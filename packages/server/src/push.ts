@@ -8,15 +8,19 @@
 import webpush, { type PushSubscription } from 'web-push';
 import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import type { DeliverableNudge } from '@everything/shared';
+import { config } from './config.js';
 import { db } from './db/client.js';
 import { devices, settings } from './db/schema.js';
 import { getSettings } from './nudge-engine.js';
 
 /**
- * There is no real address here — VAPID just wants a contact for the push
- * service to complain to, and this server has no domain.
+ * VAPID's `sub` is a contact for the push service, not a destination.
+ *
+ * It still has to look real: Apple refuses `localhost` with `403 BadJwtToken`,
+ * and does so identically for every send, so the failure looks like "push
+ * doesn't work" rather than "one claim is malformed". Validated in config.ts.
  */
-const VAPID_SUBJECT = 'mailto:everything-app@localhost';
+const VAPID_SUBJECT = config.VAPID_SUBJECT;
 
 /**
  * The keypair, created once and then reused forever.
@@ -106,13 +110,19 @@ export async function sendPushToPhones(nudges: DeliverableNudge[], now = Date.no
       await webpush.sendNotification(subscription, payload, { TTL: 15 * 60 });
       outcome.sent++;
     } catch (error) {
-      const status = (error as { statusCode?: number }).statusCode;
+      const { statusCode, body, message } = error as { statusCode?: number; body?: string; message?: string };
+
       // 404/410 mean the browser threw the subscription away — reinstalled the
       // app, cleared data. Keeping it would fail forever.
-      if (status === 404 || status === 410) {
+      if (statusCode === 404 || statusCode === 410) {
         await db.update(devices).set({ pushSubscription: null }).where(eq(devices.id, device.id));
         outcome.removed++;
       } else {
+        // Never silent. Swallowing these made a malformed VAPID claim look like
+        // "push just doesn't work", which took a live phone to diagnose.
+        console.error(
+          `push to ${device.name} failed: ${statusCode ?? '?'} ${String(body ?? message ?? '').trim()}`
+        );
         outcome.failed++;
       }
     }

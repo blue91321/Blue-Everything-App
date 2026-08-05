@@ -1,6 +1,6 @@
 import { desc, lt } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { attentionReportSchema } from '@everything/shared';
+import { attentionReportSchema, isAwayFromPc } from '@everything/shared';
 import { db } from '../db/client.js';
 import { attentionSamples } from '../db/schema.js';
 import { changes } from '../events.js';
@@ -30,7 +30,7 @@ export const SAMPLE_RETENTION_MS = 90 * 24 * 60 * 60_000;
  * In-memory because it's a cache, not a fact — a restart costs one extra row
  * and one extra sweep, which is the right trade for keeping it off disk.
  */
-let lastPersisted: { state: string; at: number } | null = null;
+let lastPersisted: { state: string; at: number; away: boolean } | null = null;
 let lastSweepAt = 0;
 
 /**
@@ -72,7 +72,8 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
 
     // A stopping point is always worth a row — it's the event the app exists
     // for, and losing it to coalescing would hide why a nudge fired.
-    const changed = lastPersisted?.state !== report.state;
+    const away = isAwayFromPc(report);
+    const changed = lastPersisted?.state !== report.state || lastPersisted?.away !== away;
     const stale = !lastPersisted || at - lastPersisted.at >= SAMPLE_HEARTBEAT_MS;
     if (changed || stale || report.stoppingPoint) {
       await db.insert(attentionSamples).values({
@@ -84,8 +85,10 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
         idleMs: report.idleMs,
         liveGames: JSON.stringify(report.liveGames),
         stoppingQuality: report.stoppingPoint?.quality ?? null,
+        audioPlaying: report.audioPlaying ? 1 : 0,
+        awayFromPc: away ? 1 : 0,
       });
-      lastPersisted = { state: report.state, at };
+      lastPersisted = { state: report.state, at, away };
     }
 
     let queueChanged = false;

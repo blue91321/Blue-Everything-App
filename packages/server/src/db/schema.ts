@@ -174,6 +174,13 @@ export const attentionSamples = sqliteTable(
     /** JSON array. Denormalised on purpose; this table is append-only log data. */
     liveGames: text('live_games').notNull().default('[]'),
     stoppingQuality: text('stopping_quality'),
+    /**
+     * Recorded because idle time alone can't explain why a phone nudge did or
+     * didn't fire. Without it, "he was idle 52 minutes and nothing pushed" is
+     * unanswerable after the fact.
+     */
+    audioPlaying: integer('audio_playing').notNull().default(0),
+    awayFromPc: integer('away_from_pc').notNull().default(0),
     createdAt: now(),
   },
   (t) => [index('attention_samples_at_idx').on(t.at)]

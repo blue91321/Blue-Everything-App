@@ -59,6 +59,21 @@ const envSchema = z.object({
    */
   CORS_ORIGIN: z.string().default(''),
 
+  /**
+   * VAPID `sub` claim — a contact for the push service, not an address anything
+   * is sent to.
+   *
+   * Must be a well-formed `mailto:` or `https:` URI with a real-looking domain.
+   * Apple rejects `localhost` outright with `403 BadJwtToken`, which is why the
+   * obvious `mailto:...@localhost` silently broke every push to iPhone.
+   */
+  VAPID_SUBJECT: z
+    .string()
+    .default('mailto:everything-app@example.com')
+    .refine((v) => /^(mailto:[^@\s]+@[^@\s.]+\.[^@\s]+|https:\/\/\S+)$/.test(v) && !v.includes('localhost'), {
+      message: 'must be mailto:name@domain.tld or https://host, and cannot use localhost',
+    }),
+
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
   /** Set when running behind a reverse proxy so client IPs log correctly. */

@@ -234,6 +234,18 @@ check('nothing toasts at an empty desk', awayBody.deliver.length === 0);
 check('the server agrees he is away', awayBody.awayFromPc === true);
 check('and with no phone subscribed nothing is pushed', awayBody.pushed === 0);
 
+// A `prime`-only nudge must still be able to reach the phone: minQuality asks
+// about breaks on the PC, and there is no PC activity to break into.
+await post('/api/nudges', { title: 'Prime-only, but he has left', minQuality: 'prime' });
+const primeWhileAway = await post(
+  '/api/attention',
+  report({ state: 'away', reason: 'still out', idleMs: longIdle, audioPlaying: false })
+);
+check(
+  'a prime-only nudge is eligible for the phone',
+  primeWhileAway.json().awayFromPc === true && primeWhileAway.json().deliver.length === 0
+);
+
 const stillQueued = await app.inject({ method: 'GET', url: '/api/nudges/queue' });
 check(
   'so it stays queued rather than vanishing',

@@ -159,7 +159,14 @@ export async function collectDeliverable(
     return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
   }
 
-  const effectiveMoment = toPhone ? ('any' as NudgeQuality) : moment;
+  /**
+   * `minQuality` asks "how good a break is this?" — a question about the PC.
+   * With the chair empty there is no match to avoid interrupting, so the phone
+   * counts as the best possible moment. Using 'any' here instead would have
+   * meant a nudge asking for a `prime` break could never reach the phone at
+   * all, which is the opposite of the intent.
+   */
+  const effectiveMoment = toPhone ? ('prime' as NudgeQuality) : moment;
 
   const candidates = await db
     .select()

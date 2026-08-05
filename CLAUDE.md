@@ -381,6 +381,26 @@ VAPID keys are generated once into the `settings` row; only the public half is
 ever sent to a browser. iOS only exposes push to a Home-Screen install over
 HTTPS, which `checkPushSupport()` explains rather than failing silently.
 
+**The VAPID `sub` claim must name a real-looking domain.** It is only a contact
+for the push service, so `mailto:everything-app@localhost` looks harmless — but
+Apple rejects it with `403 BadJwtToken` on every single send. Because it fails
+identically every time, it presents as "push doesn't work" rather than "one
+claim is malformed". `VAPID_SUBJECT` is validated in `config.ts` and refuses
+localhost outright.
+
+Two things made that bug expensive to find, both now fixed:
+
+- **Push failures were swallowed.** A failed send must not fail the agent's
+  heartbeat, but it must still be logged, or `pushed: 0` is undiagnosable.
+- **`audioPlaying` wasn't recorded.** With only idle time in the sample log,
+  "he was idle 52 minutes and nothing pushed" could not be answered after the
+  fact. Samples now carry `audioPlaying` and `awayFromPc`, and a change in
+  either forces a row.
+
+`npm run push-test -w @everything/server` sends to every subscribed device and
+prints the push service's response verbatim. `--subject <uri>` tries an
+alternative `sub` without changing config.
+
 ### Three ways to go quiet, because one schedule doesn't fit
 
 `quietReason()` in `packages/shared` is the single decision, so the server, the
