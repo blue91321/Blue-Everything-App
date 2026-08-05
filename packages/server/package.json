@@ -1,0 +1,28 @@
+{
+  "name": "@everything/server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "migrate": "drizzle-kit push",
+    "generate": "drizzle-kit generate",
+    "pair": "tsx src/cli/pair.ts",
+    "smoke": "tsx src/cli/smoke.ts"
+  },
+  "dependencies": {
+    "@everything/shared": "*",
+    "@fastify/cors": "^10.0.1",
+    "@fastify/static": "^8.0.3",
+    "@libsql/client": "^0.17.4",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.11.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

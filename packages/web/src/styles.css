@@ -1,0 +1,519 @@
+/*
+ * One stylesheet, no framework.
+ *
+ * The layout is a left drawer that slides over the content on a phone and is
+ * simply always there on a desktop — same markup, same nav, one media query
+ * deciding which behaviour applies.
+ */
+
+:root {
+  --bg: #14161c;
+  --surface: #1c1f27;
+  --surface-raised: #232734;
+  --border: #2b303c;
+  --text: #e8e9ed;
+  --muted: #8b90a0;
+  --accent: #ffb454;
+  --accent-text: #14161c;
+  --danger: #ff6b6b;
+  --ok: #5fd18c;
+
+  --radius: 12px;
+  --gap: 12px;
+  /* Must match DRAWER_WIDTH in useEdgeDrawer.ts. */
+  --drawer-width: 260px;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-raised: #eef0f4;
+    --border: #dcdfe6;
+    --text: #1a1c22;
+    --muted: #666c7a;
+    --accent: #b96f00;
+    --accent-text: #ffffff;
+    --danger: #c92a2a;
+    --ok: #2b8a3e;
+
+    color-scheme: light;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Stops iOS bouncing the whole page when a list is scrolled to its end. */
+  overscroll-behavior-y: none;
+}
+
+/* ---------- drawer + shell ---------- */
+
+.drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--drawer-width);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  z-index: 30;
+  /* Off-canvas by default; App.tsx overrides this inline while dragging. */
+  transform: translateX(-100%);
+  transition: transform 0.22s ease;
+  padding-top: env(safe-area-inset-top);
+}
+
+.shell.desktop .drawer {
+  transform: none;
+  transition: none;
+}
+
+.drawer-head {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  padding: 18px 18px 12px;
+}
+
+.drawer nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px;
+  flex: 1;
+}
+
+.drawer nav button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.drawer nav button:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.drawer nav button[aria-current='true'] {
+  background: var(--surface-raised);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.glyph {
+  width: 20px;
+  text-align: center;
+  font-size: 15px;
+}
+
+.drawer-foot {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 20;
+  transition: opacity 0.22s ease;
+}
+
+.shell.desktop {
+  padding-left: var(--drawer-width);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer,
+  .backdrop {
+    transition: none;
+  }
+}
+
+/* ---------- content ---------- */
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--gap) 48px;
+  padding-top: env(safe-area-inset-top);
+}
+
+header.top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0 12px;
+}
+
+header.top h1 {
+  font-size: 20px;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.menu {
+  background: none;
+  border: 0;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  padding: 6px 4px;
+  cursor: pointer;
+  /* Comfortable thumb target without shifting the title. */
+  margin-left: -4px;
+}
+
+section {
+  margin-bottom: 24px;
+}
+
+section > h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+/*
+ * A just-ticked item stays in place for a moment before moving to the finished
+ * section. Fading it as it waits makes the eventual move read as "this is on
+ * its way out" rather than "the list jumped".
+ */
+.card.settling {
+  opacity: 0.55;
+  transition: opacity 1.4s ease;
+}
+
+.card.muted {
+  border-style: dashed;
+  opacity: 0.8;
+}
+
+.title.struck {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+/* Finished work: visible, scrollable-to, but clearly out of the way. */
+.done-area {
+  opacity: 0.65;
+  margin-top: 32px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.done-area:hover,
+.done-area:focus-within {
+  opacity: 1;
+}
+
+.done-area .card {
+  background: none;
+}
+
+.row-actions {
+  margin-top: -6px;
+  margin-bottom: 8px;
+}
+
+/* Compact -/count/+ control for adjusting a habit's tally. */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+}
+
+.stepper .btn {
+  padding: 4px 10px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.stepper .btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.stepper .count {
+  min-width: 22px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+/* On/off switch. A checkbox reads as "tick this to agree"; a switch reads as
+   "this is currently on", which is what these settings actually are. */
+.toggle {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 27px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.toggle .knob {
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.toggle.on {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.toggle.on .knob {
+  transform: translateX(19px);
+  background: var(--accent-text);
+}
+
+.toggle:disabled {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle,
+  .toggle .knob {
+    transition: none;
+  }
+}
+
+/* Step-by-step device instructions. */
+.guide ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.guide li {
+  margin-bottom: 16px;
+}
+
+.guide li::marker {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.snippet {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  font-size: 13px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  overflow-x: auto;
+  white-space: pre;
+  user-select: all;
+}
+
+.ok-text {
+  color: var(--ok);
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.row.between {
+  justify-content: space-between;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.meta.urgent {
+  color: var(--danger);
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 14px;
+  padding: 8px 0;
+}
+
+/* ---------- controls ---------- */
+
+input,
+textarea,
+select {
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  /* 16px keeps iOS Safari from zooming the viewport on focus. */
+  font: 16px/1.4 inherit;
+  font-family: inherit;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 88px;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+button {
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn {
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  white-space: nowrap;
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.btn.subtle {
+  background: none;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 6px 8px;
+}
+
+.btn.danger {
+  color: var(--danger);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+/* Big round check target — the most-tapped control in the app. */
+.check {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: none;
+  color: var(--ok);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.check.done {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: var(--bg);
+}
+
+.quality {
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.quality.prime {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.banner {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+/* ---------- pairing ---------- */
+
+.pair {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 48px 20px;
+}
+
+.pair h1 {
+  font-size: 24px;
+  margin: 0 0 8px;
+}
+
+.pair p {
+  color: var(--muted);
+  font-size: 14px;
+}

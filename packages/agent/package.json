@@ -1,0 +1,21 @@
+{
+  "name": "@everything/agent",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "agent": "tsx src/index.ts",
+    "sensor": "tsx src/sensor-spike.ts",
+    "doctor": "tsx src/doctor.ts",
+    "bench": "tsx src/bench.ts",
+    "toast": "tsx src/cli/test-toast.ts"
+  },
+  "dependencies": {
+    "@everything/shared": "*",
+    "koffi": "^2.9.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

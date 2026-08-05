@@ -1,0 +1,24 @@
+node_modules/
+dist/
+build/
+out/
+*.log
+
+# Local data — never leaves this machine
+data/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+
+# Vault material, when it exists
+*.vault
+secrets/
+
+# Holds this machine's bearer token
+agent.config.json
+
+# Runtime logs from scripts/start.ps1
+logs/

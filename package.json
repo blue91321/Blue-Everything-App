@@ -1,0 +1,11 @@
+{
+  "name": "everything-app",
+  "private": true,
+  "version": "0.0.1",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "sensor": "npm run sensor -w @everything/agent"
+  }
+}

@@ -1,0 +1,85 @@
+/**
+ * Every environment-dependent value the server needs, in one validated place.
+ *
+ * Nothing else in the codebase may read `process.env`. That rule is what makes
+ * relocating this server — to a VPS, a container, a different box on Tailscale —
+ * a matter of changing env vars rather than hunting through source.
+ */
+import { z } from 'zod';
+import { fileURLToPath } from 'node:url';
+import { dirname, isAbsolute, resolve } from 'node:path';
+
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Anchor a relative `file:` database to the server package, not the working
+ * directory.
+ *
+ * Launched by hand from the package this makes no difference; launched by Task
+ * Scheduler — which starts in C:\Windows\System32 — a relative path would
+ * quietly create a second, empty database and the app would look wiped.
+ * Absolute paths and remote URLs are left exactly as given.
+ */
+function anchorDatabaseUrl(url: string): string {
+  if (!url.startsWith('file:')) return url;
+  const path = url.slice('file:'.length);
+  return isAbsolute(path) ? url : `file:${resolve(packageRoot, path)}`;
+}
+
+const envSchema = z.object({
+  /**
+   * `0.0.0.0` on purpose: the Windows agent and the phone both reach the server
+   * over the network, even when it happens to be running on the same PC. Binding
+   * to localhost would work today and break the moment it moves.
+   */
+  HOST: z.string().default('0.0.0.0'),
+  PORT: z.coerce.number().int().positive().default(8787),
+
+  /**
+   * libsql URL. `file:` is a local SQLite file; swap in a `libsql://` or
+   * `http://` URL to point at a remote database with no code change.
+   */
+  DATABASE_URL: z.string().default('file:./data/everything.db'),
+  DATABASE_AUTH_TOKEN: z.string().optional(),
+
+  /**
+   * Disable only for throwaway local testing. Once this server is reachable
+   * over Tailscale it is reachable by anything else on that tailnet.
+   */
+  AUTH_REQUIRED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  /**
+   * Comma-separated origins allowed to call the API cross-origin. Empty by
+   * default, and it should stay that way: the PWA is served from this same
+   * origin, so it needs no CORS at all. A wildcard here would let any web page
+   * Blake happens to visit read his data off 127.0.0.1.
+   */
+  CORS_ORIGIN: z.string().default(''),
+
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+
+  /** Set when running behind a reverse proxy so client IPs log correctly. */
+  TRUST_PROXY: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+});
+
+const parsed = envSchema.safeParse(process.env);
+if (!parsed.success) {
+  console.error('Invalid environment configuration:');
+  for (const issue of parsed.error.issues) console.error(`  ${issue.path.join('.')}: ${issue.message}`);
+  process.exit(1);
+}
+
+export const config = { ...parsed.data, DATABASE_URL: anchorDatabaseUrl(parsed.data.DATABASE_URL) };
+
+export const corsOrigins =
+  config.CORS_ORIGIN === '*'
+    ? true
+    : config.CORS_ORIGIN === ''
+      ? false // same-origin only
+      : config.CORS_ORIGIN.split(',').map((s) => s.trim());
