@@ -180,6 +180,34 @@ await post('/api/nudges', {
 const stale = await post('/api/attention', report({ reason: 'long after the reminder mattered' }));
 check('an expired reminder never fires', !titles(stale).includes('Drink water (stale)'), titles(stale).join(', '));
 
+console.log('\nlocal trust cannot be reached through a proxy');
+{
+  // `tailscale serve` terminates TLS and forwards to 127.0.0.1, so every
+  // tailnet caller arrives on a loopback socket. Trusting the socket alone
+  // handed the whole tailnet unauthenticated access; these pin the fix.
+  const { isTrustedLocal } = await import('../auth.js');
+  const fake = (over: Record<string, unknown> = {}) =>
+    ({
+      socket: { remoteAddress: '127.0.0.1' },
+      headers: { host: '127.0.0.1:8787' },
+      ...over,
+    }) as never;
+
+  check('a browser on this PC is trusted', isTrustedLocal(fake()));
+  check(
+    'but a request proxied in from the tailnet is not',
+    !isTrustedLocal(fake({ headers: { host: 'desktop-abc.tail1234.ts.net' } }))
+  );
+  check(
+    'nor one carrying a forwarding header',
+    !isTrustedLocal(fake({ headers: { host: '127.0.0.1:8787', 'x-forwarded-for': '100.64.0.9' } }))
+  );
+  check(
+    'nor one from a real remote socket',
+    !isTrustedLocal(fake({ socket: { remoteAddress: '192.168.0.5' }, headers: { host: '192.168.0.19:8787' } }))
+  );
+}
+
 console.log('\naway from the PC (phone push gating)');
 const { isAwayFromPc, AWAY_FROM_PC_IDLE_MS } = await import('@everything/shared');
 const longIdle = AWAY_FROM_PC_IDLE_MS + 60_000;

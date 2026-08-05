@@ -109,6 +109,11 @@ Let's Encrypt certificate, which iOS accepts. Use that URL on the phone, not the
 raw tailnet IP. (`tailscale serve` keeps it inside the tailnet; `funnel` would
 expose it to the public internet, which this app should never use.)
 
+Set up on this machine as `desktop-aqo6lhd.tail5a2a48.ts.net`. Note that the
+Windows installer does **not** put `tailscale.exe` on PATH, so anything shelling
+out to it must try `%ProgramFiles%\Tailscale\tailscale.exe` too — looking it up
+by name alone reports "not installed" on a machine where it is running fine.
+
 ### Icons
 
 `packages/web/scripts/make-icons.mjs` generates them at build time with a small
@@ -297,15 +302,27 @@ Requests arriving from loopback are allowed without a token. Making Blake paste
 a token into a browser on the same PC that runs the server protects nothing and
 was the single biggest piece of friction in the app.
 
-Loopback trust is guarded so a web page can't abuse it:
+Loopback trust is guarded four ways. **The Host check is not optional** — see
+below for why leaving it out handed the entire tailnet unauthenticated access:
 
-- the raw socket address is checked, never `request.ip`, which honours
+- the **Host header must name loopback**. `tailscale serve` terminates TLS and
+  proxies to `127.0.0.1`, so every tailnet caller arrives on a loopback socket.
+  What a proxied request cannot fake is the name it asked for: it still carries
+  `desktop-xxx.ts.net`, not `127.0.0.1`;
+- any **forwarding header** (`X-Forwarded-*`, `Forwarded`) disqualifies it,
+  since a direct call has none;
+- the **raw socket address** is checked, never `request.ip`, which honours
   `X-Forwarded-For` when trustProxy is on;
-- local trust is disabled entirely when `TRUST_PROXY` is set, since behind a
-  proxy every request looks local;
-- a cross-site `Origin` or `Sec-Fetch-Site` is refused, which blocks both a
-  malicious page POSTing to 127.0.0.1 in the background and DNS rebinding;
-- CORS defaults to same-origin only.
+- a cross-site **`Origin` or `Sec-Fetch-Site`** is refused, blocking a malicious
+  page POSTing to 127.0.0.1 in the background, and DNS rebinding with it.
+
+Local trust is also disabled outright when `TRUST_PROXY` is set, and CORS
+defaults to same-origin only.
+
+Testing this needs the *proxied* path specifically. Hitting the raw tailnet IP
+(`http://100.x.y.z:8787`) arrives on a non-loopback socket and is correctly
+refused whether or not the bug is present, so it proves nothing. The smoke suite
+covers the proxy shapes directly.
 
 Everything else — the phone over Tailscale — needs a bearer token, stored as a
 SHA-256 hash. Tokens are minted in the app under **settings → Add a device**,

@@ -21,21 +21,53 @@ export interface ConnectAddress {
 }
 
 /**
- * Ask the Tailscale CLI for this machine's tailnet name.
- *
- * Best effort with a short timeout — Tailscale may not be installed, may not be
- * logged in, or may not be on PATH, and none of those should slow down or fail
- * the page that's just trying to render pairing instructions.
+ * The Windows installer does not put tailscale.exe on PATH, so looking it up by
+ * name alone silently reports "Tailscale not installed" on a machine where it
+ * is running perfectly well.
  */
-async function tailscaleDnsName(): Promise<string | null> {
+const TAILSCALE_PATHS = [
+  'tailscale',
+  `${process.env.ProgramFiles ?? 'C:\\Program Files'}\\Tailscale\\tailscale.exe`,
+  `${process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)'}\\Tailscale\\tailscale.exe`,
+];
+
+async function tailscale(args: string[]): Promise<string | null> {
+  for (const exe of TAILSCALE_PATHS) {
+    try {
+      const { stdout } = await run(exe, args, { timeout: 2500, windowsHide: true });
+      return stdout;
+    } catch {
+      // Try the next location; not installed there, or not logged in.
+    }
+  }
+  return null;
+}
+
+/**
+ * This machine's tailnet name, and whether it is actually serving the app over
+ * HTTPS. Best effort — none of this should fail the page that is only trying to
+ * render pairing instructions.
+ */
+async function tailscaleInfo(): Promise<{ dnsName: string; serving: boolean } | null> {
+  const statusJson = await tailscale(['status', '--json']);
+  if (!statusJson) return null;
+
+  let dnsName: string | null = null;
   try {
-    const { stdout } = await run('tailscale', ['status', '--json'], { timeout: 1500, windowsHide: true });
-    const status = JSON.parse(stdout) as { Self?: { DNSName?: string } };
-    const name = status.Self?.DNSName?.replace(/\.$/, '');
-    return name || null;
+    const status = JSON.parse(statusJson) as { Self?: { DNSName?: string }; BackendState?: string };
+    if (status.BackendState !== 'Running') return null;
+    dnsName = status.Self?.DNSName?.replace(/\.$/, '') ?? null;
   } catch {
     return null;
   }
+  if (!dnsName) return null;
+
+  // `serve status` lists the proxies. Without one, the https name resolves but
+  // nothing answers on it, which would be a confusing thing to recommend.
+  const serveStatus = (await tailscale(['serve', 'status'])) ?? '';
+  const serving = serveStatus.includes(`https://${dnsName}`) && serveStatus.includes(String(config.PORT));
+
+  return { dnsName, serving };
 }
 
 export async function connectRoutes(app: FastifyInstance): Promise<void> {
@@ -50,12 +82,14 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const addresses: ConnectAddress[] = [];
-    const dnsName = await tailscaleDnsName();
+    const info = await tailscaleInfo();
 
-    if (dnsName) {
-      // What `tailscale serve` publishes: real certificate, no port needed.
+    // Only offered once `tailscale serve` is actually proxying — the name
+    // resolves either way, so recommending it early would send Blake to a
+    // page that never loads.
+    if (info?.serving) {
       addresses.push({
-        url: `https://${dnsName}`,
+        url: `https://${info.dnsName}`,
         kind: 'tailscale-https',
         label: 'Tailscale (secure) — use this one on your phone',
         secure: true,
@@ -78,7 +112,7 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
 
     return {
       addresses,
-      tailscale: dnsName ? { dnsName, serving: true } : null,
+      tailscale: info,
       hostname: hostname(),
       port: config.PORT,
     };

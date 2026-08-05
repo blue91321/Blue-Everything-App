@@ -32,6 +32,26 @@ function constantTimeEquals(a: string, b: string): boolean {
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+/** Headers any reverse proxy adds. Their presence means this is not a direct call. */
+const FORWARDED_HEADERS = ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host', 'forwarded'] as const;
+
+/**
+ * Was this request addressed to loopback, or to a public name?
+ *
+ * `tailscale serve` terminates TLS and proxies to 127.0.0.1, so a request from
+ * anywhere on the tailnet arrives on a loopback socket. The socket address
+ * alone would therefore hand full access to the whole tailnet. What it cannot
+ * fake is the Host header: a proxied request still carries the name the caller
+ * asked for, `desktop-xxx.ts.net`, not `127.0.0.1`.
+ */
+function addressedToLoopback(hostHeader: string | undefined): boolean {
+  if (!hostHeader) return false;
+  // Strip the port; keep IPv6 brackets, which are part of the host form.
+  const host = hostHeader.trim().toLowerCase().replace(/:\d+$/, '');
+  return LOOPBACK_HOSTS.has(host);
+}
 
 /**
  * Is this request from a browser or process on this same PC?
@@ -53,6 +73,12 @@ export function isTrustedLocal(request: FastifyRequest): boolean {
 
   const address = request.socket.remoteAddress ?? '';
   if (!LOOPBACK.has(address)) return false;
+
+  // A proxy in front of us — `tailscale serve` above all — makes every caller
+  // look local. Both of these must hold, or the entire tailnet gets in without
+  // a token.
+  if (FORWARDED_HEADERS.some((header) => request.headers[header])) return false;
+  if (!addressedToLoopback(request.headers.host)) return false;
 
   // Browsers send this on cross-site requests; if it's there, believe it.
   const site = request.headers['sec-fetch-site'];
