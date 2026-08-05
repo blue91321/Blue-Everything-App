@@ -24,36 +24,85 @@ function decodeKey(base64Url: string): ArrayBuffer {
 
 export type PushSupport =
   | { supported: true }
-  | { supported: false; reason: string };
+  | { supported: false; reason: string; fix?: string };
+
+export const isInstalled = (): boolean =>
+  (navigator as { standalone?: boolean }).standalone === true ||
+  window.matchMedia('(display-mode: standalone)').matches;
 
 /**
- * iOS only exposes push to an installed app, so a page that looks fine in
- * Safari still can't subscribe. `standalone` is how it reports being launched
- * from the Home Screen.
+ * Why this device can or can't receive push.
+ *
+ * Order matters. iOS removes `navigator.serviceWorker` *entirely* on an
+ * insecure page, so testing for the API first blames the browser for what is
+ * actually the address — which sends you debugging Safari instead of fixing
+ * the URL. Secure context is therefore checked first, always.
  */
 export function checkPushSupport(): PushSupport {
-  if (!('serviceWorker' in navigator)) return { supported: false, reason: 'This browser has no service worker support.' };
-  if (!('PushManager' in window)) return { supported: false, reason: 'This browser cannot receive push notifications.' };
   if (!window.isSecureContext) {
     return {
       supported: false,
-      reason: 'Needs a secure (https) address. On the phone, use the Tailscale https URL.',
+      reason: `This page is open on ${location.origin}, which isn't a secure address.`,
+      fix: isInstalled()
+        ? 'This Home Screen icon was saved from the old address. Delete it, open the https:// Tailscale address in Safari, and add it again.'
+        : 'Open the https:// Tailscale address instead.',
     };
   }
 
-  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-  const installed =
-    (navigator as { standalone?: boolean }).standalone === true ||
-    window.matchMedia('(display-mode: standalone)').matches;
-
-  if (iOS && !installed) {
+  if (!('serviceWorker' in navigator)) {
+    return { supported: false, reason: 'This browser has no service worker support.' };
+  }
+  if (!('PushManager' in window)) {
+    return { supported: false, reason: 'This browser cannot receive push notifications.' };
+  }
+  if (!('Notification' in window)) {
     return {
       supported: false,
-      reason: 'On iPhone, add this to your Home Screen first — Safari can only deliver notifications to an installed app.',
+      reason: 'Notifications are unavailable here.',
+      fix: 'On iPhone this usually means the app was opened in Safari rather than from the Home Screen icon.',
+    };
+  }
+
+  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent));
+  if (iOS && !isInstalled()) {
+    return {
+      supported: false,
+      reason: 'Safari itself cannot receive these notifications.',
+      fix: 'Tap Share, then "Add to Home Screen", and open the app from that icon.',
     };
   }
 
   return { supported: true };
+}
+
+export interface PushDiagnostics {
+  origin: string;
+  secure: boolean;
+  installed: boolean;
+  hasServiceWorker: boolean;
+  hasPushManager: boolean;
+  permission: string;
+  subscribed: boolean;
+}
+
+/** Everything needed to work out why push isn't available, on the phone itself. */
+export async function pushDiagnostics(): Promise<PushDiagnostics> {
+  let subscribed = false;
+  try {
+    subscribed = Boolean(await currentSubscription());
+  } catch {
+    // Registration unavailable — reported by the other fields.
+  }
+
+  return {
+    origin: location.origin,
+    secure: window.isSecureContext,
+    installed: isInstalled(),
+    hasServiceWorker: 'serviceWorker' in navigator,
+    hasPushManager: 'PushManager' in window,
+    permission: 'Notification' in window ? Notification.permission : 'unavailable',
+    subscribed,
+  };
 }
 
 export async function currentSubscription(): Promise<PushSubscription | null> {

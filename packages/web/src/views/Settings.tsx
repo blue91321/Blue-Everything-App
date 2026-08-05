@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react';
 import { api, type Session } from '../api';
 import { useAsync } from '../useAsync';
 import { clockTime, relative } from '../format';
-import { checkPushSupport, currentSubscription, disablePush, enablePush } from '../push';
+import {
+  checkPushSupport,
+  currentSubscription,
+  disablePush,
+  enablePush,
+  pushDiagnostics,
+  type PushDiagnostics,
+} from '../push';
 
 export function Settings({ session, onChanged }: { session: Session; onChanged: () => void }) {
   const devices = useAsync(() => api.devices.list());
@@ -158,6 +165,11 @@ function PhoneNudges() {
                   ? 'This device is set up to receive them.'
                   : 'Not set up yet.'}
             </div>
+            {!support.supported && support.fix && (
+              <div className="meta" style={{ marginTop: 6 }}>
+                <strong>{support.fix}</strong>
+              </div>
+            )}
           </div>
           {support.supported && (
             <button className="btn" disabled={busy} onClick={subscribed ? turnOff : turnOn}>
@@ -166,8 +178,50 @@ function PhoneNudges() {
           )}
         </div>
         {message && <div className="meta" style={{ marginTop: 8 }}>{message}</div>}
+
+        {/* Shown on the device with the problem, since that's where it can be
+            read — describing it back on the PC is no help. */}
+        {!support.supported && <Diagnostics />}
       </div>
     </section>
+  );
+}
+
+function Diagnostics() {
+  const [info, setInfo] = useState<PushDiagnostics | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    void pushDiagnostics().then(setInfo);
+  }, []);
+
+  if (!info) return null;
+
+  const rows: [string, string, boolean][] = [
+    ['Address', info.origin, info.secure],
+    ['Secure connection', info.secure ? 'yes' : 'no — needs https', info.secure],
+    ['Opened from Home Screen', info.installed ? 'yes' : 'no', info.installed],
+    ['Service worker', info.hasServiceWorker ? 'available' : 'missing', info.hasServiceWorker],
+    ['Push support', info.hasPushManager ? 'available' : 'missing', info.hasPushManager],
+    ['Permission', info.permission, info.permission === 'granted'],
+  ];
+
+  return (
+    <>
+      <button className="btn subtle" style={{ marginTop: 8 }} onClick={() => setOpen((v) => !v)}>
+        {open ? 'hide details' : 'why not?'}
+      </button>
+      {open && (
+        <div className="diagnostics">
+          {rows.map(([label, value, ok]) => (
+            <div className="row between" key={label}>
+              <span className="meta">{label}</span>
+              <span className={ok ? 'meta ok-text' : 'meta urgent'}>{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
