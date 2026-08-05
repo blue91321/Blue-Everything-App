@@ -63,14 +63,26 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     return safe;
   });
 
-  /** The PWA hands over its Web Push subscription once the user allows it. */
+  /**
+   * The PWA hands over its Web Push subscription once the user allows it, and
+   * posts an empty body to withdraw it.
+   *
+   * The shape is checked rather than stringified blindly: `JSON.stringify(null)`
+   * is the string "null", which would look like a live subscription forever and
+   * fail every send.
+   */
   app.post('/api/devices/me/push', async (request, reply) => {
     if (!request.deviceId) return reply.code(400).send({ error: 'not running with a paired device' });
+
+    const body = request.body as { endpoint?: unknown } | null;
+    const isSubscription = Boolean(body && typeof body === 'object' && typeof body.endpoint === 'string');
+
     await db
       .update(devices)
-      .set({ pushSubscription: JSON.stringify(request.body) })
+      .set({ pushSubscription: isSubscription ? JSON.stringify(body) : null })
       .where(eq(devices.id, request.deviceId));
-    return { ok: true };
+
+    return { ok: true, subscribed: isSubscription };
   });
 
   app.post('/api/devices/:id/revoke', async (request, reply) => {

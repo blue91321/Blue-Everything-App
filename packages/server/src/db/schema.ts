@@ -210,6 +210,20 @@ export const settings = sqliteTable('settings', {
 
   /** Master switch, so everything can be silenced without losing the settings. */
   remindersEnabled: integer('reminders_enabled').notNull().default(1),
+
+  /**
+   * VAPID keypair for web push, generated once on first use.
+   *
+   * The private key is a secret, but it lives in the same gitignored database
+   * as everything else personal here, so it needs no separate handling. Only
+   * the public half is ever sent to a browser.
+   */
+  vapidPublicKey: text('vapid_public_key'),
+  vapidPrivateKey: text('vapid_private_key'),
+
+  /** Send nudges to the phone when Blake is away from the PC. */
+  pushEnabled: integer('push_enabled').notNull().default(1),
+
   updatedAt: touched(),
 });
 

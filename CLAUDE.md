@@ -326,6 +326,44 @@ Defined once, in `shouldDeliver()` in `src/nudge-engine.ts`:
 - **Going quiet outranks everything, including a passed deadline.** "Don't wake
   me up" has to mean it or it isn't a setting worth having.
 
+### Phone push, and how "away" is decided
+
+When Blake is genuinely away from the PC, nudges go to his phone instead of the
+screen. Never both: a toast he's sitting in front of beats a buzz in his pocket.
+
+`isAwayFromPc()` in `packages/shared` needs **both**:
+
+1. no keyboard or mouse for 15 minutes, and
+2. no sound played in the last 2 minutes.
+
+The second condition is the whole point. Idle time cannot tell an empty chair
+apart from a film — both look identical to the keyboard and need opposite
+behaviour. `packages/agent/src/audio.ts` reads the WASAPI peak meter through COM
+(vtables by hand via koffi; `powercfg /requests` needs admin and the audio
+interfaces aren't automation-friendly, so nothing simpler exists). It costs
+0.08ms a poll.
+
+Sound is remembered for 2 minutes rather than sampled instantaneously, because
+speech dips to near silence between words and a single sample can land in a gap.
+
+Deliberately conservative: a missed phone nudge is a small loss, a phone buzzing
+mid-film is exactly the badly-timed interruption this app exists to prevent.
+
+Other guards:
+
+- **A 10-minute cooldown** between pushes, and several waiting nudges become one
+  notification. Stepping out for an afternoon shouldn't mean a pocketful of
+  buzzes on the way back.
+- **Nothing is marked delivered until a push actually succeeds**, so with no
+  phone subscribed the queue simply waits and toasts when he sits down.
+- **Quiet hours and DND still apply** — away doesn't override asleep.
+- Subscriptions the push service reports as dead (404/410) are cleared
+  automatically.
+
+VAPID keys are generated once into the `settings` row; only the public half is
+ever sent to a browser. iOS only exposes push to a Home-Screen install over
+HTTPS, which `checkPushSupport()` explains rather than failing silently.
+
 ### Three ways to go quiet, because one schedule doesn't fit
 
 `quietReason()` in `packages/shared` is the single decision, so the server, the

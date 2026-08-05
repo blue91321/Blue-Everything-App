@@ -99,16 +99,18 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
       queueChanged = expired + queuedTasks + queuedHabits > 0;
     }
 
-    const deliver = await collectDeliverable(report, request.deviceId);
+    const result = await collectDeliverable(report, request.deviceId);
 
     // This endpoint fires every few seconds, so it announces changes only when
     // it genuinely made one — otherwise every open client would reload on a
     // timer, which is the polling this was meant to avoid.
-    if (queueChanged || deliver.length > 0) changes.emitChange('nudges');
+    if (queueChanged || result.deliver.length > 0 || result.pushed > 0) changes.emitChange('nudges');
 
     return {
       moment: momentQuality(report.state, report.stoppingPoint),
-      deliver,
+      deliver: result.deliver,
+      pushed: result.pushed,
+      awayFromPc: result.awayFromPc,
     };
   });
 

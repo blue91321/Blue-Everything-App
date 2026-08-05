@@ -8,6 +8,7 @@
  */
 import { and, desc, eq, inArray, isNotNull, isNull, lt, lte, or } from 'drizzle-orm';
 import {
+  isAwayFromPc,
   quietReason,
   qualityRank,
   type AttentionReport,
@@ -18,6 +19,7 @@ import {
 } from '@everything/shared';
 import { db } from './db/client.js';
 import { habitEntries, habits, nudges, settings, tasks } from './db/schema.js';
+import { pushIsOnCooldown, sendPushToPhones } from './push.js';
 import { periodKeyFor } from './routes/habits.js';
 
 /**
@@ -113,10 +115,20 @@ export function shouldDeliver(
  * Evaluate the queue against a fresh attention report and mark whatever wins as
  * delivered. Returns what the caller should actually show.
  */
+export interface DeliveryResult {
+  /** For the agent to raise as Windows toasts. Empty when Blake isn't there. */
+  deliver: DeliverableNudge[];
+  /** How many reached the phone instead. */
+  pushed: number;
+  channel: 'toast' | 'push' | 'none';
+  /** True when the PC has been untouched and silent long enough to count as empty. */
+  awayFromPc: boolean;
+}
+
 export async function collectDeliverable(
   report: AttentionReport,
   deviceId: string | null
-): Promise<DeliverableNudge[]> {
+): Promise<DeliveryResult> {
   const now = report.at ?? Date.now();
   const moment = momentQuality(report.state, report.stoppingPoint);
 
@@ -132,6 +144,23 @@ export async function collectDeliverable(
       windowsDnd: report.windowsDnd,
     }) !== null;
 
+  /**
+   * With the chair empty, the PC's stopping points are meaningless — there is
+   * no match to avoid interrupting. So anything already due may go to the
+   * phone, which is why `isAwayFromPc` is deliberately strict about proving
+   * he's really gone.
+   */
+  const awayFromPc = isAwayFromPc(report);
+  const toPhone = awayFromPc && Boolean(prefs.pushEnabled) && !quiet;
+
+  if (toPhone && pushIsOnCooldown(now)) {
+    // Leave everything queued rather than marking it delivered — it will go out
+    // on the next window, or as a toast the moment he sits back down.
+    return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
+  }
+
+  const effectiveMoment = toPhone ? ('any' as NudgeQuality) : moment;
+
   const candidates = await db
     .select()
     .from(nudges)
@@ -142,35 +171,58 @@ export async function collectDeliverable(
       )
     );
 
-  const winners: DeliverableNudge[] = [];
+  const winners: { nudge: DeliverableNudge; escalated: boolean }[] = [];
   for (const nudge of candidates) {
-    const decision = shouldDeliver(nudge, { now, state: report.state, moment, quiet });
+    const decision = shouldDeliver(nudge, { now, state: report.state, moment: effectiveMoment, quiet });
     if (!decision.deliver) continue;
 
+    winners.push({
+      escalated: decision.escalated,
+      nudge: {
+        id: nudge.id,
+        title: nudge.title,
+        body: nudge.body,
+        taskId: nudge.taskId,
+        habitId: nudge.habitId,
+        minQuality: nudge.minQuality as NudgeQuality,
+        escalated: decision.escalated,
+      },
+    });
+  }
+
+  if (winners.length === 0) {
+    return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
+  }
+
+  // Send before marking anything delivered: with no phone subscribed, or the
+  // push service refusing, these must stay queued rather than vanish unseen.
+  let pushed = 0;
+  if (toPhone) {
+    const outcome = await sendPushToPhones(winners.map((w) => w.nudge), now);
+    pushed = outcome.sent;
+    if (pushed === 0) return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
+  }
+
+  for (const { nudge, escalated } of winners) {
     await db
       .update(nudges)
       .set({
         state: 'delivered',
         deliveredAt: now,
         deliveredDeviceId: deviceId,
-        attempts: nudge.attempts + 1,
-        escalated: decision.escalated ? 1 : 0,
+        attempts: (candidates.find((c) => c.id === nudge.id)?.attempts ?? 0) + 1,
+        escalated: escalated ? 1 : 0,
         snoozeUntil: null,
       })
       .where(eq(nudges.id, nudge.id));
-
-    winners.push({
-      id: nudge.id,
-      title: nudge.title,
-      body: nudge.body,
-      taskId: nudge.taskId,
-      habitId: nudge.habitId,
-      minQuality: nudge.minQuality as NudgeQuality,
-      escalated: decision.escalated,
-    });
   }
 
-  return winners;
+  return {
+    deliver: toPhone ? [] : winners.map((w) => w.nudge),
+    pushed,
+    channel: toPhone ? 'push' : 'toast',
+    awayFromPc,
+  };
 }
 
 /**

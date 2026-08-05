@@ -43,6 +43,7 @@ function toReport(snapshot: AttentionSnapshot, stoppingPoint: StoppingPoint | nu
     idleMs: snapshot.idleMs,
     liveGames: snapshot.liveGames,
     windowsDnd: snapshot.windowsDnd,
+    audioPlaying: snapshot.audioPlaying,
     stoppingPoint: stoppingPoint ? { quality: stoppingPoint.quality, reason: stoppingPoint.reason } : null,
   };
 }

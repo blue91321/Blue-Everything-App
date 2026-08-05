@@ -81,6 +81,10 @@ export interface AppSettings {
   followWindowsDnd: number;
   dndUntil: number | null;
   remindersEnabled: number;
+  pushEnabled: number;
+  /** Public half only; the private key never leaves the server. */
+  vapidPublicKey: string;
+  awayFromPcIdleMinutes: number;
   /** Live from the agent, not stored. */
   windowsDnd: boolean;
   /** Whether reminders are silenced right this second, and why. */
@@ -198,7 +202,12 @@ export const api = {
       followWindowsDnd?: boolean;
       dndUntil?: number | null;
       remindersEnabled?: boolean;
+      pushEnabled?: boolean;
     }) => patch<AppSettings>('/api/settings', payload),
+  },
+
+  push: {
+    subscribe: (subscription: unknown) => post('/api/devices/me/push', subscription),
   },
 
   notes: {

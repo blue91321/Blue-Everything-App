@@ -8,7 +8,8 @@
     "sensor": "tsx src/sensor-spike.ts",
     "doctor": "tsx src/doctor.ts",
     "bench": "tsx src/bench.ts",
-    "toast": "tsx src/cli/test-toast.ts"
+    "toast": "tsx src/cli/test-toast.ts",
+    "audio": "tsx src/cli/test-audio.ts"
   },
   "dependencies": {
     "@everything/shared": "*",

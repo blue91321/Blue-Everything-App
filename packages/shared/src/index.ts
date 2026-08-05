@@ -41,6 +41,8 @@ export const attentionReportSchema = z.object({
   liveGames: z.array(z.string().max(260)).default([]),
   /** Windows' own Do Not Disturb / quiet time is switched on right now. */
   windowsDnd: z.boolean().default(false),
+  /** Something has played sound recently — a video, a stream, a call. */
+  audioPlaying: z.boolean().default(false),
   /** Present only on the poll where a transition actually happened. */
   stoppingPoint: z
     .object({ quality: stoppingQualitySchema, reason: z.string().max(300) })
@@ -168,6 +170,7 @@ export const updateSettingsSchema = z.object({
   /** Absolute time; null clears the manual pause. */
   dndUntil: z.number().int().nullish(),
   remindersEnabled: z.boolean().optional(),
+  pushEnabled: z.boolean().optional(),
 });
 
 /**
@@ -222,6 +225,28 @@ export const registerDeviceSchema = z.object({
   name: z.string().min(1).max(120),
   kind: deviceKindSchema,
 });
+
+/* ------------------------------------------------------------------ */
+/* Away from the PC                                                    */
+/* ------------------------------------------------------------------ */
+
+/** No keyboard or mouse for this long before the phone is even considered. */
+export const AWAY_FROM_PC_IDLE_MS = 15 * 60_000;
+
+/**
+ * Has Blake actually left, as opposed to sitting still?
+ *
+ * Idle time alone can't tell the difference: watching a two-hour film looks
+ * exactly like an empty chair to the keyboard. Sound is what separates them, so
+ * a push only goes out when the machine has been untouched *and* silent.
+ *
+ * Deliberately conservative — a missed phone nudge is a small loss, while a
+ * phone buzzing in his pocket while he's sat watching something is exactly the
+ * badly-timed interruption this whole app exists to prevent.
+ */
+export function isAwayFromPc(input: { idleMs: number; audioPlaying?: boolean }): boolean {
+  return input.idleMs >= AWAY_FROM_PC_IDLE_MS && !input.audioPlaying;
+}
 
 /** Shape the API returns for a nudge the client should show right now. */
 export interface DeliverableNudge {

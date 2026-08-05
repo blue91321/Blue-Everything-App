@@ -8,6 +8,7 @@
  *   npm run bench -w @everything/agent
  */
 import { getForegroundWindow, getIdleMs, getNotificationState, listProcessNames, processIsAlive } from './win32.js';
+import { audioRecentlyPlaying } from './audio.js';
 
 function time(label: string, iterations: number, fn: () => unknown): number {
   fn(); // warm up, so we don't measure koffi's first-call setup
@@ -27,9 +28,10 @@ const notify = time('getNotificationState()', 200, getNotificationState);
 
 const somePid = process.pid;
 const alive = time('processIsAlive(pid)', 200, () => processIsAlive(somePid));
+const audio = time('audioRecentlyPlaying()', 200, audioRecentlyPlaying);
 const snapshot = time('listProcessNames()  [expensive]', 50, listProcessNames);
 
-const cheap = foreground + idle + notify + alive;
+const cheap = foreground + idle + notify + alive + audio;
 const full = cheap + snapshot;
 
 console.log(`\n  cheap poll  ${cheap.toFixed(3)} ms`);

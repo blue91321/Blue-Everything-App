@@ -30,6 +30,7 @@ import {
   notificationStateName,
   type ForegroundWindowInfo,
 } from './win32.js';
+import { audioRecentlyPlaying } from './audio.js';
 import { isGame, isLauncher } from './games.js';
 
 export type AttentionState =
@@ -59,6 +60,14 @@ export interface AttentionSnapshot {
    * to bed rather than at a predicted hour.
    */
   windowsDnd: boolean;
+  /**
+   * Something has played sound recently.
+   *
+   * The reason this exists: idle time cannot tell an empty chair apart from a
+   * film. Both look identical to the keyboard, and they need opposite
+   * behaviour — one should reach the phone, the other must not.
+   */
+  audioPlaying: boolean;
   /** Known game executables currently alive, whether focused or not. */
   liveGames: string[];
 }
@@ -216,7 +225,8 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
     const windowsDnd =
       notificationState === NotificationState.QUIET_TIME ||
       notificationState === NotificationState.PRESENTATION_MODE;
-    const base = { at, foreground, idleMs, notificationState, windowsDnd, liveGames };
+    const audioPlaying = audioRecentlyPlaying(now).playing;
+    const base = { at, foreground, idleMs, notificationState, windowsDnd, audioPlaying, liveGames };
 
     // Order matters. A live game outranks idleness: sitting in a death-cam
     // without touching the mouse is not the same as walking away, and firing a

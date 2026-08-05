@@ -6,6 +6,8 @@
  */
 import { getForegroundWindow, getIdleMs, getNotificationState, listProcessNames, notificationStateName } from './win32.js';
 import { GAME_PROCESSES, LAUNCHER_PROCESSES } from './games.js';
+import { audioRecentlyPlaying } from './audio.js';
+import { AWAY_FROM_PC_IDLE_MS, isAwayFromPc } from '@everything/shared';
 
 const processes = listProcessNames();
 const foreground = getForegroundWindow();
@@ -15,8 +17,19 @@ console.log('foreground window:  ', foreground ? `${foreground.exe} (pid ${foreg
 console.log('  title:            ', foreground?.title || '(none)');
 console.log('  exe path:         ', foreground?.exePath || 'FAILED');
 console.log('  fullscreen:       ', foreground?.isFullScreen);
-console.log('idle:               ', `${Math.round(getIdleMs() / 1000)}s`);
+const idleMs = getIdleMs();
+console.log('idle:               ', `${Math.round(idleMs / 1000)}s`);
 console.log('notification state: ', notificationStateName(getNotificationState()));
+
+const audio = audioRecentlyPlaying();
+console.log('audio meter:        ', audio.available ? `peak ${audio.peak.toFixed(4)}` : 'UNAVAILABLE');
+console.log('sound recently:     ', audio.playing ? 'yes' : 'no');
+console.log(
+  'away from the PC:   ',
+  isAwayFromPc({ idleMs, audioPlaying: audio.playing })
+    ? 'yes — phone nudges would be allowed'
+    : `no — needs ${AWAY_FROM_PC_IDLE_MS / 60_000}m idle and silence`
+);
 
 const games = [...GAME_PROCESSES].filter((p) => processes.has(p));
 const launchers = [...LAUNCHER_PROCESSES].filter((p) => processes.has(p));

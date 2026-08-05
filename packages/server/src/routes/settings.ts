@@ -1,13 +1,16 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { quietReason, updateSettingsSchema } from '@everything/shared';
+import { AWAY_FROM_PC_IDLE_MS, quietReason, updateSettingsSchema } from '@everything/shared';
 import { db } from '../db/client.js';
 import { settings } from '../db/schema.js';
 import { getSettings } from '../nudge-engine.js';
+import { getVapidKeys } from '../push.js';
 import { currentWindowsDnd } from './attention.js';
 
 async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
   const windowsDnd = currentWindowsDnd();
+  // Generated on first read so the phone always has a key to subscribe with.
+  const { publicKey } = await getVapidKeys();
   const reason = quietReason(new Date(), {
     quietHoursEnabled: Boolean(row.quietHoursEnabled),
     quietStartMinute: row.quietStartMinute,
@@ -18,7 +21,17 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     windowsDnd,
   });
 
-  return { ...row, windowsDnd, quietNow: reason !== null, quietReason: reason };
+  // The private half must never leave the server.
+  const { vapidPrivateKey: _secret, vapidPublicKey: _stored, ...safe } = row;
+
+  return {
+    ...safe,
+    vapidPublicKey: publicKey,
+    windowsDnd,
+    quietNow: reason !== null,
+    quietReason: reason,
+    awayFromPcIdleMinutes: AWAY_FROM_PC_IDLE_MS / 60_000,
+  };
 }
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
@@ -40,6 +53,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         quietHoursEnabled: toInt(body.quietHoursEnabled),
         followWindowsDnd: toInt(body.followWindowsDnd),
         remindersEnabled: toInt(body.remindersEnabled),
+        pushEnabled: toInt(body.pushEnabled),
       })
       .where(eq(settings.id, current.id))
       .returning();

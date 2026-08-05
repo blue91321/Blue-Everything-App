@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type Session } from '../api';
 import { useAsync } from '../useAsync';
 import { clockTime, relative } from '../format';
+import { checkPushSupport, currentSubscription, disablePush, enablePush } from '../push';
 
 export function Settings({ session, onChanged }: { session: Session; onChanged: () => void }) {
   const devices = useAsync(() => api.devices.list());
@@ -10,6 +11,7 @@ export function Settings({ session, onChanged }: { session: Session; onChanged: 
   return (
     <>
       <QuietHours />
+      <PhoneNudges />
 
       <section>
         <h2>This device</h2>
@@ -71,6 +73,101 @@ export function Settings({ session, onChanged }: { session: Session; onChanged: 
         ))}
       </section>
     </>
+  );
+}
+
+/**
+ * Notifications on this device, when Blake isn't at the PC.
+ *
+ * Shown everywhere, because the useful place to turn it on is the phone itself
+ * — but it explains itself differently depending on whether this device can
+ * actually receive them.
+ */
+function PhoneNudges() {
+  const settings = useAsync(() => api.settings.get());
+  const [subscribed, setSubscribed] = useState<boolean | null>(null);
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const support = checkPushSupport();
+
+  useEffect(() => {
+    void currentSubscription().then((s) => setSubscribed(Boolean(s)));
+  }, []);
+
+  const current = settings.data;
+  if (!current) return null;
+
+  async function turnOn() {
+    setBusy(true);
+    try {
+      const result = await enablePush(current!.vapidPublicKey);
+      setMessage(result.message);
+      setSubscribed(result.ok);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not enable notifications.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function turnOff() {
+    setBusy(true);
+    try {
+      await disablePush();
+      setSubscribed(false);
+      setMessage('This device will no longer be notified.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section>
+      <h2>Phone nudges</h2>
+
+      <div className="card">
+        <div className="row between">
+          <div className="grow">
+            <div className="title">Send nudges to my phone when I'm away</div>
+            <div className="meta">
+              Only once the PC has been untouched for {current.awayFromPcIdleMinutes} minutes{' '}
+              <strong>and</strong> nothing is playing — so a long film never sets your pocket buzzing.
+            </div>
+          </div>
+          <Toggle
+            on={Boolean(current.pushEnabled)}
+            disabled={busy}
+            label="Send nudges to my phone"
+            onChange={async (on) => {
+              await api.settings.update({ pushEnabled: on });
+              settings.reload();
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="row between">
+          <div className="grow">
+            <div className="title">Notifications on this device</div>
+            <div className="meta">
+              {!support.supported
+                ? support.reason
+                : subscribed
+                  ? 'This device is set up to receive them.'
+                  : 'Not set up yet.'}
+            </div>
+          </div>
+          {support.supported && (
+            <button className="btn" disabled={busy} onClick={subscribed ? turnOff : turnOn}>
+              {busy ? '…' : subscribed ? 'Turn off' : 'Turn on'}
+            </button>
+          )}
+        </div>
+        {message && <div className="meta" style={{ marginTop: 8 }}>{message}</div>}
+      </div>
+    </section>
   );
 }
 

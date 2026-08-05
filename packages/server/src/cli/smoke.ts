@@ -180,6 +180,42 @@ await post('/api/nudges', {
 const stale = await post('/api/attention', report({ reason: 'long after the reminder mattered' }));
 check('an expired reminder never fires', !titles(stale).includes('Drink water (stale)'), titles(stale).join(', '));
 
+console.log('\naway from the PC (phone push gating)');
+const { isAwayFromPc, AWAY_FROM_PC_IDLE_MS } = await import('@everything/shared');
+const longIdle = AWAY_FROM_PC_IDLE_MS + 60_000;
+
+// Pure rule checks — no phone needed, and these are the ones that must not be
+// wrong: a false positive buzzes his pocket while he's sat watching something.
+check('idle + silent counts as away', isAwayFromPc({ idleMs: longIdle, audioPlaying: false }));
+check('idle but audio playing does NOT', !isAwayFromPc({ idleMs: longIdle, audioPlaying: true }));
+check('silent but recently active does NOT', !isAwayFromPc({ idleMs: 60_000, audioPlaying: false }));
+check(
+  'a two-hour film does not count as away',
+  !isAwayFromPc({ idleMs: 2 * 60 * 60_000, audioPlaying: true })
+);
+
+// With no phone subscribed, an away nudge must stay queued rather than being
+// quietly consumed.
+await post('/api/nudges', { title: 'Waiting for the phone', minQuality: 'any' });
+const awayNoPhone = await post(
+  '/api/attention',
+  report({ state: 'away', reason: 'out of the room', idleMs: longIdle, audioPlaying: false })
+);
+const awayBody = awayNoPhone.json();
+check('nothing toasts at an empty desk', awayBody.deliver.length === 0);
+check('the server agrees he is away', awayBody.awayFromPc === true);
+check('and with no phone subscribed nothing is pushed', awayBody.pushed === 0);
+
+const stillQueued = await app.inject({ method: 'GET', url: '/api/nudges/queue' });
+check(
+  'so it stays queued rather than vanishing',
+  stillQueued.json().some((n: { title: string }) => n.title === 'Waiting for the phone')
+);
+
+// Back at the desk it should arrive as a toast, proving nothing was lost.
+const backAtDesk = await post('/api/attention', report({ reason: 'back at the keyboard', idleMs: 0 }));
+check('and arrives as a toast once he returns', titles(backAtDesk).includes('Waiting for the phone'), titles(backAtDesk).join(', '));
+
 console.log('\nsnooze');
 const snoozeTarget = await post('/api/nudges', { title: 'Snooze me', minQuality: 'any' });
 await post(`/api/nudges/${snoozeTarget.json().id}/snooze`, { minutes: 30 });
