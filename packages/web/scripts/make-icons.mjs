@@ -191,3 +191,11 @@ mkdirSync(assetsDir, { recursive: true });
 const ico = encodeIco([16, 32, 48, 256].map((size) => ({ size, png: drawIcon(size) })));
 writeFileSync(resolve(assetsDir, 'everything.ico'), ico);
 console.log(`  ${'everything.ico'.padEnd(22)} 16/32/48/256  ${(ico.length / 1024).toFixed(1)} KB`);
+
+// The browser extension's toolbar icon, from the same mark.
+const extensionIcons = resolve(dirname(fileURLToPath(import.meta.url)), '../../extension/icons');
+mkdirSync(extensionIcons, { recursive: true });
+for (const size of [16, 32, 48, 128]) {
+  writeFileSync(resolve(extensionIcons, `icon-${size}.png`), drawIcon(size));
+}
+console.log(`  ${'extension icons'.padEnd(22)} 16/32/48/128`);

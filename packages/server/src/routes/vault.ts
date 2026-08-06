@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   urlMatchesEntry,
   vaultChangePasswordSchema,
+  vaultDestroySchema,
+  vaultImportSchema,
   vaultItemSchema,
   vaultItemUpdateSchema,
   vaultRecoverSchema,
@@ -10,6 +12,7 @@ import {
 } from '@everything/shared';
 import { changes } from '../events.js';
 import { combineShares, decodeShare } from '../vault/crypto.js';
+import { isDuplicate, readExport } from '../vault/import.js';
 import * as session from '../vault/session.js';
 import * as store from '../vault/store.js';
 
@@ -129,6 +132,48 @@ export async function vaultRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, ...session.status() };
   });
 
+  /**
+   * Issue a new recovery kit, invalidating the old one.
+   *
+   * Needs only an unlocked vault, because unlocking already proved the master
+   * password (or the old shares). Asking again would add friction without
+   * adding a check.
+   */
+  app.post('/api/vault/recovery/regenerate', async (_request, reply) => {
+    const key = requireUnlocked(reply);
+    if (!key) return;
+
+    const shares = await store.regenerateRecovery(key);
+    changes.emitChange('vault');
+    return {
+      recoveryShares: shares,
+      warning: 'The previous kit no longer works. These two are shown once.',
+    };
+  });
+
+  /**
+   * Delete the vault and everything in it.
+   *
+   * Takes the master password rather than trusting the open session: this
+   * cannot be undone, and an unlocked vault sitting on screen is too easy to
+   * destroy by accident.
+   */
+  app.post('/api/vault/destroy', async (request, reply) => {
+    const { masterPassword } = vaultDestroySchema.parse(request.body);
+
+    try {
+      const key = await store.openWithPassword(masterPassword);
+      key.fill(0);
+    } catch {
+      return reply.code(401).send({ error: 'that password is wrong' });
+    }
+
+    const { deletedEntries } = await store.destroyVault();
+    session.lock();
+    changes.emitChange('vault');
+    return { ok: true, deletedEntries };
+  });
+
   app.post('/api/vault/change-password', async (request, reply) => {
     const body = vaultChangePasswordSchema.parse(request.body);
 
@@ -193,6 +238,66 @@ export async function vaultRoutes(app: FastifyInstance): Promise<void> {
     await store.deleteItem(id);
     changes.emitChange('vault');
     return reply.code(204).send();
+  });
+
+  /**
+   * Import a browser password export.
+   *
+   * Two-phase on purpose: the first call reports what would happen and writes
+   * nothing, so a mis-detected layout is caught before a thousand mangled
+   * entries land in the vault. Only `commit: true` writes.
+   *
+   * The CSV is never logged, never stored, and never returned — and neither
+   * are the passwords in the preview, which reports counts and titles only.
+   */
+  app.post('/api/vault/import', async (request, reply) => {
+    const key = requireUnlocked(reply);
+    if (!key) return;
+
+    const body = vaultImportSchema.parse(request.body);
+
+    let parsed;
+    try {
+      parsed = readExport(body.csv);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+
+    const existing = await store.listItems(key);
+    const seen = existing.map((item) => ({ url: item.url, username: item.username }));
+
+    const fresh = parsed.entries.filter(
+      (entry) => body.includeDuplicates || !seen.some((old) => isDuplicate(entry, { ...entry, ...old }))
+    );
+    const duplicates = parsed.entries.length - fresh.length;
+
+    if (!body.commit) {
+      return {
+        preview: true,
+        format: parsed.format,
+        found: parsed.entries.length,
+        wouldImport: fresh.length,
+        duplicates,
+        skippedWithoutPassword: parsed.skipped,
+        // Titles only — a preview must not become a way to read the file back.
+        sample: fresh.slice(0, 5).map((entry) => entry.title),
+      };
+    }
+
+    let imported = 0;
+    for (const entry of fresh) {
+      await store.createItem(key, entry);
+      imported++;
+    }
+
+    changes.emitChange('vault');
+    return {
+      preview: false,
+      format: parsed.format,
+      imported,
+      duplicates,
+      skippedWithoutPassword: parsed.skipped,
+    };
   });
 
   /**

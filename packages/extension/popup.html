@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Everything Vault</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <!-- Every screen ships in the same document and is toggled by popup.js;
+         a popup is destroyed on every close, so there is nothing to route. -->
+    <main id="app">
+      <section id="loading" class="screen">
+        <p class="muted">Connecting…</p>
+      </section>
+
+      <section id="pair" class="screen" hidden>
+        <h1>Connect to Everything</h1>
+        <p class="muted">
+          In the app on this PC: <strong>Settings → Browser extension → Create code</strong>.
+        </p>
+        <label class="field">
+          <span>Server</span>
+          <input id="pair-url" type="text" value="http://127.0.0.1:8787" spellcheck="false" />
+        </label>
+        <label class="field">
+          <span>Code</span>
+          <input id="pair-token" type="password" placeholder="paste the code" spellcheck="false" />
+        </label>
+        <p id="pair-error" class="error" hidden></p>
+        <button id="pair-submit" class="primary">Connect</button>
+      </section>
+
+      <section id="offline" class="screen" hidden>
+        <h1>Everything isn't running</h1>
+        <p class="muted">Start it on this PC, then reopen this.</p>
+        <p id="offline-detail" class="muted small"></p>
+        <button id="offline-retry">Try again</button>
+      </section>
+
+      <section id="locked" class="screen" hidden>
+        <h1>Vault locked</h1>
+        <label class="field">
+          <span>Master password</span>
+          <input id="unlock-password" type="password" autofocus />
+        </label>
+        <p id="unlock-error" class="error" hidden></p>
+        <button id="unlock-submit" class="primary">Unlock</button>
+        <p class="muted small">Takes about a second — that delay is what protects the vault.</p>
+      </section>
+
+      <section id="vault" class="screen" hidden>
+        <header>
+          <input id="search" type="search" placeholder="Search" autocomplete="off" />
+          <button id="lock" title="Lock the vault">Lock</button>
+        </header>
+        <p id="context" class="muted small"></p>
+        <ul id="results"></ul>
+        <p id="empty" class="muted" hidden>Nothing here.</p>
+        <p id="status" class="muted small" hidden></p>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

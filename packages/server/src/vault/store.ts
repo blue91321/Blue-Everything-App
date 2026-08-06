@@ -147,6 +147,43 @@ export async function rewrapWithPassword(vaultKey: Buffer, newPassword: string):
   }
 }
 
+/**
+ * Issue a fresh recovery kit, replacing any existing one.
+ *
+ * Works whether or not the vault already had recovery — the same operation
+ * both replaces a lost kit and adds one to a vault created without.
+ *
+ * The old shares stop working the instant this returns, which is the point:
+ * a half-lost kit is a liability, since whoever finds the surviving share is
+ * one share away rather than two.
+ */
+export async function regenerateRecovery(vaultKey: Buffer): Promise<{ a: string; b: string }> {
+  const row = await getVaultRow();
+  if (!row) throw new Error('no vault has been set up');
+
+  const code = newRecoveryCode();
+  const wrapped = wrapVaultKey(vaultKey, deriveKeyFromRecoveryCode(code));
+  const shares = splitSecret(code);
+  code.fill(0);
+
+  await db.update(vault).set({ wrappedByRecovery: wrapped }).where(eq(vault.id, row.id));
+  return { a: encodeShare(shares.a), b: encodeShare(shares.b) };
+}
+
+/**
+ * Destroy the vault and everything in it.
+ *
+ * Genuinely irreversible: the entries are encrypted under a key that exists
+ * only in the wrapping being deleted, so there is nothing left to recover from
+ * even with the master password. The caller must prove it knows that password
+ * first.
+ */
+export async function destroyVault(): Promise<{ deletedEntries: number }> {
+  const deleted = await db.delete(vaultEntries).returning({ id: vaultEntries.id });
+  await db.delete(vault);
+  return { deletedEntries: deleted.length };
+}
+
 /* ------------------------------------------------------------------ */
 /* Items                                                               */
 /* ------------------------------------------------------------------ */

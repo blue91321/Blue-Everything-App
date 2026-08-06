@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Everything Vault",
+  "version": "0.1.0",
+  "description": "Fills passwords from your own Everything vault, running on this PC.",
+
+  "permissions": ["storage", "activeTab", "scripting"],
+
+  "host_permissions": ["http://127.0.0.1:8787/*"],
+
+  "action": {
+    "default_title": "Everything Vault",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

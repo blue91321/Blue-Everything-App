@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type VaultSecret, type VaultStatus, type VaultSummary } from '../api';
+import { api, type ImportResult, type VaultSecret, type VaultStatus, type VaultSummary } from '../api';
 import { useAsync } from '../useAsync';
 import { relative } from '../format';
 
@@ -39,7 +39,7 @@ export function Vault() {
 
   if (!state.configured) return <SetUpVault onShares={setPendingShares} onDone={status.reload} />;
   if (!state.unlocked) return <UnlockVault status={state} onDone={status.reload} />;
-  return <OpenVault status={state} onLocked={status.reload} />;
+  return <OpenVault status={state} onLocked={status.reload} onShares={setPendingShares} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -161,6 +161,16 @@ function RecoveryShares({ shares, onDone }: { shares: { a: string; b: string }; 
         <ShareBlock label="Share 1 — put this in Google Password Manager" value={shares.a} />
         <ShareBlock label="Share 2 — print this, or keep it on your phone" value={shares.b} />
 
+        {/* The failure this warns about is a real one: a browser's "save
+            password?" prompt appears at exactly the wrong moment and looks
+            like the thing you were trying to do. */}
+        <div className="banner" style={{ borderLeftColor: 'var(--danger)', marginTop: 12 }}>
+          <strong>A "save password?" prompt from your browser is not this.</strong> Dismissing or accepting
+          that prompt does <em>not</em> store a share. Go to{' '}
+          <code>passwords.google.com</code>, add a note or entry yourself, and paste share 1 in by hand.
+          Then come back and check you can actually see it there.
+        </div>
+
         <div className="meta" style={{ marginTop: 10 }}>
           Both are needed together. Either one on its own reveals nothing at all — not "is hard to crack",
           but carries no information about the code. Keeping them in the same place defeats the point.
@@ -168,8 +178,14 @@ function RecoveryShares({ shares, onDone }: { shares: { a: string; b: string }; 
 
         <label className="row" style={{ marginTop: 14, cursor: 'pointer' }}>
           <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} style={{ width: 'auto' }} />
-          <span className="grow title">I have stored both, in two different places</span>
+          <span className="grow title">
+            I have stored both in two different places, and checked I can see them there
+          </span>
         </label>
+
+        <div className="meta" style={{ marginTop: 6 }}>
+          If you lose one later, open the vault and make a new kit — you don't need the old one to do it.
+        </div>
 
         <div className="row" style={{ marginTop: 12 }}>
           <button className="btn primary" disabled={!saved} onClick={onDone}>
@@ -323,11 +339,20 @@ function RecoverVault({ onDone, onCancel }: { onDone: () => void; onCancel: () =
 /* Open                                                                */
 /* ------------------------------------------------------------------ */
 
-function OpenVault({ status, onLocked }: { status: VaultStatus; onLocked: () => void }) {
+function OpenVault({
+  status,
+  onLocked,
+  onShares,
+}: {
+  status: VaultStatus;
+  onLocked: () => void;
+  onShares: (shares: { a: string; b: string }) => void;
+}) {
   const items = useAsync(() => api.vault.items());
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const lock = useCallback(async () => {
     await api.vault.lock();
@@ -361,8 +386,13 @@ function OpenVault({ status, onLocked }: { status: VaultStatus; onLocked: () => 
           <button className="btn primary" onClick={() => setAdding(true)}>
             Add
           </button>
+          <button className="btn" onClick={() => setImporting((v) => !v)}>
+            Import
+          </button>
         </div>
       </section>
+
+      {importing && <ImportPanel onClose={() => setImporting(false)} onImported={items.reload} />}
 
       {adding && (
         <EntryEditor
@@ -399,7 +429,137 @@ function OpenVault({ status, onLocked }: { status: VaultStatus; onLocked: () => 
           )
         )}
       </section>
+
+      <VaultDanger status={status} onShares={onShares} onDestroyed={onLocked} />
     </>
+  );
+}
+
+/**
+ * Recovery kit and deletion.
+ *
+ * Below the entries and behind confirmations, because both are things you want
+ * once a year and never want to hit by accident.
+ */
+function VaultDanger({
+  status,
+  onShares,
+  onDestroyed,
+}: {
+  status: VaultStatus;
+  onShares: (shares: { a: string; b: string }) => void;
+  onDestroyed: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmingKit, setConfirmingKit] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+
+  async function regenerate() {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api.vault.regenerateRecovery();
+      setConfirmingKit(false);
+      // Handed to the parent so a background refresh cannot unmount the only
+      // screen these codes appear on.
+      onShares(result.recoveryShares);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'could not make a new kit');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function destroy() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.vault.destroy(deletePassword);
+      setDeletePassword('');
+      setDeleting(false);
+      onDestroyed();
+    } catch {
+      setError('That password is wrong. Nothing was deleted.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="done-area">
+      <h2>Recovery kit</h2>
+      <div className="card">
+        <div className="meta">
+          {status.hasRecovery
+            ? 'This vault has a recovery kit. If you have lost either share, make a new one — a half-lost kit is worse than none, because whoever finds the surviving half is one step away instead of two.'
+            : 'This vault has no recovery kit. Without one, forgetting the master password is final.'}
+        </div>
+
+        {confirmingKit ? (
+          <>
+            <div className="banner" style={{ borderLeftColor: 'var(--accent)' }}>
+              The old shares stop working immediately. You will be shown two new ones, once.
+            </div>
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="btn primary" onClick={regenerate} disabled={busy}>
+                {busy ? 'creating…' : 'Yes, make a new kit'}
+              </button>
+              <button className="btn" onClick={() => setConfirmingKit(false)}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn" onClick={() => setConfirmingKit(true)}>
+              {status.hasRecovery ? 'Replace recovery kit' : 'Create a recovery kit'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <h2 style={{ marginTop: 24 }}>Delete the vault</h2>
+      <div className="card">
+        <div className="meta">
+          Deletes {status.itemCount} {status.itemCount === 1 ? 'entry' : 'entries'} and the vault itself.
+          This cannot be undone by anyone — the entries are encrypted under a key that only exists inside
+          what gets deleted, so no password or recovery kit brings them back.
+        </div>
+
+        {deleting ? (
+          <>
+            <div className="meta" style={{ marginTop: 10 }}>Type your master password to confirm.</div>
+            <input
+              type="password"
+              value={deletePassword}
+              onChange={(e) => setDeletePassword(e.target.value)}
+              placeholder="Master password"
+              aria-label="Master password to delete the vault"
+              autoComplete="current-password"
+              style={{ marginTop: 6 }}
+            />
+            <div className="row" style={{ marginTop: 10 }}>
+              <button className="btn subtle danger" onClick={destroy} disabled={busy || !deletePassword}>
+                {busy ? 'deleting…' : 'Delete everything'}
+              </button>
+              <button className="btn" onClick={() => { setDeleting(false); setDeletePassword(''); }}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn subtle danger" onClick={() => setDeleting(true)}>
+              Delete vault
+            </button>
+          </div>
+        )}
+      </div>
+
+      {error && <div className="banner">{error}</div>}
+    </section>
   );
 }
 
@@ -544,6 +704,159 @@ function EntryDetail({ item, onClose, onChanged }: { item: VaultSummary; onClose
         )}
       </div>
       <div className="meta" style={{ marginTop: 8 }}>changed {relative(item.updatedAt)}</div>
+    </div>
+  );
+}
+
+/**
+ * Bringing in a browser's saved passwords.
+ *
+ * Previews before it writes, because a mis-read layout would otherwise dump a
+ * thousand mangled entries into the vault, and untangling that by hand is
+ * worse than not importing at all.
+ *
+ * The file is read in the browser and posted to the server on this same
+ * machine. It is never stored — but it is still every password Blake owns
+ * sitting in his Downloads folder, which is why the last thing this screen
+ * does is tell him to delete it.
+ */
+function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const [csv, setCsv] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [done, setDone] = useState<ImportResult | null>(null);
+  const [includeDuplicates, setIncludeDuplicates] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function choose(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError('');
+    setDone(null);
+    setFileName(file.name);
+
+    const text = await file.text();
+    setCsv(text);
+    setBusy(true);
+    try {
+      setPreview(await api.vault.importCsv(text, false));
+    } catch (cause) {
+      setPreview(null);
+      setError(cause instanceof Error ? cause.message : 'could not read that file');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function commit() {
+    setBusy(true);
+    setError('');
+    try {
+      const result = await api.vault.importCsv(csv, true, includeDuplicates);
+      setDone(result);
+      // Drop the file contents from memory the moment they're no longer needed.
+      setCsv('');
+      setPreview(null);
+      onImported();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'import failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <div className="card">
+        <div className="title">Imported {done.imported} {done.imported === 1 ? 'login' : 'logins'}</div>
+        <div className="meta" style={{ marginTop: 4 }}>
+          Read as {done.format}.
+          {done.duplicates > 0 && ` ${done.duplicates} already existed and were left alone.`}
+          {done.skippedWithoutPassword > 0 && ` ${done.skippedWithoutPassword} had no password and were ignored.`}
+        </div>
+
+        <div className="banner" style={{ borderLeftColor: 'var(--danger)', marginTop: 12 }}>
+          <strong>Delete {fileName || 'the export file'} now.</strong> It holds every one of those passwords
+          in plain text, and it is sitting in your Downloads folder where any program on this PC can read it.
+          Empty the Recycle Bin too.
+        </div>
+
+        <div className="meta" style={{ marginTop: 8 }}>
+          Worth doing next: turn off the browser's own password saving, so it stops collecting a second copy.
+        </div>
+
+        <div className="row" style={{ marginTop: 10 }}>
+          <button className="btn primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="row between">
+        <div className="title">Import saved passwords</div>
+        <button className="btn subtle" onClick={onClose}>
+          close
+        </button>
+      </div>
+
+      <div className="meta" style={{ marginTop: 6 }}>
+        In Brave: <code>brave://password-manager/passwords</code> → Settings → Export. Chrome, Edge, Firefox,
+        Bitwarden, Safari and KeePass exports all work.
+      </div>
+
+      <div style={{ marginTop: 10 }}>
+        <input type="file" accept=".csv,text/csv" onChange={choose} aria-label="Password export file" />
+      </div>
+
+      {busy && <div className="meta" style={{ marginTop: 8 }}>reading…</div>}
+      {error && <div className="banner">{error}</div>}
+
+      {preview && (
+        <>
+          {/* `found` already excludes rows without a password, so importing
+              duplicates too means importing exactly `found`. */}
+          <div className="meta" style={{ marginTop: 10 }}>
+            Read as <strong>{preview.format}</strong> — found {preview.found}, will add{' '}
+            <strong>{includeDuplicates ? preview.found : preview.wouldImport}</strong>.
+            {preview.duplicates > 0 && ` ${preview.duplicates} already in the vault.`}
+            {preview.skippedWithoutPassword > 0 && ` ${preview.skippedWithoutPassword} had no password.`}
+          </div>
+
+          {preview.sample && preview.sample.length > 0 && (
+            <div className="meta" style={{ marginTop: 6 }}>
+              First few: {preview.sample.join(', ')}
+              {/* Names only. A preview that showed passwords would just be a
+                  second way to read the file. */}
+            </div>
+          )}
+
+          {preview.duplicates > 0 && (
+            <label className="row" style={{ marginTop: 10, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={includeDuplicates}
+                onChange={(e) => setIncludeDuplicates(e.target.checked)}
+                style={{ width: 'auto' }}
+              />
+              <span className="meta grow">Add the {preview.duplicates} duplicates as well</span>
+            </label>
+          )}
+
+          <div className="row" style={{ marginTop: 12 }}>
+            <button className="btn primary" onClick={commit} disabled={busy || preview.wouldImport === 0}>
+              {busy ? 'importing…' : `Import ${includeDuplicates ? preview.found : preview.wouldImport}`}
+            </button>
+            <button className="btn" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

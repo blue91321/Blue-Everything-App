@@ -130,6 +130,82 @@ check(
   (await post('/api/vault/unlock', { masterPassword: 'a different long passphrase' })).statusCode === 200
 );
 
+console.log('\nimporting a browser export');
+{
+  // Quotes and commas inside a password are the case a naive splitter mangles,
+  // and the entry you would never think to re-check.
+  const csv = [
+    'name,url,username,password,note',
+    'GitHub,https://github.com/,blake,hunter2,',
+    'Bank,https://bank.example/,blake@example.com,"p,a""ss","a note, with commas"',
+    'Nothing,https://none.example/,someone,,',
+  ].join('\n');
+
+  const previewed = (await post('/api/vault/import', { csv, commit: false })).json();
+  check('previews without writing', previewed.preview === true && previewed.found === 2, previewed.format);
+  check('ignores the row with no password', previewed.skippedWithoutPassword === 1);
+  check('the preview carries no passwords', !JSON.stringify(previewed).includes('hunter2'), 'titles only');
+
+  const before = (await get('/api/vault/items')).json().length;
+  const committed = (await post('/api/vault/import', { csv, commit: true })).json();
+  check('imports on commit', committed.imported === 2);
+  check('and the entries are there', (await get('/api/vault/items')).json().length === before + 2);
+
+  const bank = (await get('/api/vault/items')).json().find((i: { title: string }) => i.title === 'Bank');
+  const bankSecret = (await get(`/api/vault/items/${bank.id}/secret`)).json();
+  check('a password containing a comma and a quote survives', bankSecret.password === 'p,a"ss', bankSecret.password);
+  check('and the note survives', bankSecret.notes === 'a note, with commas');
+
+  const repeat = (await post('/api/vault/import', { csv, commit: true })).json();
+  check('re-importing the same file adds nothing', repeat.imported === 0 && repeat.duplicates === 2);
+
+  const forced = (await post('/api/vault/import', { csv, commit: true, includeDuplicates: true })).json();
+  check('unless duplicates are explicitly wanted', forced.imported === 2);
+
+  const rubbish = await post('/api/vault/import', { csv: 'alpha,beta\n1,2\n', commit: false });
+  check('a file with no password column is refused', rubbish.statusCode === 400);
+}
+
+console.log('\nreplacing a lost recovery kit');
+{
+  const fresh = (await post('/api/vault/recovery/regenerate')).json();
+  const newShares = fresh.recoveryShares as { a: string; b: string };
+  check('issues a new kit', Boolean(newShares?.a && newShares?.b));
+  check('which differs from the original', newShares.a !== shares.a && newShares.b !== shares.b);
+
+  await post('/api/vault/lock');
+  session.resetForTests();
+  const stale = await post('/api/vault/recover', {
+    shareA: shares.a, shareB: shares.b, newMasterPassword: 'yet another long passphrase',
+  });
+  check('the old shares no longer work', stale.statusCode === 401);
+
+  const current = await post('/api/vault/recover', {
+    shareA: newShares.a, shareB: newShares.b, newMasterPassword: 'yet another long passphrase',
+  });
+  check('the new shares do', current.statusCode === 200);
+  check('and the entries survived', (await get('/api/vault/items')).json().length > 0);
+}
+
+console.log('\ndeleting the vault');
+{
+  const itemsBefore = (await get('/api/vault/items')).json().length;
+  check('there is something to lose', itemsBefore > 0, `${itemsBefore} entries`);
+
+  const wrong = await post('/api/vault/destroy', { masterPassword: 'not the password' });
+  check('a wrong password deletes nothing', wrong.statusCode === 401);
+  check('and the entries are still there', (await get('/api/vault/items')).json().length === itemsBefore);
+
+  const destroyed = await post('/api/vault/destroy', { masterPassword: 'yet another long passphrase' });
+  check('the right password deletes it', destroyed.statusCode === 200);
+  check('every entry went with it', destroyed.json().deletedEntries === itemsBefore);
+
+  const after = (await get('/api/vault/status')).json();
+  check('the vault reports itself gone', after.configured === false && after.itemCount === 0);
+  check('and locked', after.unlocked === false);
+  check('a new vault can be created afterwards', (await post('/api/vault/setup', { masterPassword: MASTER })).statusCode === 201);
+}
+
 console.log('\nbrute force');
 session.resetForTests();
 await post('/api/vault/lock');

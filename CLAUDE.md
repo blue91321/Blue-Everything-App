@@ -499,6 +499,82 @@ Shares are printed in Crockford base32 (no I, L, O or U) because they get
 written down and typed back months later. Decoding folds the ambiguous
 characters rather than silently producing a wrong key.
 
+A kit can be reissued at any time from an unlocked vault — no need for the old
+one. Unlocking already proved the master password, so asking for it again would
+be friction without a check. Reissuing invalidates the previous shares, which is
+the point: a half-lost kit is worse than none, because whoever finds the
+surviving share is one step from the vault rather than two.
+
+**A browser's "save password?" prompt is not the same as saving a share**, and
+appears at exactly the wrong moment. Blake lost a share to precisely that, so
+the kit screen now says so outright and tells him to verify it is really stored
+before ticking the box.
+
+### Deleting the vault
+
+Takes the master password, not merely an unlocked session — it cannot be undone
+by anyone, since the entries are encrypted under a key that exists only inside
+what is being deleted. An unlocked vault sitting on screen is far too easy to
+destroy by accident.
+
+### Importing a browser export
+
+`npm run import-check -w @everything/server` covers the reader; the API side is
+in `vault-api`.
+
+Reads Chrome/Brave/Edge, Firefox, Bitwarden, Safari and KeePass exports, and
+falls back to guessing columns by name. Rows without a password are skipped —
+those are "never save" markers, not logins.
+
+**Two-phase on purpose.** The first call reports what it found and writes
+nothing, so a mis-detected layout is caught before a thousand mangled entries
+land in the vault. Only `commit: true` writes.
+
+The CSV is the most dangerous thing that will ever pass through this app: every
+password Blake owns, in plaintext. It is parsed in memory, never written to
+disk, never logged, and never echoed back — the preview returns counts and
+titles only, because a preview that showed passwords would just be a second way
+to read the file. The success screen's main job is telling him to delete the
+export.
+
+The hand-rolled CSV reader exists because splitting on commas quietly corrupts
+exactly the entries hardest to notice are wrong: a comma inside a note, a quote
+inside a password, a newline inside either.
+
+### The browser extension
+
+`packages/extension` — Manifest V3, loaded unpacked from `brave://extensions`
+with developer mode on. Pair it under **Settings → Browser extension**.
+
+**No background worker and no content scripts.** Nothing runs until the toolbar
+icon is clicked: no listener on every page, nothing injected into sites, no
+long-lived process holding a token. `activeTab` + `scripting` inject the fill
+function into one tab, once, on an explicit click. That is both leaner and a
+much smaller thing to trust.
+
+All network calls happen in the popup, which is an extension page — host
+permissions cover it, so there is no preflight to satisfy.
+
+Two things had to give for this to work:
+
+- **CORS allows `chrome-extension://` and `moz-extension://`.** The extension's
+  requests are cross-origin by definition, so without it the browser discards
+  responses the server already sent. Not a real loosening: every `/api` route
+  still needs a bearer token, and the vault additionally needs an
+  `extension`-kind device. A `browser`-kind token gets 403 from the vault and
+  200 from `/api/tasks`, which is the intended split.
+- **Local trust cannot apply.** The extension's `Origin` is cross-site, so
+  `isTrustedLocal` correctly refuses it — hence the token. That is the auth
+  design working, not something to route around.
+
+Field detection prefers *position* over names: the username box is the last
+text-ish input before the visible password box, within the same form. Site
+naming conventions vary far too much to match on.
+
+Filling goes through the prototype value setter and dispatches `input` and
+`change`, because assigning `.value` on a React-controlled field is silently
+reverted on the next render.
+
 ## Attention model
 
 `packages/agent/src/attention.ts` classifies each moment as `free`, `in-game`,

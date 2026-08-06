@@ -92,9 +92,26 @@ if (!parsed.success) {
 
 export const config = { ...parsed.data, DATABASE_URL: anchorDatabaseUrl(parsed.data.DATABASE_URL) };
 
+const configuredOrigins = config.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * Same-origin only, plus browser extensions.
+ *
+ * The extension's requests carry `Origin: chrome-extension://<id>`, which is
+ * cross-origin by definition — so without this the browser discards every
+ * response even though the server answered. Allowing the scheme is not a
+ * loosening worth worrying about: every `/api` route still demands a bearer
+ * token, and the vault additionally demands an `extension`-kind device.
+ */
 export const corsOrigins =
   config.CORS_ORIGIN === '*'
     ? true
-    : config.CORS_ORIGIN === ''
-      ? false // same-origin only
-      : config.CORS_ORIGIN.split(',').map((s) => s.trim());
+    : (origin: string | undefined, callback: (error: Error | null, allow: boolean) => void) => {
+        // No Origin header at all: same-origin navigation, or a non-browser
+        // client like the agent. Nothing for CORS to protect.
+        if (!origin) return callback(null, true);
+        if (origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://')) {
+          return callback(null, true);
+        }
+        callback(null, configuredOrigins.includes(origin));
+      };

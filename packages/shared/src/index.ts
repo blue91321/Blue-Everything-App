@@ -288,6 +288,24 @@ export const vaultRecoverSchema = z.object({
   newMasterPassword: z.string().min(MIN_MASTER_PASSWORD).max(1024),
 });
 
+export const vaultImportSchema = z.object({
+  /** The raw export. Held in memory only; never written down or logged. */
+  csv: z.string().min(1).max(20 * 1024 * 1024),
+  /** Preview first; nothing is written until this is true. */
+  commit: z.boolean().default(false),
+  /** Bring in logins that already exist for the same site and username. */
+  includeDuplicates: z.boolean().default(false),
+});
+
+/**
+ * Deleting the vault takes the master password, not merely an unlocked
+ * session. It is irreversible, so it should cost a deliberate act rather than
+ * a stray click on an already-open screen.
+ */
+export const vaultDestroySchema = z.object({
+  masterPassword: z.string().min(1).max(1024),
+});
+
 export const vaultChangePasswordSchema = z.object({
   currentPassword: z.string().min(1).max(1024),
   newPassword: z.string().min(MIN_MASTER_PASSWORD).max(1024),

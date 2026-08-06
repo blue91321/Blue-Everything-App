@@ -122,6 +122,19 @@ export interface VaultSecret {
   notes: string;
 }
 
+export interface ImportResult {
+  preview: boolean;
+  format: string;
+  /** Preview only. */
+  found?: number;
+  wouldImport?: number;
+  sample?: string[];
+  /** Commit only. */
+  imported?: number;
+  duplicates: number;
+  skippedWithoutPassword: number;
+}
+
 export interface ConnectAddress {
   url: string;
   kind: 'tailscale-https' | 'tailscale' | 'lan' | 'local';
@@ -188,7 +201,7 @@ export const api = {
 
   devices: {
     list: () => request<Device[]>('/api/devices'),
-    create: (payload: { name: string; kind: 'phone' | 'browser' | 'windows-agent' }) =>
+    create: (payload: { name: string; kind: 'phone' | 'browser' | 'windows-agent' | 'extension' }) =>
       post<Device & { token: string }>('/api/devices', payload),
     revoke: (id: string) => post(`/api/devices/${id}/revoke`),
   },
@@ -256,6 +269,12 @@ export const api = {
       post('/api/vault/recover', { shareA, shareB, newMasterPassword }),
     changePassword: (currentPassword: string, newPassword: string) =>
       post('/api/vault/change-password', { currentPassword, newPassword }),
+    importCsv: (csv: string, commit: boolean, includeDuplicates = false) =>
+      post<ImportResult>('/api/vault/import', { csv, commit, includeDuplicates }),
+    regenerateRecovery: () =>
+      post<{ recoveryShares: { a: string; b: string } }>('/api/vault/recovery/regenerate'),
+    destroy: (masterPassword: string) =>
+      post<{ ok: boolean; deletedEntries: number }>('/api/vault/destroy', { masterPassword }),
   },
 
   notes: {

@@ -44,6 +44,8 @@ export function Settings({ session, onChanged }: { session: Session; onChanged: 
         </section>
       )}
 
+      {session.local && <BrowserExtension onAdded={devices.reload} />}
+
       <section>
         <h2>Connected devices</h2>
         {devices.loading && <div className="empty">loading…</div>}
@@ -222,6 +224,61 @@ function Diagnostics() {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Pairing for the browser extension.
+ *
+ * Separate from the phone flow because the answer is different: the extension
+ * is the only other thing allowed to touch the vault, so its code is worth
+ * treating as a distinct decision rather than one more device.
+ */
+function BrowserExtension({ onAdded }: { onAdded: () => void }) {
+  const [issued, setIssued] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  async function createCode() {
+    setError('');
+    try {
+      const created = await api.devices.create({ name: 'Browser extension', kind: 'extension' });
+      setIssued(created.token);
+      onAdded();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'could not create a code');
+    }
+  }
+
+  return (
+    <section>
+      <h2>Browser extension</h2>
+      <div className="card">
+        <div className="title">Autofill in this browser</div>
+        <div className="meta" style={{ marginTop: 4 }}>
+          The extension is the only thing besides this PC that may read the vault. Load it from{' '}
+          <code>packages\extension</code> at <code>brave://extensions</code> with developer mode on, then
+          paste a code below into it.
+        </div>
+
+        <div className="row" style={{ marginTop: 10 }}>
+          <button className="btn primary" onClick={createCode}>
+            Create code
+          </button>
+        </div>
+        {error && <div className="banner">{error}</div>}
+        {issued && (
+          <>
+            <input readOnly value={issued} onFocus={(e) => e.currentTarget.select()} style={{ marginTop: 8 }} />
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="btn" onClick={() => navigator.clipboard?.writeText(issued).catch(() => {})}>
+                Copy
+              </button>
+              <span className="meta">Shown once.</span>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
 
