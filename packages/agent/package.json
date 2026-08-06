@@ -9,7 +9,11 @@
     "doctor": "tsx src/doctor.ts",
     "bench": "tsx src/bench.ts",
     "toast": "tsx src/cli/test-toast.ts",
-    "audio": "tsx src/cli/test-audio.ts"
+    "audio": "tsx src/cli/test-audio.ts",
+    "voice-setup": "tsx src/cli/voice-setup.ts",
+    "voice-try": "tsx src/cli/voice-try.ts",
+    "voice-enrol": "tsx src/cli/voice-enrol.ts",
+    "overlay-try": "tsx src/cli/overlay-try.ts"
   },
   "dependencies": {
     "@everything/shared": "*",

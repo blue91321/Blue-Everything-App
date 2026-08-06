@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, type Session } from '../api';
 import { useAsync } from '../useAsync';
+import { Toggle } from '../controls';
 import { clockTime, relative } from '../format';
 import {
   checkPushSupport,
@@ -433,31 +434,6 @@ function QuietHours() {
         </div>
       </div>
     </section>
-  );
-}
-
-function Toggle({
-  on,
-  label,
-  disabled,
-  onChange,
-}: {
-  on: boolean;
-  label: string;
-  disabled?: boolean;
-  onChange: (on: boolean) => void;
-}) {
-  return (
-    <button
-      className={`toggle${on ? ' on' : ''}`}
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!on)}
-    >
-      <span className="knob" />
-    </button>
   );
 }
 

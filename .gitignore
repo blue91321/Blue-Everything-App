@@ -22,3 +22,7 @@ agent.config.json
 
 # Runtime logs from scripts/start.ps1
 logs/
+
+# Voice models — ~85MB of third-party binaries, downloaded by voice-setup.
+# Not ours, not small, and not something a git history should carry.
+packages/agent/models/

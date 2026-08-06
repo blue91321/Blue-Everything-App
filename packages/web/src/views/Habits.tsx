@@ -136,6 +136,7 @@ function ManagedHabit({
             {habit.doneThisPeriod} of {habit.targetPerPeriod} this {habit.cadence === 'daily' ? 'day' : 'week'}
             {habit.met && ' · done'}
             {habit.reminderEveryMinutes && ` · reminds every ${formatInterval(habit.reminderEveryMinutes)}`}
+            {habit.voicePhrases.length > 0 && ` · says "${habit.voicePhrases[0]}"`}
           </div>
         </div>
 
@@ -206,6 +207,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
   const [cadence, setCadence] = useState(habit.cadence);
   const [target, setTarget] = useState(habit.targetPerPeriod);
   const [reminder, setReminder] = useState(habit.reminderEveryMinutes ?? 0);
+  const [phrases, setPhrases] = useState<string[]>(habit.voicePhrases);
 
   async function save() {
     await api.habits.update(habit.id, {
@@ -213,6 +215,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
       cadence,
       targetPerPeriod: Math.max(1, target),
       reminderEveryMinutes: reminder > 0 ? reminder : null,
+      voicePhrases: phrases.map((p) => p.trim()).filter(Boolean),
     });
     onSaved();
     onClose();
@@ -253,12 +256,88 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
         </div>
       </div>
 
+      <VoicePhrases habitName={name} phrases={phrases} onChange={setPhrases} />
+
       <div className="row" style={{ marginTop: 10 }}>
         <button className="btn primary" onClick={save}>
           Save
         </button>
         <button className="btn" onClick={onClose}>
           Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What Blake can say to tick this habit off.
+ *
+ * Phrases are matched on meaningful words rather than exactly, and past tenses
+ * are folded — so "drink water" already covers "I drank some water". The list
+ * is for genuinely different wordings ("had a glass"), not for spelling out
+ * every grammatical variation, and the copy says so because otherwise the
+ * natural instinct is to type twenty of them.
+ */
+function VoicePhrases({
+  habitName,
+  phrases,
+  onChange,
+}: {
+  habitName: string;
+  phrases: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState('');
+
+  function add() {
+    const trimmed = draft.trim().toLowerCase();
+    if (!trimmed || phrases.includes(trimmed)) return;
+    onChange([...phrases, trimmed]);
+    setDraft('');
+  }
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="title">Say it out loud</div>
+      <div className="meta" style={{ marginTop: 4 }}>
+        With voice switched on, saying your wake word and then one of these ticks off {habitName || 'this habit'}.
+        Tense and filler words don't matter — "drink water" already catches "I just drank some water". Add
+        another only for a genuinely different wording.
+      </div>
+
+      {phrases.length > 0 && (
+        <div className="row wrap" style={{ marginTop: 8 }}>
+          {phrases.map((phrase) => (
+            <button
+              key={phrase}
+              className="btn subtle"
+              aria-label={`Remove phrase ${phrase}`}
+              onClick={() => onChange(phrases.filter((p) => p !== phrase))}
+            >
+              {phrase} ✕
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="row" style={{ marginTop: 8 }}>
+        <div className="grow">
+          <input
+            value={draft}
+            placeholder="drink water"
+            aria-label="New voice phrase"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                add();
+              }
+            }}
+          />
+        </div>
+        <button className="btn" disabled={!draft.trim()} onClick={add}>
+          Add
         </button>
       </div>
     </div>

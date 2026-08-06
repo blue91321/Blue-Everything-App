@@ -21,8 +21,10 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     windowsDnd,
   });
 
-  // The private half must never leave the server.
-  const { vapidPrivateKey: _secret, vapidPublicKey: _stored, ...safe } = row;
+  // The private half must never leave the server. The voiceprint is dropped for
+  // a different reason — it isn't secret, it's just 128 floats that no screen
+  // has any use for, and the settings payload is fetched on every page load.
+  const { vapidPrivateKey: _secret, vapidPublicKey: _stored, voiceprint, ...safe } = row;
 
   return {
     ...safe,
@@ -31,18 +33,28 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     quietNow: reason !== null,
     quietReason: reason,
     awayFromPcIdleMinutes: AWAY_FROM_PC_IDLE_MS / 60_000,
+    hasVoiceprint: Boolean(voiceprint),
+    // Stored as whole percent; the shared threshold constants are fractions.
+    speakerThreshold: row.speakerThreshold / 100,
   };
 }
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/settings', async () => describe(await getSettings()));
 
-  app.patch('/api/settings', async (request) => {
+  app.patch('/api/settings', async (request, reply) => {
     const body = updateSettingsSchema.parse(request.body);
     const current = await getSettings();
 
     // SQLite has no boolean type, so the flags convert on the way in.
     const toInt = (v: boolean | undefined) => (v === undefined ? undefined : v ? 1 : 0);
+
+    // Turning this on with nothing enrolled would silently reject every command
+    // — the speaker score would be compared against a voiceprint that doesn't
+    // exist, and voice would simply stop working with no visible cause.
+    if (body.requireKnownSpeaker && !current.voiceprint) {
+      return reply.code(400).send({ error: 'enrol your voice first — there is nothing to compare against yet' });
+    }
 
     const [updated] = await db
       .update(settings)
@@ -54,6 +66,17 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         followWindowsDnd: toInt(body.followWindowsDnd),
         remindersEnabled: toInt(body.remindersEnabled),
         pushEnabled: toInt(body.pushEnabled),
+        voiceEnabled: toInt(body.voiceEnabled),
+        // Switching voice on clears any pause. "Stop listening until I turn it
+        // back on" has to mean the obvious switch, or the only way out of an
+        // open-ended pause is an endpoint with no button attached to it — which
+        // is exactly how it shipped, and exactly how it stayed stuck.
+        ...(body.voiceEnabled === true ? { voicePausedUntil: null } : {}),
+        wakeWord: body.wakeWord?.trim().toLowerCase(),
+        requireKnownSpeaker: toInt(body.requireKnownSpeaker),
+        speakerThreshold:
+          body.speakerThreshold === undefined ? undefined : Math.round(body.speakerThreshold * 100),
+        voiceInputDevice: body.voiceInputDevice,
       })
       .where(eq(settings.id, current.id))
       .returning();

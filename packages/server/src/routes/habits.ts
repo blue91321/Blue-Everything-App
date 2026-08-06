@@ -26,6 +26,21 @@ export function periodKeyFor(cadence: Cadence, at = new Date()): string {
   return `${thursday.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
+/**
+ * `voice_phrases` is a JSON column, so it crosses the API boundary as a real
+ * array and never leaks its storage format to the PWA. A malformed value —
+ * only reachable by hand-editing the database — reads as "no phrases" rather
+ * than taking the habits list down with it.
+ */
+function parsePhrases(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function habitRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/habits', async () => {
     const all = await db
@@ -41,7 +56,13 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
           .from(habitEntries)
           .where(and(eq(habitEntries.habitId, habit.id), eq(habitEntries.periodKey, key)));
         const done = entries.reduce((sum, e) => sum + e.count, 0);
-        return { ...habit, periodKey: key, doneThisPeriod: done, met: done >= habit.targetPerPeriod };
+        return {
+          ...habit,
+          voicePhrases: parsePhrases(habit.voicePhrases),
+          periodKey: key,
+          doneThisPeriod: done,
+          met: done >= habit.targetPerPeriod,
+        };
       })
     );
   });
@@ -55,20 +76,33 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
 
     const [created] = await db
       .insert(habits)
-      .values({ ...body, active: body.active ? 1 : 0, sortOrder: body.sortOrder ?? nextOrder })
+      .values({
+        ...body,
+        active: body.active ? 1 : 0,
+        sortOrder: body.sortOrder ?? nextOrder,
+        voicePhrases: JSON.stringify(body.voicePhrases),
+      })
       .returning();
-    return reply.code(201).send(created);
+    return reply.code(201).send({ ...created, voicePhrases: parsePhrases(created.voicePhrases) });
   });
 
   app.patch('/api/habits/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = updateHabitSchema.parse(request.body);
+    // Pulled out of the spread rather than overridden after it: the column is
+    // JSON text but the schema is an array, and leaving both in scope makes the
+    // written type `string | string[]`.
+    const { voicePhrases, ...body } = updateHabitSchema.parse(request.body);
     const [updated] = await db
       .update(habits)
-      .set({ ...body, ...(body.active === undefined ? {} : { active: body.active ? 1 : 0 }) })
+      .set({
+        ...body,
+        ...(body.active === undefined ? {} : { active: body.active ? 1 : 0 }),
+        ...(voicePhrases === undefined ? {} : { voicePhrases: JSON.stringify(voicePhrases) }),
+      })
       .where(eq(habits.id, id))
       .returning();
-    return updated ?? reply.code(404).send({ error: 'no such habit' });
+    if (!updated) return reply.code(404).send({ error: 'no such habit' });
+    return { ...updated, voicePhrases: parsePhrases(updated.voicePhrases) };
   });
 
   app.delete('/api/habits/:id', async (request, reply) => {

@@ -83,6 +83,13 @@ jumps reads as a bug. Two things there are load-bearing:
   `touchmove` and the `touchend` fall in the same frame the rendered value is
   stale and the gesture is silently dropped.
 
+**The PWA does not import `@everything/shared`.** Its entry point pulls in zod,
+which is 14KB gzipped in a bundle whose whole point is being almost entirely
+framework — measured, when one helper was imported for a warning string. That is
+why `api.ts` redeclares its row types by hand, and why the odd piece of display
+copy is duplicated rather than shared. Anything with consequences stays in
+`shared`, where it is under test, and the server enforces it.
+
 Served by Fastify from the same origin as the API, so there's no CORS, no
 configured API host, and one URL for both the app and its data. Auth is the same
 bearer token the agent uses, held in `localStorage`; any 401 drops the whole app
@@ -133,7 +140,7 @@ a relative database path would quietly create a second, empty database there.
 | iPhone app | Installable PWA | No Mac, no Apple Developer account. iOS 16.4+ supports web push for home-screen PWAs, which was the blocker. |
 | Sync | Server on the Windows PC, reachable over Tailscale | Free, private, no cloud. Trade-off: the phone only syncs while the PC is awake. |
 | Password vault | Own vault, own browser extension | Decided 2026-08-06 after comparing Bitwarden, Vaultwarden, KeePassXC and 1Password. Blake wants to own all of it. |
-| Voice | Push-to-talk on a global hotkey → local Whisper | Far more reliable than an always-on wake word, and the phone can post audio to the same endpoint. |
+| Voice | Always-on wake word → local Vosk | Revised 2026-08-06. Push-to-talk is cheaper and cannot false-positive, but the requirement was a wake word Blake can *change from a text box*, and hands-free mid-game. See **Voice** below for what that costs. |
 | Source control | Local git only | Not going on GitHub until Blake is happy with a version. Keep the repo clean enough to publish later. |
 | Windows agent | Headless Node service, **not Electron** | Electron costs 150–250MB resident to show a tray icon. The agent is 55MB and has no UI at all — toasts go through WinRT via PowerShell, and the UI is the PWA in a browser. |
 
@@ -144,7 +151,7 @@ This runs forever on a gaming PC, so cost is a measured constraint, not a vibe.
 
 | | Naive | Now |
 | --- | --- | --- |
-| Resident memory | 150–250MB (Electron) | **55MB** (one Node process) |
+| Resident memory | 150–250MB (Electron) | **55MB** (one Node process), **220MB with voice on** |
 | DB rows/day | ~43,000 | **~1,500** (measured: 5 rows per 201s of mixed activity) |
 | CPU | 0.26% of a core | **~0.002%** typical |
 
@@ -161,12 +168,51 @@ Three mechanisms, all in `attention.ts` and `routes/attention.ts`:
 
 Before adding anything that runs on a timer, check it against these numbers.
 
+**Voice is the one thing that breaks this budget, and it breaks it badly.**
+Measured on this machine, voice on and idle:
+
+| | Agent, voice off | Agent, voice on |
+| --- | --- | --- |
+| Resident | 66MB cold, 75MB after voice has run | **212MB**, flat once warm (198MB before the overlay module) |
+| CPU | ~0.002% | **1.9ms per 100ms block** — ~2% of a core *while the room is audible* |
+| Model load | — | 0.2s, on switch-on rather than at startup |
+
+The RMS gate bounds the CPU: a silent room skips the model entirely, so the
+honest figure is "2% of a core times the fraction of the day something is
+making noise", not 2% flat.
+
+**The memory is the uncomfortable number.** 198MB is inside the 150–250MB range
+this project rejected Electron over. The comparison is not quite fair — Electron
+cost that to draw a tray icon, this buys continuous speech recognition — but the
+raw figure is what it is, and the leanness argument above cannot be quoted while
+pretending voice is free.
+
+It is unavoidable *for an always-on wake word*: the acoustic model, the decoding
+graph and the speaker model all have to stay resident to answer within a second.
+Push-to-talk would not pay it — 0.2s to load means the models could be pulled in
+per utterance and dropped again. That is the cost of the wake word being
+always-on, as distinct from the cost of it being editable.
+
+**Switching voice off gives it back**, which is why `shutdown()` in `voice.ts`
+calls `disposeVosk()` rather than only closing the microphone: 198MB → 75MB,
+measured. Without that, "off" would have been a lie about everything except the
+microphone — the models would have sat there for a feature nobody had enabled.
+The 9MB it doesn't return is heap the allocator keeps, and the DLLs stay mapped.
+
+Recogniser handles must be freed *before* the models they point into, or the
+frees dangle. `shutdown()` does them in that order deliberately.
+
 ## Ground rules
 
 - **Never commit real data.** `data/`, `*.db`, and `.env` are gitignored. The
   database is personal; treat it as such.
-- The agent is read-only about the system. It observes windows and processes; it
-  does not close, kill, or manipulate them.
+- The agent is read-only about the system, **with one deliberate exception**. It
+  observes windows and processes; it does not close, kill, or manipulate them.
+  `packages/agent/src/actions.ts` breaks that rule on purpose so a voice command
+  can press a hotkey or open a site — decided 2026-08-06. It is the only file
+  allowed to, and it is the most dangerous code here: a mis-heard phrase does
+  not write a wrong row, it presses keys into whatever window has focus. Keep
+  its guards intact and do not add a second such file without the same care.
 - Prefer boring, debuggable code. This app has one user and needs to survive
   being ignored for six months and then edited again.
 
@@ -227,6 +273,12 @@ npm run bench -w @everything/agent     # what one poll costs
 npm run toast -w @everything/agent     # prove notifications reach the screen
 npm run sensor -w @everything/agent    # live attention readout; --seconds N to bound it
 npm run smoke -w @everything/server    # end-to-end proof the nudge engine holds and releases
+
+npm run voice-setup -w @everything/agent   # are the mic and the models actually working?
+npm run voice-try   -w @everything/agent   # prove the recognisers, without saying anything
+npm run overlay-try -w @everything/agent   # show the cursor overlay, without saying anything
+npm run voice-enrol -w @everything/agent   # teach it your voice — say the wake word ten times
+npm run voice-check -w @everything/server  # prove the phrase matcher, in memory
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 ```
 
@@ -574,6 +626,398 @@ naming conventions vary far too much to match on.
 Filling goes through the prototype value setter and dispatches `input` and
 `change`, because assigning `.value` on a React-controlled field is silently
 reverted on the next render.
+
+## Voice
+
+Say the wake word, then `"I drank water"`, and the drink-water habit is ticked
+off. `npm run voice-check -w @everything/server` proves the matcher; run it
+before trusting any change to the phrase logic.
+
+**Its own tab, not a section of Settings.** It is the only feature that holds a
+microphone open, so the switch that turns it off must never be something you
+have to go hunting through another screen for.
+
+### The screen must not be write-only
+
+A switch reading "on" while the agent is stopped, the models are missing, or the
+wrong microphone is selected is *worse* than no switch, because it looks like it
+worked. So the agent reports what it is actually doing, and the Voice tab shows
+it: whether the agent is alive, which device is open, a live input level, and
+any error — the four states that have four different fixes.
+
+`POST /api/voice/agent` is one endpoint doing both directions: the agent says
+what it's doing and is told what to do in the same round trip. It has no live
+connection to the server, so folding the answer into the report it was already
+sending keeps that at one request rather than two.
+
+**It long-polls.** The server holds the request open until something the agent
+cares about changes, keyed on a `voiceVersion` counter bumped by settings and
+habit edits and by arming a test. Asking on a timer instead lost both ways: at
+10 seconds, a quarter of a test window was gone before the microphone was even
+listening, *and* it cost a request every 10 seconds forever. Measured after the
+change: **487ms** to enter a test, and 3 requests a minute idle instead of 6.
+
+The exception is while a test runs, where the screen shows a live level meter
+and wants frequent readings rather than a held connection — a 400ms poll, for
+the forty-five seconds it lasts.
+
+**A report is gathered before the config that arrives with it is applied**, so a
+settings change would otherwise show up a whole poll late — which reads as "the
+microphone I just picked didn't take", the exact doubt this screen exists to
+remove. When something actually changed, the agent re-reports 600ms later, once
+the new device has had a moment to open.
+
+Status lives in memory on the server, like `currentWindowsDnd`. "Is a microphone
+open right now" cannot be answered from a log, and writing a row every ten
+seconds for it would be the polling this app avoids everywhere else.
+
+### Testing it
+
+**Test it** arms a 45-second window in which the agent *reports* what it hears
+instead of acting on it. `/api/voice/heard` refuses outside that window, so there
+is no path by which checking whether the microphone works could quietly log four
+glasses of water.
+
+**A matched command ends the test immediately.** Running the full window anyway
+meant standing there talking at a microphone that had already answered the
+question, and every extra sentence added noise to the readout. Only a *match*
+stops it — a command that matched nothing is exactly the case worth another go.
+
+The window is generous because the first time through you are reading the
+instructions and finding the wake word. It was 30s, and appeared to end early
+for a second reason on top of that: the agent only learned a test had started on
+its next poll, so up to a third of the window was spent not listening while the
+countdown ran anyway.
+
+The replay buffer is cleared at every utterance boundary Vosk reports, not just
+on an RMS gap — a close-talk headset can hold the gate open through breathing
+between sentences, and a buffer spanning two deliveries comes back transcribed
+as one: "hey jarvis drink water hey jarvis drink water".
+
+During a test the wide-vocabulary recogniser runs alongside the wake one, and
+words heard while still waiting for the wake word are reported as `speech`. That
+distinction is the whole value of the test: "it can't hear me" and "it hears me
+fine but the wake word isn't landing" look identical on a level meter and need
+opposite fixes.
+
+**The two recognisers endpoint independently**, so the wide one routinely
+finishes a block or two before the wake one. Reporting that as "but not the wake
+word" over a transcript that plainly contained it was a flat lie that sent Blake
+looking for the wrong problem. The agent now decides `matchedWake` — it is the
+only side that knows the wake word without the PWA importing zod — and the
+readout says "wake word in there" instead.
+
+`npm run voice-try -w @everything/agent` is the same idea without a microphone —
+Windows' own speech synthesiser writes the audio, so it exercises grammar
+construction, the block feed and `[unk]` handling. It proves nothing about the
+speaker check, since it is not Blake's voice.
+
+### Choosing a microphone
+
+Stored as the device **name**, not its index. Windows renumbers inputs whenever
+something is plugged in or unplugged, so a saved index quietly starts meaning a
+different microphone. Matched on prefix, because `waveInGetDevCapsW` truncates
+names to 31 characters — "Headset Microphone (5- Arctis Pro Wireless)" comes
+back as "Headset Microphone (5- Arctis P".
+
+A named device that is missing is reported as an error rather than silently
+falling back to the default: "it stopped hearing me" and "your headset is
+unplugged" want very different reactions.
+
+### The PWA can outrun the server, and must not explode when it does
+
+The three packages restart independently, and `start.ps1` rebuilds the PWA when
+the sources are newer — so the ordinary case right after an edit is a browser
+holding the new bundle while the old server process is still running. The voice
+fields are therefore **optional in `AppSettings`**, with a `serverSupportsVoice`
+guard, and the screen says "the server is running an older version" instead of
+rendering.
+
+That is not hypothetical: reading `wakeWord` off a response that predated it
+threw, and took the entire Settings screen down with it. A stale server should
+look stale, not broken.
+
+**Off by default.** It is the only feature that holds a microphone open, so it
+is something Blake switched on, not something he finds already running. Turning
+it off in Settings releases the device immediately.
+
+```
+microphone ──► RMS gate ──► wake recogniser ──► command recogniser
+  (winmm)      (silence is    ("hey everything",      (habit vocabulary)
+                free)          + speaker embedding)          │
+                                                             ▼
+                                                    POST /api/voice/command
+                                                    (server decides intent)
+```
+
+### Everything is Vosk, and that is why there is no second dependency
+
+One `libvosk.dll` does both jobs: it recognises the wake word *and* emits a
+128-dimension speaker embedding for what it just heard. The obvious alternative
+— an ONNX speaker model — meant `onnxruntime-node` (~150MB native) on top of a
+separate wake-word engine. Bound through koffi rather than the `vosk` npm
+package, which is built on `ffi-napi` and does not build on Node 24.
+
+The models are **not in git** (`packages/agent/models/`, ~85MB of third-party
+binaries). `npm run voice-setup -w @everything/agent` checks what is present and
+prints exactly what to download and where to put it.
+
+### An editable wake word is the expensive choice, deliberately
+
+Porcupine and openWakeWord are cheap *because* the keyword is trained into a
+model — changing it means retraining on someone's web console. That was the one
+property that had to hold, so the wake word is recognised by a general speech
+model constrained to a grammar, and is a plain string in `settings`.
+
+**Leading attention words are optional, and one word is allowed.** `"hey"` is
+short, unstressed and run into whatever follows it, so the recogniser returns
+`jarvis` far more often than `hey jarvis`. Requiring the whole phrase meant the
+wake word failing on utterances where the distinctive part came through
+perfectly. `wakeWordRequired()` drops leading `hey/ok/hi/yo/…`, so `hey jarvis`
+answers to `jarvis` too — verified against the real recogniser, along with bare
+`hey` *not* waking it.
+
+A one-word wake word is permitted but warned about rather than refused. It
+genuinely is worse — there is nothing before it to rule out ordinary
+conversation, and with an always-on microphone that means habits ticked off by
+accident. It is also the thing that survives being half-heard, so it is Blake's
+trade to make. The schema validates shape only; `wakeWordAdvice()` supplies the
+warning.
+
+Two things keep that affordable:
+
+1. **An RMS gate in front of the recogniser.** A silent room costs nothing;
+   without it the model would run on all 86,400 seconds of every day.
+2. **Two recognisers.** The wake recogniser knows two or three words, so it is
+   cheap enough to run continuously and rarely fires by accident. Only once it
+   fires does the wide-vocabulary command recogniser get fed anything.
+
+### Speaking without a pause used to lose the command
+
+Vosk reports the wake word only when it decides the *utterance* ended, not when
+the wake word did. Say "hey jarvis I drank water" in one breath and the whole
+sentence goes into the wake recogniser — which returns `hey jarvis`, the rest
+being `[unk]`, once you finally stop. The command had already been consumed and
+thrown away. Measured before the fix: a pause gave `drink two water`, the same
+sentence run together gave `""`.
+
+So the listener keeps a **four-second replay buffer** and feeds it to the
+command recogniser the moment the wake word fires. That is what makes fluent
+speech work; without it the app rewarded talking like a robot.
+
+The replay deliberately includes the wake-word audio, so the command transcript
+usually starts with it. Extra words are harmless to the matcher — but a
+transcript of *only* the wake word is not a command, and `hasCommand()` guards
+that, or trailing off after "jarvis" would file a note reading "jarvis".
+
+Verified across four deliveries: 600ms pause, 1.5s pause, run together, and run
+together at speed. All four deliver.
+
+`[unk]` must stay in every grammar. Without it Vosk cannot represent "that was
+none of these" and forces everything it hears onto the nearest phrase — which
+for an always-on microphone means the wake word firing on coughs and music.
+
+**And `[unk]` must be stripped out of the transcript**, in `vosk.ts`. A closed
+grammar can only ever emit vocabulary words, so ordinary speech comes back
+studded with it — "i drank two waters" arrives as `[unk] drink two water [unk]`.
+Stripping it at that boundary means an utterance of *entirely* unknown words
+reduces to the empty string, and empty already means "heard nothing" everywhere
+downstream. Left in, every unrecognised sentence in earshot would have been
+filed as a note reading `[unk] [unk]`.
+
+The models are third-party binaries, so the versions that were actually tested:
+`vosk-win64-0.3.45`, `vosk-model-small-en-us-0.15`, `vosk-model-spk-0.4`.
+
+### The server decides what was said, the agent only hears it
+
+The agent posts a transcript to `/api/voice/command`; all matching happens
+server-side, like `/api/attention`. So phrases live next to the habit in the
+database, are editable from the phone, and never have to be synced onto another
+machine.
+
+The agent *does* fetch a vocabulary hint from `/api/voice/config` to constrain
+the recogniser. That is a recognition aid, not a decision. Its `version` is a
+**hash of the words**, not a count — renaming a phrase from "drink water" to
+"sip water" leaves the count identical, and a counted version left the agent
+listening for the old vocabulary indefinitely.
+
+**Audio never leaves the agent process.** There is deliberately no endpoint that
+accepts a recording. Nothing is written to disk and nothing is logged but text.
+
+**Voice cannot touch the vault.** Habits, tasks and notes only — a spoken
+password manager is not a feature.
+
+### A phrase can do five things, not one
+
+`voice_commands` replaced `habits.voice_phrases`, which could only ever tick off
+a habit. Migration `0010` copies the old phrases across and the column is then
+left alone — the Voice tab is the single place phrases are edited, so two
+sources of truth would only ever disagree.
+
+| Kind | Does | Target |
+| --- | --- | --- |
+| `habit` | records one against it, honouring "two" / "three" | habit id |
+| `note` | writes down whatever was said *after* the phrase | — |
+| `url` | opens it in the default browser | http(s) address |
+| `hotkey` | presses keys into the focused window | e.g. `ctrl+shift+m` |
+| `pause` | closes the microphone, for N minutes or until switched back on | — |
+
+**The division of labour is deliberate.** Anything touching *data* happens on
+the server, which owns the database. Anything touching *this machine* — a
+browser, a keystroke — comes back as an instruction for the agent to carry out,
+because the server is meant to be movable and has no business assuming it runs
+on Blake's desk.
+
+`pause` is the one that justifies the rest: an always-on microphone you can only
+silence by walking to the keyboard is silent at exactly the wrong moment.
+`voicePausedUntil` holds `-1` for "until switched back on by hand", which is
+distinct from null, so the difference survives a restart.
+
+**A pause needs a way out, and it must be the obvious one.** Two, in fact: the
+Voice screen shows a **Paused** state with a *Start listening* button, and
+switching the master toggle on clears the pause as a side effect. It first
+shipped with neither — only a `/api/voice/resume` endpoint nothing called — so
+an open-ended pause was a dead end, and the screen cheerfully reported
+"Starting up… loading the speech models" at something that was never going to
+start. `paused` has to be checked *before* `listening` in that status ladder,
+because the setting is still on the whole time.
+
+Guards on `hotkey` and `url`, since these are the parts with teeth: only stored
+commands can fire, `parseHotkey` is an allow-list that requires a modifier so a
+stray letter can never be sent, and only `http:`/`https:` open so the shell is
+never handed a `file:` path or a protocol handler.
+
+### The overlay at the cursor
+
+`packages/agent/src/overlay.ts` — `CreateWindowExW` and GDI through koffi, the
+same trick `audio.ts` uses for WASAPI and `mic.ts` for waveIn.
+`npm run overlay-try -w @everything/agent` shows it without saying anything.
+
+Electron was rejected at 150–250MB to draw a tray icon and was never going to be
+accepted to draw four lines of text. A borderless browser window was the other
+candidate and fails the case that matters most: it takes most of a second to
+appear and will not float above an exclusive-fullscreen game, which is exactly
+when Blake is talking rather than typing. This appears in about a millisecond,
+sits above everything, and is `WS_EX_NOACTIVATE` so it never steals focus from
+whatever he is playing.
+
+Three things there are easy to get wrong:
+
+- **`DrawTextW` is in user32, not gdi32.** It is a layout helper built on GDI
+  rather than a GDI primitive, and looking for it in the obvious library fails
+  at load time with "cannot find function".
+- **koffi's type registry is process-wide.** `win32.ts` already owns `RECT` and
+  `MONITORINFO`, so the overlay's structs are prefixed. A collision throws on
+  import and takes the agent down before it starts.
+- **The message pump is polled, not looped.** Windows wants a thread sitting in
+  `GetMessage`; Node owns this thread. So `PeekMessageW` runs on a timer — 16ms
+  while visible, 200ms while hidden to drain strays — and `DispatchMessageW`
+  calls the window procedure synchronously on the same thread, which is what
+  makes the koffi callback safe. Nothing is ever invoked from a thread V8 has
+  not heard of. The callback pointer is held in a variable so it cannot be
+  collected while Windows still has it.
+
+The window is created lazily on first use and kept, because recreating it per
+utterance would waste the speed that justified building it. If it cannot be
+created at all, voice carries on without it — a missing overlay is a poor reason
+to lose the feature.
+
+### It is a conversation, not a receipt
+
+After answering, the listener calls `listenAgain()`: the microphone stays open
+for one more command **without the wake word**, because having just replied it
+is still Blake's turn and making him say "hey jarvis" again would be the point
+missed. A `pause` is the exception — he asked for silence, so carrying on
+listening would be perverse.
+
+When two commands answer to the same phrase the server returns `ambiguous` with
+`choices` rather than guessing, and the overlay draws them as buttons.
+`POST /api/voice/command/:id/run` carries out whichever is clicked. Guessing
+would be the worst option available: a wrongly fired hotkey is not something
+anyone would notice was wrong.
+
+### Matching is on meaning, not strings
+
+`matchVoiceCommand()` in `packages/shared` compares stemmed content words with
+irregular pasts folded, so one stored phrase `drink water` already covers "I
+drank some water". Exact matching does not survive contact with speech
+recognition.
+
+Every content word of the phrase must appear — **except the last, and only on a
+second pass.** The tail of a sentence is where speech actually gets lost: the
+voice drops, Vosk decides the utterance ended, and "mute my mic" arrives as
+"mute my". Strict matching then found nothing at all.
+
+`matchVoiceCommandLoosely` is deliberately narrow, because looseness here ticks
+off real things:
+
+- only the **last** content word may be missing, never a middle one,
+- the phrase needs at least two content words, so a one-word phrase can never
+  match on nothing,
+- it runs only after the strict pass found nothing, and
+- it returns *every* candidate rather than a winner. "drink water" and "drink
+  coffee" both reduce to "drink", and guessing between them is precisely the
+  failure worth all this ceremony — so the overlay asks instead.
+
+A single loose match still fires, but the overlay says so: *Drink water — 9 of
+16 (heard "drink water" partly)*. Wrong data with nothing to prompt going to
+look for it is the thing to fear, and that suffix is the prompt.
+
+A habit with no phrases is unreachable by voice; it is never matched on its name.
+
+**Unmatched speech is dropped, not filed as a note.** It used to become one, on
+the reasoning that a silent drop had no way back so a junk note beat losing a
+sentence. The overlay changed that: a miss is *visible* the moment it happens,
+so the drop is no longer silent — while clipped speech had been filing a steady
+stream of half-sentences ("mute my", "hey my go"). Notes come from a `note`
+command now, and only from it. `/api/voice/misses` still lists the leftovers
+from before.
+
+Phrases are editable in two places, on purpose. In the habit editor on the
+Habits screen, next to the thing they belong to; and on the Voice tab, because
+"what can I say, and how do I change it" is a question about voice, and
+answering it used to mean leaving the screen and opening every habit in turn.
+Both write the same `voicePhrases` array. Edits save immediately rather than
+behind a Save button, matching how ticking a habit off works everywhere else.
+
+`/api/voice/test` (Voice → "Try a phrase") answers "what would this
+do" without doing it. The failure everyone hits is a phrase that reads perfectly
+and never matches; the alternative way to find that out is repeating it at the
+microphone while watching a log.
+
+### Only responding to Blake's voice
+
+**Voice → "Teach it my voice"** — say the wake word ten times, and the mean of
+the length-normalised embeddings is stored as the voiceprint. Enrolling on the
+wake word rather than free speech means the enrolled vectors and the runtime
+vectors come from the same words at the same distance from the same microphone,
+which is what lets the threshold be strict.
+
+**Enrolment is a mode the running agent enters, not a separate program.** It
+cannot be anything else: the agent already holds the microphone, so a second
+opener gets `MMSYSERR_ALLOCATED` — which meant the old CLI failed precisely when
+someone was most likely to run it, with voice switched on. The server arms a
+90-second window, the agent collects wake-word embeddings during it, and
+progress appears both on the Voice screen and on the overlay at the cursor.
+`npm run voice-enrol` still works and now drives that same path rather than a
+second one.
+
+Refused with a reason when voice is off or paused, since it borrows the
+microphone that those turn off.
+
+With an always-on microphone this is doing real work: it is what stops the
+television, a video on this PC, or someone else in the room from logging habits.
+**It is a filter against the room, not a security control** — a recording of his
+voice passes it.
+
+Checked in the agent *and* on the server. The agent's copy avoids a pointless
+round trip per television advert; the server's is the one that cannot be
+bypassed by a stale agent config.
+
+`requireKnownSpeaker` defaults **off** and is switched on by enrolment. On by
+default would have meant the settings screen reading "only respond to my voice:
+on" while nothing was enrolled and nothing was being checked — a switch claiming
+a protection it was not providing.
 
 ## Attention model
 

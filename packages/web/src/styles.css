@@ -378,6 +378,12 @@ section > h2 {
   justify-content: space-between;
 }
 
+/* For lists of unknown length — voice phrases, mostly — where a fixed row would
+   push the last one off the edge on a phone. */
+.row.wrap {
+  flex-wrap: wrap;
+}
+
 .grow {
   flex: 1;
   min-width: 0;
@@ -528,4 +534,22 @@ button {
 .pair p {
   color: var(--muted);
   font-size: 14px;
+}
+
+/* Input level meter on the Voice screen. Answers "is this microphone hearing
+   me at all", which is the first thing to check and the hardest to guess at.
+   Scaled x4 because speech RMS sits around 0.1-0.25 and a linear 0-1 bar would
+   barely twitch. */
+.level {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.level-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
 }

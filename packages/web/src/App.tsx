@@ -6,6 +6,7 @@ import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
 import { Notes } from './views/Notes';
 import { Vault } from './views/Vault';
+import { Voice } from './views/Voice';
 import { Settings } from './views/Settings';
 
 const NAV = [
@@ -14,6 +15,10 @@ const NAV = [
   { id: 'habits', label: 'Habits', glyph: '↻' },
   { id: 'notes', label: 'Notes', glyph: '✎' },
   { id: 'vault', label: 'Vault', glyph: '🔒' },
+  // Its own tab rather than a section of Settings: it is the one feature that
+  // holds a microphone open, so the switch that turns it off should never be
+  // something you have to go looking for.
+  { id: 'voice', label: 'Voice', glyph: '🎙' },
   { id: 'settings', label: 'Settings', glyph: '⚙' },
 ] as const;
 
@@ -122,6 +127,7 @@ export function App() {
         {view === 'habits' && <Habits />}
         {view === 'notes' && <Notes />}
         {view === 'vault' && <Vault />}
+        {view === 'voice' && <Voice local={session.local} />}
         {view === 'settings' && <Settings session={session} onChanged={checkSession} />}
       </div>
     </div>

@@ -72,9 +72,48 @@ export const habits = sqliteTable('habits', {
    * lists and never interrupts — the right default for most habits.
    */
   reminderEveryMinutes: integer('reminder_every_minutes'),
+  /**
+   * JSON array of things Blake might say to tick this off. A JSON column rather
+   * than a side table because they are only ever read and written as a whole
+   * list, and there is nothing to query or join them by.
+   */
+  voicePhrases: text('voice_phrases').notNull().default('[]'),
   createdAt: now(),
   updatedAt: touched(),
 });
+
+/**
+ * Everything a spoken phrase can do.
+ *
+ * Replaces `habits.voice_phrases`, which could only ever tick off a habit. That
+ * column is migrated into this table and then left alone — the Voice screen is
+ * the single place phrases are edited, so two sources of truth would only
+ * disagree.
+ */
+export const voiceCommands = sqliteTable(
+  'voice_commands',
+  {
+    id: id(),
+    /** habit | note | url | hotkey | pause. */
+    kind: text('kind').notNull(),
+    /** JSON array of the things Blake might say. */
+    phrases: text('phrases').notNull().default('[]'),
+    /**
+     * Habit id, URL, or key combo, depending on `kind`. Not a foreign key: it
+     * holds three different sorts of value, and a habit that goes away should
+     * leave a visibly broken command rather than silently deleting the phrase.
+     */
+    target: text('target'),
+    /** For `pause`: minutes. Null means until switched back on by hand. */
+    pauseMinutes: integer('pause_minutes'),
+    label: text('label'),
+    enabled: integer('enabled').notNull().default(1),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [index('voice_commands_enabled_idx').on(t.enabled)]
+);
 
 export const habitEntries = sqliteTable(
   'habit_entries',
@@ -230,6 +269,53 @@ export const settings = sqliteTable('settings', {
 
   /** Send nudges to the phone when Blake is away from the PC. */
   pushEnabled: integer('push_enabled').notNull().default(1),
+
+  /**
+   * Off by default, and deliberately so: this is the only feature in the app
+   * that holds the microphone open, and that should be a thing Blake turns on
+   * rather than a thing he discovers is already running.
+   */
+  voiceEnabled: integer('voice_enabled').notNull().default(0),
+
+  /** Plain text, changeable at any time. See wakeWordSchema for why. */
+  wakeWord: text('wake_word').notNull().default('hey everything'),
+
+  /**
+   * Reject commands that don't sound like Blake. With an always-on microphone
+   * this is doing real work — it is what stops the television, a video, or
+   * someone else in the room from logging his habits.
+   */
+  /**
+   * Off until a voiceprint exists, and switched on by enrolment rather than
+   * defaulting to on. On by default would mean the settings screen showing
+   * "only respond to my voice: on" while nothing was enrolled and nothing was
+   * being checked — a switch claiming a protection it was not providing.
+   */
+  requireKnownSpeaker: integer('require_known_speaker').notNull().default(0),
+  speakerThreshold: integer('speaker_threshold_pct').notNull().default(55),
+
+  /**
+   * The enrolled voiceprint: a JSON array of floats, averaged over the
+   * enrolment clips. Not a secret in the vault sense — it cannot reconstruct
+   * his voice — but it is personal, so it lives here and never leaves the box.
+   */
+  voiceprint: text('voiceprint'),
+  voiceprintSamples: integer('voiceprint_samples').notNull().default(0),
+
+  /**
+   * Which microphone to listen on, by name. Null follows the Windows default.
+   * A name rather than an index because Windows renumbers inputs when devices
+   * come and go, and a stale index means quietly listening to the wrong thing.
+   */
+  voiceInputDevice: text('voice_input_device'),
+
+  /**
+   * Listening is paused until this time. `-1` means paused until Blake turns it
+   * back on by hand — distinct from null (not paused), so "stop listening" can
+   * mean either "for a bit" or "until I say so" and the difference survives a
+   * restart.
+   */
+  voicePausedUntil: integer('voice_paused_until'),
 
   updatedAt: touched(),
 });

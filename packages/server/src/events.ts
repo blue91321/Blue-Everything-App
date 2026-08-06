@@ -73,6 +73,13 @@ export function registerChangeAnnouncer(app: FastifyInstance): void {
     // steps. That route announces its own changes when it actually makes any.
     if (request.url.startsWith('/api/attention')) return;
 
+    // Same reasoning for voice: with an always-on microphone `/api/voice/command`
+    // fires on ambient speech, and most of those end in "not for me" — a wrong
+    // speaker, or nothing that matched. Announcing all of them would reload
+    // every open client whenever the room was noisy. These routes announce
+    // themselves, with the right scope, only when they actually wrote something.
+    if (request.url.startsWith('/api/voice/')) return;
+
     changes.emitChange(scopeForPath(request.url));
   });
 }

@@ -71,6 +71,8 @@ export interface Habit {
   active: number;
   sortOrder: number;
   reminderEveryMinutes: number | null;
+  /** Things Blake can say to tick this off. Empty means voice can't reach it. */
+  voicePhrases: string[];
   periodKey: string;
   doneThisPeriod: number;
   met: boolean;
@@ -92,6 +94,91 @@ export interface AppSettings {
   /** Whether reminders are silenced right this second, and why. */
   quietNow: boolean;
   quietReason: 'reminders-off' | 'paused' | 'quiet-hours' | 'windows-dnd' | null;
+
+  /**
+   * Optional because the server can genuinely be older than this bundle — the
+   * PWA is rebuilt and served by a process that may not have restarted yet.
+   * Typed as present when it isn't is what turned a stale server into a blank
+   * Settings screen, so the absence is in the type now and has to be handled.
+   */
+  voiceEnabled?: number;
+  wakeWord?: string;
+  requireKnownSpeaker?: number;
+  /** 0-1. Stored as whole percent; converted on the way out of the server. */
+  speakerThreshold?: number;
+  /** The voiceprint itself is never sent — no screen has a use for 128 floats. */
+  hasVoiceprint?: boolean;
+  voiceprintSamples?: number;
+  /** Microphone name; null follows the Windows default. */
+  voiceInputDevice?: string | null;
+}
+
+/** An `AppSettings` from a server that actually has voice support. */
+export type VoiceSettings = AppSettings & Required<Pick<AppSettings, 'wakeWord' | 'speakerThreshold' | 'voiceprintSamples'>>;
+
+export const serverSupportsVoice = (settings: AppSettings): settings is VoiceSettings =>
+  settings.wakeWord !== undefined;
+
+/** Live state of the listener, as last reported by the agent. */
+export interface VoiceStatus {
+  /** The setting. Whether anything is *actually* listening is `listening`. */
+  enabled: boolean;
+  agentRunning: boolean;
+  listening: boolean;
+  device: string | null;
+  devices: { id: number; name: string }[];
+  error: string | null;
+  /** Loudest level since the agent's last report, 0-1. Drives the meter. */
+  peak: number;
+  lastReportAt: number | null;
+  selectedDevice: string | null;
+  paused: boolean;
+  /** -1 means until switched back on by hand; a timestamp means until then. */
+  pausedUntil: number | null;
+  testing: boolean;
+  testUntil: number;
+  /** The last test ended because a command matched, not because it ran out. */
+  testSucceeded: boolean;
+  /** Collecting wake-word samples right now. */
+  enrolling: boolean;
+  enrolUntil: number;
+  enrolSamples: number;
+  /** How well the last sample agreed with the ones before it, 0-1. */
+  enrolAgreement: number | null;
+  heard: {
+    /** `speech` is words heard while still waiting for the wake word. */
+    kind: 'level' | 'speech' | 'wake' | 'command';
+    /** Whether the transcript actually contains the wake word. */
+    matchedWake: boolean;
+    text: string;
+    speakerScore: number | null;
+    peak: number;
+    at: number;
+    wouldMatch: { habitName: string | null; phrase: string } | null;
+  }[];
+}
+
+export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'pause';
+
+export interface VoiceCommand {
+  id: string;
+  kind: VoiceCommandKind;
+  phrases: string[];
+  /** Habit id, URL, or key combo, depending on `kind`. */
+  target: string | null;
+  pauseMinutes: number | null;
+  /** Server-derived display name when none was set by hand. */
+  label: string | null;
+  enabled: boolean;
+  sortOrder: number;
+}
+
+/** What `/api/voice/test` says a sentence would do. Nothing is written. */
+export interface VoiceTest {
+  heard: string;
+  tokens: string[];
+  count: number;
+  match: { id: string; phrase: string; score: number; habitName: string | null } | null;
 }
 
 export interface VaultStatus {
@@ -226,6 +313,7 @@ export const api = {
         targetPerPeriod?: number;
         active?: boolean;
         reminderEveryMinutes?: number | null;
+        voicePhrases?: string[];
       }
     ) => patch<Habit>(`/api/habits/${id}`, payload),
     remove: (id: string) => request<void>(`/api/habits/${id}`, { method: 'DELETE' }),
@@ -246,7 +334,29 @@ export const api = {
       dndUntil?: number | null;
       remindersEnabled?: boolean;
       pushEnabled?: boolean;
+      voiceEnabled?: boolean;
+      wakeWord?: string;
+      requireKnownSpeaker?: boolean;
+      speakerThreshold?: number;
+      voiceInputDevice?: string | null;
     }) => patch<AppSettings>('/api/settings', payload),
+  },
+
+  voice: {
+    /** Dry run: what would this sentence do? Writes nothing. */
+    test: (text: string) => post<VoiceTest>('/api/voice/test', { text }),
+    forgetVoice: () => request<void>('/api/voice/enrol', { method: 'DELETE' }),
+    status: () => request<VoiceStatus>('/api/voice/status'),
+    commands: () => request<VoiceCommand[]>('/api/voice/commands'),
+    createCommand: (payload: Partial<VoiceCommand>) => post<VoiceCommand>('/api/voice/commands', payload),
+    updateCommand: (id: string, payload: Partial<VoiceCommand>) =>
+      patch<VoiceCommand>(`/api/voice/commands/${id}`, payload),
+    removeCommand: (id: string) => request<void>(`/api/voice/commands/${id}`, { method: 'DELETE' }),
+    resume: () => post('/api/voice/resume'),
+    startEnrol: () => post<{ enrolUntil: number }>('/api/voice/enrol/start'),
+    stopEnrol: () => post('/api/voice/enrol/stop'),
+    startListening: () => post<{ testUntil: number }>('/api/voice/test-listen'),
+    stopListening: () => post('/api/voice/test-listen/stop'),
   },
 
   push: {

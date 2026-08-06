@@ -97,11 +97,568 @@ export const createHabitSchema = z.object({
   sortOrder: z.number().int().optional(),
   /** Nag every N minutes until the target is met; null to never interrupt. */
   reminderEveryMinutes: z.number().int().min(5).max(24 * 60).nullish(),
+  /**
+   * Things Blake might say to tick this off — "i drank water", "had a glass".
+   * Empty means the habit can't be reached by voice at all, which is the
+   * default: a habit nobody has written a phrase for should never win a match.
+   */
+  voicePhrases: z.array(z.string().min(1).max(120)).max(20).default([]),
 });
 export const updateHabitSchema = createHabitSchema.partial();
 
 /** Whole-list reorder: ids in the order they should appear. */
 export const reorderSchema = z.object({ ids: z.array(z.string().uuid()).max(500) });
+
+/* ------------------------------------------------------------------ */
+/* Voice                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The wake word is a plain string, changeable at any moment from the settings
+ * screen, because that was the requirement that shaped the whole design.
+ *
+ * The cheap wake-word engines (Porcupine, openWakeWord) are cheap precisely
+ * because the keyword is baked into a trained model — changing it means
+ * retraining. Keeping it editable means recognising it with a general speech
+ * model constrained to a grammar, which costs more CPU and buys the property
+ * that actually mattered here.
+ *
+ * Two words minimum: a single short word fires constantly on ordinary speech,
+ * and the room is full of ordinary speech.
+ */
+export const wakeWordSchema = z
+  .string()
+  .min(3)
+  .max(40)
+  .regex(/^[a-z]+(?: [a-z]+)*$/i, 'letters and single spaces only — it is matched against spoken words');
+
+export const DEFAULT_WAKE_WORD = 'hey everything';
+
+/**
+ * Words a speech recogniser drops constantly and that carry no identity.
+ *
+ * "hey" is short, unstressed and usually run into the next word, so Vosk hears
+ * "jarvis" far more often than it hears "hey jarvis". Requiring the whole
+ * phrase meant the wake word failing on utterances where the distinctive part
+ * was recognised perfectly.
+ */
+const WAKE_PREFIXES = new Set(['hey', 'ok', 'okay', 'hi', 'hello', 'yo', 'hay', 'a', 'uh', 'um']);
+
+/**
+ * The part of the wake word that actually has to be heard.
+ *
+ * Leading attention words are optional; whatever follows them is the name and
+ * is required. This is not a loosening of the gate — the wake recogniser runs a
+ * grammar containing only the wake word and `[unk]`, so the sole thing it can
+ * emit besides "nothing" is wake-word words. What it changes is that a
+ * half-heard "…jarvis" counts, which is the common case.
+ */
+export function wakeWordRequired(wakeWord: string): string[] {
+  const words = wakeWord.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+
+  const required = words.filter((word, index) => !(index < words.length - 1 && WAKE_PREFIXES.has(word)));
+  // Never strip everything: "hey ok" would otherwise require nothing at all.
+  return required.length > 0 ? required : [words[words.length - 1]];
+}
+
+/** Did that utterance contain the wake word? */
+export function matchesWakeWord(heard: string, wakeWord: string): boolean {
+  const required = wakeWordRequired(wakeWord);
+  if (required.length === 0) return false;
+
+  // Consumes each match, so a wake word with a repeated word needs it that many
+  // times. A plain set would let "jar" satisfy "jar jar".
+  const pool = heard.toLowerCase().split(/\s+/).filter(Boolean);
+  return required.every((word) => {
+    const found = pool.indexOf(word);
+    if (found === -1) return false;
+    pool.splice(found, 1);
+    return true;
+  });
+}
+
+/**
+ * Why this wake word might be a bad one — advice, never a refusal.
+ *
+ * A one-word wake word is genuinely worse: it fires on ordinary conversation,
+ * and with an always-on microphone that means habits ticked off by accident.
+ * But it is also the thing that survives being half-heard, so it is Blake's
+ * call to make, not the schema's.
+ */
+export function wakeWordAdvice(wakeWord: string): string | null {
+  const words = wakeWord.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+
+  if (words.length === 1) {
+    const only = words[0];
+    if (only.length <= 4) {
+      return `"${only}" is short as well as single — it will fire on ordinary conversation. A distinctive name of three syllables or more is far more reliable.`;
+    }
+    return `One word will fire more often by accident, since there is nothing before it to rule out ordinary speech. Worth it if the longer version keeps getting half-heard — a distinctive name works best.`;
+  }
+
+  return null;
+}
+
+/**
+ * Cosine similarity a speaker embedding must reach to count as Blake.
+ *
+ * Tuned for the failure that matters: a false accept logs a habit he didn't do,
+ * which is quietly wrong data. A false reject means saying it again, which is
+ * merely annoying. So this sits deliberately on the strict side of the equal-
+ * error rate.
+ */
+export const DEFAULT_SPEAKER_THRESHOLD = 0.55;
+
+/** How long after the wake word the command must arrive before we give up. */
+export const VOICE_COMMAND_TIMEOUT_MS = 6000;
+
+export const voiceCommandSchema = z.object({
+  /** What was heard after the wake word. Never the raw audio — see voice.ts. */
+  text: z.string().min(1).max(500),
+  /** Cosine similarity against the enrolled voiceprint, if one exists. */
+  speakerScore: z.number().min(-1).max(1).nullish(),
+  at: z.number().int().optional(),
+});
+export type VoiceCommand = z.infer<typeof voiceCommandSchema>;
+
+/**
+ * How long a listening test stays armed.
+ *
+ * Generous on purpose: the first time through you are reading the instructions,
+ * finding the wake word, and clearing your throat. It used to be 30s *and* up
+ * to a third of that was spent waiting for the agent to notice the test had
+ * started, which is why it appeared to end early.
+ */
+export const VOICE_TEST_MS = 45_000;
+
+/**
+ * What the agent tells the server about itself.
+ *
+ * The Voice screen was write-only before this: it could turn the microphone on
+ * but had no way to say whether anything was actually listening. A switch that
+ * reads "on" while the agent is stopped, the models are missing, or the wrong
+ * microphone is selected is worse than no switch, because it looks like it
+ * worked.
+ */
+export const voiceAgentReportSchema = z.object({
+  /** The microphone is open and the models are loaded right now. */
+  listening: z.boolean(),
+  /** Which device is actually in use — resolved, not requested. */
+  device: z.string().max(200).nullish(),
+  /** Everything Windows can see, so the settings screen can offer a choice. */
+  devices: z.array(z.object({ id: z.number().int(), name: z.string().max(200) })).max(64).default([]),
+  /** Why it isn't listening, when it isn't. */
+  error: z.string().max(300).nullish(),
+  /** Loudest RMS since the last report, 0-1. Drives the level meter. */
+  peak: z.number().min(0).max(1).default(0),
+  /**
+   * Hold the response until something changes, up to this long. The agent has
+   * no live connection to the server, so this is how it reacts to "Test it"
+   * immediately without asking on a fast timer forever.
+   */
+  waitMs: z.number().int().min(0).max(25_000).optional(),
+  /** Version the agent last saw; a mismatch answers straight away. */
+  since: z.number().int().optional(),
+  /** How many usable enrolment samples are in hand, while enrolling. */
+  enrolSamples: z.number().int().min(0).max(200).optional(),
+  /** How well the last sample agreed with the ones before it, 0-1. */
+  enrolAgreement: z.number().min(-1).max(1).nullish(),
+});
+export type VoiceAgentReport = z.infer<typeof voiceAgentReportSchema>;
+
+/**
+ * Something the agent heard during a listening test.
+ *
+ * Reported rather than acted on: the point of a test is to see what *would*
+ * happen, and a test that ticked off real habits would be its own problem.
+ */
+export const voiceHeardSchema = z.object({
+  /**
+   * `speech` is words heard *without* the wake word. It exists because the
+   * single most useful thing a test can tell you is which of two failures you
+   * have: the microphone isn't picking you up at all, or it is picking you up
+   * fine and the wake word simply isn't being recognised. A level meter alone
+   * cannot separate those, and they have completely different fixes.
+   */
+  kind: z.enum(['level', 'speech', 'wake', 'command']),
+  /**
+   * Whether this transcript actually contains the wake word.
+   *
+   * Decided by the agent, which is the only side that knows the wake word
+   * without the PWA importing zod. It exists because during a test two
+   * recognisers run in parallel and endpoint independently: the wide one often
+   * finishes a block or two before the wake one, and reporting that as "but not
+   * the wake word" was a flat lie about a transcript with the wake word in it.
+   */
+  matchedWake: z.boolean().default(false),
+  text: z.string().max(500).default(''),
+  speakerScore: z.number().min(-1).max(1).nullish(),
+  peak: z.number().min(0).max(1).default(0),
+});
+export type VoiceHeard = z.infer<typeof voiceHeardSchema>;
+
+/**
+ * Enrolment, as a mode the running agent enters.
+ *
+ * It cannot be a separate process: the agent already holds the microphone, and
+ * a second opener gets `MMSYSERR_ALLOCATED` rather than a voiceprint. So the
+ * server arms a window, the agent collects wake-word embeddings during it, and
+ * both the button and the CLI drive that same one path.
+ */
+export const VOICE_ENROL_MS = 90_000;
+
+/** Where the mean stops moving much. Fewer, and one odd delivery skews it. */
+export const VOICE_ENROL_SAMPLES = 10;
+
+/** Below this the embedding came from too little audio to mean anything. */
+export const VOICE_ENROL_MIN_FRAMES = 40;
+
+/**
+ * Mean of the length-normalised vectors.
+ *
+ * Normalising first matters: the model's vectors do not share a magnitude, and
+ * averaging raw ones lets a single loud delivery dominate. Cosine similarity
+ * ignores magnitude at comparison time, so it should be removed here too.
+ */
+export function averageVoiceprint(vectors: readonly (readonly number[])[]): number[] {
+  if (vectors.length === 0) return [];
+
+  const mean = new Array<number>(vectors[0].length).fill(0);
+  for (const vector of vectors) {
+    const norm = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0)) || 1;
+    for (let i = 0; i < vector.length; i++) mean[i] += vector[i] / norm / vectors.length;
+  }
+  return mean;
+}
+
+/** A 128-dim x-vector from the speaker model, averaged over enrolment clips. */
+export const voiceEnrolSchema = z.object({
+  voiceprint: z.array(z.number()).min(16).max(512),
+  /** How many clips went into it — shown on the settings screen. */
+  samples: z.number().int().positive().max(200),
+});
+
+/**
+ * Irregular pasts, because the whole point is that "I drank water" should tick
+ * off a habit whose phrase is "drink water". Suffix stripping alone cannot get
+ * from `drank` to `drink`, and these are exactly the verbs people use for the
+ * things they do every day.
+ */
+const IRREGULAR: Record<string, string> = {
+  drank: 'drink', drunk: 'drink', ate: 'eat', eaten: 'eat', took: 'take', taken: 'take',
+  went: 'go', gone: 'go', ran: 'run', did: 'do', made: 'make', read: 'read', slept: 'sleep',
+  fed: 'feed', wrote: 'write', written: 'write', brushed: 'brush', swam: 'swim', paid: 'pay',
+};
+
+/**
+ * Words that carry no meaning in a command and vary wildly between the way a
+ * phrase was typed and the way it gets said. Dropping them is what lets one
+ * stored phrase cover "drink water", "I drank the water" and "just had some water".
+ */
+const FILLER = new Set([
+  'i', 'a', 'an', 'the', 'some', 'my', 'me', 'just', 'please', 'ok', 'okay', 'now',
+  'have', 'has', 'had', 'do', 'does', 'done', 'to', 'of', 'and', 'it', 'that', 'this',
+  'was', 'is', 'am', 'been', 'be', 'get', 'got', 'for', 'so', 'then', 'already',
+]);
+
+/** Spoken counts, so "I drank two waters" adds two rather than one. */
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  a: 1, an: 1, couple: 2, twice: 2, once: 1,
+};
+
+function stem(word: string): string {
+  if (IRREGULAR[word]) return IRREGULAR[word];
+  // Order matters: check the longer suffixes first, and never strip a word down
+  // to nothing or to a single letter.
+  for (const suffix of ['ing', 'ed', 'es', 's']) {
+    if (word.length > suffix.length + 2 && word.endsWith(suffix)) return word.slice(0, -suffix.length);
+  }
+  return word;
+}
+
+/** Meaningful, stemmed words. The unit both sides of a match are reduced to. */
+export function voiceTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(stem)
+    .filter((word) => !FILLER.has(word));
+}
+
+/** How many the speaker asked for, defaulting to one. */
+export function spokenCount(text: string): number {
+  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  for (const word of words) {
+    const digits = Number(word);
+    if (Number.isInteger(digits) && digits >= 1 && digits <= 20) return digits;
+    // `a`/`an` are only a count next to something countable, and treating them
+    // as one is the same answer as the default anyway — so only take words that
+    // are unambiguously numbers.
+    if (NUMBER_WORDS[word] !== undefined && word !== 'a' && word !== 'an') return NUMBER_WORDS[word];
+  }
+  return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* Voice commands — more than habits                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What a spoken phrase can do.
+ *
+ * `habit` was the whole vocabulary once. The rest exist because a wake word you
+ * already talk to may as well open a site or silence itself, and because a
+ * "stop listening" phrase is the only way to switch an always-on microphone off
+ * without walking to the keyboard — which is the one moment you most want it.
+ */
+export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'pause'] as const;
+export const voiceCommandKindSchema = z.enum(voiceCommandKinds);
+export type VoiceCommandKind = z.infer<typeof voiceCommandKindSchema>;
+
+/** Modifiers a hotkey may carry, spelled the way people write them. */
+export const HOTKEY_MODIFIERS = ['ctrl', 'control', 'alt', 'shift', 'win', 'super', 'meta'] as const;
+
+/**
+ * Keys a hotkey may end on.
+ *
+ * A deliberate allow-list, not "any string". This ends up as synthetic key
+ * presses into whatever window is focused, so the set of things a mis-heard
+ * phrase can do should be small and inspectable.
+ */
+export const HOTKEY_KEYS = [
+  ...'abcdefghijklmnopqrstuvwxyz0123456789'.split(''),
+  'f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12',
+  'space', 'enter', 'tab', 'escape', 'backspace', 'delete', 'insert', 'home', 'end',
+  'pageup', 'pagedown', 'up', 'down', 'left', 'right',
+  'minus', 'plus', 'comma', 'period',
+] as const;
+
+export interface Hotkey {
+  modifiers: string[];
+  key: string;
+}
+
+/** `"ctrl+shift+m"` to its parts, or null if it isn't one. */
+export function parseHotkey(value: string): Hotkey | null {
+  const parts = value.toLowerCase().split('+').map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+
+  const key = parts[parts.length - 1];
+  const modifiers = parts.slice(0, -1);
+
+  if (!(HOTKEY_KEYS as readonly string[]).includes(key)) return null;
+  if (modifiers.some((m) => !(HOTKEY_MODIFIERS as readonly string[]).includes(m))) return null;
+  if (new Set(modifiers).size !== modifiers.length) return null;
+
+  // A bare letter would fire on any focused window the moment a phrase matched,
+  // which is far too easy to do by accident.
+  if (modifiers.length === 0 && key.length === 1) return null;
+
+  return { modifiers, key };
+}
+
+/**
+ * Only http(s), and only a parseable URL.
+ *
+ * Without this a mis-typed target could hand `file:` or a custom protocol
+ * handler to the shell, which is a much larger thing than "open a website".
+ */
+export function isOpenableUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export const createVoiceCommandSchema = z
+  .object({
+    kind: voiceCommandKindSchema,
+    phrases: z.array(z.string().min(1).max(120)).min(1).max(20),
+    /** Habit id, URL, or key combo, depending on `kind`. */
+    target: z.string().max(2000).nullish(),
+    /** For `pause`: how long. Null means until switched back on by hand. */
+    pauseMinutes: z.number().int().min(1).max(24 * 60).nullish(),
+    /** What to call it on screen. Falls back to something derived from target. */
+    label: z.string().max(120).nullish(),
+    enabled: z.boolean().default(true),
+    sortOrder: z.number().int().optional(),
+  })
+  .superRefine((value, ctx) => {
+    const fail = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: ['target'] });
+
+    if (value.kind === 'habit' && !value.target) fail('pick which habit this ticks off');
+    if (value.kind === 'url' && !isOpenableUrl(value.target ?? '')) fail('needs a full http:// or https:// address');
+    if (value.kind === 'hotkey' && !parseHotkey(value.target ?? '')) {
+      fail('needs a key combination with at least one modifier, like ctrl+shift+m');
+    }
+  });
+
+export const updateVoiceCommandSchema = createVoiceCommandSchema;
+
+export interface VoiceCandidate {
+  id: string;
+  phrases: string[];
+}
+
+export interface VoiceMatch {
+  id: string;
+  /** The stored phrase that won, for showing back "ticked off: drink water". */
+  phrase: string;
+  /** 0-1. How much of the stored phrase the transcript actually covered. */
+  score: number;
+  /** True when the last word of the phrase was never heard — see below. */
+  lenient?: boolean;
+}
+
+/**
+ * Every content word of the phrase has to appear. Anything looser matches the
+ * wrong habit, and a habit ticked off by mistake is worse than one missed —
+ * it is wrong data that Blake has no reason to go looking for.
+ */
+export const VOICE_MATCH_FLOOR = 1;
+
+/**
+ * Which habit, if any, was that?
+ *
+ * Order-insensitive coverage of the stored phrase rather than string equality,
+ * because speech recognition returns "i drank some water" for a phrase typed as
+ * "drink water" and no amount of exact matching survives that. Ties go to the
+ * most specific phrase, so "drink coffee" beats a bare "drink".
+ */
+export function matchVoiceCommand(text: string, candidates: VoiceCandidate[]): VoiceMatch | null {
+  const spoken = new Set(voiceTokens(text));
+  if (spoken.size === 0) return null;
+
+  let best: VoiceMatch | null = null;
+
+  for (const candidate of candidates) {
+    for (const phrase of candidate.phrases) {
+      const wanted = voiceTokens(phrase);
+      if (wanted.length === 0) continue;
+
+      const hits = wanted.filter((token) => spoken.has(token)).length;
+      const score = hits / wanted.length;
+      if (score < VOICE_MATCH_FLOOR) continue;
+
+      // Longer phrases win ties: they are the more specific claim about what
+      // was said, and a two-word phrase matching is weaker evidence.
+      if (!best || score > best.score || (score === best.score && wanted.length > voiceTokens(best.phrase).length)) {
+        best = { id: candidate.id, phrase, score };
+      }
+    }
+  }
+
+  return best;
+}
+
+/**
+ * What was said, minus the trigger and the wake word.
+ *
+ * "make a note buy milk" against the phrase "make a note" leaves "buy milk",
+ * which is the note. Words are removed by stem, so it survives the same
+ * mangling everything else here does, and only the *first* occurrence of each
+ * trigger word goes — "note that the note is wrong" keeps its second "note".
+ */
+export function remainderAfterPhrase(text: string, phrase: string, wakeWord = ''): string {
+  // Built from the phrase's *raw* words, not `voiceTokens`, which drops filler.
+  // "make a note" has to strip its own "a" — matching on content words alone
+  // left "Noted: a buy milk", with the article stranded at the front.
+  const words = (value: string): string[] =>
+    value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+
+  const strip = [...words(phrase), ...words(wakeWord)];
+  const kept: string[] = [];
+
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const plain = word.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!plain) continue;
+
+    // Exact first, then by stem, so a stored "drink" still removes a spoken
+    // "drank" without "drinks" eating an unrelated word earlier in the list.
+    let at = strip.indexOf(plain);
+    if (at === -1) at = strip.findIndex((candidate) => stem(candidate) === stem(plain));
+
+    if (at !== -1) {
+      strip.splice(at, 1);
+      continue;
+    }
+    kept.push(word);
+  }
+
+  return kept.join(' ').trim();
+}
+
+/**
+ * Every command whose phrase matches except for its **final** word.
+ *
+ * The tail of a sentence is what gets clipped: the voice drops, the recogniser
+ * decides the utterance ended, and "drink water" arrives as "drink". Strict
+ * matching then finds nothing at all, which is the complaint this answers.
+ *
+ * Deliberately narrow, because looseness here ticks off the wrong thing:
+ *
+ *  - only the *last* content word may be missing, never a middle one,
+ *  - the phrase must have at least two content words, so a one-word phrase can
+ *    never match on nothing at all, and
+ *  - the caller only reaches this after a strict pass found nothing.
+ *
+ * Returns every candidate rather than a winner. Two commands can easily share
+ * a first word — "drink water" and "drink coffee" — and guessing between them
+ * is exactly the failure that must not happen silently, so the caller asks.
+ */
+export function matchVoiceCommandLoosely(text: string, candidates: VoiceCandidate[]): VoiceMatch[] {
+  const spoken = new Set(voiceTokens(text));
+  if (spoken.size === 0) return [];
+
+  const found = new Map<string, VoiceMatch>();
+
+  for (const candidate of candidates) {
+    for (const phrase of candidate.phrases) {
+      const wanted = voiceTokens(phrase);
+      if (wanted.length < 2) continue;
+
+      const required = wanted.slice(0, -1);
+      if (!required.every((token) => spoken.has(token))) continue;
+
+      const score = required.length / wanted.length;
+      const previous = found.get(candidate.id);
+      if (!previous || score > previous.score) {
+        found.set(candidate.id, { id: candidate.id, phrase, score, lenient: true });
+      }
+    }
+  }
+
+  return [...found.values()];
+}
+
+/**
+ * Cosine similarity between two speaker embeddings.
+ *
+ * The vectors are not unit length as they come out of the model, so this
+ * normalises rather than taking a bare dot product.
+ */
+export function cosineSimilarity(a: readonly number[], b: readonly number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0;
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+  return denominator === 0 ? 0 : dot / denominator;
+}
 
 /* ------------------------------------------------------------------ */
 /* Time tracking                                                       */
@@ -171,6 +728,16 @@ export const updateSettingsSchema = z.object({
   dndUntil: z.number().int().nullish(),
   remindersEnabled: z.boolean().optional(),
   pushEnabled: z.boolean().optional(),
+  voiceEnabled: z.boolean().optional(),
+  wakeWord: wakeWordSchema.optional(),
+  requireKnownSpeaker: z.boolean().optional(),
+  speakerThreshold: z.number().min(0).max(1).optional(),
+  /**
+   * Stored as the device *name*, not its index. Windows renumbers inputs when
+   * something is plugged in or removed, so an index saved today can silently
+   * mean a different microphone tomorrow. Null follows the Windows default.
+   */
+  voiceInputDevice: z.string().max(200).nullish(),
 });
 
 /**
