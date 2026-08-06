@@ -476,6 +476,18 @@ preferred over passes.
 The recovery code uses HKDF, not Argon2: it is 256 random bits, so there is no
 dictionary to slow down.
 
+### The recovery kit screen must outrank everything
+
+`Vault.tsx` holds the freshly generated shares in the *parent*, not in the setup
+form. Creating a vault broadcasts a change; every loader refetches; the parent
+then sees `configured: true` and would re-render straight past the shares into
+the unlocked vault — unmounting the only screen those codes will ever appear on.
+
+That is not hypothetical. It happened on the first real run, and the kit was
+gone: `hasRecovery: true` with nothing ever displayed. Anything that can
+navigate away from that screen destroys the kit, so it is rendered above the
+status check and gated on an explicit tick rather than a button.
+
 ### Split recovery
 
 `splitSecret` is a one-time pad — share A is random, share B is the code XORed

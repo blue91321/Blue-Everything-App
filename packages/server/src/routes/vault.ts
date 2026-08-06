@@ -45,6 +45,12 @@ export async function vaultRoutes(app: FastifyInstance): Promise<void> {
   /** Safe to call locked — says nothing about the contents. */
   app.get('/api/vault/status', async () => {
     const row = await store.getVaultRow();
+
+    // An in-memory session can outlive the vault row it belongs to. Reporting
+    // "not configured but unlocked" is incoherent, so the session is dropped
+    // rather than described.
+    if (!row && session.isUnlocked()) session.lock();
+
     return {
       configured: row !== null,
       hasRecovery: Boolean(row?.wrappedByRecovery),

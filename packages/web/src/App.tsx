@@ -5,6 +5,7 @@ import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
 import { Notes } from './views/Notes';
+import { Vault } from './views/Vault';
 import { Settings } from './views/Settings';
 
 const NAV = [
@@ -12,6 +13,7 @@ const NAV = [
   { id: 'tasks', label: 'Tasks', glyph: '☑' },
   { id: 'habits', label: 'Habits', glyph: '↻' },
   { id: 'notes', label: 'Notes', glyph: '✎' },
+  { id: 'vault', label: 'Vault', glyph: '🔒' },
   { id: 'settings', label: 'Settings', glyph: '⚙' },
 ] as const;
 
@@ -119,6 +121,7 @@ export function App() {
         {view === 'tasks' && <Tasks />}
         {view === 'habits' && <Habits />}
         {view === 'notes' && <Notes />}
+        {view === 'vault' && <Vault />}
         {view === 'settings' && <Settings session={session} onChanged={checkSession} />}
       </div>
     </div>
