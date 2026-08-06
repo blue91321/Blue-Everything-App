@@ -22,6 +22,7 @@ import { nudgeRoutes } from './routes/nudges.js';
 import { settingsRoutes } from './routes/settings.js';
 import { taskRoutes } from './routes/tasks.js';
 import { timeRoutes } from './routes/time.js';
+import { vaultRoutes } from './routes/vault.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -59,6 +60,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deviceRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);
+  await app.register(vaultRoutes);
 
   await registerWebApp(app);
 

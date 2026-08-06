@@ -10,7 +10,7 @@ import type { FastifyInstance } from 'fastify';
  * because updates only ever flow one way and this needs no extra dependency.
  */
 
-export type ChangeScope = 'tasks' | 'habits' | 'notes' | 'nudges' | 'settings' | 'devices' | 'time';
+export type ChangeScope = 'tasks' | 'habits' | 'notes' | 'nudges' | 'settings' | 'devices' | 'time' | 'vault';
 
 interface ChangeEvent {
   scope: ChangeScope | 'all';
@@ -47,6 +47,8 @@ function scopeForPath(path: string): ChangeScope | 'all' {
       return 'devices';
     case 'time':
       return 'time';
+    case 'vault':
+      return 'vault';
     default:
       return 'all';
   }

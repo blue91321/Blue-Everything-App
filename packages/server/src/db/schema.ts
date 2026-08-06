@@ -248,23 +248,45 @@ export const devices = sqliteTable('devices', {
 });
 
 /**
- * Deliberately unused for now — the vault-shaped hole.
+ * The vault's key material. One row, id 'singleton'.
  *
- * Password management was deferred, but the storage shape was not left to
- * chance: the server stores an opaque ciphertext blob and its nonce and never
- * sees a plaintext secret or the master key. Whichever route wins later
- * (wrapping Bitwarden, or an own Argon2id + XChaCha20-Poly1305 vault), that
- * boundary holds. Do not add a `password` column here.
+ * Holds no secrets in the clear: the vault key exists here only in wrapped
+ * form, and each wrapping is itself authenticated, so a wrong master password
+ * fails to unwrap rather than yielding a plausible-looking wrong key.
  */
-export const vaultItems = sqliteTable('vault_items', {
-  id: id(),
-  kind: text('kind').notNull(),
-  /** Unencrypted label so the list can render without unlocking. Never secret. */
-  label: text('label').notNull(),
-  ciphertext: text('ciphertext').notNull(),
-  nonce: text('nonce').notNull(),
-  /** Which key-derivation parameters produced the key, for future rotation. */
+export const vault = sqliteTable('vault', {
+  id: text('id').primaryKey().$defaultFn(() => 'singleton'),
+
+  /** Argon2id salt and cost, stored so parameters can be raised later without
+   *  locking Blake out of a vault created under the old ones. */
+  kdfSalt: text('kdf_salt').notNull(),
   kdfVersion: integer('kdf_version').notNull().default(1),
+  kdfMemoryKiB: integer('kdf_memory_kib').notNull(),
+  kdfPasses: integer('kdf_passes').notNull(),
+  kdfParallelism: integer('kdf_parallelism').notNull(),
+
+  /** vaultKey sealed under the key derived from the master password. */
+  wrappedByPassword: text('wrapped_by_password').notNull(),
+  /** vaultKey sealed under the recovery code. Null if recovery was declined. */
+  wrappedByRecovery: text('wrapped_by_recovery'),
+
+  createdAt: now(),
+  updatedAt: touched(),
+});
+
+/**
+ * One encrypted entry per row, and *everything* is inside the blob — title,
+ * username, URL, password, notes.
+ *
+ * No plaintext label column. This database syncs to OneDrive, and a list of
+ * which services Blake has accounts with is worth protecting even when the
+ * passwords themselves are safe. The cost is that the item list can't render
+ * until the vault is unlocked, which is the correct trade.
+ */
+export const vaultEntries = sqliteTable('vault_entries', {
+  id: id(),
+  /** Base64 of nonce ‖ ciphertext ‖ GCM tag. */
+  sealed: text('sealed').notNull(),
   createdAt: now(),
   updatedAt: touched(),
 });
@@ -280,7 +302,8 @@ export const schema = {
   attentionSamples,
   settings,
   devices,
-  vaultItems,
+  vault,
+  vaultEntries,
 };
 
 /** Used by the health check to prove the database is actually reachable. */

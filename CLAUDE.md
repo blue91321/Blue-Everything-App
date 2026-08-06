@@ -132,7 +132,7 @@ a relative database path would quietly create a second, empty database there.
 | --- | --- | --- |
 | iPhone app | Installable PWA | No Mac, no Apple Developer account. iOS 16.4+ supports web push for home-screen PWAs, which was the blocker. |
 | Sync | Server on the Windows PC, reachable over Tailscale | Free, private, no cloud. Trade-off: the phone only syncs while the PC is awake. |
-| Password vault | Deferred | Build the rest first; leave a vault-shaped hole in the schema. Revisit as "wrap Bitwarden CLI" vs "own Argon2id + XChaCha20 vault". |
+| Password vault | Own vault, own browser extension | Decided 2026-08-06 after comparing Bitwarden, Vaultwarden, KeePassXC and 1Password. Blake wants to own all of it. |
 | Voice | Push-to-talk on a global hotkey → local Whisper | Far more reliable than an always-on wake word, and the phone can post audio to the same endpoint. |
 | Source control | Local git only | Not going on GitHub until Blake is happy with a version. Keep the repo clean enough to publish later. |
 | Windows agent | Headless Node service, **not Electron** | Electron costs 150–250MB resident to show a tray icon. The agent is 55MB and has no UI at all — toasts go through WinRT via PowerShell, and the UI is the PWA in a browser. |
@@ -440,6 +440,52 @@ never break into a match.
 
 Note for tests: quiet hours default to 23:00–07:30, so anything asserting
 delivery must switch them off first or it passes or fails by time of day.
+
+## Password vault
+
+`npm run vault-check -w @everything/server` proves the cryptography. Run it
+before trusting any change to `src/vault/`.
+
+**No crypto dependencies.** Argon2id and AES-256-GCM both come from Node's
+built-in `crypto`, which is OpenSSL. Node 24 exposes Argon2 directly, so there
+is no WASM build, no native module, and no JavaScript cipher implementation
+anywhere near the passwords. (`kdbxweb` would have given KeePass-format support,
+but it depends on a `@xmldom/xmldom` with five high-severity advisories that npm
+refused to override — and the format was not needed.)
+
+### Envelope encryption
+
+```
+master password ──Argon2id(salt)──► passwordKey ──┐
+                                                  ├─► unwraps vaultKey
+recovery code ────HKDF-SHA256─────► recoveryKey ──┘
+
+vaultKey ──AES-256-GCM──► every item
+```
+
+Items are encrypted with a random `vaultKey`; that key is *wrapped* separately
+by each way of unlocking it — the same design 1Password and Bitwarden use.
+Changing the master password or adding a recovery method re-wraps 32 bytes
+rather than re-encrypting the vault.
+
+Argon2id runs at m=256MiB, t=3, p=1 — far above the OWASP floor of 19MiB/t=2,
+measured at ~680ms here. A vault is unlocked rarely and the attacker pays that
+cost on every guess. Memory is what defeats GPU and ASIC cracking, so it is
+preferred over passes.
+
+The recovery code uses HKDF, not Argon2: it is 256 random bits, so there is no
+dictionary to slow down.
+
+### Split recovery
+
+`splitSecret` is a one-time pad — share A is random, share B is the code XORed
+with it. Either share alone carries *literally no information* about the code,
+not merely "is hard to break", so one can live in Google Password Manager and
+one on paper. Both are needed; losing one leaves only the master password.
+
+Shares are printed in Crockford base32 (no I, L, O or U) because they get
+written down and typed back months later. Decoding folds the ambiguous
+characters rather than silently producing a wrong key.
 
 ## Attention model
 

@@ -7,5 +7,6 @@
   ],
   "scripts": {
     "sensor": "npm run sensor -w @everything/agent"
-  }
+  },
+  "comment": "The vault deliberately has no crypto dependencies: Argon2id and AES-256-GCM both come from Node's built-in crypto, which is OpenSSL. The one library that would have saved work (kdbxweb, for KeePass files) shipped a vulnerable XML parser that npm would not let us override, and it is not needed."
 }

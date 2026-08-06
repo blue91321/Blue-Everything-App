@@ -217,7 +217,7 @@ export function quietReason(at: Date, input: QuietInputs): QuietReason | null {
 /* Devices                                                             */
 /* ------------------------------------------------------------------ */
 
-export const deviceKinds = ['windows-agent', 'phone', 'browser'] as const;
+export const deviceKinds = ['windows-agent', 'phone', 'browser', 'extension'] as const;
 export const deviceKindSchema = z.enum(deviceKinds);
 export type DeviceKind = z.infer<typeof deviceKindSchema>;
 
@@ -246,6 +246,77 @@ export const AWAY_FROM_PC_IDLE_MS = 15 * 60_000;
  */
 export function isAwayFromPc(input: { idleMs: number; audioPlaying?: boolean }): boolean {
   return input.idleMs >= AWAY_FROM_PC_IDLE_MS && !input.audioPlaying;
+}
+
+/* ------------------------------------------------------------------ */
+/* Vault                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A master password this short is not worth the Argon2id cost protecting it.
+ * Long beats complex — the strength comes from length, so the UI should ask for
+ * a passphrase rather than punctuation.
+ */
+export const MIN_MASTER_PASSWORD = 12;
+
+export const vaultSetupSchema = z.object({
+  masterPassword: z.string().min(MIN_MASTER_PASSWORD).max(1024),
+  /** Off only if Blake explicitly accepts that a forgotten password is final. */
+  withRecovery: z.boolean().default(true),
+});
+
+export const vaultUnlockSchema = z.object({
+  masterPassword: z.string().min(1).max(1024),
+});
+
+export const vaultItemSchema = z.object({
+  title: z.string().min(1).max(300),
+  username: z.string().max(300).default(''),
+  password: z.string().max(2000).default(''),
+  /** Used to match a login form to an entry; encrypted like everything else. */
+  url: z.string().max(2000).default(''),
+  notes: z.string().max(20_000).default(''),
+  /** TOTP secret, if the site has one. */
+  totp: z.string().max(300).default(''),
+});
+export type VaultItemInput = z.infer<typeof vaultItemSchema>;
+export const vaultItemUpdateSchema = vaultItemSchema.partial();
+
+export const vaultRecoverSchema = z.object({
+  shareA: z.string().min(1).max(200),
+  shareB: z.string().min(1).max(200),
+  newMasterPassword: z.string().min(MIN_MASTER_PASSWORD).max(1024),
+});
+
+export const vaultChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(1024),
+  newPassword: z.string().min(MIN_MASTER_PASSWORD).max(1024),
+});
+
+/**
+ * Does a stored entry's URL match the page a login form is on?
+ *
+ * Compares registrable-ish host suffixes, so an entry for `example.com` fills
+ * on `login.example.com`. Deliberately does *not* match the other way round: an
+ * entry for `login.example.com` should not fill on `example.com.evil.test`.
+ */
+export function urlMatchesEntry(entryUrl: string, pageUrl: string): boolean {
+  const host = (value: string): string | null => {
+    try {
+      return new URL(value.includes('://') ? value : `https://${value}`).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return null;
+    }
+  };
+
+  const entryHost = host(entryUrl);
+  const pageHost = host(pageUrl);
+  if (!entryHost || !pageHost) return false;
+  if (entryHost === pageHost) return true;
+
+  // Suffix match must land on a dot boundary, or "evil-example.com" would match
+  // "example.com".
+  return pageHost.endsWith(`.${entryHost}`);
 }
 
 /** Shape the API returns for a nudge the client should show right now. */

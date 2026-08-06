@@ -10,7 +10,9 @@
     "generate": "drizzle-kit generate",
     "pair": "tsx src/cli/pair.ts",
     "smoke": "tsx src/cli/smoke.ts",
-    "push-test": "tsx src/cli/push-test.ts"
+    "push-test": "tsx src/cli/push-test.ts",
+    "vault-check": "tsx src/cli/vault-check.ts",
+    "vault-api": "tsx src/cli/vault-api-check.ts"
   },
   "dependencies": {
     "@everything/shared": "*",
