@@ -57,9 +57,21 @@ export interface Task {
   status: TaskStatus;
   priority: number;
   dueAt: number | null;
+  /** The date matters, the time of day doesn't. `dueAt` is end of that day. */
+  dueIsAllDay: number;
   projectId: string | null;
   createdAt: number;
   completedAt: number | null;
+}
+
+/** What the API accepts for a task, as opposed to what a row looks like. */
+export interface TaskInput {
+  title?: string;
+  notes?: string | null;
+  status?: TaskStatus;
+  priority?: number;
+  dueAt?: number | null;
+  dueIsAllDay?: boolean;
 }
 
 export interface Habit {
@@ -71,6 +83,8 @@ export interface Habit {
   active: number;
   sortOrder: number;
   reminderEveryMinutes: number | null;
+  /** Minutes since midnight before reminders start; null means straight away. */
+  reminderStartMinute: number | null;
   /** Things Blake can say to tick this off. Empty means voice can't reach it. */
   voicePhrases: string[];
   periodKey: string;
@@ -111,6 +125,14 @@ export interface AppSettings {
   voiceprintSamples?: number;
   /** Microphone name; null follows the Windows default. */
   voiceInputDevice?: string | null;
+  /** Seconds it keeps listening after answering. 0 switches follow-ups off. */
+  voiceFollowUpSeconds?: number;
+  voiceRetrySeconds?: number;
+  overlayPlacement?: string;
+  overlayScreen?: string | null;
+  /** An emoji, `file` for an uploaded picture, or empty for none. */
+  overlayAvatar?: string;
+  updatedAt?: number;
 }
 
 /** An `AppSettings` from a server that actually has voice support. */
@@ -145,6 +167,15 @@ export interface VoiceStatus {
   enrolSamples: number;
   /** How well the last sample agreed with the ones before it, 0-1. */
   enrolAgreement: number | null;
+  /** Phrase words the speech model cannot pronounce, so can never be heard. */
+  unknownWords: string[];
+  followUpSeconds: number;
+  retrySeconds: number;
+  overlayPlacement: string;
+  overlayScreen: string | null;
+  overlayAvatar: string;
+  /** Monitors the agent can see — the browser only knows about its own. */
+  screens: { id: string; label: string; primary: boolean }[];
   heard: {
     /** `speech` is words heard while still waiting for the wake word. */
     kind: 'level' | 'speech' | 'wake' | 'command';
@@ -158,7 +189,7 @@ export interface VoiceStatus {
   }[];
 }
 
-export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'pause';
+export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'media' | 'pause' | 'cancel';
 
 export interface VoiceCommand {
   id: string;
@@ -169,6 +200,8 @@ export interface VoiceCommand {
   pauseMinutes: number | null;
   /** Server-derived display name when none was set by hand. */
   label: string | null;
+  /** Whether the microphone stays open after this one fires. */
+  allowFollowUp: boolean;
   enabled: boolean;
   sortOrder: number;
 }
@@ -295,9 +328,10 @@ export const api = {
 
   tasks: {
     list: (status = 'todo,doing') => request<Task[]>(`/api/tasks?status=${encodeURIComponent(status)}`),
-    create: (payload: { title: string; priority?: number; dueAt?: number | null; notes?: string | null }) =>
-      post<Task>('/api/tasks', payload),
-    update: (id: string, payload: Partial<Task>) => patch<Task>(`/api/tasks/${id}`, payload),
+    create: (payload: TaskInput & { title: string }) => post<Task>('/api/tasks', payload),
+    // Not Partial<Task>: the row stores dueIsAllDay as 0/1, but the API takes a
+    // boolean, and letting the row type through here sends the wrong one.
+    update: (id: string, payload: TaskInput) => patch<Task>(`/api/tasks/${id}`, payload),
     remove: (id: string) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
   },
 
@@ -313,6 +347,7 @@ export const api = {
         targetPerPeriod?: number;
         active?: boolean;
         reminderEveryMinutes?: number | null;
+        reminderStartMinute?: number | null;
         voicePhrases?: string[];
       }
     ) => patch<Habit>(`/api/habits/${id}`, payload),
@@ -339,6 +374,11 @@ export const api = {
       requireKnownSpeaker?: boolean;
       speakerThreshold?: number;
       voiceInputDevice?: string | null;
+      voiceFollowUpSeconds?: number;
+      voiceRetrySeconds?: number;
+      overlayPlacement?: string;
+      overlayScreen?: string | null;
+      overlayAvatar?: string;
     }) => patch<AppSettings>('/api/settings', payload),
   },
 
@@ -353,6 +393,11 @@ export const api = {
       patch<VoiceCommand>(`/api/voice/commands/${id}`, payload),
     removeCommand: (id: string) => request<void>(`/api/voice/commands/${id}`, { method: 'DELETE' }),
     resume: () => post('/api/voice/resume'),
+    uploadAvatar: (data: string, type: string) =>
+      request<{ ok: boolean }>('/api/voice/avatar', {
+        method: 'PUT',
+        body: JSON.stringify({ data, type }),
+      }),
     startEnrol: () => post<{ enrolUntil: number }>('/api/voice/enrol/start'),
     stopEnrol: () => post('/api/voice/enrol/stop'),
     startListening: () => post<{ testUntil: number }>('/api/voice/test-listen'),

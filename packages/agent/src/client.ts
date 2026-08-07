@@ -18,7 +18,9 @@ export interface AttentionResponse {
 export type VoiceAction =
   | { do: 'open-url'; url: string }
   | { do: 'press-keys'; keys: string }
-  | { do: 'pause'; untilMs: number | null };
+  | { do: 'media'; action: string }
+  | { do: 'pause'; untilMs: number | null }
+  | { do: 'cancel' };
 
 /** What the server did with something it was told was said. */
 export interface VoiceOutcome {
@@ -27,7 +29,9 @@ export interface VoiceOutcome {
     | 'note-added'
     | 'opened'
     | 'keys-sent'
+    | 'media-sent'
     | 'paused'
+    | 'cancelled'
     | 'captured-as-note'
     | 'ambiguous'
     | 'no-match'
@@ -38,6 +42,8 @@ export interface VoiceOutcome {
   say?: string;
   action?: VoiceAction;
   choices?: { id: string; label: string }[];
+  /** Whether this command lets the microphone stay open afterwards. */
+  allowFollowUp?: boolean;
   habitName?: string;
   doneThisPeriod?: number;
   target?: number;
@@ -168,6 +174,16 @@ export class ServerClient {
 
   stopEnrol(): Promise<unknown> {
     return this.request('/api/voice/enrol/stop', { method: 'POST' });
+  }
+
+  /** The avatar picture. Bytes, not JSON — the only such call here. */
+  async avatarImage(): Promise<Buffer> {
+    const response = await fetch(`${this.baseUrl}/api/voice/avatar`, {
+      headers: this.token ? { authorization: `Bearer ${this.token}` } : {},
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`avatar fetch failed: ${response.status}`);
+    return Buffer.from(await response.arrayBuffer());
   }
 
   enrolVoice(voiceprint: number[], samples: number): Promise<{ ok: boolean; dimensions: number }> {

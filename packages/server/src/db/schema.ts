@@ -44,6 +44,15 @@ export const tasks = sqliteTable(
     status: text('status').notNull().default('todo'),
     priority: integer('priority').notNull().default(0),
     dueAt: integer('due_at'),
+    /**
+     * The due date has no meaningful time of day.
+     *
+     * `dueAt` still holds an instant — the end of that day — so every query
+     * that orders or compares by it keeps working. This flag only says how to
+     * *talk* about it: "due Friday" rather than "due Friday at 11:59pm", and
+     * eligible to nudge from the morning rather than an hour before midnight.
+     */
+    dueIsAllDay: integer('due_is_all_day').notNull().default(0),
     scheduledAt: integer('scheduled_at'),
     estimateMinutes: integer('estimate_minutes'),
     sortOrder: integer('sort_order').notNull().default(0),
@@ -72,6 +81,15 @@ export const habits = sqliteTable('habits', {
    * lists and never interrupts — the right default for most habits.
    */
   reminderEveryMinutes: integer('reminder_every_minutes'),
+  /**
+   * Don't start nagging until this time of day, as minutes since local
+   * midnight. Null means from the moment the period begins.
+   *
+   * "Take a walk" wants to be raised at two in the afternoon, not at seven in
+   * the morning alongside everything else — a reminder that arrives before it
+   * is actionable teaches you to ignore reminders.
+   */
+  reminderStartMinute: integer('reminder_start_minute'),
   /**
    * JSON array of things Blake might say to tick this off. A JSON column rather
    * than a side table because they are only ever read and written as a whole
@@ -107,6 +125,8 @@ export const voiceCommands = sqliteTable(
     /** For `pause`: minutes. Null means until switched back on by hand. */
     pauseMinutes: integer('pause_minutes'),
     label: text('label'),
+    /** Whether the microphone stays open after this command fires. */
+    allowFollowUp: integer('allow_follow_up').notNull().default(1),
     enabled: integer('enabled').notNull().default(1),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: now(),
@@ -316,6 +336,25 @@ export const settings = sqliteTable('settings', {
    * restart.
    */
   voicePausedUntil: integer('voice_paused_until'),
+
+  /**
+   * Seconds it keeps listening after answering, with no wake word needed.
+   * 0 switches follow-ups off entirely — the microphone closes as soon as a
+   * command is done, which is the conservative choice and a legitimate one.
+   */
+  voiceFollowUpSeconds: integer('voice_follow_up_seconds').notNull().default(6),
+  /** The same, but after a miss — repeating yourself takes longer than adding. */
+  voiceRetrySeconds: integer('voice_retry_seconds').notNull().default(8),
+
+  /** Where the popup appears, and on which screen. Null screen = the mouse's. */
+  overlayPlacement: text('overlay_placement').notNull().default('cursor'),
+  overlayScreen: text('overlay_screen'),
+  /**
+   * An emoji, the literal `file` when Blake uploaded a picture, or empty for
+   * none. The picture itself lives beside the database rather than in it —
+   * a settings row read on every page load has no business carrying an image.
+   */
+  overlayAvatar: text('overlay_avatar').notNull().default(''),
 
   updatedAt: touched(),
 });

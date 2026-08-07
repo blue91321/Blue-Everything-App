@@ -77,6 +77,11 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         speakerThreshold:
           body.speakerThreshold === undefined ? undefined : Math.round(body.speakerThreshold * 100),
         voiceInputDevice: body.voiceInputDevice,
+        voiceFollowUpSeconds: body.voiceFollowUpSeconds,
+        voiceRetrySeconds: body.voiceRetrySeconds,
+        overlayPlacement: body.overlayPlacement,
+        overlayScreen: body.overlayScreen,
+        overlayAvatar: body.overlayAvatar,
       })
       .where(eq(settings.id, current.id))
       .returning();

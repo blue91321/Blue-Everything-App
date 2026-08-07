@@ -8,7 +8,7 @@
  * microphone is a slow way to debug a CreateWindowEx flag.
  */
 import koffi from 'koffi';
-import { createOverlay } from '../overlay.js';
+import { createOverlay, listScreens } from '../overlay.js';
 
 /* Asking Windows whether the window is really there, rather than trusting that
  * no exception was thrown. "It did not crash" is not "it appeared". */
@@ -33,6 +33,11 @@ function describe(label: string): void {
   );
 }
 
+console.log('\nScreens Windows can see:');
+for (const screen of listScreens()) {
+  console.log(`  ${screen.id}  ${screen.label}  work ${screen.work.left},${screen.work.top} -> ${screen.work.right},${screen.work.bottom}`);
+}
+
 const overlay = createOverlay({
   onChoice: (id) => console.log(`  clicked: ${id}`),
   onDismiss: () => console.log('  dismissed'),
@@ -41,7 +46,13 @@ const overlay = createOverlay({
 console.log('\nShowing at the cursor. Move the mouse somewhere visible.\n');
 
 const steps: { after: number; run: () => void }[] = [
-  { after: 0, run: () => overlay.show({ title: 'Listening…', lines: [{ text: 'say something', tone: 'muted' }] }) },
+  {
+    after: 0,
+    run: () => {
+      overlay.configure({ avatar: { kind: 'emoji', value: '🤖' } });
+      overlay.show({ title: 'Listening…', lines: [{ text: 'say something', tone: 'muted' }] });
+    },
+  },
   {
     after: 2500,
     run: () =>
@@ -61,6 +72,14 @@ const steps: { after: number; run: () => void }[] = [
           { id: 'b', label: 'Open my email' },
         ],
       }),
+  },
+  {
+    after: 8000,
+    run: () => {
+      // Anchored bottom-right of whichever screen the mouse is on.
+      overlay.configure({ placement: { mode: 'bottom-right', screen: null } });
+      overlay.show({ title: 'Bottom right', lines: [{ text: 'anchored, not at the cursor', tone: 'muted' }] });
+    },
   },
   { after: 11000, run: () => overlay.hide() },
 ];

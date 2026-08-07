@@ -813,6 +813,62 @@ that, or trailing off after "jarvis" would file a note reading "jarvis".
 Verified across four deliveries: 600ms pause, 1.5s pause, run together, and run
 together at speed. All four deliver.
 
+### The grammar must be able to say what people actually say
+
+The matcher stems, so a stored `drink water` covers "I drank some water". The
+**recogniser cannot help**: a grammar only emits words it contains, and the
+stored phrase gave it `drink`, never `drank`. Asked to transcribe "drank" it had
+to pick something from the list anyway, and what it picked was arbitrary —
+"I drank water" came back as **"resume water"**, which matched a one-word
+`resume` phrase and paused the music.
+
+So `vocabularyFor` expands every phrase word through `spokenVariants`: the
+irregular past, `-s`/`-es`, `-ed`, `-ing`. Widening a grammar normally widens
+what can be mis-matched, but not here — every generated form stems back to the
+word it came from, so a mis-hear between two of them still reaches the same
+command. That property is checked in `voice-check`.
+
+The counting words (`one`…`ten`, `twice`, `once`, `couple`) are in the grammar
+**always**, whatever the phrases are. `spokenCount` reads them out of the
+transcript, and without them the recogniser was never allowed to say "two" —
+"I drank two waters" came back as `waters` and matched nothing at all. A feature
+reading for words the recogniser could not produce.
+
+The wake word is deliberately *not* expanded: it is a name, and widening the one
+grammar that most needs to stay narrow buys nothing.
+
+`checkWords` carries the literal phrase words separately, so the
+can-this-be-heard warning below reports what Blake typed rather than the
+generated forms.
+
+### A grammar can only contain words the model can pronounce
+
+`vosk_recognizer_new_grm` silently drops any word missing from the model's
+lexicon, with a warning on stderr nobody reads — so the phrase reads perfectly
+and can never match. `"unmute my mic"` was live for days before anyone noticed.
+
+`unknownWords()` in `vosk.ts` asks the model directly via
+`vosk_model_find_word`, and the agent reports the result on its heartbeat. That
+check generalises: it stays right whichever model is installed, because it asks
+that model rather than assuming a word list.
+
+The warning appears **everywhere the word does**, not only as a summary:
+
+- on the command's own row — the one you are looking at when you wonder why the
+  phrase never fires,
+- on the group heading, so collapsing a section cannot hide a broken command,
+- on the offending phrase chip inside the editor, and
+- under the wake word, which is the worst case of all: nothing wakes at all and
+  every other diagnostic on the screen looks perfectly healthy.
+
+**It is not a small-vocabulary problem, and a bigger model would not fix it.**
+Probed against `vosk-model-small-en-us-0.15`: `obstreperous`, `quixotic`,
+`netflix`, `youtube`, `obsidian`, `unfollow`, `livestream`, `rewind`, `shuffle`
+and `spotify` are all present. What is missing is coinages and compounds —
+`unmute`, `unpause`, `playpause`, `fastforward`, `doomscroll`, `valorant`. The
+lexicon is the usual ~200k CMU-derived dictionary; a larger model buys acoustic
+accuracy, not those words. Two ordinary words beat one invented compound.
+
 `[unk]` must stay in every grammar. Without it Vosk cannot represent "that was
 none of these" and forces everything it hears onto the nearest phrase — which
 for an always-on microphone means the wake word firing on coughs and music.
@@ -860,13 +916,45 @@ sources of truth would only ever disagree.
 | `note` | writes down whatever was said *after* the phrase | — |
 | `url` | opens it in the default browser | http(s) address |
 | `hotkey` | presses keys into the focused window | e.g. `ctrl+shift+m` |
+| `media` | play/pause, skip, back, stop, volume, mute | one of `mediaActions` |
 | `pause` | closes the microphone, for N minutes or until switched back on | — |
+| `cancel` | drops the sentence in progress; the microphone stays on | — |
 
 **The division of labour is deliberate.** Anything touching *data* happens on
 the server, which owns the database. Anything touching *this machine* — a
 browser, a keystroke — comes back as an instruction for the agent to carry out,
 because the server is meant to be movable and has no business assuming it runs
 on Blake's desk.
+
+**Media commands are gated on something actually playing.** They go out as the
+system media keys rather than a `hotkey`, so they reach whatever owns playback
+without that window being focused — which is the point when the music is behind
+a game. But an always-on microphone mishearing "skip" in a silent room is worse
+than most misfires, because nothing happens that you would notice was wrong. So
+`mediaIsPlaying()` in `audio.ts` gates them: no sound on the output meter in the
+last two minutes and the key is never sent, with the overlay saying why.
+
+The check lives in the agent because only it can see the meter, and it is the
+same WASAPI reading `attention.ts` already takes each tick — so the guard costs
+nothing. It refuses when the meter is *unavailable* too: an unknown answer is
+not a yes for something that presses keys. The two-minute memory is deliberate,
+so a track paused a moment ago still takes "play".
+
+Volume steps send the key five times, because one press moves Windows' volume
+about two percent and nobody means that by "volume up".
+
+**`cancel` and `pause` are one choice on screen and two kinds underneath.** The
+Voice tab offers a single "Stop listening", with a scope: *just this sentence*,
+*for a few minutes*, or *until I switch it back on*. The first writes `cancel`,
+the other two write `pause`. Offering them as two peers in the same dropdown
+made two near-identical entries and left you guessing which meant "never mind".
+
+The split stays in the data because they genuinely do different things: `cancel`
+abandons the exchange, closes the follow-up window and takes the popup away
+while the microphone stays open — the wake word works again immediately —
+whereas `pause` shuts the microphone. Saying "never mind" should not cost the
+next five minutes of voice, which is what using `pause` for it did. Editing a
+saved command reads the scope back off the kind, so the round trip holds.
 
 `pause` is the one that justifies the rest: an always-on microphone you can only
 silence by walking to the keyboard is silent at exactly the wrong moment.
@@ -922,6 +1010,30 @@ utterance would waste the speed that justified building it. If it cannot be
 created at all, voice carries on without it — a missing overlay is a poor reason
 to lose the feature.
 
+### Where it appears, and what face it wears
+
+`cursor` is the original behaviour. The nine anchors pin it to a corner instead,
+which is what a multi-monitor desk wants: the pointer is wherever you last
+clicked, not where you are looking. A pinned popup can follow **whichever screen
+the mouse is on** or stay on **one named screen** — stored by device name
+(`\.\DISPLAY25`), never by index, because unplugging a monitor renumbers the
+rest exactly as it does microphones. A named screen that has gone falls back to
+the mouse's rather than opening somewhere that no longer exists.
+
+`listScreens()` uses `EnumDisplayMonitors` with a koffi callback and reports the
+**work area**, so an anchored popup sits above the taskbar rather than under it.
+The list is read live and comes from the agent — `window.screen` in the PWA
+describes only the display that tab is on.
+
+Avatars are **emoji by default**: Windows draws them in colour from Segoe UI
+Emoji, so a gallery costs no checked-in binaries, matching how the app icons are
+generated rather than committed. A picture of Blake's own is uploaded to
+`data/avatar.<ext>` — beside the database, not in it, because a settings row
+read on every page load has no business carrying an image — and the agent
+downloads it once per `avatarVersion`. GDI+ decodes it, since `LoadImageW` only
+understands BMP and nobody has a BMP. `probeAvatar()` exists because a failed
+decode is otherwise silent: the gutter just stays empty.
+
 ### It is a conversation, not a receipt
 
 After answering, the listener calls `listenAgain()`: the microphone stays open
@@ -929,6 +1041,29 @@ for one more command **without the wake word**, because having just replied it
 is still Blake's turn and making him say "hey jarvis" again would be the point
 missed. A `pause` is the exception — he asked for silence, so carrying on
 listening would be perverse.
+
+**How long it waits is two settings**, both 0–30 with sliders on the Voice tab.
+`voiceFollowUpSeconds` is the wait after it *works* — you may add a second
+thing. `voiceRetrySeconds` is the wait after it *misses* — you are about to
+repeat yourself, which takes longer because you have to notice it failed first,
+so it defaults higher at 8. **0 switches either off**, which is a legitimate
+choice rather than a broken one.
+
+The retry is **bounded to one per wake**. Reopening on every failure would let a
+misheard cough hold the microphone open indefinitely: nothing said, retry,
+nothing said, retry. `retryUsed` resets when the wake word actually fires again.
+
+**Individual commands can opt out**, via `allowFollowUp` on `voice_commands`.
+Chaining suits some and not others: two habits in a row is natural, while
+opening a site or pressing a hotkey means attention has already gone elsewhere
+and a live microphone is just exposure. Defaults on, so nothing changed for
+commands that existed before the column did.
+
+It is deliberately *not* the same number as `VOICE_COMMAND_TIMEOUT_MS`. That one
+is how long it waits for the first thing after the wake word, where Blake is
+part-way through a sentence and the answer is fixed. `inFollowUp` in `voice.ts`
+is what keeps the two apart. The overlay stays up for whichever is longer, so
+"it is still waiting for me" and "it has finished" are never the same picture.
 
 When two commands answer to the same phrase the server returns `ambiguous` with
 `choices` rather than guessing, and the overlay draws them as buttons.
@@ -972,6 +1107,17 @@ so the drop is no longer silent — while clipped speech had been filing a stead
 stream of half-sentences ("mute my", "hey my go"). Notes come from a `note`
 command now, and only from it. `/api/voice/misses` still lists the leftovers
 from before.
+
+The list is **grouped by what the command does**, in collapsible `<details>`
+sections with a count each — a flat list stopped being scannable at about six
+entries, and this is a list that only grows. `<details>` rather than hand-rolled
+state, so keyboard and screen-reader behaviour comes from the browser.
+
+Which sections are shut is remembered in `localStorage`; reopening them on every
+visit is exactly the sort of small chore that makes a screen annoying. Empty
+groups are hidden entirely, and saving a new command **opens the section it
+landed in** — otherwise adding a hotkey while Hotkeys is collapsed looks like
+nothing happened.
 
 Phrases are editable in two places, on purpose. In the habit editor on the
 Habits screen, next to the thing they belong to; and on the Voice tab, because

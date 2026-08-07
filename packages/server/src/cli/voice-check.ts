@@ -11,7 +11,9 @@
  * Runs entirely in memory. Touches no database and needs no server.
  */
 import {
+  ALWAYS_IN_VOCABULARY,
   cosineSimilarity,
+  spokenVariants,
   matchVoiceCommand,
   matchVoiceCommandLoosely,
   matchesWakeWord,
@@ -85,6 +87,31 @@ check('…but a clipped tail does', matchVoiceCommandLoosely('exercise at', gym)
 check('one-word phrase never matches loosely', matchVoiceCommandLoosely('anything', [{ id: 'x', phrases: ['exercise'] }]), []);
 check('unrelated speech still matches nothing', loose('what time is it'), []);
 check('empty still matches nothing', loose(''), []);
+
+console.log('\nThe grammar must be able to say what people actually say');
+// A grammar can only emit words it contains. "drink water" alone left the
+// recogniser unable to produce "drank", so it substituted the nearest word it
+// did have — which on this machine was "resume", and that paused the music.
+check('"drink" offers its past tense', spokenVariants('drink').includes('drank'), true);
+check('…and its -ing form', spokenVariants('drink').includes('drinking'), true);
+check('…and its plural', spokenVariants('drink').includes('drinks'), true);
+check('"take" offers "took"', spokenVariants('take').includes('took'), true);
+check('"brush" pluralises with -es', spokenVariants('brush').includes('brushes'), true);
+check('"go" is too short to inflect blindly', spokenVariants('go').includes('goed'), false);
+check('…but still offers "went"', spokenVariants('go').includes('went'), true);
+
+// Widening the grammar is only safe because every generated form stems back to
+// the word it came from — so a mis-hear between two of them still matches the
+// same command rather than a different one.
+for (const form of spokenVariants('drink')) {
+  check(`"${form}" still stems to drink`, voiceTokens(form), ['drink']);
+}
+
+// `spokenCount` reads these out of a transcript, so the grammar has to carry
+// them whatever the phrases are. Without them "I drank two waters" came back as
+// "waters" and matched nothing.
+check('counting words always available', ALWAYS_IN_VOCABULARY.includes('two'), true);
+check('…including "three"', ALWAYS_IN_VOCABULARY.includes('three'), true);
 
 console.log('\nSpecificity — a longer phrase beats a shorter one');
 const overlapping: VoiceCandidate[] = [

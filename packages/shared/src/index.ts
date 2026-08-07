@@ -67,9 +67,18 @@ export const createTaskSchema = z.object({
   /** 0 = none, 3 = urgent. */
   priority: z.number().int().min(0).max(3).default(0),
   dueAt: z.number().int().nullish(),
+  /** The date matters but the time of day doesn't. `dueAt` holds end of day. */
+  dueIsAllDay: z.boolean().default(false),
   scheduledAt: z.number().int().nullish(),
   estimateMinutes: z.number().int().positive().nullish(),
 });
+
+/** Local end of day, which is the instant an all-day task is due by. */
+export function endOfDayFor(at: number): number {
+  const day = new Date(at);
+  day.setHours(23, 59, 59, 999);
+  return day.getTime();
+}
 export type CreateTask = z.infer<typeof createTaskSchema>;
 export const updateTaskSchema = createTaskSchema.partial();
 
@@ -97,6 +106,11 @@ export const createHabitSchema = z.object({
   sortOrder: z.number().int().optional(),
   /** Nag every N minutes until the target is met; null to never interrupt. */
   reminderEveryMinutes: z.number().int().min(5).max(24 * 60).nullish(),
+  /**
+   * Minutes since local midnight before reminders may start. Null means as
+   * soon as the period begins.
+   */
+  reminderStartMinute: z.number().int().min(0).max(24 * 60 - 1).nullish(),
   /**
    * Things Blake might say to tick this off — "i drank water", "had a glass".
    * Empty means the habit can't be reached by voice at all, which is the
@@ -214,6 +228,59 @@ export const DEFAULT_SPEAKER_THRESHOLD = 0.55;
 /** How long after the wake word the command must arrive before we give up. */
 export const VOICE_COMMAND_TIMEOUT_MS = 6000;
 
+/**
+ * How long it keeps listening *after* answering, with no wake word needed.
+ *
+ * Separate from the command timeout above, which is how long it waits for the
+ * first thing after the wake word. This one is the conversation: having just
+ * replied, how long is it still Blake's turn.
+ *
+ * The right value is personal and the trade is real — longer means saying two
+ * things in a row without repeating the wake word, but also a microphone acting
+ * on stray speech for longer after every command. So it is a setting rather
+ * than a number someone picked once.
+ */
+export const DEFAULT_VOICE_FOLLOW_UP_SECONDS = 6;
+
+/**
+ * How long it waits after a *failed* attempt, as opposed to a successful one.
+ *
+ * A different question with a different answer. After it works, a follow-up is
+ * a second thing you might say. After it fails, you are repeating yourself —
+ * which takes longer, because you have to notice it failed first. So this
+ * defaults higher and is its own slider rather than sharing one.
+ *
+ * Bounded to a single retry per wake, in `voice.ts`. Reopening on every failure
+ * would let one misheard cough hold the microphone open indefinitely.
+ */
+export const DEFAULT_VOICE_RETRY_SECONDS = 8;
+
+/**
+ * Where the popup appears.
+ *
+ * `cursor` is the original behaviour — beside the pointer. The anchors put it
+ * in a fixed spot instead, which is what you want on a multi-monitor desk where
+ * the pointer is wherever you last clicked rather than where you are looking.
+ */
+export const overlayPlacements = [
+  'cursor',
+  'top-left', 'top', 'top-right',
+  'left', 'centre', 'right',
+  'bottom-left', 'bottom', 'bottom-right',
+] as const;
+export const overlayPlacementSchema = z.enum(overlayPlacements);
+export type OverlayPlacement = z.infer<typeof overlayPlacementSchema>;
+
+/**
+ * Built-in avatars are emoji, not image files.
+ *
+ * Windows draws them in colour from Segoe UI Emoji, so a gallery costs no
+ * checked-in binaries — the same reasoning that has the app icons generated at
+ * build time rather than committed.
+ */
+export const AVATAR_CHOICES = ['🤖', '🎧', '🐈', '🦉', '👾', '🫡', '🧠', '⭐'] as const;
+export const MAX_VOICE_FOLLOW_UP_SECONDS = 30;
+
 export const voiceCommandSchema = z.object({
   /** What was heard after the wake word. Never the raw audio — see voice.ts. */
   text: z.string().min(1).max(500),
@@ -249,6 +316,11 @@ export const voiceAgentReportSchema = z.object({
   device: z.string().max(200).nullish(),
   /** Everything Windows can see, so the settings screen can offer a choice. */
   devices: z.array(z.object({ id: z.number().int(), name: z.string().max(200) })).max(64).default([]),
+  /** Monitors, likewise — the overlay has to be put somewhere real. */
+  screens: z
+    .array(z.object({ id: z.string().max(200), label: z.string().max(200), primary: z.boolean() }))
+    .max(16)
+    .default([]),
   /** Why it isn't listening, when it isn't. */
   error: z.string().max(300).nullish(),
   /** Loudest RMS since the last report, 0-1. Drives the level meter. */
@@ -261,6 +333,14 @@ export const voiceAgentReportSchema = z.object({
   waitMs: z.number().int().min(0).max(25_000).optional(),
   /** Version the agent last saw; a mismatch answers straight away. */
   since: z.number().int().optional(),
+  /**
+   * Phrase words the speech model has no pronunciation for.
+   *
+   * These are silently dropped from the grammar, so a phrase containing one can
+   * never match. Reported so the screen can say which, rather than leaving a
+   * command that reads perfectly and never works.
+   */
+  unknownWords: z.array(z.string().max(60)).max(50).default([]),
   /** How many usable enrolment samples are in hand, while enrolling. */
   enrolSamples: z.number().int().min(0).max(200).optional(),
   /** How well the last sample agreed with the ones before it, 0-1. */
@@ -363,6 +443,19 @@ const FILLER = new Set([
   'was', 'is', 'am', 'been', 'be', 'get', 'got', 'for', 'so', 'then', 'already',
 ]);
 
+/**
+ * Words the grammar must always carry, whatever the phrases are.
+ *
+ * `spokenCount` reads these out of a transcript — but a grammar can only emit
+ * what it contains, so without them "I drank two waters" came back as "waters"
+ * and matched nothing at all. The counting feature was reading for words the
+ * recogniser had never been allowed to say.
+ */
+export const ALWAYS_IN_VOCABULARY = [
+  'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+  'twice', 'once', 'couple',
+] as const;
+
 /** Spoken counts, so "I drank two waters" adds two rather than one. */
 const NUMBER_WORDS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
@@ -377,6 +470,43 @@ function stem(word: string): string {
     if (word.length > suffix.length + 2 && word.endsWith(suffix)) return word.slice(0, -suffix.length);
   }
   return word;
+}
+
+/**
+ * The forms of a word someone might actually say.
+ *
+ * The matcher stems, so a stored "drink water" already covers "I drank some
+ * water" — but the *recogniser* cannot help: a grammar can only emit words it
+ * contains, and the stored phrase gives it "drink" and not "drank". Asked to
+ * transcribe "drank" it must pick something from the list anyway, and the thing
+ * it picks is arbitrary. On this machine "I drank water" came back as "resume
+ * water", which then matched a one-word "resume" phrase and paused the music.
+ *
+ * So the grammar is widened with the inflections, and the matcher stems them
+ * all back to the same token. Widening is safe precisely because of that: every
+ * generated form reduces to the word it came from, so a mis-hear between two of
+ * them still matches the same command. Forms the model does not know are
+ * dropped by Vosk harmlessly.
+ */
+export function spokenVariants(word: string): string[] {
+  const base = word.toLowerCase().trim();
+  if (!base) return [];
+
+  const forms = new Set<string>([base]);
+
+  // Irregular pasts, read backwards out of the table the stemmer uses.
+  for (const [past, root] of Object.entries(IRREGULAR)) {
+    if (root === base) forms.add(past);
+  }
+
+  // Too short to inflect sensibly — "go" would give "goed".
+  if (base.length > 2) {
+    forms.add(/(s|x|z|ch|sh)$/.test(base) ? `${base}es` : `${base}s`);
+    forms.add(base.endsWith('e') ? `${base}d` : `${base}ed`);
+    forms.add(base.endsWith('e') ? `${base.slice(0, -1)}ing` : `${base}ing`);
+  }
+
+  return [...forms];
 }
 
 /** Meaningful, stemmed words. The unit both sides of a match are reduced to. */
@@ -415,10 +545,45 @@ export function spokenCount(text: string): number {
  * already talk to may as well open a site or silence itself, and because a
  * "stop listening" phrase is the only way to switch an always-on microphone off
  * without walking to the keyboard — which is the one moment you most want it.
+ *
+ * `cancel` and `pause` are easy to confuse and are not the same thing. `cancel`
+ * abandons the sentence in progress — you woke it by accident, or changed your
+ * mind — and the wake word works again immediately. `pause` shuts the
+ * microphone for minutes or until switched back on. "Never mind" should not
+ * cost you the next five minutes of voice.
  */
-export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'pause'] as const;
+export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'media', 'pause', 'cancel'] as const;
 export const voiceCommandKindSchema = z.enum(voiceCommandKinds);
 export type VoiceCommandKind = z.infer<typeof voiceCommandKindSchema>;
+
+/**
+ * What a `media` command can do.
+ *
+ * These go out as the system media keys, so they reach whatever owns playback
+ * — Spotify, a browser tab, a game — without needing that window focused, which
+ * a `hotkey` command would.
+ */
+export const mediaActions = [
+  'playpause',
+  'next',
+  'previous',
+  'stop',
+  'volumeup',
+  'volumedown',
+  'mute',
+] as const;
+export const mediaActionSchema = z.enum(mediaActions);
+export type MediaAction = z.infer<typeof mediaActionSchema>;
+
+export const MEDIA_LABEL: Record<MediaAction, string> = {
+  playpause: 'Play / pause',
+  next: 'Skip forward',
+  previous: 'Skip back',
+  stop: 'Stop',
+  volumeup: 'Volume up',
+  volumedown: 'Volume down',
+  mute: 'Mute / unmute',
+};
 
 /** Modifiers a hotkey may carry, spelled the way people write them. */
 export const HOTKEY_MODIFIERS = ['ctrl', 'control', 'alt', 'shift', 'win', 'super', 'meta'] as const;
@@ -487,6 +652,14 @@ export const createVoiceCommandSchema = z
     pauseMinutes: z.number().int().min(1).max(24 * 60).nullish(),
     /** What to call it on screen. Falls back to something derived from target. */
     label: z.string().max(120).nullish(),
+    /**
+     * Whether the microphone stays open after this one fires.
+     *
+     * Chaining suits some commands and not others: two habits in a row is
+     * natural, while opening a site or pressing a hotkey means you have already
+     * turned your attention elsewhere and a live microphone is just exposure.
+     */
+    allowFollowUp: z.boolean().default(true),
     enabled: z.boolean().default(true),
     sortOrder: z.number().int().optional(),
   })
@@ -497,6 +670,9 @@ export const createVoiceCommandSchema = z
     if (value.kind === 'url' && !isOpenableUrl(value.target ?? '')) fail('needs a full http:// or https:// address');
     if (value.kind === 'hotkey' && !parseHotkey(value.target ?? '')) {
       fail('needs a key combination with at least one modifier, like ctrl+shift+m');
+    }
+    if (value.kind === 'media' && !(mediaActions as readonly string[]).includes(value.target ?? '')) {
+      fail('pick which media control this is');
     }
   });
 
@@ -738,6 +914,15 @@ export const updateSettingsSchema = z.object({
    * mean a different microphone tomorrow. Null follows the Windows default.
    */
   voiceInputDevice: z.string().max(200).nullish(),
+  /** Seconds to keep listening after answering. 0 switches follow-ups off. */
+  voiceFollowUpSeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
+  /** Seconds to keep listening after a miss. 0 means don't wait for a retry. */
+  voiceRetrySeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
+  overlayPlacement: overlayPlacementSchema.optional(),
+  /** Device name of the screen to anchor to; null follows the mouse. */
+  overlayScreen: z.string().max(200).nullish(),
+  /** An emoji, `file` for the uploaded one, or empty for no avatar. */
+  overlayAvatar: z.string().max(80).optional(),
 });
 
 /**

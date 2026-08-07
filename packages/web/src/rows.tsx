@@ -1,5 +1,5 @@
 import { api, type Habit, type Task } from './api';
-import { isOverdue, relative } from './format';
+import { dueLabel, isOverdue } from './format';
 import type { Settling } from './useSettling';
 
 /**
@@ -42,7 +42,7 @@ export function TaskRow({
           {task.dueAt && !done && (
             <div className={`meta ${isOverdue(task.dueAt) ? 'urgent' : ''}`}>
               {isOverdue(task.dueAt) ? 'overdue ' : 'due '}
-              {relative(task.dueAt)}
+              {dueLabel(task.dueAt, Boolean(task.dueIsAllDay))}
             </div>
           )}
         </div>

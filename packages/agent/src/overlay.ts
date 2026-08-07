@@ -30,6 +30,16 @@ const user32 = koffi.load('user32.dll');
 const gdi32 = koffi.load('gdi32.dll');
 const kernel32 = koffi.load('kernel32.dll');
 
+/**
+ * GDI+, purely to decode an image file.
+ *
+ * `LoadImageW` only understands BMP, and Blake will pick a PNG or a JPG. The
+ * alternative was decoding PNG in JavaScript — feasible, since node:zlib has
+ * the inflate half, but it would be a hundred lines that only ever handle one
+ * format. Eight GDI+ calls handle every format Windows knows.
+ */
+const gdiplus = koffi.load('gdiplus.dll');
+
 /* ------------------------------------------------------------------ */
 /* Structs                                                             */
 /* ------------------------------------------------------------------ */
@@ -80,6 +90,25 @@ const MONITORINFO = koffi.struct('OverlayMONITORINFO', {
   dwFlags: 'uint32_t',
 });
 
+/**
+ * The EX form, which carries `szDevice` — the `\.\DISPLAY1` name.
+ *
+ * A chosen screen is stored by that name rather than by index, for the same
+ * reason a microphone is: unplugging one renumbers the rest, and an index saved
+ * today quietly means a different monitor tomorrow.
+ */
+const MONITORINFOEXW = koffi.struct('OverlayMONITORINFOEXW', {
+  cbSize: 'uint32_t',
+  rcMonitor: RECT,
+  rcWork: RECT,
+  dwFlags: 'uint32_t',
+  szDevice: koffi.array('uint16_t', 32),
+});
+
+const MonitorEnumProto = koffi.proto(
+  'int __stdcall MonitorEnumProc(void *monitor, void *hdc, void *rect, intptr_t data)'
+);
+
 /* ------------------------------------------------------------------ */
 /* Functions                                                           */
 /* ------------------------------------------------------------------ */
@@ -114,6 +143,10 @@ const EndPaint = user32.func('int __stdcall EndPaint(void *hwnd, const void *ps)
 const FillRect = user32.func('int __stdcall FillRect(void *hdc, const void *rect, void *brush)');
 const MonitorFromPoint = user32.func('void * __stdcall MonitorFromPoint(int64_t pt, uint32_t flags)');
 const GetMonitorInfoW = user32.func('int __stdcall GetMonitorInfoW(void *monitor, _Out_ void *info)');
+const EnumDisplayMonitors = user32.func(
+  'int __stdcall EnumDisplayMonitors(void *hdc, const void *clip, void *callback, intptr_t data)'
+);
+const MonitorFromWindow = user32.func('void * __stdcall MonitorFromWindow(void *hwnd, uint32_t flags)');
 
 // DrawText lives in user32, not gdi32 — it is a layout helper built on top of
 // GDI rather than a GDI primitive, and looking for it in the obvious library
@@ -127,6 +160,33 @@ const DeleteObject = gdi32.func('int __stdcall DeleteObject(void *object)');
 const SelectObject = gdi32.func('void * __stdcall SelectObject(void *hdc, void *object)');
 const SetTextColor = gdi32.func('uint32_t __stdcall SetTextColor(void *hdc, uint32_t color)');
 const SetBkMode = gdi32.func('int __stdcall SetBkMode(void *hdc, int mode)');
+const CreateCompatibleDC = gdi32.func('void * __stdcall CreateCompatibleDC(void *hdc)');
+const DeleteDC = gdi32.func('int __stdcall DeleteDC(void *hdc)');
+const SetStretchBltMode = gdi32.func('int __stdcall SetStretchBltMode(void *hdc, int mode)');
+const StretchBlt = gdi32.func(
+  'int __stdcall StretchBlt(void *dst, int x, int y, int w, int h, void *src, int sx, int sy, int sw, int sh, uint32_t rop)'
+);
+
+const GdiplusStartupInput = koffi.struct('OverlayGdiplusStartupInput', {
+  GdiplusVersion: 'uint32_t',
+  DebugEventCallback: 'void *',
+  SuppressBackgroundThread: 'int32_t',
+  SuppressExternalCodecs: 'int32_t',
+});
+
+const GdiplusStartup = gdiplus.func(
+  'int __stdcall GdiplusStartup(_Out_ uintptr_t *token, const void *input, void *output)'
+);
+const GdipCreateBitmapFromFile = gdiplus.func(
+  'int __stdcall GdipCreateBitmapFromFile(const char16_t *file, _Out_ void **bitmap)'
+);
+const GdipCreateHBITMAPFromBitmap = gdiplus.func(
+  'int __stdcall GdipCreateHBITMAPFromBitmap(void *bitmap, _Out_ void **hbitmap, uint32_t background)'
+);
+const GdipGetImageWidth = gdiplus.func('int __stdcall GdipGetImageWidth(void *image, _Out_ uint32_t *width)');
+const GdipGetImageHeight = gdiplus.func('int __stdcall GdipGetImageHeight(void *image, _Out_ uint32_t *height)');
+const GdipDisposeImage = gdiplus.func('int __stdcall GdipDisposeImage(void *image)');
+
 const CreateFontW = gdi32.func(
   'void * __stdcall CreateFontW(int h, int w, int esc, int orient, int weight, uint32_t italic, uint32_t underline, uint32_t strikeout, uint32_t charset, uint32_t outPrec, uint32_t clipPrec, uint32_t quality, uint32_t pitch, const char16_t *face)'
 );
@@ -155,6 +215,8 @@ const DT_SINGLELINE = 0x0020;
 const DT_VCENTER = 0x0004;
 const DT_CENTER = 0x0001;
 const MONITOR_DEFAULTTONEAREST = 0x00000002;
+const HALFTONE = 4;
+const SRCCOPY = 0x00cc0020;
 const VK_ESCAPE = 0x1b;
 
 /** GDI wants 0x00BBGGRR, which is the reverse of how anyone writes a colour. */
@@ -179,6 +241,85 @@ const BUTTON_HEIGHT = 30;
 
 const wide = (value: string): string => value;
 
+export interface Screen {
+  /** `\\.\DISPLAY1`. Stable across restarts in a way an index is not. */
+  id: string;
+  /** What to call it on screen — "Screen 1 (2560×1440, primary)". */
+  label: string;
+  primary: boolean;
+  work: { left: number; top: number; right: number; bottom: number };
+}
+
+/** Anchors, plus `cursor` for the original behaviour. */
+export type Placement =
+  | 'cursor'
+  | 'top-left'
+  | 'top'
+  | 'top-right'
+  | 'left'
+  | 'centre'
+  | 'right'
+  | 'bottom-left'
+  | 'bottom'
+  | 'bottom-right';
+
+const MONITOR_PRIMARY = 0x1;
+
+/**
+ * Every screen Windows currently has, with its work area.
+ *
+ * The work area rather than the full bounds, so an anchored overlay sits above
+ * the taskbar instead of under it.
+ */
+export function listScreens(): Screen[] {
+  const screens: Screen[] = [];
+
+  const onMonitor = (monitor: unknown): number => {
+    const info = koffi.alloc(MONITORINFOEXW, 1);
+    koffi.encode(info, MONITORINFOEXW, {
+      cbSize: koffi.sizeof(MONITORINFOEXW),
+      rcMonitor: { left: 0, top: 0, right: 0, bottom: 0 },
+      rcWork: { left: 0, top: 0, right: 0, bottom: 0 },
+      dwFlags: 0,
+      szDevice: new Array(32).fill(0),
+    });
+
+    if (GetMonitorInfoW(monitor, info)) {
+      const decoded = koffi.decode(info, MONITORINFOEXW) as {
+        rcWork: Screen['work'];
+        rcMonitor: Screen['work'];
+        dwFlags: number;
+        szDevice: number[];
+      };
+      const end = decoded.szDevice.indexOf(0);
+      const id = String.fromCharCode(...decoded.szDevice.slice(0, end === -1 ? 32 : end));
+      const width = decoded.rcMonitor.right - decoded.rcMonitor.left;
+      const height = decoded.rcMonitor.bottom - decoded.rcMonitor.top;
+      const primary = (decoded.dwFlags & MONITOR_PRIMARY) !== 0;
+
+      screens.push({
+        id,
+        label: `Screen ${screens.length + 1} (${width}×${height}${primary ? ', primary' : ''})`,
+        primary,
+        work: decoded.rcWork,
+      });
+    }
+    return 1; // keep enumerating
+  };
+
+  // Registered and released per call: this runs when the settings screen asks,
+  // not on any hot path, and a permanently registered callback is one more
+  // thing to keep alive for no gain.
+  const callback = koffi.register(onMonitor, koffi.pointer(MonitorEnumProto));
+  try {
+    EnumDisplayMonitors(null, null, callback, 0);
+  } finally {
+    koffi.unregister(callback);
+  }
+
+  return screens;
+}
+
 export type Tone = 'normal' | 'muted' | 'good' | 'bad' | 'accent';
 
 export interface OverlayLine {
@@ -197,9 +338,109 @@ export interface OverlayContent {
   choices?: OverlayChoice[];
 }
 
+/**
+ * The face on the left of the popup.
+ *
+ * Either a short run of text — an emoji, which Windows draws in colour from
+ * Segoe UI Emoji and which needs no file at all — or an image on disk. Built-in
+ * options are emoji for exactly that reason: no binaries in the repo, matching
+ * how the app icons are generated rather than checked in.
+ */
+export interface Avatar {
+  kind: 'none' | 'emoji' | 'image';
+  /** The emoji itself, or an absolute path to the image. */
+  value: string;
+}
+
+const AVATAR_SIZE = 44;
+
+/** Loaded once per path and kept; decoding a PNG per popup would be silly. */
+let gdiplusToken: unknown = null;
+const imageCache = new Map<string, { bitmap: unknown; width: number; height: number } | null>();
+
+function startGdiplus(): boolean {
+  if (gdiplusToken) return true;
+  try {
+    const input = koffi.alloc(GdiplusStartupInput, 1);
+    koffi.encode(input, GdiplusStartupInput, {
+      GdiplusVersion: 1,
+      DebugEventCallback: null,
+      SuppressBackgroundThread: 0,
+      SuppressExternalCodecs: 0,
+    });
+    const token: unknown[] = [null];
+    if (GdiplusStartup(token, input, null) !== 0) return false;
+    gdiplusToken = token[0];
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decode an image to an HBITMAP, or null if it cannot be read.
+ *
+ * A failure is cached too: a path that is gone should cost one failed decode,
+ * not one per popup forever.
+ */
+function loadImage(path: string): { bitmap: unknown; width: number; height: number } | null {
+  if (imageCache.has(path)) return imageCache.get(path) ?? null;
+
+  let result: { bitmap: unknown; width: number; height: number } | null = null;
+
+  if (startGdiplus()) {
+    const out: unknown[] = [null];
+    if (GdipCreateBitmapFromFile(path, out) === 0 && out[0]) {
+      const image = out[0];
+      const width: number[] = [0];
+      const height: number[] = [0];
+      GdipGetImageWidth(image, width);
+      GdipGetImageHeight(image, height);
+
+      const hbitmap: unknown[] = [null];
+      // The background is what shows through transparency; matching the popup
+      // means a PNG with an alpha channel does not come out on a white square.
+      if (GdipCreateHBITMAPFromBitmap(image, hbitmap, 0xff1c1f27) === 0 && hbitmap[0]) {
+        result = { bitmap: hbitmap[0], width: width[0], height: height[0] };
+      }
+      GdipDisposeImage(image);
+    }
+  }
+
+  imageCache.set(path, result);
+  return result;
+}
+
+/**
+ * Could that picture be decoded, and at what size?
+ *
+ * Drawing failure is otherwise silent — `drawAvatar` just leaves the gutter
+ * empty — so this is how the agent can report "that file could not be read"
+ * rather than leaving Blake to wonder why his avatar never appears.
+ */
+export function probeAvatar(path: string): { width: number; height: number } | null {
+  const image = loadImage(path);
+  return image ? { width: image.width, height: image.height } : null;
+}
+
+/** Drop a cached image so a replaced file is picked up rather than remembered. */
+export function forgetAvatar(path: string): void {
+  const cached = imageCache.get(path);
+  if (cached) DeleteObject(cached.bitmap);
+  imageCache.delete(path);
+}
+
+export interface OverlayPlacement {
+  mode: Placement;
+  /** Device name of the screen to anchor to; null follows the mouse. */
+  screen: string | null;
+}
+
 export interface Overlay {
   show(content: OverlayContent): void;
   hide(): void;
+  /** Where to appear, and what face to wear. Applied on the next `show`. */
+  configure(next: { placement?: OverlayPlacement; avatar?: Avatar }): void;
   readonly visible: boolean;
   destroy(): void;
 }
@@ -221,6 +462,8 @@ export function createOverlay(handlers: {
   const className = 'EverythingVoiceOverlay';
 
   let content: OverlayContent = { title: '' };
+  let placement: OverlayPlacement = { mode: 'cursor', screen: null };
+  let avatar: Avatar = { kind: 'none', value: '' };
   let buttons: { id: string; top: number; bottom: number }[] = [];
   let shown = false;
   let destroyed = false;
@@ -307,6 +550,9 @@ export function createOverlay(handlers: {
 
   const titleFont = font(16, 600);
   const bodyFont = font(15, 400);
+  // Segoe UI Emoji is what makes a built-in avatar a colour glyph rather than
+  // an outline, and it costs nothing to ship.
+  const avatarFont = CreateFontW(-32, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, wide('Segoe UI Emoji'));
 
   const rectAt = (left: number, top: number, right: number, bottom: number): unknown => {
     const r = koffi.alloc(RECT, 1);
@@ -344,6 +590,12 @@ export function createOverlay(handlers: {
 
     SetBkMode(hdc, TRANSPARENT);
 
+    // The avatar sits in the left gutter; everything else shifts right by its
+    // width so the two never overlap on a long title.
+    const gutter = avatar.kind === 'none' ? 0 : AVATAR_SIZE + 12;
+    if (gutter > 0) drawAvatar(hdc, PADDING, PADDING);
+    const textLeft = PADDING + gutter;
+
     let y = PADDING;
 
     SelectObject(hdc, titleFont);
@@ -352,7 +604,7 @@ export function createOverlay(handlers: {
       hdc,
       wide(content.title),
       -1,
-      rectAt(PADDING, y, client.right - PADDING, y + LINE_HEIGHT),
+      rectAt(textLeft, y, client.right - PADDING, y + LINE_HEIGHT),
       DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS
     );
     y += LINE_HEIGHT + 4;
@@ -364,7 +616,7 @@ export function createOverlay(handlers: {
         hdc,
         wide(line.text),
         -1,
-        rectAt(PADDING, y, client.right - PADDING, y + LINE_HEIGHT * 2),
+        rectAt(textLeft, y, client.right - PADDING, y + LINE_HEIGHT * 2),
         DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS
       );
       y += LINE_HEIGHT * (line.text.length > 44 ? 2 : 1);
@@ -390,35 +642,78 @@ export function createOverlay(handlers: {
   function heightFor(next: OverlayContent): number {
     const lines = (next.lines ?? []).reduce((total, line) => total + (line.text.length > 44 ? 2 : 1), 0);
     const choices = (next.choices ?? []).length;
-    return PADDING * 2 + LINE_HEIGHT + 4 + lines * LINE_HEIGHT + choices * (BUTTON_HEIGHT + 6);
+    const text = PADDING * 2 + LINE_HEIGHT + 4 + lines * LINE_HEIGHT + choices * (BUTTON_HEIGHT + 6);
+    // A one-line result beside a 44px face would otherwise clip the face.
+    return avatar.kind === 'none' ? text : Math.max(text, PADDING * 2 + AVATAR_SIZE);
   }
 
-  /** Beside the cursor, nudged back on screen if that would fall off an edge. */
-  function place(height: number): void {
+  /** Where the mouse is, and which work area it falls in. */
+  function cursorScreen(): { cursor: { x: number; y: number }; work: Screen['work'] | null } {
     const point = koffi.alloc(POINT, 1);
     GetCursorPos(point);
     const cursor = koffi.decode(point, POINT) as { x: number; y: number };
 
-    let x = cursor.x + 16;
-    let y = cursor.y + 18;
-
     const packed = BigInt(cursor.x & 0xffffffff) | (BigInt(cursor.y & 0xffffffff) << 32n);
     const monitor = MonitorFromPoint(packed, MONITOR_DEFAULTTONEAREST);
-    if (monitor) {
-      const info = koffi.alloc(MONITORINFO, 1);
-      koffi.encode(info, MONITORINFO, {
-        cbSize: koffi.sizeof(MONITORINFO),
-        rcMonitor: { left: 0, top: 0, right: 0, bottom: 0 },
-        rcWork: { left: 0, top: 0, right: 0, bottom: 0 },
-        dwFlags: 0,
-      });
-      if (GetMonitorInfoW(monitor, info)) {
-        const work = (koffi.decode(info, MONITORINFO) as { rcWork: { left: number; top: number; right: number; bottom: number } }).rcWork;
+    if (!monitor) return { cursor, work: null };
+
+    const info = koffi.alloc(MONITORINFO, 1);
+    koffi.encode(info, MONITORINFO, {
+      cbSize: koffi.sizeof(MONITORINFO),
+      rcMonitor: { left: 0, top: 0, right: 0, bottom: 0 },
+      rcWork: { left: 0, top: 0, right: 0, bottom: 0 },
+      dwFlags: 0,
+    });
+    if (!GetMonitorInfoW(monitor, info)) return { cursor, work: null };
+
+    return { cursor, work: (koffi.decode(info, MONITORINFO) as { rcWork: Screen['work'] }).rcWork };
+  }
+
+  const MARGIN = 24;
+
+  /**
+   * Put the window where Blake asked for it.
+   *
+   * `cursor` keeps the original behaviour — beside the pointer, flipped back
+   * on-screen rather than clipped at an edge. Everything else anchors to a work
+   * area: either a named screen, or whichever one the mouse is on, which is the
+   * useful default for more than one monitor because it follows attention
+   * without following the pointer around.
+   */
+  function place(height: number): void {
+    const { cursor, work: cursorWork } = cursorScreen();
+
+    // A named screen that has been unplugged falls back to the mouse's, rather
+    // than putting the window somewhere that no longer exists.
+    const named = placement.screen ? listScreens().find((s) => s.id === placement.screen) : undefined;
+    const work = named?.work ?? cursorWork;
+
+    let x: number;
+    let y: number;
+
+    if (placement.mode === 'cursor' || !work) {
+      x = cursor.x + 16;
+      y = cursor.y + 18;
+      if (work) {
         if (x + WIDTH > work.right) x = cursor.x - WIDTH - 16;
         if (y + height > work.bottom) y = cursor.y - height - 18;
-        x = Math.max(work.left, x);
-        y = Math.max(work.top, y);
       }
+    } else {
+      const mode = placement.mode;
+      const left = work.left + MARGIN;
+      const right = work.right - WIDTH - MARGIN;
+      const middleX = Math.round((work.left + work.right - WIDTH) / 2);
+      const top = work.top + MARGIN;
+      const bottom = work.bottom - height - MARGIN;
+      const middleY = Math.round((work.top + work.bottom - height) / 2);
+
+      x = mode.endsWith('-left') || mode === 'left' ? left : mode.endsWith('-right') || mode === 'right' ? right : middleX;
+      y = mode.startsWith('top') ? top : mode.startsWith('bottom') ? bottom : middleY;
+    }
+
+    if (work) {
+      x = Math.min(Math.max(work.left, x), Math.max(work.left, work.right - WIDTH));
+      y = Math.min(Math.max(work.top, y), Math.max(work.top, work.bottom - height));
     }
 
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, WIDTH, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -447,9 +742,36 @@ export function createOverlay(handlers: {
     timer.unref();
   }
 
+  /** Emoji as text, or an image blitted into a square. */
+  function drawAvatar(hdc: unknown, x: number, y: number): void {
+    if (avatar.kind === 'emoji') {
+      SelectObject(hdc, avatarFont);
+      SetTextColor(hdc, COLOR.text);
+      DrawTextW(hdc, wide(avatar.value), -1, rectAt(x, y, x + AVATAR_SIZE, y + AVATAR_SIZE), DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+      return;
+    }
+
+    if (avatar.kind !== 'image') return;
+    const image = loadImage(avatar.value);
+    if (!image) return;
+
+    const memory = CreateCompatibleDC(hdc);
+    const previous = SelectObject(memory, image.bitmap);
+    // HALFTONE, so a large photo scaled into 44px does not come out jagged.
+    SetStretchBltMode(hdc, HALFTONE);
+    StretchBlt(hdc, x, y, AVATAR_SIZE, AVATAR_SIZE, memory, 0, 0, image.width, image.height, SRCCOPY);
+    SelectObject(memory, previous);
+    DeleteDC(memory);
+  }
+
   return {
     get visible() {
       return shown;
+    },
+
+    configure(next): void {
+      if (next.placement) placement = next.placement;
+      if (next.avatar) avatar = next.avatar;
     },
 
     show(next: OverlayContent): void {
@@ -489,7 +811,9 @@ export function createOverlay(handlers: {
       DestroyWindow(hwnd);
       // Fonts and brushes are GDI handles, and leaking them across a long-lived
       // process is exactly the sort of thing that has no symptom until it does.
-      for (const handle of [titleFont, bodyFont, background, borderBrush, buttonBrush]) DeleteObject(handle);
+      for (const handle of [titleFont, bodyFont, avatarFont, background, borderBrush, buttonBrush]) DeleteObject(handle);
+      for (const cached of imageCache.values()) if (cached) DeleteObject(cached.bitmap);
+      imageCache.clear();
       koffi.unregister(wndProc);
     },
   };

@@ -20,10 +20,14 @@ import { ServerClient, ServerUnreachable, type VoiceOutcome } from './client.js'
 import { agentConfig, assertConfigured } from './config.js';
 import { registerExtraGames } from './games.js';
 import { showToast } from './notify.js';
-import { openUrl, pressKeys } from './actions.js';
-import { createOverlay, type Overlay } from './overlay.js';
+import { writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { openUrl, pressKeys, pressMediaKey } from './actions.js';
+import { mediaIsPlaying } from './audio.js';
+import { createOverlay, listScreens, forgetAvatar, type Avatar, type Overlay, type Placement } from './overlay.js';
 import { createVoiceListener, type VoiceConfig } from './voice.js';
-import { VoskUnavailable } from './vosk.js';
+import { unknownWords, VoskUnavailable } from './vosk.js';
 
 assertConfigured();
 registerExtraGames(agentConfig.extraGames);
@@ -168,9 +172,32 @@ const TONE_FOR: Record<string, 'good' | 'bad' | 'muted'> = {
   opened: 'good',
   'keys-sent': 'good',
   paused: 'muted',
+  cancelled: 'muted',
   'captured-as-note': 'muted',
   'no-match': 'bad',
 };
+
+/**
+ * Whether a media command is allowed to fire right now.
+ *
+ * The whole point of the guard: with an always-on microphone, a mis-heard word
+ * skipping a track in a silent room is worse than most misfires because there
+ * is nothing to notice. If the output meter says nothing has played, the
+ * command does not go out.
+ *
+ * Checked here rather than on the server because only this process can see the
+ * meter — and it is the same reading `attention.ts` already takes, so it costs
+ * nothing extra.
+ */
+function mediaAllowed(): boolean {
+  try {
+    return mediaIsPlaying();
+  } catch {
+    // No sound card, or COM refused. An unknown answer is not a yes for
+    // something that presses keys.
+    return false;
+  }
+}
 
 function performAction(result: VoiceOutcome): void {
   // Anything that touches *this machine* comes back as an instruction; the
@@ -180,6 +207,22 @@ function performAction(result: VoiceOutcome): void {
   try {
     if (result.action.do === 'open-url') openUrl(result.action.url);
     if (result.action.do === 'press-keys') pressKeys(result.action.keys);
+
+    if (result.action.do === 'media') {
+      if (!mediaAllowed()) {
+        console.log(`[${clock()}] media ignored — nothing is playing`);
+        ui()?.show({
+          title: 'Nothing is playing',
+          lines: [{ text: `so "${result.text}" was ignored`, tone: 'muted' }],
+        });
+        hideOverlay(OVERLAY_RESULT_MS);
+        return;
+      }
+      pressMediaKey(result.action.action);
+    }
+    // Drop whatever was in progress, but leave the microphone open — the wake
+    // word works again straight away, which is the whole difference from pause.
+    if (result.action.do === 'cancel') voice.cancelExchange();
     // A pause needs nothing here: the server has recorded it, and the next
     // long-poll answer reports voice as disabled, which closes the microphone.
   } catch (error) {
@@ -208,11 +251,33 @@ function showResult(result: VoiceOutcome): void {
     // which matters most for the ones that changed nothing.
     lines: [{ text: `heard "${result.text}"`, tone: TONE_FOR[result.outcome] ?? 'muted' }],
   });
-  hideOverlay(OVERLAY_RESULT_MS);
 
-  // Having just answered, it is still Blake's turn. A pause is the exception:
-  // he asked for silence, so carrying on listening would be perverse.
-  if (result.outcome !== 'paused') voice.listenAgain();
+  /*
+   * How long to stay open depends on what just happened.
+   *
+   *  - a hit: Blake may add a second thing, so the follow-up window — unless
+   *    this command asked not to, which is what `allowFollowUp` is for.
+   *  - a miss: he is about to repeat himself, which takes longer. Once only.
+   *  - a pause: he asked for silence, so carrying on would be perverse.
+   */
+  const failed = result.outcome === 'no-match';
+  const followUp =
+    result.outcome === 'paused' || result.outcome === 'ambiguous' || result.outcome === 'cancelled'
+      ? 0
+      : failed
+        ? retryUsed
+          ? 0
+          : retryMs
+        : result.allowFollowUp === false
+          ? 0
+          : followUpMs;
+
+  if (failed) retryUsed = true;
+  if (followUp > 0) voice.listenAgain(followUp);
+
+  // The window stays up for as long as it is still listening, so "it is waiting
+  // for me" and "it has finished" are never the same picture.
+  hideOverlay(result.outcome === 'cancelled' ? 900 : Math.max(OVERLAY_RESULT_MS, followUp));
 }
 
 async function chooseCommand(id: string): Promise<void> {
@@ -255,6 +320,8 @@ voice.on('error', (error: Error) => {
 voice.on('wake', ({ speakerScore }: { speakerScore: number | null }) => {
   const score = speakerScore === null ? '' : ` (voice match ${(speakerScore * 100).toFixed(0)}%)`;
   console.log(`[${clock()}] listening…${score}`);
+  // A fresh wake is a new exchange, so the one retry is available again.
+  retryUsed = false;
   ui()?.show({ title: 'Listening…', lines: [{ text: 'go ahead', tone: 'muted' }] });
   // No auto-hide: the result replaces this, and `missed` covers trailing off.
 });
@@ -262,10 +329,19 @@ voice.on('wake', ({ speakerScore }: { speakerScore: number | null }) => {
 // Woke, but nothing usable followed — take the window away rather than leaving
 // "Listening…" on screen for a question that was never asked.
 voice.on('missed', () => {
-  if (overlay?.visible) {
-    ui()?.show({ title: "Didn't catch that", lines: [{ text: 'say it again', tone: 'muted' }] });
-    hideOverlay(2000);
-  }
+  if (!overlay?.visible) return;
+
+  // Woke but caught nothing — the same failure as a no-match, and it gets the
+  // same one retry rather than closing the moment he pauses to think.
+  const retry = retryUsed ? 0 : retryMs;
+  retryUsed = true;
+
+  ui()?.show({
+    title: "Didn't catch that",
+    lines: [{ text: retry > 0 ? 'say it again' : 'say the wake word to try again', tone: 'muted' }],
+  });
+  if (retry > 0) voice.listenAgain(retry);
+  hideOverlay(Math.max(2000, retry));
 });
 
 // During a test the screen is showing what the agent hears, so it is posted the
@@ -375,6 +451,91 @@ const VOICE_RETRY_MS = 15_000;
 
 let voiceVersion = 0;
 let appliedVoice = '';
+
+/**
+ * Phrase words the model cannot pronounce, recomputed when the vocabulary
+ * changes. Sent on the next heartbeat so the Voice screen can name them.
+ */
+let missingWords: string[] = [];
+let missingCheckedFor = '';
+/** Mirrored from settings so `showResult` can size the overlay's stay. */
+let followUpMs = 0;
+/** The same, for a miss rather than a hit. */
+let retryMs = 0;
+
+/**
+ * Whether the retry after a miss has already been spent this exchange.
+ *
+ * Reopening on *every* failure would let one misheard cough hold the microphone
+ * open forever: nothing said, retry, nothing said, retry. One retry per wake,
+ * reset when the wake word actually fires again.
+ */
+let retryUsed = false;
+
+/**
+ * The screen list is read live rather than cached.
+ *
+ * Monitors get plugged in, and the whole reason the settings screen shows a
+ * list is that it changes — one captured at startup is the one guaranteed to be
+ * wrong. Cheap enough: it runs on the voice heartbeat, not per frame.
+ */
+function screensFor(): { id: string; label: string; primary: boolean }[] {
+  try {
+    return listScreens().map(({ id, label, primary }) => ({ id, label, primary }));
+  } catch {
+    // A session with no desktop. An empty list says that honestly.
+    return [];
+  }
+}
+
+/** Where the downloaded avatar lands, and which version is already there. */
+const avatarFile = resolve(tmpdir(), 'everything-voice-avatar');
+let avatarAt = 0;
+let overlayLook = '';
+
+/**
+ * Push placement and avatar into the window, downloading the picture if it is
+ * new. Only does work when something actually changed — this runs on every
+ * heartbeat, and re-decoding a PNG twice a minute forever would be silly.
+ */
+async function applyOverlayLook(answer: {
+  overlayPlacement?: string;
+  overlayScreen?: string | null;
+  overlayAvatar?: string;
+  avatarVersion?: number;
+}): Promise<void> {
+  const signature = `${answer.overlayPlacement}:${answer.overlayScreen}:${answer.overlayAvatar}:${answer.avatarVersion}`;
+  if (signature === overlayLook) return;
+  overlayLook = signature;
+
+  let avatar: Avatar = { kind: 'none', value: '' };
+
+  if (answer.overlayAvatar === 'file') {
+    try {
+      if ((answer.avatarVersion ?? 0) !== avatarAt) {
+        const bytes = await client.avatarImage();
+        await writeFile(avatarFile, bytes);
+        avatarAt = answer.avatarVersion ?? 0;
+        // The path is reused, so the decoded copy has to be thrown away or the
+        // old picture would keep being drawn from cache.
+        forgetAvatar(avatarFile);
+      }
+      avatar = { kind: 'image', value: avatarFile };
+    } catch (error) {
+      console.error(`[${clock()}] could not fetch the avatar: ${(error as Error).message}`);
+    }
+  } else if (answer.overlayAvatar) {
+    avatar = { kind: 'emoji', value: answer.overlayAvatar };
+  }
+
+  ui()?.configure({
+    placement: {
+      mode: (answer.overlayPlacement ?? 'cursor') as Placement,
+      screen: answer.overlayScreen ?? null,
+    },
+    avatar,
+  });
+}
 let voiceLoopStopped = false;
 
 async function voiceTick(): Promise<number> {
@@ -386,6 +547,8 @@ async function voiceTick(): Promise<number> {
     listening: status.listening,
     device: status.device,
     devices: status.devices,
+    screens: screensFor(),
+    unknownWords: missingWords,
     error: status.error,
     peak: status.peak,
     // While testing or enrolling the screen wants live progress, so ask now.
@@ -396,12 +559,35 @@ async function voiceTick(): Promise<number> {
   });
 
   voiceVersion = answer.version;
+  followUpMs = answer.followUpMs ?? 0;
+  await applyOverlayLook(answer);
 
   // The vocabulary is the expensive half of the payload and only changes when a
   // phrase does, so it is fetched only when there is something to listen for.
   // Rebuilding the recognisers is separately guarded by its own `version`.
   if (answer.enabled) {
-    voice.configure({ ...(await client.voiceConfig()), ...answer });
+    const full = await client.voiceConfig();
+
+    /*
+     * Which phrase words the model cannot pronounce.
+     *
+     * Only when the vocabulary actually changed, and only while voice is on:
+     * the lookup needs the speech model loaded, and loading 130MB to answer a
+     * question nobody asked would be a poor trade.
+     */
+    if (full.version !== missingCheckedFor) {
+      missingCheckedFor = full.version;
+      try {
+        missingWords = unknownWords(full.checkWords ?? full.vocabulary);
+        if (missingWords.length > 0) {
+          console.log(`[${clock()}] cannot be recognised: ${missingWords.join(', ')}`);
+        }
+      } catch {
+        missingWords = [];
+      }
+    }
+
+    voice.configure({ ...full, ...answer });
   } else {
     voice.configure({ ...EMPTY_VOICE_CONFIG, wakeWord: answer.wakeWord ?? '' });
   }

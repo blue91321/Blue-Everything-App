@@ -3,11 +3,29 @@ import type { FastifyInstance } from 'fastify';
 import {
   createProjectSchema,
   createTaskSchema,
+  endOfDayFor,
   updateProjectSchema,
   updateTaskSchema,
 } from '@everything/shared';
 import { db } from '../db/client.js';
 import { projects, tasks } from '../db/schema.js';
+
+/**
+ * Pin an all-day due date to the end of that day.
+ *
+ * The client sends whatever instant the date picker produced — usually local
+ * midnight. Storing that would make the task overdue for the whole day it is
+ * due on. Normalising here rather than in the client means every caller,
+ * including voice and the API, gets the same answer.
+ */
+function normaliseDue(body: { dueAt?: number | null; dueIsAllDay?: boolean }) {
+  if (body.dueAt === undefined) return {};
+  if (body.dueAt === null) return { dueAt: null, dueIsAllDay: 0 };
+  return {
+    dueAt: body.dueIsAllDay ? endOfDayFor(body.dueAt) : body.dueAt,
+    dueIsAllDay: body.dueIsAllDay ? 1 : 0,
+  };
+}
 
 export async function taskRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/tasks', async (request) => {
@@ -32,7 +50,10 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/api/tasks', async (request, reply) => {
     const body = createTaskSchema.parse(request.body);
-    const [created] = await db.insert(tasks).values(body).returning();
+    const [created] = await db
+      .insert(tasks)
+      .values({ ...body, ...normaliseDue(body) })
+      .returning();
     return reply.code(201).send(created);
   });
 
@@ -46,7 +67,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
 
     const [updated] = await db
       .update(tasks)
-      .set({ ...body, ...(completedAt !== undefined ? { completedAt } : {}) })
+      .set({ ...body, ...normaliseDue(body), ...(completedAt !== undefined ? { completedAt } : {}) })
       .where(eq(tasks.id, id))
       .returning();
 

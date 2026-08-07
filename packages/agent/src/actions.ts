@@ -22,7 +22,7 @@
  */
 import { spawn } from 'node:child_process';
 import koffi from 'koffi';
-import { isOpenableUrl, parseHotkey } from '@everything/shared';
+import { isOpenableUrl, parseHotkey, type MediaAction } from '@everything/shared';
 
 const user32 = koffi.load('user32.dll');
 
@@ -50,7 +50,42 @@ for (let i = 0; i < 26; i++) VK[String.fromCharCode(97 + i)] = 0x41 + i; // a-z
 for (let i = 0; i < 10; i++) VK[String(i)] = 0x30 + i; // 0-9
 for (let i = 1; i <= 12; i++) VK[`f${i}`] = 0x6f + i; // F1-F12
 
+/**
+ * The system media keys.
+ *
+ * Chosen over a `hotkey` command because these are handled by Windows itself
+ * and routed to whatever owns playback — the media app does not need to be
+ * focused, which is the entire point when the thing playing is behind a game.
+ */
+const MEDIA_VK: Record<MediaAction, number> = {
+  playpause: 0xb3,
+  next: 0xb0,
+  previous: 0xb1,
+  stop: 0xb2,
+  volumeup: 0xaf,
+  volumedown: 0xae,
+  mute: 0xad,
+};
+
+/**
+ * One press moves Windows' volume by about two percent, which is not what
+ * anyone means by "volume up". Five is a step you can actually hear.
+ */
+const VOLUME_PRESSES = 5;
+
 export class ActionRefused extends Error {}
+
+/** Press a media key. Global — no window needs focus. */
+export function pressMediaKey(action: string): void {
+  const code = MEDIA_VK[action as MediaAction];
+  if (code === undefined) throw new ActionRefused(`"${action}" is not a media control`);
+
+  const presses = action === 'volumeup' || action === 'volumedown' ? VOLUME_PRESSES : 1;
+  for (let i = 0; i < presses; i++) {
+    keybd_event(code, 0, 0, 0);
+    keybd_event(code, 0, KEYEVENTF_KEYUP, 0);
+  }
+}
 
 /**
  * Press a combination into whatever window is focused.

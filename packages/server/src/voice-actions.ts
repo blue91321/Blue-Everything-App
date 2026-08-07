@@ -14,11 +14,15 @@
  */
 import { and, asc, eq } from 'drizzle-orm';
 import {
+  ALWAYS_IN_VOCABULARY,
+  MEDIA_LABEL,
   matchVoiceCommand,
   matchVoiceCommandLoosely,
+  spokenVariants,
   parseHotkey,
   remainderAfterPhrase,
   spokenCount,
+  type MediaAction,
   type VoiceCandidate,
   type VoiceCommandKind,
 } from '@everything/shared';
@@ -31,7 +35,11 @@ import type { Cadence } from '@everything/shared';
 export type VoiceAction =
   | { do: 'open-url'; url: string }
   | { do: 'press-keys'; keys: string }
-  | { do: 'pause'; untilMs: number | null };
+  /** A system media key. The agent refuses it when nothing is playing. */
+  | { do: 'media'; action: string }
+  | { do: 'pause'; untilMs: number | null }
+  /** Drop the sentence in progress. The microphone stays on. */
+  | { do: 'cancel' };
 
 export interface VoiceOutcome {
   outcome:
@@ -39,7 +47,9 @@ export interface VoiceOutcome {
     | 'note-added'
     | 'opened'
     | 'keys-sent'
+    | 'media-sent'
     | 'paused'
+    | 'cancelled'
     | 'captured-as-note'
     | 'ambiguous'
     | 'no-match';
@@ -49,6 +59,8 @@ export interface VoiceOutcome {
   action?: VoiceAction;
   /** When more than one command matched equally well, so the agent can ask. */
   choices?: { id: string; label: string }[];
+  /** Whether this command lets the microphone stay open afterwards. */
+  allowFollowUp?: boolean;
   habitId?: string;
   habitName?: string;
   doneThisPeriod?: number;
@@ -74,6 +86,8 @@ export interface LoadedCommand {
   target: string | null;
   pauseMinutes: number | null;
   label: string | null;
+  /** Whether the microphone stays open after this fires. */
+  allowFollowUp: boolean;
 }
 
 export async function loadCommands(): Promise<LoadedCommand[]> {
@@ -90,11 +104,12 @@ export async function loadCommands(): Promise<LoadedCommand[]> {
     target: row.target,
     pauseMinutes: row.pauseMinutes,
     label: row.label,
+    allowFollowUp: Boolean(row.allowFollowUp),
   }));
 }
 
-/** Every word any command can contain — the recogniser's whole vocabulary. */
-export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): string[] {
+/** The literal words of every phrase, plus the wake word. What to check exists. */
+export function phraseWordsFor(commands: LoadedCommand[], wakeWord: string): string[] {
   const words = new Set<string>();
   for (const word of wakeWord.toLowerCase().split(/\s+/)) if (word) words.add(word);
 
@@ -102,6 +117,35 @@ export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): stri
     for (const phrase of command.phrases) {
       for (const word of phrase.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)) {
         if (word) words.add(word);
+      }
+    }
+  }
+
+  return [...words].sort();
+}
+
+/**
+ * The recogniser's whole vocabulary — phrase words *and their inflections*.
+ *
+ * The literal words alone are not enough: a grammar can only emit what it
+ * contains, so a stored "drink water" left the recogniser unable to say
+ * "drank" and it substituted whatever was nearest. See `spokenVariants`.
+ *
+ * The wake word is left unexpanded. It is a name, and "jarvises" would only
+ * widen the one grammar that most needs to stay narrow.
+ */
+export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): string[] {
+  const words = new Set<string>();
+  for (const word of wakeWord.toLowerCase().split(/\s+/)) if (word) words.add(word);
+
+  // The counting words, always — `spokenCount` reads them and the recogniser
+  // cannot emit what it was never given.
+  for (const word of ALWAYS_IN_VOCABULARY) words.add(word);
+
+  for (const command of commands) {
+    for (const phrase of command.phrases) {
+      for (const word of phrase.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)) {
+        for (const form of spokenVariants(word)) words.add(form);
       }
     }
   }
@@ -196,7 +240,7 @@ export async function resolveVoiceCommand(
   }
 
   const command = commands.find((c) => c.id === match.id)!;
-  const result = await runCommand(command, text, match.phrase, wakeWord);
+  const result = { ...(await runCommand(command, text, match.phrase, wakeWord)), allowFollowUp: command.allowFollowUp };
 
   // Say so when the last word was never heard. Wrong data with nothing to
   // prompt going to look for it is the thing to fear here, and this is the
@@ -213,10 +257,14 @@ export async function labelFor(command: LoadedCommand): Promise<string> {
       return `open ${command.target}`;
     case 'hotkey':
       return `press ${command.target}`;
+    case 'media':
+      return MEDIA_LABEL[(command.target ?? '') as MediaAction] ?? 'media control';
     case 'note':
       return 'make a note';
     case 'pause':
       return command.pauseMinutes ? `stop listening for ${command.pauseMinutes}m` : 'stop listening';
+    case 'cancel':
+      return 'never mind';
   }
 }
 
@@ -279,6 +327,21 @@ export async function runCommand(
         action: { do: 'press-keys', keys: command.target ?? '' },
         say: `Pressed ${command.target}`,
       };
+
+    case 'media':
+      // Whether it actually fires is the agent's call: only it can see the
+      // output meter, and "is anything playing" is the guard on this kind.
+      return {
+        outcome: 'media-sent',
+        text,
+        action: { do: 'media', action: command.target ?? '' },
+        say: MEDIA_LABEL[(command.target ?? '') as MediaAction] ?? 'Media',
+      };
+
+    case 'cancel':
+      // Nothing to write: this ends an exchange rather than changing anything.
+      // The agent closes the follow-up window and takes the popup away.
+      return { outcome: 'cancelled', text, action: { do: 'cancel' }, say: 'Never mind' };
 
     case 'pause': {
       // -1 is "until switched back on by hand", which has to survive a restart

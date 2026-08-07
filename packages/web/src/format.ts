@@ -42,3 +42,32 @@ export function toLocalInputValue(at: number): string {
   const d = new Date(at - new Date().getTimezoneOffset() * 60_000);
   return d.toISOString().slice(0, 16);
 }
+
+/** `YYYY-MM-DD` for a date input, in local time. */
+export const toDateInputValue = (at: number): string => toLocalInputValue(at).slice(0, 10);
+
+/** `HH:mm` for a time input, in local time. */
+export const toTimeInputValue = (at: number): string => toLocalInputValue(at).slice(11, 16);
+
+/**
+ * How a due date reads.
+ *
+ * An all-day task must never say "due in 6h" — the time is an implementation
+ * detail of storing a date as an instant, and surfacing it makes the app look
+ * like it invented a deadline Blake never set.
+ */
+export function dueLabel(at: number, allDay: boolean): string {
+  if (!allDay) return relative(at);
+
+  const day = new Date(at);
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  const days = Math.round((new Date(day).setHours(0, 0, 0, 0) - midnight.getTime()) / 86_400_000);
+
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days === -1) return 'yesterday';
+  if (days > 1 && days < 7) return day.toLocaleDateString(undefined, { weekday: 'long' });
+  if (days < 0) return `${Math.abs(days)} days ago`;
+  return day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}

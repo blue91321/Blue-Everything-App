@@ -56,13 +56,24 @@ export interface VoiceConfig {
   speakerThreshold: number;
   voiceprint: number[] | null;
   vocabulary: string[];
+  /** The literal phrase words, for the can-this-be-heard check. */
+  checkWords?: string[];
   version: string;
   /** Device name to listen on; null follows the Windows default. */
   inputDevice?: string | null;
+  /** Where the popup goes, and what face it wears. Passed straight through. */
+  overlayPlacement?: string;
+  overlayScreen?: string | null;
+  overlayAvatar?: string;
+  avatarVersion?: number;
   /** While in the future, report what is heard instead of acting on it. */
   testUntil?: number;
   /** While in the future, collect wake-word samples instead of obeying them. */
   enrolUntil?: number;
+  /** How long to reopen after a miss. Read by index.ts, not used here. */
+  retryMs?: number;
+  /** How long to keep listening after answering. 0 switches follow-ups off. */
+  followUpMs?: number;
 }
 
 /** What the listener can say about itself, for the Voice screen. */
@@ -133,13 +144,24 @@ export interface VoiceListener extends EventEmitter {
   /** Current state for the Voice screen. Reading it resets the peak meter. */
   status(): VoiceStatus;
   /**
-   * Keep listening for one more command *without* the wake word.
+   * Keep listening for one more command *without* the wake word, for `ms`.
    *
    * What makes the overlay a conversation rather than a receipt: having just
    * answered, it is still Blake's turn, and making him say "hey jarvis" again
    * to add a second thing would be the whole point missed.
+   *
+   * The duration is passed in rather than read from config because it differs
+   * by situation — a retry after a miss is not the same wait as a follow-up
+   * after a hit, and only the caller knows which just happened.
    */
-  listenAgain(): void;
+  listenAgain(ms: number): void;
+  /**
+   * Abandon the sentence in progress and go back to waiting for the wake word.
+   *
+   * Not the same as stopping: the microphone stays open and the wake word works
+   * immediately. "Never mind" should not cost the next five minutes of voice.
+   */
+  cancelExchange(): void;
   /** When the running listening test ends, or 0. Drives the report cadence. */
   readonly testingUntil: number;
   /** When the running enrolment ends, or 0. Also drives the report cadence. */
@@ -169,6 +191,18 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
   let lastError: string | null = null;
   /** Device name that was asked for but isn't plugged in. */
   let openedFor: string | null | undefined;
+
+  /**
+   * Whether the open microphone is a follow-up rather than a fresh wake.
+   *
+   * They wait for different lengths: after the wake word the window is fixed —
+   * you are part-way through one sentence — while after an answer it is however
+   * long Blake set, because that is a choice about how conversational he wants
+   * it to be.
+   */
+  let inFollowUp = false;
+  /** How long the current follow-up lasts; set by `listenAgain`. */
+  let followWindow = 0;
 
   const testing = (now = Date.now()) => (config?.testUntil ?? 0) > now;
   const enrolling = (now = Date.now()) => (config?.enrolUntil ?? 0) > now;
@@ -398,6 +432,7 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
       }
 
       lastSpeakerScore = scoreSpeaker(heard.speaker);
+      inFollowUp = false;
       phase = 'awake';
       wokeAt = now;
       command!.reset();
@@ -432,12 +467,14 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     // Awake: everything now goes to the command recogniser until it finishes a
     // phrase or the window closes.
     const finished = command!.accept(samples);
-    const timedOut = now - wokeAt > VOICE_COMMAND_TIMEOUT_MS;
+    const window = inFollowUp ? followWindow : VOICE_COMMAND_TIMEOUT_MS;
+    const timedOut = now - wokeAt > window;
 
     if (!finished && !timedOut) return;
 
     const utterance = finished ?? command!.flush();
     phase = 'idle';
+    inFollowUp = false;
     wake!.reset();
     forgetReplay();
 
@@ -508,14 +545,28 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
   emitter.start = start;
   emitter.stop = stop;
 
-  emitter.listenAgain = (): void => {
+  emitter.listenAgain = (ms: number): void => {
     if (!config?.enabled || !command || !wake) return;
+    // 0 means the microphone closes when a command is done. A real choice, and
+    // the conservative one — nothing stays open on stray speech.
+    if (ms <= 0) return;
+    inFollowUp = true;
+    followWindow = ms;
     phase = 'awake';
     wokeAt = Date.now();
     // A follow-up is not a fresh wake, so the speaker score from the wake word
     // that started this exchange still stands — it is the same person talking.
     command.reset();
     wake.reset();
+    forgetReplay();
+  };
+
+  emitter.cancelExchange = (): void => {
+    phase = 'idle';
+    inFollowUp = false;
+    followWindow = 0;
+    wake?.reset();
+    command?.reset();
     forgetReplay();
   };
 

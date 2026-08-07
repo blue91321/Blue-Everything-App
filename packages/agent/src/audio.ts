@@ -191,6 +191,24 @@ export function audioRecentlyPlaying(now = Date.now()): { playing: boolean; peak
   return { playing: now - lastHeardAt < AUDIO_MEMORY_MS, peak: reading.peak, available: true };
 }
 
+/**
+ * Is media actually playing, for the purpose of allowing a media command?
+ *
+ * The gate on "skip", "pause" and the rest. Without it a mis-heard word skips a
+ * track in a silent room — and unlike a wrongly ticked habit, you would not
+ * even know which command misfired.
+ *
+ * Uses the same two-minute memory as everything else here, deliberately: a
+ * track you paused a moment ago should still take "play", and speech dips to
+ * near silence between words anyway. It refuses when the meter is unavailable
+ * rather than assuming — an unknown answer is not a yes for something with
+ * consequences.
+ */
+export function mediaIsPlaying(now = Date.now()): boolean {
+  const reading = audioRecentlyPlaying(now);
+  return reading.available && reading.playing;
+}
+
 export function disposeAudio(): void {
   cached?.dispose();
 }

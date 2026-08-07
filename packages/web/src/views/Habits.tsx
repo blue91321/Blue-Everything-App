@@ -2,6 +2,14 @@ import { useState } from 'react';
 import { api, type Habit } from '../api';
 import { useAsync } from '../useAsync';
 
+const minuteToTime = (minute: number): string =>
+  `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+
+const timeToMinute = (value: string): number => {
+  const [h, m] = value.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+};
+
 const formatInterval = (minutes: number): string =>
   minutes < 60 ? `${minutes}m` : minutes % 60 === 0 ? `${minutes / 60}h` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 
@@ -136,6 +144,9 @@ function ManagedHabit({
             {habit.doneThisPeriod} of {habit.targetPerPeriod} this {habit.cadence === 'daily' ? 'day' : 'week'}
             {habit.met && ' · done'}
             {habit.reminderEveryMinutes && ` · reminds every ${formatInterval(habit.reminderEveryMinutes)}`}
+            {habit.reminderEveryMinutes !== null &&
+              habit.reminderStartMinute !== null &&
+              ` from ${minuteToTime(habit.reminderStartMinute)}`}
             {habit.voicePhrases.length > 0 && ` · says "${habit.voicePhrases[0]}"`}
           </div>
         </div>
@@ -207,6 +218,9 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
   const [cadence, setCadence] = useState(habit.cadence);
   const [target, setTarget] = useState(habit.targetPerPeriod);
   const [reminder, setReminder] = useState(habit.reminderEveryMinutes ?? 0);
+  const [startTime, setStartTime] = useState(
+    habit.reminderStartMinute === null ? '' : minuteToTime(habit.reminderStartMinute)
+  );
   const [phrases, setPhrases] = useState<string[]>(habit.voicePhrases);
 
   async function save() {
@@ -215,6 +229,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
       cadence,
       targetPerPeriod: Math.max(1, target),
       reminderEveryMinutes: reminder > 0 ? reminder : null,
+      reminderStartMinute: startTime ? timeToMinute(startTime) : null,
       voicePhrases: phrases.map((p) => p.trim()).filter(Boolean),
     });
     onSaved();
@@ -249,10 +264,31 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
             </option>
           ))}
         </select>
+        {reminder > 0 && (
+          <div className="row" style={{ marginTop: 8 }}>
+            <span className="meta">Not before</span>
+            <input
+              type="time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+              aria-label="Start reminding at"
+              style={{ width: 'auto' }}
+            />
+            {startTime && (
+              <button className="btn subtle" type="button" onClick={() => setStartTime('')}>
+                any time
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="meta" style={{ marginTop: 6 }}>
-          Nags you until you've hit the target, then stops for the rest of the {cadence === 'daily' ? 'day' : 'week'}.
-          Silent during quiet hours and while you're in a game — and a reminder you miss is dropped rather than
-          stacking up.
+          {reminder > 0 && startTime
+            ? `Starts asking at ${startTime} and keeps going until it's done.`
+            : "Nags you until you've hit the target, then stops for the rest of the " +
+              (cadence === 'daily' ? 'day' : 'week') + '.'}{' '}
+          Ticking it off restarts the clock. Silent during quiet hours and while you're in a game — and a
+          reminder you miss is dropped rather than stacking up.
         </div>
       </div>
 

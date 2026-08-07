@@ -14,6 +14,11 @@
  */
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -41,6 +46,7 @@ import {
   parsePhrases,
   resolveVoiceCommand,
   runCommand,
+  phraseWordsFor,
   vocabularyFor,
 } from '../voice-actions.js';
 
@@ -74,6 +80,31 @@ let testUntil = 0;
 
 /** Whether the last test ended because it worked, rather than by running out. */
 let succeeded = false;
+
+/**
+ * Changes when the uploaded avatar does.
+ *
+ * The picture lives beside the database, not in it — a settings row read on
+ * every page load has no business carrying an image. The agent downloads it
+ * once and only again when this moves.
+ */
+let avatarVersion = Date.now();
+
+/** What Windows can decode, and therefore what is worth accepting. */
+const AVATAR_TYPES: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/bmp': 'bmp',
+};
+
+/**
+ * Beside the database, resolved from this file rather than the working
+ * directory — Task Scheduler starts the server in System32, and a relative path
+ * would quietly write the avatar somewhere nobody would ever look.
+ */
+const avatarPath = (extension: string): string =>
+  resolve(dirname(fileURLToPath(import.meta.url)), '../../data', `avatar.${extension}`);
 
 /**
  * When an enrolment window closes.
@@ -156,6 +187,10 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     // far more accurate and far cheaper than open-ended transcription, which is
     // what makes an always-on microphone affordable at all.
     const words = vocabularyFor(commands, row.wakeWord);
+    // Checked against the model separately from the grammar: the grammar now
+    // carries generated inflections, and warning that "waters" is unknown would
+    // bury the one warning that matters under noise nobody typed.
+    const literal = phraseWordsFor(commands, row.wakeWord);
 
     return {
       enabled: Boolean(row.voiceEnabled),
@@ -164,6 +199,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       speakerThreshold: thresholdFraction(row.speakerThreshold),
       voiceprint: row.voiceprint ? (JSON.parse(row.voiceprint) as number[]) : null,
       vocabulary: words,
+      checkWords: literal,
       /**
        * Changes whenever anything above does. The agent compares this instead
        * of diffing the payload, so rebuilding the recognisers — which reloads a
@@ -216,6 +252,15 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       speakerThreshold: thresholdFraction(row.speakerThreshold),
       voiceprint: row.voiceprint ? (JSON.parse(row.voiceprint) as number[]) : null,
       inputDevice: row.voiceInputDevice,
+      /** 0 means the microphone closes as soon as a command is done. */
+      followUpMs: row.voiceFollowUpSeconds * 1000,
+      /** After a miss rather than a hit — see DEFAULT_VOICE_RETRY_SECONDS. */
+      retryMs: row.voiceRetrySeconds * 1000,
+      overlayPlacement: row.overlayPlacement,
+      overlayScreen: row.overlayScreen,
+      overlayAvatar: row.overlayAvatar,
+      /** Bumped when the picture changes, so the agent redownloads only then. */
+      avatarVersion: row.overlayAvatar === 'file' ? avatarVersion : 0,
       /** Non-zero means "report what you hear, and don't act on it". */
       testUntil: testing ? testUntil : 0,
       /** Non-zero means "collect wake-word samples instead of obeying them". */
@@ -243,12 +288,20 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       peak: fresh ? agentState!.peak : 0,
       lastReportAt: agentState?.at ?? null,
       selectedDevice: row.voiceInputDevice,
+      followUpSeconds: row.voiceFollowUpSeconds,
+      retrySeconds: row.voiceRetrySeconds,
+      overlayPlacement: row.overlayPlacement,
+      overlayScreen: row.overlayScreen,
+      overlayAvatar: row.overlayAvatar,
+      screens: fresh ? (agentState!.screens ?? []) : [],
       testing,
       testUntil: testing ? testUntil : 0,
       /** The last test ended because a command matched, not because it expired. */
       testSucceeded: succeeded,
       enrolling: enrolUntil > Date.now(),
       enrolUntil: enrolUntil > Date.now() ? enrolUntil : 0,
+      /** Words no phrase can ever be heard saying — see voiceAgentReportSchema. */
+      unknownWords: fresh ? (agentState!.unknownWords ?? []) : [],
       enrolSamples: fresh ? (agentState!.enrolSamples ?? 0) : 0,
       enrolAgreement: fresh ? (agentState!.enrolAgreement ?? null) : null,
       heard: testing || heard.length > 0 ? heard.slice(-HEARD_LIMIT) : [],
@@ -358,7 +411,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     const command = (await loadCommands()).find((c) => c.id === id);
     if (!command) return reply.code(404).send({ error: 'no such command' });
 
-    const result = await runCommand(command, text, command.phrases[0] ?? '', row.wakeWord);
+    const result = { ...(await runCommand(command, text, command.phrases[0] ?? '', row.wakeWord)), allowFollowUp: command.allowFollowUp };
     if (result.outcome === 'habit-checked') changes.emitChange('habits');
     if (result.outcome === 'note-added') changes.emitChange('notes');
     if (result.outcome === 'paused') {
@@ -377,6 +430,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
         ...row,
         phrases: parsePhrases(row.phrases),
         enabled: Boolean(row.enabled),
+        allowFollowUp: Boolean(row.allowFollowUp),
         label: await labelFor({
           id: row.id,
           kind: row.kind as never,
@@ -384,6 +438,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
           target: row.target,
           pauseMinutes: row.pauseMinutes,
           label: row.label,
+          allowFollowUp: Boolean(row.allowFollowUp),
         }),
       }))
     );
@@ -402,6 +457,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
         target: body.target ?? null,
         pauseMinutes: body.pauseMinutes ?? null,
         label: body.label ?? null,
+        allowFollowUp: body.allowFollowUp ? 1 : 0,
         enabled: body.enabled ? 1 : 0,
         sortOrder: body.sortOrder ?? nextOrder,
       })
@@ -423,6 +479,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
         target: body.target ?? null,
         pauseMinutes: body.pauseMinutes ?? null,
         label: body.label ?? null,
+        allowFollowUp: body.allowFollowUp ? 1 : 0,
         enabled: body.enabled ? 1 : 0,
       })
       .where(eq(voiceCommands.id, id))
@@ -438,6 +495,61 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     await db.delete(voiceCommands).where(eq(voiceCommands.id, id));
     bumpVoice();
     return reply.code(204).send();
+  });
+
+  /**
+   * The avatar picture, uploaded from the Voice screen.
+   *
+   * Stored beside the database as one file rather than in a column: it is
+   * binary, it is read by a different process, and the settings row is fetched
+   * on every page load. Local-only, like every other write that reaches this
+   * machine rather than the database.
+   */
+  app.put('/api/voice/avatar', async (request, reply) => {
+    if (!request.isLocal) {
+      return reply.code(403).send({ error: 'the avatar can only be set from the PC running the server' });
+    }
+
+    const body = z
+      .object({
+        /** Bare base64, no data: prefix — the client strips it. */
+        data: z.string().min(1).max(4 * 1024 * 1024),
+        type: z.string().max(100),
+      })
+      .parse(request.body);
+
+    const extension = AVATAR_TYPES[body.type];
+    if (!extension) {
+      return reply.code(400).send({ error: 'needs to be a PNG, JPEG, GIF or BMP' });
+    }
+
+    const bytes = Buffer.from(body.data, 'base64');
+    if (bytes.length === 0) return reply.code(400).send({ error: 'that file was empty' });
+
+    // One avatar at a time: the old one goes, so a switch from PNG to JPEG does
+    // not leave the previous file behind forever.
+    for (const old of Object.values(AVATAR_TYPES)) {
+      await rm(avatarPath(old), { force: true }).catch(() => {});
+    }
+    await writeFile(avatarPath(extension), bytes);
+
+    const current = await getSettings();
+    await db.update(settings).set({ overlayAvatar: 'file' }).where(eq(settings.id, current.id));
+
+    avatarVersion = Date.now();
+    changes.emitChange('settings');
+    bumpVoice();
+    return { ok: true, bytes: bytes.length, version: avatarVersion };
+  });
+
+  /** Serve it back — to the agent, which draws it, and to the settings screen. */
+  app.get('/api/voice/avatar', async (_request, reply) => {
+    for (const [type, extension] of Object.entries(AVATAR_TYPES)) {
+      const path = avatarPath(extension);
+      if (!existsSync(path)) continue;
+      return reply.type(type).send(await readFile(path));
+    }
+    return reply.code(404).send({ error: 'no avatar has been uploaded' });
   });
 
   /** Resume after a "stop listening". The only way back from an open-ended one. */

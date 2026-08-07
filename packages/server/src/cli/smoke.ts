@@ -256,6 +256,95 @@ check(
 const backAtDesk = await post('/api/attention', report({ reason: 'back at the keyboard', idleMs: 0 }));
 check('and arrives as a toast once he returns', titles(backAtDesk).includes('Waiting for the phone'), titles(backAtDesk).join(', '));
 
+console.log('\nticking a habit restarts its reminder clock');
+{
+  const { sweepHabitReminders, reminderWindowOpen } = await import('../nudge-engine.js');
+  const habit = (await post('/api/habits', { name: 'Drink water', cadence: 'daily', targetPerPeriod: 8 })).json();
+  await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${habit.id}`,
+    payload: { reminderEveryMinutes: 60 },
+  });
+
+  const { db } = await import('../db/client.js');
+  const { nudges: nudgeTable } = await import('../db/schema.js');
+  const { eq: whereEq } = await import('drizzle-orm');
+
+  const t0 = Date.now();
+  check('raises the first reminder', (await sweepHabitReminders(t0)) === 1);
+  check('and not a second straight away', (await sweepHabitReminders(t0 + 60_000)) === 0);
+
+  /**
+   * Both the nudge and a tick get real timestamps, so the only way to put real
+   * distance between them is to age the nudge. Ninety minutes back, and spent,
+   * means the habit is unambiguously due another reminder — unless something
+   * else reset the clock.
+   */
+  const ageOutTheReminder = async () => {
+    await db
+      .update(nudgeTable)
+      .set({ createdAt: Date.now() - 90 * 60_000, state: 'expired' })
+      .where(whereEq(nudgeTable.habitId, habit.id));
+  };
+
+  await ageOutTheReminder();
+  check('a stale reminder means another is due', (await sweepHabitReminders(Date.now())) === 1, '90 minutes on');
+
+  // Now the same situation, except Blake has just drunk a glass.
+  await ageOutTheReminder();
+  await post(`/api/habits/${habit.id}/check`);
+  check(
+    'but ticking it off buys the full interval again',
+    (await sweepHabitReminders(Date.now())) === 0,
+    'the tick reset the clock'
+  );
+  check(
+    'and the next one lands an interval after the tick',
+    (await sweepHabitReminders(Date.now() + 61 * 60_000)) === 1
+  );
+
+  console.log('\nreminder start time');
+  check('9:00 is not yet open for a 14:00 start', !reminderWindowOpen(14 * 60, new Date(2026, 7, 6, 9, 0)));
+  check('14:00 is open', reminderWindowOpen(14 * 60, new Date(2026, 7, 6, 14, 0)));
+  check('20:00 is still open', reminderWindowOpen(14 * 60, new Date(2026, 7, 6, 20, 0)));
+
+  const walk = (await post('/api/habits', { name: 'Take a walk', cadence: 'daily' })).json();
+  await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${walk.id}`,
+    // 23:59 so the window is shut whenever this suite happens to run.
+    payload: { reminderEveryMinutes: 30, reminderStartMinute: 23 * 60 + 59 },
+  });
+  const before = (await app.inject({ method: 'GET', url: '/api/nudges/queue' })).json().length;
+  await sweepHabitReminders(new Date(2026, 7, 6, 9, 0).getTime());
+  const after = (await app.inject({ method: 'GET', url: '/api/nudges/queue' })).json().length;
+  check('a habit whose time has not come raises nothing', after === before);
+}
+
+console.log('\nall-day tasks');
+{
+  const { sweepDueTasks } = await import('../nudge-engine.js');
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+
+  const allDay = (await post('/api/tasks', { title: 'Bins out', dueAt: midnight.getTime(), dueIsAllDay: true })).json();
+  const endOfDay = new Date();
+  endOfDay.setHours(23, 59, 59, 999);
+  check('a bare date is stored as end of that day', allDay.dueAt === endOfDay.getTime(), new Date(allDay.dueAt).toTimeString().slice(0, 8));
+  check('and is flagged all-day', allDay.dueIsAllDay === 1);
+
+  // The point of the flag: eligible from the morning, not at 22:59.
+  await sweepDueTasks(Date.now());
+  const queued = (await app.inject({ method: 'GET', url: '/api/nudges/queue' })).json();
+  const mine = queued.find((n: { taskId: string }) => n.taskId === allDay.id);
+  check('it queues straight away rather than an hour before midnight', Boolean(mine));
+  check('and is eligible now', mine && mine.earliestAt <= Date.now());
+
+  const timed = (await post('/api/tasks', { title: 'Call the dentist', dueAt: Date.now() + 3 * 60 * 60_000 })).json();
+  check('a task with a time keeps that exact time', timed.dueAt > Date.now() + 2 * 60 * 60_000);
+  check('and is not flagged all-day', timed.dueIsAllDay === 0);
+}
+
 console.log('\nsnooze');
 const snoozeTarget = await post('/api/nudges', { title: 'Snooze me', minQuality: 'any' });
 await post(`/api/nudges/${snoozeTarget.json().id}/snooze`, { minutes: 30 });

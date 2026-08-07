@@ -261,6 +261,16 @@ export async function expireStaleNudges(now = Date.now()): Promise<number> {
  * At most one live nudge per habit, and it expires after one interval — so the
  * habit reminds you *now or not at all*, rather than accumulating a debt.
  */
+/**
+ * Has this habit's time of day arrived?
+ *
+ * Only a start, not a window: "remind me to walk from 2pm" should keep asking
+ * until it's done or the day ends, and quiet hours already stop it at night.
+ */
+export function reminderWindowOpen(startMinute: number, at: Date): boolean {
+  return at.getHours() * 60 + at.getMinutes() >= startMinute;
+}
+
 export async function sweepHabitReminders(now = Date.now()): Promise<number> {
   const due = await db
     .select()
@@ -282,6 +292,11 @@ export async function sweepHabitReminders(now = Date.now()): Promise<number> {
     const intervalMs = (habit.reminderEveryMinutes ?? 0) * 60_000;
     if (intervalMs <= 0) continue;
 
+    // Not yet the time of day this habit wants to be raised at.
+    if (habit.reminderStartMinute !== null && !reminderWindowOpen(habit.reminderStartMinute, new Date(now))) {
+      continue;
+    }
+
     // Already hit the target for this period — nothing to nag about.
     const periodKey = periodKeyFor(habit.cadence as 'daily' | 'weekly', new Date(now));
     const entries = await db
@@ -291,15 +306,26 @@ export async function sweepHabitReminders(now = Date.now()): Promise<number> {
     const done = entries.reduce((sum, e) => sum + e.count, 0);
     if (done >= habit.targetPerPeriod) continue;
 
-    // Space reminders by the interval, measured from the last one raised —
-    // whether it was delivered, ignored, or expired unseen.
     const [previous] = await db
       .select({ createdAt: nudges.createdAt })
       .from(nudges)
       .where(eq(nudges.habitId, habit.id))
       .orderBy(desc(nudges.createdAt))
       .limit(1);
-    if (previous && previous.createdAt > now - intervalMs) continue;
+
+    const lastTick = entries.reduce((latest, entry) => Math.max(latest, entry.doneAt), 0);
+
+    /**
+     * Space reminders from whichever happened later: the last reminder raised,
+     * or the last time the habit was actually ticked off.
+     *
+     * Counting only from the reminder means drinking a glass of water two
+     * minutes after being nudged still gets you nudged again on the original
+     * schedule — which is exactly when it feels like nagging rather than
+     * helping. Doing the thing should buy you the full interval.
+     */
+    const since = Math.max(previous?.createdAt ?? 0, lastTick);
+    if (since > now - intervalMs) continue;
 
     await db.insert(nudges).values({
       title: habit.name,
@@ -340,10 +366,27 @@ export const RENUDGE_COOLDOWN_MS = 45 * 60_000;
 export async function sweepDueTasks(now = Date.now()): Promise<number> {
   const soon = now + DUE_SOON_WINDOW_MS;
 
-  const dueTasks = await db
+  /**
+   * All-day tasks need a wider net than the hour-before window.
+   *
+   * Their stored instant is the *end* of the due day, so "bins out today" sits
+   * at 23:59 and would not be picked up until 22:59 — silent all day, then
+   * escalating at bedtime. Widening to the end of today catches them, and the
+   * filter below decides which are genuinely eligible.
+   */
+  const horizon = Math.max(soon, startOfDayFor(now) + 24 * 60 * 60_000 - 1);
+
+  const candidates = await db
     .select()
     .from(tasks)
-    .where(and(eq(tasks.status, 'todo'), lte(tasks.dueAt, soon), isNull(tasks.completedAt)));
+    .where(and(eq(tasks.status, 'todo'), lte(tasks.dueAt, horizon), isNull(tasks.completedAt)));
+
+  const dueTasks = candidates.filter((task) =>
+    task.dueIsAllDay
+      ? // Eligible from the morning of the day it's due.
+        startOfDayFor(task.dueAt ?? now) <= now
+      : (task.dueAt ?? 0) <= soon
+  );
 
   if (dueTasks.length === 0) return 0;
 
@@ -372,17 +415,34 @@ export async function sweepDueTasks(now = Date.now()): Promise<number> {
 
   const fresh = dueTasks.filter((t) => !spokenFor.has(t.id));
   for (const task of fresh) {
+    /**
+     * An all-day task is due *that day*, not at 23:59 — so it becomes eligible
+     * from the morning rather than an hour before midnight. Using the stored
+     * instant would mean a task due today sat silent until nearly bedtime and
+     * then escalated, which is the worst of both.
+     */
+    const earliestAt = task.dueIsAllDay
+      ? Math.max(now, startOfDayFor(task.dueAt ?? now))
+      : Math.max(now, (task.dueAt ?? now) - DUE_SOON_WINDOW_MS);
+
     await db.insert(nudges).values({
       title: task.title,
       body: task.notes,
       taskId: task.id,
-      earliestAt: Math.max(now, (task.dueAt ?? now) - DUE_SOON_WINDOW_MS),
+      earliestAt,
       // The due time itself is the deadline: before it, wait for a good moment;
-      // after it, interrupt.
+      // after it, interrupt. For an all-day task that is the end of the day.
       deadlineAt: task.dueAt,
       minQuality: task.priority >= 2 ? 'decent' : 'prime',
     });
   }
 
   return fresh.length;
+}
+
+/** Local midnight of whichever day `at` falls in. */
+function startOfDayFor(at: number): number {
+  const day = new Date(at);
+  day.setHours(0, 0, 0, 0);
+  return day.getTime();
 }

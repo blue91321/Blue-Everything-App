@@ -34,6 +34,7 @@ interface VoskApi {
   setLogLevel: (level: number) => void;
   modelNew: (path: string) => unknown;
   modelFree: (model: unknown) => void;
+  findWord: (model: unknown, word: string) => number;
   spkModelNew: (path: string) => unknown;
   spkModelFree: (model: unknown) => void;
   recognizerNew: (model: unknown, rate: number) => unknown;
@@ -71,6 +72,7 @@ function load(): VoskApi {
     setLogLevel: lib.func('void vosk_set_log_level(int level)'),
     modelNew: lib.func('void *vosk_model_new(const char *path)'),
     modelFree: lib.func('void vosk_model_free(void *model)'),
+    findWord: lib.func('int vosk_model_find_word(void *model, const char *word)'),
     spkModelNew: lib.func('void *vosk_spk_model_new(const char *path)'),
     spkModelFree: lib.func('void vosk_spk_model_free(void *model)'),
     recognizerNew: lib.func('void *vosk_recognizer_new(void *model, float rate)'),
@@ -127,6 +129,27 @@ function models(): { speech: unknown; speaker: unknown | null } {
   }
 
   return { speech: speechModel, speaker: speakerModel };
+}
+
+/**
+ * Which of these words the model has no pronunciation for.
+ *
+ * A grammar can only contain words in the model's lexicon; anything else Vosk
+ * drops with a warning nobody reads, and the phrase then silently never
+ * matches. "unmute" is the one that caught us out — a perfectly ordinary word
+ * to a person, absent from a 2020 dictionary.
+ *
+ * This is the check that generalises: it stays useful whichever model is
+ * installed, because it asks that model rather than assuming anything.
+ */
+export function unknownWords(words: string[]): string[] {
+  const vosk = load();
+  const { speech } = models();
+
+  return words.filter((word) => {
+    const clean = word.trim().toLowerCase();
+    return clean.length > 0 && vosk.findWord(speech, clean) < 0;
+  });
 }
 
 export function speakerModelAvailable(): boolean {

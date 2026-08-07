@@ -3,6 +3,7 @@ import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as Voice
 import { useAsync } from '../useAsync';
 import { Toggle } from '../controls';
 import { VoicePhrases } from './VoiceCommands';
+import { VoiceLook } from './VoiceLook';
 
 /**
  * Advice on a wake word — a copy of `wakeWordAdvice` in @everything/shared.
@@ -85,12 +86,43 @@ function VoiceSettings({
     }
   }
 
+  // Fetched for the screen list, which only the agent can see — `window.screen`
+  // describes the display this tab is on and nothing else.
+  const look = useAsync(() => api.voice.status()).data ?? null;
+
+  // The slider moves freely and saves once, on release. Sending a PATCH per
+  // pixel would be a dozen writes and a dozen agent reconfigures for one drag.
+  const [draftFollowUp, setDraftFollowUp] = useState<number | null>(null);
+  const followUp = draftFollowUp ?? current.voiceFollowUpSeconds ?? 6;
+
+  function commitFollowUp() {
+    if (draftFollowUp === null || draftFollowUp === current.voiceFollowUpSeconds) return;
+    void update({ voiceFollowUpSeconds: draftFollowUp }).then(() => setDraftFollowUp(null));
+  }
+
+  const [draftRetry, setDraftRetry] = useState<number | null>(null);
+  const retry = draftRetry ?? current.voiceRetrySeconds ?? 8;
+
+  function commitRetry() {
+    if (draftRetry === null || draftRetry === current.voiceRetrySeconds) return;
+    void update({ voiceRetrySeconds: draftRetry }).then(() => setDraftRetry(null));
+  }
+
   const wakeWord = draftWakeWord ?? current.wakeWord;
   // One word is allowed. It is a worse choice, not an invalid one — and it is
   // the choice that survives the recogniser dropping half the phrase, so the
   // screen advises rather than refuses.
   const wakeWordValid = /^[a-z]+(?: [a-z]+)*$/i.test(wakeWord.trim()) && wakeWord.trim().length >= 3;
   const advice = wakeWordValid ? wakeWordAdvice(wakeWord) : null;
+
+  /*
+   * A wake word the model cannot pronounce is the worst version of this bug:
+   * nothing wakes at all, and every other diagnostic on this screen looks fine.
+   * Only checks the *saved* one, since that is what the agent was asked about.
+   */
+  const wakeWordUnknown = (look?.unknownWords ?? []).filter((word) =>
+    current.wakeWord.toLowerCase().split(/\s+/).includes(word)
+  );
 
   return (
     <>
@@ -146,11 +178,71 @@ function VoiceSettings({
               {advice}
             </div>
           )}
+          {wakeWordUnknown.length > 0 && (
+            <div className="meta urgent" style={{ marginTop: 6 }}>
+              ⚠ {wakeWordUnknown.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so this
+              wake word can never be heard. Pick ordinary words — compounds and invented names are the usual cause.
+            </div>
+          )}
           <div className="meta" style={{ marginTop: 6 }}>
             Takes effect straight away — the status above will say what it's listening for.
           </div>
         </div>
+
+        <div className="card">
+          <div className="title">Keep listening after it answers</div>
+          <div className="meta" style={{ marginTop: 4 }}>
+            {followUp === 0
+              ? 'Off — the microphone closes as soon as a command is done, so every command needs the wake word.'
+              : `For ${followUp} second${followUp === 1 ? '' : 's'} you can say another thing without the wake word. Longer is more conversational, but it also means stray speech can reach it for longer after each command.`}
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <input
+              type="range"
+              min={0}
+              max={30}
+              step={1}
+              value={followUp}
+              aria-label="Seconds to keep listening after answering"
+              onChange={(e) => setDraftFollowUp(Number(e.target.value))}
+              onMouseUp={() => commitFollowUp()}
+              onTouchEnd={() => commitFollowUp()}
+              onKeyUp={() => commitFollowUp()}
+            />
+            <span className="meta" style={{ minWidth: 52 }}>
+              {followUp === 0 ? 'off' : `${followUp}s`}
+            </span>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="title">Keep listening after it misses</div>
+          <div className="meta" style={{ marginTop: 4 }}>
+            {retry === 0
+              ? "Off — a miss closes the microphone, so you'd say the wake word again."
+              : `For ${retry} second${retry === 1 ? '' : 's'} after it fails to understand, so you can just repeat yourself. Usually wants to be longer than the one above — you have to notice it missed first. Only one retry per wake, so a misheard cough can't hold the microphone open.`}
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <input
+              type="range"
+              min={0}
+              max={30}
+              step={1}
+              value={retry}
+              aria-label="Seconds to keep listening after a miss"
+              onChange={(e) => setDraftRetry(Number(e.target.value))}
+              onMouseUp={() => commitRetry()}
+              onTouchEnd={() => commitRetry()}
+              onKeyUp={() => commitRetry()}
+            />
+            <span className="meta" style={{ minWidth: 52 }}>
+              {retry === 0 ? 'off' : `${retry}s`}
+            </span>
+          </div>
+        </div>
       </section>
+
+      <VoiceLook settings={current} status={look} saving={saving} onChange={update} />
 
       <section>
         <h2>Only respond to my voice</h2>
