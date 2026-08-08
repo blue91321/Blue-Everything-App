@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, type Habit } from '../api';
 import { useAsync } from '../useAsync';
 import { featureEnabled } from '../features';
+import { PushChoice } from '../controls';
 
 const minuteToTime = (minute: number): string =>
   `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
@@ -223,6 +224,13 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
     habit.reminderStartMinute === null ? '' : minuteToTime(habit.reminderStartMinute)
   );
   const [phrases, setPhrases] = useState<string[]>(habit.voicePhrases);
+  const [push, setPush] = useState<boolean | null>(habit.pushToPhone === null ? null : Boolean(habit.pushToPhone));
+
+  // Same reasoning as the task editor: loaded by the thing that needs it, only
+  // while a row is open.
+  const settings = useAsync(() => api.settings.get());
+  const pushDefault = settings.data?.pushDefault !== 0;
+  const canChoosePush = featureEnabled('push') && settings.data?.pushDefault !== undefined;
 
   async function save() {
     await api.habits.update(habit.id, {
@@ -231,6 +239,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
       targetPerPeriod: Math.max(1, target),
       reminderEveryMinutes: reminder > 0 ? reminder : null,
       reminderStartMinute: startTime ? timeToMinute(startTime) : null,
+      ...(canChoosePush ? { pushToPhone: push } : {}),
       voicePhrases: phrases.map((p) => p.trim()).filter(Boolean),
     });
     onSaved();
@@ -292,6 +301,20 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
           reminder you miss is dropped rather than stacking up.
         </div>
       </div>
+
+      {/* Gated on there being a reminder at all. A habit that never interrupts
+          raises no nudge, so a push switch on it would be a control over
+          something that cannot happen — and would read as being broken. */}
+      {canChoosePush && reminder > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div className="title">Send this to my phone</div>
+          <div className="meta" style={{ marginTop: 4, marginBottom: 8 }}>
+            Only when you are away from the PC. A repeating habit is the most likely thing to buzz your
+            pocket for no reason, so this is worth an answer.
+          </div>
+          <PushChoice value={push} fallback={pushDefault} onChange={setPush} />
+        </div>
+      )}
 
       {/* Phrases only mean something if there is a listener. With voice off
           this is an editor for a field nothing reads — and worse, it says

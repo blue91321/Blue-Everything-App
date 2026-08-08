@@ -120,6 +120,20 @@
                         "when":  1786061600000,
                         "tag":  "0016_logo",
                         "breakpoints":  true
+                    },
+                    {
+                        "idx":  17,
+                        "version":  "6",
+                        "when":  1786061700000,
+                        "tag":  "0017_per_item_push",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  18,
+                        "version":  "6",
+                        "when":  1786061800000,
+                        "tag":  "0018_notification_sound",
+                        "breakpoints":  true
                     }
                 ]
 }

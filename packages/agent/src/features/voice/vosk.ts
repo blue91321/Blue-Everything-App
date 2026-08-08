@@ -174,6 +174,20 @@ export interface Recogniser {
    * stopped, or null while they're still going.
    */
   accept(samples: Int16Array): Utterance | null;
+  /**
+   * What it thinks it has heard *so far*, before deciding the speaker stopped.
+   *
+   * The difference matters more than it sounds. `accept` only answers once the
+   * endpointer is satisfied, which means a fixed stretch of silence *after* you
+   * finish — and that silence is paid twice, once to notice the wake word and
+   * again to read the command. The partial is available while you are still
+   * talking, which is what lets the popup appear when you say the wake word
+   * rather than a second after you stop.
+   *
+   * Never a substitute for `accept` where the *text* has consequences: a
+   * partial can be revised, and it carries no speaker embedding.
+   */
+  partial(): string;
   /** Force whatever is buffered to be finalised — used when a command times out. */
   flush(): Utterance;
   reset(): void;
@@ -241,6 +255,18 @@ export function createRecogniser(phrases: string[], options: { withSpeaker?: boo
 
       const utterance = parse(vosk.result(recogniser));
       return utterance.text ? utterance : null;
+    },
+
+    partial(): string {
+      if (closed) return '';
+      // `parse` reads `text`; a partial result carries `partial` instead, so it
+      // is normalised here rather than teaching `parse` about both shapes.
+      try {
+        const { partial } = JSON.parse(vosk.partialResult(recogniser)) as VoskResult;
+        return (partial ?? '').replace(/\[unk\]/g, ' ').replace(/\s+/g, ' ').trim();
+      } catch {
+        return '';
+      }
     },
 
     flush(): Utterance {

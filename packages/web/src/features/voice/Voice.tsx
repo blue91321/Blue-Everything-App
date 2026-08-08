@@ -696,7 +696,19 @@ function PhraseTester() {
 
       {result && (
         <div className="meta" style={{ marginTop: 10 }}>
-          {result.match ? (
+          {result.chain?.length ? (
+            <>
+              <span className="ok-text">Would do {result.chain.length} things, in order:</span>
+              <ol style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+                {result.chain.map((step, index) => (
+                  <li key={`${step.phrase}-${index}`}>
+                    <strong>{step.habitName}</strong>
+                    {step.count > 1 ? ` ${step.count} times` : ''} — matched "{step.phrase}"
+                  </li>
+                ))}
+              </ol>
+            </>
+          ) : result.match ? (
             <>
               <span className="ok-text">
                 Would tick off <strong>{result.match.habitName}</strong>
@@ -706,8 +718,11 @@ function PhraseTester() {
             </>
           ) : (
             <>
-              <span className="meta urgent">No habit matches.</span> It would be saved as a note instead.
-              Heard words: {result.tokens.join(', ') || '(none)'}.
+              {/* Not "it would be saved as a note" — that stopped being true when
+                  the overlay made a miss visible as it happens, and unmatched
+                  speech started being dropped instead of filed. */}
+              <span className="meta urgent">Nothing matches.</span> It would be dropped, and the popup
+              would say so. Heard words: {result.tokens.join(', ') || '(none)'}.
             </>
           )}
         </div>

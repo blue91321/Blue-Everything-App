@@ -124,6 +124,26 @@ const POLL_MS = 100;
  */
 const REPLAY_BUFFER_SAMPLES = SAMPLE_RATE * 4;
 
+/**
+ * How long a command transcript must stop changing before it is taken as final.
+ *
+ * Vosk answers `accept` only when its endpointer is satisfied, which is roughly
+ * a second of silence *after* you finish — and that second is spent twice, once
+ * to notice the wake word and again to read the command. Two seconds of nothing
+ * happening is the whole of the "voice is laggy" complaint.
+ *
+ * A partial that has not moved for three polls means the decoder has settled and
+ * the rest of the wait is the endpointer being conservative about a speaker who
+ * has already stopped. Flushing then is not acting on a partial — `flush()`
+ * finalises properly and returns the real result — it is only declining to wait
+ * for a verdict that is already in.
+ *
+ * Three rather than one, because a partial also sits still in the gaps between
+ * words. At 100ms a poll that is 300ms of quiet, which is longer than the pause
+ * inside a phrase and shorter than the pause after one.
+ */
+const SETTLED_POLLS = 3;
+
 export interface VoiceListener extends EventEmitter {
   start(): void;
   stop(): void;
@@ -191,6 +211,20 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
   let inFollowUp = false;
   /** How long the current follow-up lasts; set by `listenAgain`. */
   let followWindow = 0;
+
+  /**
+   * Woke on a partial, so the speaker embedding has not arrived yet.
+   *
+   * The wake recogniser keeps running through the command window until it
+   * endpoints and hands one over — the embedding is the whole reason the
+   * speaker model is attached to *that* recogniser, and firing early must not
+   * quietly cost the "only my voice" check its evidence.
+   */
+  let awaitingSpeaker = false;
+
+  /** The last command partial, and how many polls it has sat unchanged. */
+  let lastPartial = '';
+  let settledFor = 0;
 
   const testing = (now = Date.now()) => (config?.testUntil ?? 0) > now;
   const enrolling = (now = Date.now()) => (config?.enrolUntil ?? 0) > now;
@@ -316,6 +350,23 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
 
   let lastSpeakerScore: number | null = null;
 
+  /**
+   * Pay off the embedding debt taken on by waking early.
+   *
+   * Waking on a partial is a latency trick and must not become a hole in the
+   * speaker check. If the wake recogniser has not endpointed by the time the
+   * exchange is over, it is finalised here so the evidence exists at all.
+   *
+   * **Order-sensitive:** it has to run before `wake.reset()`, which discards
+   * the audio the embedding is computed from. Called from both places that end
+   * an exchange rather than left to the caller to remember.
+   */
+  function settleSpeaker(): void {
+    if (!awaitingSpeaker || !wake) return;
+    lastSpeakerScore = scoreSpeaker(wake.flush().speaker);
+    awaitingSpeaker = false;
+  }
+
   function poll(): void {
     if (!config?.enabled) return;
 
@@ -383,7 +434,23 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
         }
       }
 
-      if (!heard) return;
+      if (!heard) {
+        /*
+         * Not endpointed yet — but the partial may already name the wake word,
+         * and that is the difference between the popup appearing as you say it
+         * and appearing a second after you stop.
+         *
+         * Enrolment and tests deliberately stay on the final result: enrolment
+         * needs the speaker embedding, which a partial has not got, and a test
+         * is a readout of what the recogniser actually decided rather than what
+         * it was leaning towards.
+         */
+        if (!enrolling(now) && !testing(now)) {
+          const guess = wake!.partial();
+          if (guess && matchesWakeWord(guess, config.wakeWord)) beginExchange(now, level, null, guess);
+        }
+        return;
+      }
 
       // Grammar mode still returns `[unk]` for anything off-list, so this means
       // the wake word rather than merely "some speech happened". Leading
@@ -397,8 +464,6 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
         forgetReplay();
         return;
       }
-
-      stats.wakes++;
 
       /*
        * Enrolling: the wake word is a sample, not an instruction.
@@ -419,37 +484,21 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
         return;
       }
 
-      lastSpeakerScore = scoreSpeaker(heard.speaker);
-      inFollowUp = false;
-      phase = 'awake';
-      wokeAt = now;
-      command!.reset();
-      emitter.emit('wake', { speakerScore: lastSpeakerScore });
-      if (testing(now))
-        emitter.emit('heard', { kind: 'wake', text: heard.text, speakerScore: lastSpeakerScore, peak: level, matchedWake: true });
-
-      /*
-       * Replay everything the wake recogniser just consumed.
-       *
-       * Vosk reports the wake word only once the whole utterance ends, so for
-       * anyone who doesn't pause after it, the command has already gone by. The
-       * buffer holds it; feeding it to the command recogniser is what lets
-       * "hey jarvis I drank water" work said as one sentence.
-       */
-      let replayed: Utterance | null = null;
-      for (const block of replay) replayed = command!.accept(block) ?? replayed;
-      forgetReplay();
-
-      // A completed result here means the sentence was already finished — the
-      // run-together case. If it holds only the wake word, you paused after
-      // it and is still to speak, so keep listening rather than filing "jarvis"
-      // as a note.
-      if (replayed?.text && hasCommand(replayed.text)) {
-        phase = 'idle';
-        wake!.reset();
-        deliver(replayed.text, level);
-      }
+      beginExchange(now, level, scoreSpeaker(heard.speaker), heard.text);
       return;
+    }
+
+    /*
+     * Woke on a partial, so the embedding is still owed. The wake recogniser
+     * keeps being fed until it endpoints and produces one — the speaker model
+     * is attached to that recogniser and nothing else can answer for it.
+     */
+    if (awaitingSpeaker) {
+      const settled = wake!.accept(samples);
+      if (settled) {
+        lastSpeakerScore = scoreSpeaker(settled.speaker);
+        awaitingSpeaker = false;
+      }
     }
 
     // Awake: everything now goes to the command recogniser until it finishes a
@@ -458,11 +507,34 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     const window = inFollowUp ? followWindow : VOICE_COMMAND_TIMEOUT_MS;
     const timedOut = now - wokeAt > window;
 
-    if (!finished && !timedOut) return;
+    /*
+     * Stop waiting once the decoder has stopped changing its mind.
+     *
+     * `accept` answers only when the endpointer is satisfied, which is about a
+     * second of silence after you finish. A partial that has not moved for
+     * `SETTLED_POLLS` means that decision is already made and the remaining
+     * wait is politeness. `hasCommand` keeps it from firing on the replayed
+     * wake word while you are still drawing breath to say the command.
+     */
+    let settled = false;
+    if (!finished && !timedOut) {
+      const guess = command!.partial();
+      if (guess && guess === lastPartial) {
+        settledFor++;
+        settled = settledFor >= SETTLED_POLLS && hasCommand(guess);
+      } else {
+        lastPartial = guess;
+        settledFor = 0;
+      }
+    }
+
+    if (!finished && !timedOut && !settled) return;
 
     const utterance = finished ?? command!.flush();
     phase = 'idle';
     inFollowUp = false;
+    // Before the reset, which throws away the audio the embedding comes from.
+    settleSpeaker();
     wake!.reset();
     forgetReplay();
 
@@ -488,8 +560,61 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     deliver(utterance.text, level);
   }
 
+  /**
+   * Start listening for a command.
+   *
+   * Reached two ways: from the wake recogniser's final result, which carries a
+   * speaker embedding, and from its *partial*, which does not. `speakerScore` is
+   * null in the second case and the debt is settled before anything is
+   * delivered — see `deliver`.
+   */
+  function beginExchange(now: number, level: number, speakerScore: number | null, text: string): void {
+    stats.wakes++;
+
+    lastSpeakerScore = speakerScore;
+    awaitingSpeaker = speakerScore === null;
+    inFollowUp = false;
+    phase = 'awake';
+    wokeAt = now;
+    lastPartial = '';
+    settledFor = 0;
+    command!.reset();
+
+    emitter.emit('wake', { speakerScore });
+    if (testing(now)) {
+      emitter.emit('heard', { kind: 'wake', text, speakerScore, peak: level, matchedWake: true });
+    }
+
+    /*
+     * Replay everything the wake recogniser just consumed.
+     *
+     * Vosk reports the wake word only once the whole utterance ends, so for
+     * anyone who doesn't pause after it, the command has already gone by. The
+     * buffer holds it; feeding it to the command recogniser is what lets
+     * "hey jarvis I drank water" work said as one sentence.
+     */
+    let replayed: Utterance | null = null;
+    for (const block of replay) replayed = command!.accept(block) ?? replayed;
+    forgetReplay();
+
+    // A completed result here means the sentence was already finished — the
+    // run-together case. If it holds only the wake word, you paused after
+    // it and is still to speak, so keep listening rather than filing "jarvis"
+    // as a note.
+    if (replayed?.text && hasCommand(replayed.text)) {
+      phase = 'idle';
+      deliver(replayed.text, level);
+      wake!.reset();
+    }
+  }
+
   function deliver(text: string, level = 0): void {
     if (!config) return;
+
+    // Backstop for the run-together path, where the exchange ends inside
+    // `beginExchange` and the reset comes after this returns. A no-op whenever
+    // the debt has already been paid.
+    settleSpeaker();
 
     const score = lastSpeakerScore;
 
@@ -542,6 +667,8 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     followWindow = ms;
     phase = 'awake';
     wokeAt = Date.now();
+    lastPartial = '';
+    settledFor = 0;
     // A follow-up is not a fresh wake, so the speaker score from the wake word
     // that started this exchange still stands — it is the same person talking.
     command.reset();
@@ -553,6 +680,9 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     phase = 'idle';
     inFollowUp = false;
     followWindow = 0;
+    awaitingSpeaker = false;
+    lastPartial = '';
+    settledFor = 0;
     wake?.reset();
     command?.reset();
     forgetReplay();

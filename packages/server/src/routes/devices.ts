@@ -113,4 +113,38 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       .returning({ id: devices.id, name: devices.name, revokedAt: devices.revokedAt });
     return updated ?? reply.code(404).send({ error: 'no such device' });
   });
+
+  /**
+   * Clear out a revoked device for good.
+   *
+   * **Revoking and deleting are two steps on purpose, and this refuses to be
+   * the first one.** Revoking is the thing that matters and is instant; the row
+   * that stays behind is the record of it, and it is worth reading before it
+   * goes — "phone, revoked, last seen three weeks ago" is how you notice you
+   * revoked the wrong one. Letting a single click do both would put an
+   * irreversible action where a reversible one belongs.
+   *
+   * Local-only, like minting. A token taken from the phone can already do
+   * nothing here, but the rule is worth keeping uniform: the device list is
+   * administered from the machine that owns it.
+   */
+  app.delete('/api/devices/:id', async (request, reply) => {
+    if (!request.isLocal) {
+      return reply.code(403).send({ error: 'devices can only be removed from the PC running the server' });
+    }
+
+    const { id } = request.params as { id: string };
+    const [device] = await db.select().from(devices).where(eq(devices.id, id));
+    if (!device) return reply.code(404).send({ error: 'no such device' });
+
+    // Deleting a live device would free its token hash and leave whatever holds
+    // it with a 401 and no explanation on this screen — which looks exactly like
+    // the server having broken. Revoke it first and the row says so.
+    if (!device.revokedAt) {
+      return reply.code(409).send({ error: 'revoke it first — only a revoked device can be removed' });
+    }
+
+    await db.delete(devices).where(eq(devices.id, id));
+    return reply.code(204).send();
+  });
 }

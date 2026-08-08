@@ -41,6 +41,12 @@ function parsePhrases(raw: string): string[] {
   }
 }
 
+/** Three states into a nullable integer — see the same helper in `tasks.ts`. */
+function normalisePush(body: { pushToPhone?: boolean | null }) {
+  if (body.pushToPhone === undefined) return {};
+  return { pushToPhone: body.pushToPhone === null ? null : body.pushToPhone ? 1 : 0 };
+}
+
 export async function habitRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/habits', async () => {
     const all = await db
@@ -78,6 +84,7 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
       .insert(habits)
       .values({
         ...body,
+        ...normalisePush(body),
         active: body.active ? 1 : 0,
         sortOrder: body.sortOrder ?? nextOrder,
         voicePhrases: JSON.stringify(body.voicePhrases),
@@ -96,6 +103,7 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
       .update(habits)
       .set({
         ...body,
+        ...normalisePush(body),
         ...(body.active === undefined ? {} : { active: body.active ? 1 : 0 }),
         ...(voicePhrases === undefined ? {} : { voicePhrases: JSON.stringify(voicePhrases) }),
       })

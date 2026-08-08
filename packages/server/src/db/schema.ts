@@ -53,6 +53,16 @@ export const tasks = sqliteTable(
      * eligible to nudge from the morning rather than an hour before midnight.
      */
     dueIsAllDay: integer('due_is_all_day').notNull().default(0),
+    /**
+     * May this one reach the phone when you are away from the PC?
+     *
+     * **Nullable on purpose: null means "follow `settings.push_default`".** A
+     * notNull boolean would have to be stamped with the default at creation, and
+     * would then stop tracking it — changing the default later would leave every
+     * existing task on the old answer, silently. Three states are the honest
+     * model, because "I have not decided" is genuinely not the same as "no".
+     */
+    pushToPhone: integer('push_to_phone'),
     scheduledAt: integer('scheduled_at'),
     estimateMinutes: integer('estimate_minutes'),
     sortOrder: integer('sort_order').notNull().default(0),
@@ -90,6 +100,8 @@ export const habits = sqliteTable('habits', {
    * is actionable teaches you to ignore reminders.
    */
   reminderStartMinute: integer('reminder_start_minute'),
+  /** Null follows `settings.push_default` — see `tasks.push_to_phone`. */
+  pushToPhone: integer('push_to_phone'),
   /**
    * JSON array of things you might say to tick this off. A JSON column rather
    * than a side table because they are only ever read and written as a whole
@@ -201,6 +213,16 @@ export const nudges = sqliteTable(
      */
     expiresAt: integer('expires_at'),
     minQuality: text('min_quality').notNull().default('decent'),
+    /**
+     * Resolved at sweep time from the task or habit and the default, so the
+     * answer is the one that applied when this was queued.
+     *
+     * notNull here, unlike on the rows it comes from: by the time something is
+     * in the queue "undecided" has been decided. Keeping it inheritable would
+     * mean re-reading the source row on every delivery pass, and a nudge whose
+     * task has since been deleted would have nothing to inherit from.
+     */
+    pushToPhone: integer('push_to_phone').notNull().default(1),
     state: text('state').notNull().default('pending'),
     snoozeUntil: integer('snooze_until'),
     deliveredAt: integer('delivered_at'),
@@ -278,6 +300,16 @@ export const settings = sqliteTable('settings', {
   remindersEnabled: integer('reminders_enabled').notNull().default(1),
 
   /**
+   * Play a short tone with each popup.
+   *
+   * On by default, unlike voice: this is a sound attached to something you
+   * already asked to be told about, not a new capability that holds a device
+   * open. It is still a switch, because a noise you cannot turn off is the
+   * fastest way to make someone turn the whole app off instead.
+   */
+  soundEnabled: integer('sound_enabled').notNull().default(1),
+
+  /**
    * How the app looks. Stored server-side rather than in the browser so the
    * phone and the PC agree — picking a colour on one and finding the other
    * still amber would read as the setting not having saved.
@@ -313,6 +345,18 @@ export const settings = sqliteTable('settings', {
 
   /** Send nudges to the phone when you are away from the PC. */
   pushEnabled: integer('push_enabled').notNull().default(1),
+
+  /**
+   * What a task or habit that hasn't said gets. The master switch above is
+   * still what decides whether the phone is used at all.
+   *
+   * Two settings rather than one because they answer different questions.
+   * `pushEnabled` is "does this install push to a phone"; this is "of the
+   * things that could, which do by default". Folding them together would make
+   * switching push off and setting the default to no indistinguishable, and
+   * only one of those leaves per-item choices intact when you switch back.
+   */
+  pushDefault: integer('push_default').notNull().default(1),
 
   /**
    * Off by default, and deliberately so: this is the only feature in the app

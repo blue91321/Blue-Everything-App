@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type AppSettings, type Session } from '../api';
+import { api, type AppSettings, type Device, type Session } from '../api';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
 import { Toggle } from '../controls';
@@ -306,37 +306,84 @@ export function Settings({ session, onChanged }: { session: Session; onChanged: 
         {devices.loading && <div className="empty">loading…</div>}
         {devices.data?.length === 0 && <div className="empty">No devices connected yet.</div>}
         {devices.data?.map((device) => (
-          <div className="card" key={device.id}>
-            <div className="row between">
-              <div className="grow">
-                <div className={`title${device.revokedAt ? ' struck' : ''}`}>{device.name}</div>
-                <div className="meta">
-                  {device.kind}
-                  {device.revokedAt
-                    ? ' · revoked'
-                    : device.lastSeenAt
-                      ? ` · seen ${relative(device.lastSeenAt)}`
-                      : ' · never used'}
-                </div>
-              </div>
-              {!device.revokedAt && session.local && (
-                <button
-                  className="btn subtle danger"
-                  onClick={() =>
-                    api.devices.revoke(device.id).then(() => {
-                      devices.reload();
-                      onChanged();
-                    })
-                  }
-                >
-                  revoke
-                </button>
-              )}
-            </div>
-          </div>
+          <DeviceRow
+            key={device.id}
+            device={device}
+            local={session.local}
+            onChanged={() => {
+              devices.reload();
+              onChanged();
+            }}
+          />
         ))}
       </section>
     </>
+  );
+}
+
+/**
+ * One paired device, and what can be done to it.
+ *
+ * Revoked ones stay on the list until they are cleared by hand, because the row
+ * *is* the record that it happened — but a list that only ever grows turns into
+ * a wall of struck-through names, and there is no way to tell which of four
+ * revoked "iPhone" entries is which. So the record can be closed once it has
+ * been read.
+ *
+ * Removing asks first. It is the only irreversible thing on this screen, and it
+ * sits one button away from `revoke`, which is not.
+ */
+function DeviceRow({
+  device,
+  local,
+  onChanged,
+}: {
+  device: Device;
+  local: boolean;
+  onChanged: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <div className="card">
+      <div className="row between">
+        <div className="grow">
+          <div className={`title${device.revokedAt ? ' struck' : ''}`}>{device.name}</div>
+          <div className="meta">
+            {device.kind}
+            {device.revokedAt
+              ? ` · revoked ${relative(device.revokedAt)}`
+              : device.lastSeenAt
+                ? ` · seen ${relative(device.lastSeenAt)}`
+                : ' · never used'}
+          </div>
+        </div>
+
+        {!device.revokedAt && local && (
+          <button className="btn subtle danger" onClick={() => api.devices.revoke(device.id).then(onChanged)}>
+            revoke
+          </button>
+        )}
+
+        {device.revokedAt &&
+          local &&
+          (confirming ? (
+            <>
+              <span className="meta">remove for good?</span>
+              <button className="btn subtle danger" onClick={() => api.devices.remove(device.id).then(onChanged)}>
+                yes
+              </button>
+              <button className="btn subtle" onClick={() => setConfirming(false)}>
+                no
+              </button>
+            </>
+          ) : (
+            <button className="btn subtle" onClick={() => setConfirming(true)}>
+              remove
+            </button>
+          ))}
+      </div>
+    </div>
   );
 }
 
@@ -410,6 +457,37 @@ function PhoneNudges() {
           />
         </div>
       </div>
+
+      {/* Absent on a server older than the column. Rendering a switch that
+          would be silently dropped is worse than not offering it. */}
+      {current.pushDefault !== undefined && (
+        <div className="card">
+          <div className="row between">
+            <div className="grow">
+              <div className="title">Push new tasks and habits by default</div>
+              <div className="meta">
+                What something gets when you haven't said either way. Each task and habit can override
+                this in its own editor, and anything left on <em>Default</em> follows this switch —
+                including things you made before you changed it.
+              </div>
+            </div>
+            <Toggle
+              on={Boolean(current.pushDefault)}
+              disabled={busy || !current.pushEnabled}
+              label="Push new tasks and habits by default"
+              onChange={async (on) => {
+                await api.settings.update({ pushDefault: on });
+                settings.reload();
+              }}
+            />
+          </div>
+          {!current.pushEnabled && (
+            <div className="meta" style={{ marginTop: 8 }}>
+              Nothing goes to the phone at all while the switch above is off, so this has no effect yet.
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card">
         <div className="row between">
@@ -603,6 +681,29 @@ function QuietHours() {
           </button>
         </div>
       </div>
+
+      {/* Absent on a server older than the column — see AppSettings. */}
+      {current.soundEnabled !== undefined && (
+        <div className="card">
+          <div className="row between">
+            <div className="grow">
+              <div className="title">Play a sound</div>
+              <div className="meta">
+                A short tone with each popup — one for a nudge, and for voice, one when it starts
+                listening and another when it did or didn't catch you. A nudge that quiet hours are
+                holding makes no sound because it never arrives; a voice reply still will, since you
+                asked for it.
+              </div>
+            </div>
+            <Toggle
+              on={Boolean(current.soundEnabled)}
+              disabled={saving}
+              label="Play a sound with popups"
+              onChange={(on) => update({ soundEnabled: on })}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="row between">

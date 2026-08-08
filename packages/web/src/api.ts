@@ -59,6 +59,8 @@ export interface Task {
   dueAt: number | null;
   /** The date matters, the time of day doesn't. `dueAt` is end of that day. */
   dueIsAllDay: number;
+  /** 1 yes, 0 no, null follows the default in Settings. */
+  pushToPhone: number | null;
   projectId: string | null;
   createdAt: number;
   completedAt: number | null;
@@ -72,6 +74,8 @@ export interface TaskInput {
   priority?: number;
   dueAt?: number | null;
   dueIsAllDay?: boolean;
+  /** null puts it back to following the default rather than meaning "no". */
+  pushToPhone?: boolean | null;
 }
 
 export interface Habit {
@@ -85,6 +89,8 @@ export interface Habit {
   reminderEveryMinutes: number | null;
   /** Minutes since midnight before reminders start; null means straight away. */
   reminderStartMinute: number | null;
+  /** 1 yes, 0 no, null follows the default in Settings. */
+  pushToPhone: number | null;
   /** Things you can say to tick this off. Empty means voice can't reach it. */
   voicePhrases: string[];
   periodKey: string;
@@ -99,7 +105,15 @@ export interface AppSettings {
   followWindowsDnd: number;
   dndUntil: number | null;
   remindersEnabled: number;
+  /** A short tone with each popup. Absent on a server older than the column. */
+  soundEnabled?: number;
   pushEnabled: number;
+  /**
+   * What a task or habit that hasn't chosen gets. Optional for the same reason
+   * the voice fields are — a server predating the column sends nothing, and the
+   * screen should hide the control rather than render a switch stuck on.
+   */
+  pushDefault?: number;
   /** Public half only; the private key never leaves the server. */
   vapidPublicKey: string;
   awayFromPcIdleMinutes: number;
@@ -223,6 +237,16 @@ export interface VoiceTest {
   tokens: string[];
   count: number;
   match: { id: string; phrase: string; score: number; habitName: string | null } | null;
+  /**
+   * Set when the sentence is several commands joined by "and", in the order
+   * they would run. `match` is null whenever this is present — a chain is not
+   * one match, and showing the first would describe a fraction of what happens.
+   *
+   * Optional because a server older than chaining sends neither field.
+   */
+  chain?:
+    | { phrase: string; kind: VoiceCommandKind; habitName: string | null; count: number }[]
+    | null;
 }
 
 export interface VaultStatus {
@@ -350,6 +374,8 @@ export const api = {
     create: (payload: { name: string; kind: 'phone' | 'browser' | 'windows-agent' | 'extension' }) =>
       post<Device & { token: string }>('/api/devices', payload),
     revoke: (id: string) => post(`/api/devices/${id}/revoke`),
+    /** Only works on an already-revoked device — the server enforces that. */
+    remove: (id: string) => request<void>(`/api/devices/${id}`, { method: 'DELETE' }),
   },
 
   tasks: {
@@ -374,6 +400,7 @@ export const api = {
         active?: boolean;
         reminderEveryMinutes?: number | null;
         reminderStartMinute?: number | null;
+        pushToPhone?: boolean | null;
         voicePhrases?: string[];
       }
     ) => patch<Habit>(`/api/habits/${id}`, payload),
@@ -397,7 +424,9 @@ export const api = {
       followWindowsDnd?: boolean;
       dndUntil?: number | null;
       remindersEnabled?: boolean;
+      soundEnabled?: boolean;
       pushEnabled?: boolean;
+      pushDefault?: boolean;
       voiceEnabled?: boolean;
       wakeWord?: string;
       requireKnownSpeaker?: boolean;

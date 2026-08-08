@@ -305,7 +305,7 @@ a relative database path would quietly create a second, empty database there.
 | Source control | Local git, heading for a public GitHub repo | Revised 2026-08-08. `npm run publish-check` is the gate: it asks git whether the sensitive paths are ignored, refuses to pass on a tracked database or key, and warns about personal identifiers. Run it before pushing. |
 | Licence | MIT | Decided 2026-08-08, over AGPL-3.0. AGPL's network clause would have forced anyone hosting it to publish their changes, which suits a product with users to protect; this has one user and the point of publishing it is that the ideas get taken. Copyright is held as `blue91321` rather than a legal name, matching the history rewrite that took the personal address out. |
 | Commit identity | `blue91321 <blue91321@users.noreply.github.com>` | History was rewritten 2026-08-08 to remove a personal email. Trees verified byte-identical before and after; only metadata changed. `git config user.email` is set locally so new commits match — check it after any fresh clone, because that setting does not travel. |
-| Windows agent | Headless Node service, **not Electron** | Electron costs 150–250MB resident to show a tray icon. The agent is 55MB and has no UI at all — toasts go through WinRT via PowerShell, and the UI is the PWA in a browser. |
+| Windows agent | Headless Node service, **not Electron** | Electron costs 150–250MB resident to show a tray icon. The agent is 55MB — toasts go through WinRT via PowerShell, and the UI is the PWA in a browser. It *does* now draw a tray icon, via `Shell_NotifyIconW` for well under a megabyte; what was rejected was Electron's price for one, not the icon. See **The tray icon**. |
 
 ## Leanness
 
@@ -418,6 +418,119 @@ terminal to use your own app:
 Underneath they are `scripts\start.ps1 -Open`, `stop.ps1`,
 `create-shortcut.ps1`, and `install-autostart.ps1 -Toggle`.
 
+### Popups and sounds
+
+`popup.ts` owns the one overlay window; `sound.ts` makes the noises. Both are
+**core**, and everything with something to say goes through them.
+
+The overlay started inside `features/voice/`, which made it deletable along with
+the microphone and — much worse — meant **nudges could not use it**. A nudge is
+delivered at a stopping point, which very often means the instant a match ends
+with a game still holding the screen. A Windows toast raised then is a toast you
+may never see, so the app spent all that effort picking the right moment and
+then announced it somewhere invisible. The overlay draws above exclusive
+fullscreen; that is the whole reason it exists.
+
+**A nudge now raises both**, and they fail in opposite ways: the popup is the
+half that gets *noticed*, the toast is the half that *persists* in the Action
+Centre afterwards.
+
+There is exactly one popup instance. Two owners would eventually both be
+visible, or would fight over the hide timer and leave a window up forever — so
+the lifecycle lives in `popup.ts` and callers pass content. Voice claims only
+the click handler, being the only thing that offers a choice. It is created at
+startup rather than on first use: ~3ms, and the alternative is paying it exactly
+when somebody is waiting to see whether the wake word worked.
+
+**The sounds are generated, not shipped** — the same reasoning that has the app
+icons drawn by `make-icons.mjs` rather than committed. A WAV header is 44 bytes
+of arithmetic and a sine is one line, so binaries in git would buy nothing.
+Each tone fades in and out over a few milliseconds, which is not decoration: a
+sine cut off mid-cycle clicks, and on a 70ms blip the click is most of what you
+hear. `npm run sound-try -w @everything/agent` plays them.
+
+They go out through `PlaySoundW` from winmm — the library `mic.ts` already loads
+— rather than PowerShell like `notify.ts` does. A toast is rare and can afford
+a few hundred milliseconds to spawn a process; a sound accompanies the wake word,
+where a few hundred milliseconds is the entire point missed.
+
+`soundEnabled` rides on the **attention** heartbeat, not the voice one, because
+popups are core: an install with `features/voice` deleted still raises nudges,
+and that is the only request the agent always makes. On by default, unlike
+voice — it attaches to something you already asked to be told about rather than
+opening a device — but a noise you cannot switch off is the fastest way to make
+someone switch the whole app off instead.
+
+### The tray icon
+
+`packages/agent/src/tray.ts` puts Blue Everything in the notification area —
+under the `^` arrow, with the other background apps. Left-click opens the app;
+right-click offers **Open**, **Restart** and **Stop**.
+`npm run tray-try -w @everything/agent` shows it without starting the agent.
+
+It exists because both services run hidden, so the app had nowhere to be
+*found*: two anonymous `node.exe` processes and a `.cmd` file in a folder you
+had to remember the path to.
+
+**This is not the tray Electron was rejected for.** That comparison was
+150–250MB to draw an icon. `Shell_NotifyIconW` is four calls and a 976-byte
+struct, and Windows owns the pixels — the same reasoning that let `overlay.ts`
+draw a real window without a browser engine, with less to justify because this
+draws nothing.
+
+The agent hosts it rather than the server, and that is load-bearing: the server
+binds `0.0.0.0`, ships a Dockerfile and is meant to move to a VPS. Win32 code in
+it would end that. The agent is already the Windows-side process and already
+owns every `koffi` binding here.
+
+Three things there are easy to get wrong:
+
+- **The menu items shell out through `cmd /c start`, and that form is not
+  optional.** Two requirements pull against each other, and only it satisfies
+  both — measured, after the obvious version shipped doing nothing at all:
+
+  | launched as | runs? | survives the parent being killed? |
+  | --- | --- | --- |
+  | `spawn('powershell.exe', …)` | yes | **no** |
+  | …plus `detached: true` | **no** | — |
+  | `cmd /c start /b "" powershell.exe …` | yes | yes |
+
+  The child must outlive its parent, because `stop.ps1` kills every `node.exe`
+  whose command line names this project — including the agent whose menu was
+  just clicked. But `detached: true` on Windows means `DETACHED_PROCESS`, and
+  `powershell.exe` needs a console host: with no console it exits instantly
+  without running a line. `start` has the command processor create the process
+  and cmd then exits, so what runs belongs to nobody and has a console of its
+  own. `restart.ps1` exists for the same reason: the sequencing has to survive
+  the process that asked for it.
+- **A menu item that fails has to say so.** The first version used
+  `stdio: 'ignore'` and no logging, which is why the above was invisible: a
+  broken launch and an unclicked menu item look identical. Output goes to
+  `logs\tray.log` — via PowerShell's own `*>>`, not a `>>` on the cmd line,
+  because `start /b` hands the new process cmd's handles and cmd's were
+  `ignore`, so a shell redirect there creates the file and captures nothing.
+  The icon is also **put back if the launch fails**, since it is taken down
+  before restarting and an app with no icon and no explanation is the worst of
+  both.
+- **`NOTIFYICONDATAW` fails silently when its size is wrong.** `cbSize` is how
+  the shell picks which version of the struct it was handed, and a mismatch is
+  not an error — it is a `FALSE` return and an icon that never appears. On x64
+  the modern layout is 976 bytes.
+- **The window must not be message-only.** `HWND_MESSAGE` looks right for a
+  window that is never shown, but such a window cannot receive broadcasts — and
+  `TaskbarCreated`, which is how the shell says Explorer has restarted and taken
+  every tray icon with it, is broadcast. Without it an Explorer crash leaves the
+  agent running and unreachable until a reboot.
+
+The message pump is polled like the overlay's, at 250ms rather than 16ms — a
+tray click can afford a quarter of a second, and a menu nobody has opened should
+not cost 60Hz forever. The two pumps are safe together: `PeekMessageW` with a
+null window drains the whole *thread* queue, and `DispatchMessageW` routes each
+message to the window procedure it belongs to.
+
+If the icon cannot be created at all the agent logs one line and carries on. A
+session with no desktop is not a reason to stop watching for stopping points.
+
 ### Its own window, not a browser tab
 
 `Open-AppWindow` in `start.ps1` launches the first Chromium-based browser it
@@ -458,14 +571,17 @@ npm run dev -w @everything/web         # PWA with hot reload, proxying /api to :
 npm run doctor -w @everything/agent    # verify the Win32 layer is healthy
 npm run bench -w @everything/agent     # what one poll costs
 npm run toast -w @everything/agent     # prove notifications reach the screen
+npm run tray-try -w @everything/agent  # show the tray icon, without running the agent
+npm run overlay-try -w @everything/agent   # show the popup — core, so it survives deleting voice
+npm run sound-try -w @everything/agent     # hear the generated notification tones
 npm run sensor -w @everything/agent    # live attention readout; --seconds N to bound it
 npm run smoke -w @everything/server    # end-to-end proof the nudge engine holds and releases
 
 npm run voice-setup -w @everything/agent   # are the mic and the models actually working?
 npm run voice-try   -w @everything/agent   # prove the recognisers, without saying anything
-npm run overlay-try -w @everything/agent   # show the cursor overlay, without saying anything
 npm run voice-enrol -w @everything/agent   # teach it your voice — say the wake word ten times
 npm run voice-check -w @everything/server  # prove the phrase matcher, in memory
+npm run voice-latency -w @everything/agent # where the delay between speaking and acting goes
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
 npm run features         # what is switched on, and what is actually on disk
@@ -578,6 +694,16 @@ and that route rejects anything that isn't local, so a token stolen from the
 phone still can't mint more. `npm run pair` remains as a CLI equivalent.
 `/health` is the only fully public path.
 
+**Revoking and removing are two steps, and `DELETE /api/devices/:id` refuses to
+be the first one.** Revoking is the part that matters and is instant; the row
+left behind is the *record* of it, and it is worth reading before it goes —
+"phone, revoked, last seen three weeks ago" is how you notice you revoked the
+wrong one. So the route 409s on a device that is still live. But a list that only
+grows becomes a wall of struck-through names where four revoked "iPhone" entries
+are indistinguishable, so the record can be closed once it has been read. Local
+only, like minting, and the button asks first: it is the only irreversible thing
+on that screen and it sits next to one that isn't.
+
 ### Nudge policy
 
 Defined once, in `shouldDeliver()` in `src/nudge-engine.ts`:
@@ -613,6 +739,37 @@ speech dips to near silence between words and a single sample can land in a gap.
 
 Deliberately conservative: a missed phone nudge is a small loss, a phone buzzing
 mid-film is exactly the badly-timed interruption this app exists to prevent.
+
+### Not everything deserves a pocket
+
+Each task and habit carries `push_to_phone`, and it has **three** states: yes,
+no, and null — which follows `settings.push_default`. The Settings screen sets
+the default; each editor overrides it.
+
+**The null is the whole design, not laziness about a boolean.** Stamping every
+new task with the default would look identical on the day it was made and
+diverge silently forever after: change your mind about the default and
+everything already on the list keeps answering the old question, with nothing on
+screen to say why. `resolvePush()` in `shared` is the one place three states
+become two, so the sweep, the API and the settings screen cannot disagree.
+
+`pushDefault` is separate from `pushEnabled` because they answer different
+questions — "does this install push at all" versus "of the things that could,
+which do by default". Folding them together would make switching push off
+indistinguishable from setting the default to no, and only one of those leaves
+your per-item choices intact when you switch back.
+
+**The answer is resolved when a nudge is raised, not when it is delivered.** The
+nudge row carries its own copy: by then "undecided" has been decided, re-reading
+the source row on every delivery pass would be work for nothing, and a nudge
+whose task has since been deleted would have nothing left to inherit from.
+
+A nudge that opted out is **skipped on the phone leg, never consumed** — nothing
+marks it delivered, so it keeps waiting and toasts the moment you sit back down.
+"Not worth a phone" and "not worth telling me" are different claims and only the
+first is being made. The filter runs *before* the send, so a queue of desk-only
+nudges cannot spend the ten-minute cooldown on a notification that was never
+going out.
 
 Other guards:
 
@@ -988,6 +1145,45 @@ Two things keep that affordable:
    cheap enough to run continuously and rarely fires by accident. Only once it
    fires does the wide-vocabulary command recogniser get fed anything.
 
+### The wake word fires on a *partial*, or it feels broken
+
+Vosk answers `accept` only when its endpointer decides the speaker has stopped.
+Measured with `npm run voice-latency -w @everything/agent`, against synthesised
+speech and no microphone:
+
+| | wake word |
+| --- | --- |
+| speech ends | 1700ms |
+| **partial names it** | **700ms** — a second *before* the speech ends |
+| endpoint fires | never, inside six seconds of silence |
+
+That is the whole of the "voice is laggy" complaint, and it was paid twice —
+once to notice the wake word and again to read the command.
+
+So `voice.ts` watches `wake.partial()` and begins the exchange the moment the
+partial contains the wake word. The popup appears while you are still saying it.
+
+**The speaker check must not become collateral.** A partial carries no
+embedding, so waking early takes on a debt: the wake recogniser keeps being fed
+through the command window until it endpoints and produces one, and
+`settleSpeaker()` flushes it if the exchange ends first. That has to run
+*before* `wake.reset()`, which discards the audio the embedding comes from —
+hence one function called from both endings rather than a line each caller has
+to remember. Without it, firing early would report "no voice sample to check
+against" and reject every command on a machine with "only my voice" on: a fast
+path that silently broke the feature it was speeding up.
+
+Tests and enrolment deliberately stay on the final result. Enrolment needs the
+embedding, and a test is a readout of what the recogniser *decided*, not what it
+was leaning towards.
+
+The command side gets a smaller version of the same idea: a partial that has not
+moved for `SETTLED_POLLS` (300ms) means the decoder has settled and the rest of
+the wait is the endpointer being polite. Flushing then is not acting on a
+partial — `flush()` finalises properly — it is declining to wait for a verdict
+that is already in. In practice the command endpointer is prompt (measured at
+100ms after speech ends), so this is a safety net rather than the main path.
+
 ### Speaking without a pause used to lose the command
 
 Vosk reports the wake word only when it decides the *utterance* ended, not when
@@ -1173,9 +1369,13 @@ never handed a `file:` path or a protocol handler.
 
 ### The overlay at the cursor
 
-`packages/agent/src/features/voice/overlay.ts` — `CreateWindowExW` and GDI through koffi, the
+`packages/agent/src/overlay.ts` — `CreateWindowExW` and GDI through koffi, the
 same trick `audio.ts` uses for WASAPI and `mic.ts` for waveIn.
 `npm run overlay-try -w @everything/agent` shows it without saying anything.
+
+**It is core, not part of voice** — see **Popups and sounds** below. Voice was
+where it was built, and leaving it there meant nudges could not use the one
+surface in this app that draws above a fullscreen game.
 
 Electron was rejected at 150–250MB to draw a tray icon and was never going to be
 accepted to draw four lines of text. A borderless browser window was the other
@@ -1266,6 +1466,140 @@ When two commands answer to the same phrase the server returns `ambiguous` with
 `POST /api/voice/command/:id/run` carries out whichever is clicked. Guessing
 would be the worst option available: a wrongly fired hotkey is not something
 anyone would notice was wrong.
+
+### Two commands in one breath
+
+`"I drank water and skip this track"` does both. `segmentUtterance()` in
+`shared` proposes the segments; `planChain()` in the server's `actions.ts`
+decides whether to take them.
+
+**Do not split on the word "and". It was tried, and it cannot be made to work.**
+`spokenVariants` puts an `-ing` form of every phrase word into the grammar, so
+`watering` is something the recogniser is allowed to emit — and *"water and" is
+acoustically identical to "watering"*. Asked to choose, it frequently chose the
+single word; the joint vanished and the sentence quietly did only its first
+half. This is not fixable by tuning: `tracking`, `backing`, `minding` and
+`thing` are all sitting in the same grammar, so narrowing it only moves which
+pairs collide.
+
+So the joint is never looked for. `segmentUtterance` walks the words left to
+right and closes a segment the moment what it has accumulated matches a stored
+command, then starts a new one. "and" is filler to `voiceTokens` and simply
+lands inside whichever segment it falls in — and if it came back as "watering"
+instead, that stems to `water` and the segment matches anyway. Dropping it
+entirely ("drink water take vitamins") works too.
+
+**Chaining is tried first, and has to be.** "I drank water and took my meds"
+matches `drink water` perfectly as a whole sentence — every content word of the
+phrase is in there — so resolving first and segmenting on failure would never
+chain anything.
+
+The rules are strict because the cost of being wrong is asymmetric. Failing to
+chain means saying the second thing again; chaining something that was not a
+chain fires a command nobody asked for, and with a hotkey in the list that is
+not something you would notice was wrong. So:
+
+- **every segment must match strictly** — no loose matching, no clipped-tail
+  allowance. Those exist to rescue a sentence that would otherwise be lost
+  entirely, and here there is a perfectly good fallback;
+- **every meaningful word must be consumed**, or accounted for as a clipped
+  command — see below. Words left over that are neither mean part of the
+  sentence was not understood, and that abandons the whole chain, which is what
+  keeps "I drank water and went to the shops" a single command. Trailing
+  *filler* is tolerated; "…please" should not cost it;
+- **at least two segments**, or it is simply one command;
+- **no segment may be ambiguous**, because asking about one part of a chain
+  means holding the rest of the sentence somewhere while a popup waits;
+- **no `note`**, whose content is free text — "note buy milk and eggs" would
+  file "buy milk" and try to run "eggs". A note is allowed to contain "and";
+  that is rather the point of dictating one;
+- **nothing runs until every segment has resolved**, so a chain never half-fires.
+
+Anything that fails these falls back to resolving the sentence whole, exactly as
+before. That is also what keeps a stored phrase containing "and" working: no
+prefix of `salt and pepper` matches on its own, so it closes exactly one segment.
+
+Segments close at the *earliest* point they match, so a phrase that is a strict
+prefix of another would close early — but such a pair is already ambiguous in
+the single-command path, and the leftover rule turns a mis-segmentation into a
+clean fallback rather than a wrong action.
+
+`and` stays in `ALWAYS_IN_VOCABULARY`, but for a smaller reason than it was put
+there for: nothing reads it, and it is only there so the recogniser has
+somewhere harmless to put the sound. A closed grammar must emit *something* for
+every noise it hears, and denying it the real word only pushes the guess onto a
+neighbour.
+
+Each segment carries its own count — "two waters and three coffees" is 2 then 3.
+
+#### A half-heard command must not vanish into the next one
+
+A segment only has to *contain* its phrase's words, so a command whose tail is
+clipped never closes and its words ride along until the next one closes for
+both. `"pause the [music] and I drank water"` arrived as tokens
+`[paus, drink, water]`, matched `drink water`, and **the pause was silently
+dropped** — one command where two were asked for. That is worse than failing
+outright, because the half that worked hides the half that did not.
+
+So the words a segment carried that its own phrase cannot account for are
+collected and offered to `matchVoiceCommandLoosely`, which exists for exactly
+this: a command whose last word was never heard. Two conditions have to hold,
+and the second is what stops it inventing commands:
+
+1. **exactly one loose candidate**, and
+2. **the leftovers contain only words of that candidate's phrase.**
+
+The second is not optional. "went to the shops" loosely matches `go for a walk`
+all on its own — "went" stems to "go", and the lenient matcher may lose the
+phrase's last word. What rules it out is "shops", which belongs to nothing in
+that phrase: a genuinely clipped command contains *only* its own words, while a
+sentence about something else brings its own vocabulary.
+
+Leftovers **inside** a segment that name nothing are ignored rather than fatal,
+so a stray word the recogniser invented cannot cost a chain that is otherwise
+perfectly clear. Leftovers **after** the last match are explained by no command
+at all, so those do abandon it. The wake word is passed in and excluded, since
+it is a leftover by this measure and must never become a command.
+
+Recovered steps are flagged `lenient`, so the overlay says it guessed.
+
+### The stemmer has to be the exact inverse of the generator
+
+`spokenVariants` widens the grammar and `stem` folds it back, and CLAUDE.md has
+claimed since the widening went in that "every generated form stems back to the
+word it came from". **That was only ever tested on "drink", and was false
+elsewhere**, in ways that silently lost common sentences:
+
+- `-es` was stripped from anything, so `coffees` became `coffe` while `coffee`
+  stemmed to itself — "I drank two coffees" could not match `drink coffee`. It
+  is only a plural ending after a sibilant, which is exactly the condition
+  `spokenVariants` uses to *add* it.
+- `-ing` and `-ed` attach to a stem that has already dropped its silent `e`, so
+  `taking` reduced to `tak` while `take` stayed `take` — **"I'm taking my
+  vitamins" never matched `take vitamins`**. `dropSilentE` now collapses the `e`
+  on both sides rather than trying to restore it, because putting it back
+  correctly needs a syllable measure and still gets "agreed" and "paused" wrong
+  in opposite directions. Two words differing only by a final `e` now collide,
+  which costs nothing in a vocabulary of phrases you wrote yourself.
+- The irregular table returned early and bypassed all of it, so `took` gave
+  `take` against a stored `tak`.
+
+`voiceTokens` also filters filler **before** stemming as well as after, because
+`FILLER` is spelled the way people write these words and `have` had already
+become `hav` by the time it was checked.
+
+`voice-check` now runs the round trip over a spread of endings rather than one
+verb. A property this load-bearing has to be checked on the words that break it.
+
+The outcome is `chained` with a `steps` array of ordinary outcomes. The agent
+runs each `action` in the order it was said and gives the overlay a line per
+step, so a part that failed stands out in its own colour instead of being buried
+in a run-together summary. `allowFollowUp` is granted only if every part allows
+it, and a `pause` or `cancel` anywhere in the chain closes the exchange —
+otherwise the microphone would reopen on top of a pause that had just shut it.
+
+`/api/voice/test` calls the same `planChain`, because a dry run that disagrees
+with the real one is worse than none: it is believed.
 
 ### Matching is on meaning, not strings
 

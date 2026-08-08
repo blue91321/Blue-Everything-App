@@ -1,5 +1,18 @@
 /**
- * A small window at the cursor, for talking back.
+ * A small window that appears over everything, for talking back.
+ *
+ * ### It is core, not part of voice
+ *
+ * It was built for voice and lived inside that feature, which made it deletable
+ * along with the microphone — and meant nudges could not use the one surface in
+ * this app that reliably appears **above an exclusive-fullscreen game**. That is
+ * exactly backwards for an app whose entire premise is interrupting well: a
+ * Windows toast raised the moment a match ends is a toast you may never see.
+ *
+ * So it moved up here. Voice imports it like anything else in core; deleting
+ * `features/voice/` now takes the microphone and leaves the popup, which is the
+ * right way round. `popup.ts` owns the single instance and the show/hide
+ * timing, so callers never touch this directly.
  *
  * ### Why this is hand-rolled Win32 and not a UI framework
  *
@@ -459,7 +472,7 @@ export function createOverlay(handlers: {
   onDismiss: () => void;
 }): Overlay {
   const instance = GetModuleHandleW(null);
-  const className = 'EverythingVoiceOverlay';
+  const className = 'EverythingOverlay';
 
   let content: OverlayContent = { title: '' };
   let placement: OverlayPlacement = { mode: 'cursor', screen: null };
