@@ -22,7 +22,7 @@ export type StoppingQuality = z.infer<typeof stoppingQualitySchema>;
 /**
  * How good a moment a nudge insists on before it will interrupt.
  * `any` fires during ordinary desktop use; `prime` waits for a match to end
- * or for Blake to come back to the desk.
+ * or for you to come back to the desk.
  */
 export const nudgeQualities = ['any', 'decent', 'prime'] as const;
 export const nudgeQualitySchema = z.enum(nudgeQualities);
@@ -112,7 +112,7 @@ export const createHabitSchema = z.object({
    */
   reminderStartMinute: z.number().int().min(0).max(24 * 60 - 1).nullish(),
   /**
-   * Things Blake might say to tick this off — "i drank water", "had a glass".
+   * Things you might say to tick this off — "i drank water", "had a glass".
    * Empty means the habit can't be reached by voice at all, which is the
    * default: a habit nobody has written a phrase for should never win a match.
    */
@@ -197,7 +197,7 @@ export function matchesWakeWord(heard: string, wakeWord: string): boolean {
  *
  * A one-word wake word is genuinely worse: it fires on ordinary conversation,
  * and with an always-on microphone that means habits ticked off by accident.
- * But it is also the thing that survives being half-heard, so it is Blake's
+ * But it is also the thing that survives being half-heard, so it is your
  * call to make, not the schema's.
  */
 export function wakeWordAdvice(wakeWord: string): string | null {
@@ -216,9 +216,9 @@ export function wakeWordAdvice(wakeWord: string): string | null {
 }
 
 /**
- * Cosine similarity a speaker embedding must reach to count as Blake.
+ * Cosine similarity a speaker embedding must reach to count as you.
  *
- * Tuned for the failure that matters: a false accept logs a habit he didn't do,
+ * Tuned for the failure that matters: a false accept logs a habit you didn't do,
  * which is quietly wrong data. A false reject means saying it again, which is
  * merely annoying. So this sits deliberately on the strict side of the equal-
  * error rate.
@@ -233,7 +233,7 @@ export const VOICE_COMMAND_TIMEOUT_MS = 6000;
  *
  * Separate from the command timeout above, which is how long it waits for the
  * first thing after the wake word. This one is the conversation: having just
- * replied, how long is it still Blake's turn.
+ * replied, how long is it still your turn.
  *
  * The right value is personal and the trade is real — longer means saying two
  * things in a row without repeating the wake word, but also a microphone acting
@@ -696,7 +696,7 @@ export interface VoiceMatch {
 /**
  * Every content word of the phrase has to appear. Anything looser matches the
  * wrong habit, and a habit ticked off by mistake is worse than one missed —
- * it is wrong data that Blake has no reason to go looking for.
+ * it is wrong data that you have no reason to go looking for.
  */
 export const VOICE_MATCH_FLOOR = 1;
 
@@ -878,7 +878,7 @@ export const createNudgeSchema = z.object({
   earliestAt: z.number().int().optional(),
   /**
    * Past this, the nudge stops being polite and interrupts anyway — except
-   * when Blake is away from the machine, where a toast would just be missed.
+   * when you are away from the machine, where a toast would just be missed.
    */
   deadlineAt: z.number().int().nullish(),
   /** Drop it unfired after this. Recurring reminders set it; one-offs don't. */
@@ -956,8 +956,8 @@ export const ICON_BACKGROUND = '#14161c';
  *
  * `pause` is the original and still the default — the app's whole idea is
  * holding something back until the moment is right, and the glyph says so.
- * The rest are there because it is Blake's app and he should be able to make it
- * look like his.
+ * The rest are there because it is your app and you should be able to make it
+ * look like your.
  *
  * `image` means "use the file that was uploaded". It is a shape like the others
  * rather than a separate boolean, because the two are genuinely exclusive and a
@@ -1076,14 +1076,14 @@ export const registerDeviceSchema = z.object({
 export const AWAY_FROM_PC_IDLE_MS = 15 * 60_000;
 
 /**
- * Has Blake actually left, as opposed to sitting still?
+ * Has you actually left, as opposed to sitting still?
  *
  * Idle time alone can't tell the difference: watching a two-hour film looks
  * exactly like an empty chair to the keyboard. Sound is what separates them, so
  * a push only goes out when the machine has been untouched *and* silent.
  *
  * Deliberately conservative — a missed phone nudge is a small loss, while a
- * phone buzzing in his pocket while he's sat watching something is exactly the
+ * phone buzzing in your pocket while you're sat watching something is exactly the
  * badly-timed interruption this whole app exists to prevent.
  */
 export function isAwayFromPc(input: { idleMs: number; audioPlaying?: boolean }): boolean {
@@ -1103,7 +1103,7 @@ export const MIN_MASTER_PASSWORD = 12;
 
 export const vaultSetupSchema = z.object({
   masterPassword: z.string().min(MIN_MASTER_PASSWORD).max(1024),
-  /** Off only if Blake explicitly accepts that a forgotten password is final. */
+  /** Off only if you explicitly accepts that a forgotten password is final. */
   withRecovery: z.boolean().default(true),
 });
 

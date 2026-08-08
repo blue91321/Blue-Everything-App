@@ -174,7 +174,7 @@ const PE32_SIZE = koffi.sizeof(PROCESSENTRY32W);
  * found, `processIsAlive` can watch it for a fraction of the cost.
  *
  * Process *liveness* is the signal that matters: a League match is in progress
- * whenever `League of Legends.exe` exists, even if Blake alt-tabbed to Discord.
+ * whenever `League of Legends.exe` exists, even if you alt-tabbed to Discord.
  */
 export function listProcesses(): Map<string, number> {
   const found = new Map<string, number>();

@@ -311,7 +311,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
 }
 
 /**
- * What Blake can say to tick this habit off.
+ * What you can say to tick this habit off.
  *
  * Phrases are matched on meaningful words rather than exactly, and past tenses
  * are folded — so "drink water" already covers "I drank some water". The list

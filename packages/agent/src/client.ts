@@ -46,7 +46,7 @@ export interface AttentionResponse {
   deliver: DeliverableNudge[];
 }
 
-/** Something for the agent to do on the machine Blake is sitting at. */
+/** Something for the agent to do on the machine you are sitting at. */
 export type VoiceAction =
   | { do: 'open-url'; url: string }
   | { do: 'press-keys'; keys: string }

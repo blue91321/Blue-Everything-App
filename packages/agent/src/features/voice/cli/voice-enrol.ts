@@ -1,5 +1,5 @@
 /**
- * Teach the agent what Blake sounds like, from a terminal.
+ * Teach the agent what you sound like, from a terminal.
  *
  *   npm run voice-enrol -w @everything/agent
  *
@@ -22,7 +22,7 @@
  * ### What this is and is not
  *
  * A filter against the room: the TV, a video, someone else talking. Not a
- * security control — a recording of his voice passes it, and it guards habit
+ * security control — a recording of your voice passes it, and it guards habit
  * ticks rather than anything that matters. The vault is out of reach of voice
  * entirely.
  */

@@ -11,7 +11,7 @@
  * from a file, and the browser extension's toolbar icons, which are named in a
  * static manifest.
  *
- * Those are built from the defaults unless told otherwise. If Blake changes the
+ * Those are built from the defaults unless told otherwise. If you change the
  * accent and wants the desktop icon to match, this script takes flags — that is
  * a deliberate manual step rather than something the server reaches out and
  * does, because writing into the repo and busting the Windows icon cache is a

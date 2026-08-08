@@ -1,5 +1,5 @@
 /**
- * The attention model: turn raw Win32 signals into "can I interrupt Blake
+ * The attention model: turn raw Win32 signals into "can I interrupt you
  * right now, and if not, was that just a moment where I could have?"
  *
  * Nothing here sends a notification. It only classifies the current moment and
@@ -55,8 +55,8 @@ export interface AttentionSnapshot {
    * Windows' own Do Not Disturb is on.
    *
    * Worth reporting separately from the attention state: it's an explicit "not
-   * now" from Blake, whereas `focused` is the sensor's inference. It also works
-   * for an irregular sleep schedule, because it's flipped when he actually goes
+   * now" from you, whereas `focused` is the sensor's inference. It also works
+   * for an irregular sleep schedule, because it's flipped when you actually goes
    * to bed rather than at a predicted hour.
    */
   windowsDnd: boolean;

@@ -9,7 +9,7 @@
  * The no-op default is not a stub bolted on for the sake of one: "push is not
  * installed" and "no phone is subscribed" are the same situation, and the
  * engine already handles the latter correctly — nothing is marked delivered,
- * everything stays queued, and it toasts the moment Blake sits down. So the
+ * everything stays queued, and it toasts the moment you sit down. So the
  * fallback is the behaviour that was already specified, not a new one.
  */
 import type { DeliverableNudge } from '@everything/shared';

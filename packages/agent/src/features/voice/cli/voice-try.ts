@@ -10,7 +10,7 @@
  *
  * Windows' own speech synthesiser writes the test audio, so this needs nothing
  * downloaded and no microphone. Synthetic speech is not a substitute for real
- * speech (it is cleaner, and it is not Blake's voice, so it proves nothing
+ * speech (it is cleaner, and it is not your voice, so it proves nothing
  * about the speaker check) but it exercises every other link in the chain:
  * grammar construction, the 100ms block feed, `[unk]` handling, and the
  * transcript the server would receive.

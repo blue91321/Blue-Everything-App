@@ -41,7 +41,7 @@ export async function getSettings() {
  *
  * `in-game` and `focused` are never interruptible on quality alone — only a
  * passed deadline gets through. `away` is separate: a toast fired at an empty
- * chair is a nudge spent for nothing, so nothing fires until Blake is back.
+ * chair is a nudge spent for nothing, so nothing fires until you are back.
  */
 export function momentQuality(
   state: AttentionState,
@@ -116,7 +116,7 @@ export function shouldDeliver(
  * delivered. Returns what the caller should actually show.
  */
 export interface DeliveryResult {
-  /** For the agent to raise as Windows toasts. Empty when Blake isn't there. */
+  /** For the agent to raise as Windows toasts. Empty when you aren't there. */
   deliver: DeliverableNudge[];
   /** How many reached the phone instead. */
   pushed: number;
@@ -148,14 +148,14 @@ export async function collectDeliverable(
    * With the chair empty, the PC's stopping points are meaningless — there is
    * no match to avoid interrupting. So anything already due may go to the
    * phone, which is why `isAwayFromPc` is deliberately strict about proving
-   * he's really gone.
+   * You're really gone.
    */
   const awayFromPc = isAwayFromPc(report);
   const toPhone = awayFromPc && Boolean(prefs.pushEnabled) && !quiet;
 
   if (toPhone && phones().isOnCooldown(now)) {
     // Leave everything queued rather than marking it delivered — it will go out
-    // on the next window, or as a toast the moment he sits back down.
+    // on the next window, or as a toast the moment you sit back down.
     return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
   }
 
@@ -402,7 +402,7 @@ export async function sweepDueTasks(now = Date.now()): Promise<number> {
       // Already waiting its turn.
       case 'pending':
       case 'snoozed':
-      // Blake has seen it and made a call. Don't re-raise it.
+      // You have seen it and made a call. Don't re-raise it.
       case 'acknowledged':
       case 'dismissed':
         spokenFor.add(nudge.taskId);

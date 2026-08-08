@@ -5,7 +5,7 @@
  *
  * The ground rule was "the agent is read-only about the system: it observes
  * windows and processes; it does not close, kill, or manipulate them." Sending
- * synthetic keystrokes plainly breaks that, and it was Blake's explicit call —
+ * synthetic keystrokes plainly breaks that, and it was your explicit call —
  * but it is worth being honest that this file is the exception, and that it is
  * the most dangerous code in the project. A mis-heard phrase here does not add
  * a wrong row to a table; it presses keys into whatever window has focus.

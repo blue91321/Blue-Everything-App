@@ -6,8 +6,8 @@ Not a product. No multi-tenancy, no accounts, no sign-up flow — ever.
 ## What this actually is
 
 The headline feature is **not** a to-do list. It is an *interruption-aware nudge
-engine*: something that knows what Blake is doing on Windows, holds a reminder
-while he's mid-game, and delivers it the instant he hits a natural break.
+engine*: something that knows what you are doing on Windows, holds a reminder
+while you're mid-game, and delivers it the instant you hit a natural break.
 
 Tasks, habits, time tracking, and notes exist to give that engine something
 worth saying. When a design decision is ambiguous, favour the one that makes
@@ -300,8 +300,8 @@ a relative database path would quietly create a second, empty database there.
 | --- | --- | --- |
 | iPhone app | Installable PWA | No Mac, no Apple Developer account. iOS 16.4+ supports web push for home-screen PWAs, which was the blocker. |
 | Sync | Server on the Windows PC, reachable over Tailscale | Free, private, no cloud. Trade-off: the phone only syncs while the PC is awake. |
-| Password vault | Own vault, own browser extension | Decided 2026-08-06 after comparing Bitwarden, Vaultwarden, KeePassXC and 1Password. Blake wants to own all of it. |
-| Voice | Always-on wake word → local Vosk | Revised 2026-08-06. Push-to-talk is cheaper and cannot false-positive, but the requirement was a wake word Blake can *change from a text box*, and hands-free mid-game. See **Voice** below for what that costs. |
+| Password vault | Own vault, own browser extension | Decided 2026-08-06 after comparing Bitwarden, Vaultwarden, KeePassXC and 1Password. You want to own all of it. |
+| Voice | Always-on wake word → local Vosk | Revised 2026-08-06. Push-to-talk is cheaper and cannot false-positive, but the requirement was a wake word you can *change from a text box*, and hands-free mid-game. See **Voice** below for what that costs. |
 | Source control | Local git, heading for a public GitHub repo | Revised 2026-08-08. `npm run publish-check` is the gate: it asks git whether the sensitive paths are ignored, refuses to pass on a tracked database or key, and warns about personal identifiers. Run it before pushing. |
 | Licence | MIT | Decided 2026-08-08, over AGPL-3.0. AGPL's network clause would have forced anyone hosting it to publish their changes, which suits a product with users to protect; this has one user and the point of publishing it is that the ideas get taken. Copyright is held as `blue91321` rather than a legal name, matching the history rewrite that took the personal address out. |
 | Commit identity | `blue91321 <blue91321@users.noreply.github.com>` | History was rewritten 2026-08-08 to remove a personal email. Trees verified byte-identical before and after; only metadata changed. `git config user.email` is set locally so new commits match — check it after any fresh clone, because that setting does not travel. |
@@ -365,6 +365,21 @@ The 9MB it doesn't return is heap the allocator keeps, and the DLLs stay mapped.
 Recogniser handles must be freed *before* the models they point into, or the
 frees dangle. `shutdown()` does them in that order deliberately.
 
+## Versions
+
+All five packages carry the **same** version and move together, because they are
+one app released as one thing — independent numbers would imply a release
+cadence that does not exist, and would leave you diffing four of them to work
+out what is actually deployed.
+
+`version.ts` reads it from `package.json` at boot rather than keeping a second
+copy in a constant, which is one `npm version` away from being a lie. It is
+served on `/health` and `/api/session`, and shown on the Settings screen — the
+PWA and the server update independently, so "which version am I looking at" is
+the first question whenever something looks wrong.
+
+Bump with `npm version <patch|minor|major> --workspaces --include-workspace-root`.
+
 ## Ground rules
 
 - **Never commit real data.** `data/`, `*.db`, `.env`, `agent.config.json`,
@@ -390,8 +405,8 @@ frees dangle. `shutdown()` does them in that order deliberately.
 
 ## Running it on this PC
 
-Three double-clickable files in the repo root, because Blake should never need a
-terminal to use his own app:
+Three double-clickable files in the repo root, because you should never need a
+terminal to use your own app:
 
 | File | Does |
 | --- | --- |
@@ -531,7 +546,7 @@ is.
 
 ### Auth: this machine is trusted, everything else needs a token
 
-Requests arriving from loopback are allowed without a token. Making Blake paste
+Requests arriving from loopback are allowed without a token. Making you paste
 a token into a browser on the same PC that runs the server protects nothing and
 was the single biggest piece of friction in the app.
 
@@ -578,8 +593,8 @@ Defined once, in `shouldDeliver()` in `src/nudge-engine.ts`:
 
 ### Phone push, and how "away" is decided
 
-When Blake is genuinely away from the PC, nudges go to his phone instead of the
-screen. Never both: a toast he's sitting in front of beats a buzz in his pocket.
+When you are genuinely away from the PC, nudges go to your phone instead of the
+screen. Never both: a toast you're sitting in front of beats a buzz in your pocket.
 
 `isAwayFromPc()` in `packages/shared` needs **both**:
 
@@ -605,7 +620,7 @@ Other guards:
   notification. Stepping out for an afternoon shouldn't mean a pocketful of
   buzzes on the way back.
 - **Nothing is marked delivered until a push actually succeeds**, so with no
-  phone subscribed the queue simply waits and toasts when he sits down.
+  phone subscribed the queue simply waits and toasts when you sit down.
 - **Quiet hours and DND still apply** — away doesn't override asleep.
 - Subscriptions the push service reports as dead (404/410) are cleared
   automatically.
@@ -626,7 +641,7 @@ Two things made that bug expensive to find, both now fixed:
 - **Push failures were swallowed.** A failed send must not fail the agent's
   heartbeat, but it must still be logged, or `pushed: 0` is undiagnosable.
 - **`audioPlaying` wasn't recorded.** With only idle time in the sample log,
-  "he was idle 52 minutes and nothing pushed" could not be answered after the
+  "you were idle 52 minutes and nothing pushed" could not be answered after the
   fact. Samples now carry `audioPlaying` and `awayFromPc`, and a change in
   either forces a row.
 
@@ -739,8 +754,8 @@ the point: a half-lost kit is worse than none, because whoever finds the
 surviving share is one step from the vault rather than two.
 
 **A browser's "save password?" prompt is not the same as saving a share**, and
-appears at exactly the wrong moment. Blake lost a share to precisely that, so
-the kit screen now says so outright and tells him to verify it is really stored
+appears at exactly the wrong moment. You lost a share to precisely that, so
+the kit screen now says so outright and tells you to verify it is really stored
 before ticking the box.
 
 ### Deleting the vault
@@ -764,10 +779,10 @@ nothing, so a mis-detected layout is caught before a thousand mangled entries
 land in the vault. Only `commit: true` writes.
 
 The CSV is the most dangerous thing that will ever pass through this app: every
-password Blake owns, in plaintext. It is parsed in memory, never written to
+password you own, in plaintext. It is parsed in memory, never written to
 disk, never logged, and never echoed back — the preview returns counts and
 titles only, because a preview that showed passwords would just be a second way
-to read the file. The success screen's main job is telling him to delete the
+to read the file. The success screen's main job is telling you to delete the
 export.
 
 The hand-rolled CSV reader exists because splitting on commas quietly corrupts
@@ -883,7 +898,7 @@ opposite fixes.
 
 **The two recognisers endpoint independently**, so the wide one routinely
 finishes a block or two before the wake one. Reporting that as "but not the wake
-word" over a transcript that plainly contained it was a flat lie that sent Blake
+word" over a transcript that plainly contained it was a flat lie that sent you
 looking for the wrong problem. The agent now decides `matchedWake` — it is the
 only side that knows the wake word without the PWA importing zod — and the
 readout says "wake word in there" instead.
@@ -891,7 +906,7 @@ readout says "wake word in there" instead.
 `npm run voice-try -w @everything/agent` is the same idea without a microphone —
 Windows' own speech synthesiser writes the audio, so it exercises grammar
 construction, the block feed and `[unk]` handling. It proves nothing about the
-speaker check, since it is not Blake's voice.
+speaker check, since it is not your voice.
 
 ### Choosing a microphone
 
@@ -919,7 +934,7 @@ threw, and took the entire Settings screen down with it. A stale server should
 look stale, not broken.
 
 **Off by default.** It is the only feature that holds a microphone open, so it
-is something Blake switched on, not something he finds already running. Turning
+is something you switched on, not something you find already running. Turning
 it off in Settings releases the device immediately.
 
 ```
@@ -961,7 +976,7 @@ answers to `jarvis` too — verified against the real recogniser, along with bar
 A one-word wake word is permitted but warned about rather than refused. It
 genuinely is worse — there is nothing before it to rule out ordinary
 conversation, and with an always-on microphone that means habits ticked off by
-accident. It is also the thing that survives being half-heard, so it is Blake's
+accident. It is also the thing that survives being half-heard, so it is your
 trade to make. The schema validates shape only; `wakeWordAdvice()` supplies the
 warning.
 
@@ -1019,7 +1034,7 @@ The wake word is deliberately *not* expanded: it is a name, and widening the one
 grammar that most needs to stay narrow buys nothing.
 
 `checkWords` carries the literal phrase words separately, so the
-can-this-be-heard warning below reports what Blake typed rather than the
+can-this-be-heard warning below reports what you typed rather than the
 generated forms.
 
 ### A grammar can only contain words the model can pronounce
@@ -1105,7 +1120,7 @@ sources of truth would only ever disagree.
 the server, which owns the database. Anything touching *this machine* — a
 browser, a keystroke — comes back as an instruction for the agent to carry out,
 because the server is meant to be movable and has no business assuming it runs
-on Blake's desk.
+on your desk.
 
 **Media commands are gated on something actually playing.** They go out as the
 system media keys rather than a `hotkey`, so they reach whatever owns playback
@@ -1166,9 +1181,9 @@ Electron was rejected at 150–250MB to draw a tray icon and was never going to 
 accepted to draw four lines of text. A borderless browser window was the other
 candidate and fails the case that matters most: it takes most of a second to
 appear and will not float above an exclusive-fullscreen game, which is exactly
-when Blake is talking rather than typing. This appears in about a millisecond,
+when you are talking rather than typing. This appears in about a millisecond,
 sits above everything, and is `WS_EX_NOACTIVATE` so it never steals focus from
-whatever he is playing.
+whatever you are playing.
 
 Three things there are easy to get wrong:
 
@@ -1208,7 +1223,7 @@ describes only the display that tab is on.
 
 Avatars are **emoji by default**: Windows draws them in colour from Segoe UI
 Emoji, so a gallery costs no checked-in binaries, matching how the app icons are
-generated rather than committed. A picture of Blake's own is uploaded to
+generated rather than committed. A picture of your own is uploaded to
 `data/avatar.<ext>` — beside the database, not in it, because a settings row
 read on every page load has no business carrying an image — and the agent
 downloads it once per `avatarVersion`. GDI+ decodes it, since `LoadImageW` only
@@ -1219,8 +1234,8 @@ decode is otherwise silent: the gutter just stays empty.
 
 After answering, the listener calls `listenAgain()`: the microphone stays open
 for one more command **without the wake word**, because having just replied it
-is still Blake's turn and making him say "hey jarvis" again would be the point
-missed. A `pause` is the exception — he asked for silence, so carrying on
+is still your turn and making you say "hey jarvis" again would be the point
+missed. A `pause` is the exception — you asked for silence, so carrying on
 listening would be perverse.
 
 **How long it waits is two settings**, both 0–30 with sliders on the Voice tab.
@@ -1241,7 +1256,7 @@ and a live microphone is just exposure. Defaults on, so nothing changed for
 commands that existed before the column did.
 
 It is deliberately *not* the same number as `VOICE_COMMAND_TIMEOUT_MS`. That one
-is how long it waits for the first thing after the wake word, where Blake is
+is how long it waits for the first thing after the wake word, where you are
 part-way through a sentence and the answer is fixed. `inFollowUp` in `voice.ts`
 is what keeps the two apart. The overlay stays up for whichever is longer, so
 "it is still waiting for me" and "it has finished" are never the same picture.
@@ -1312,7 +1327,7 @@ do" without doing it. The failure everyone hits is a phrase that reads perfectly
 and never matches; the alternative way to find that out is repeating it at the
 microphone while watching a log.
 
-### Only responding to Blake's voice
+### Only responding to your voice
 
 **Voice → "Teach it my voice"** — say the wake word ten times, and the mean of
 the length-normalised embeddings is stored as the voiceprint. Enrolling on the
@@ -1334,7 +1349,7 @@ microphone that those turn off.
 
 With an always-on microphone this is doing real work: it is what stops the
 television, a video on this PC, or someone else in the room from logging habits.
-**It is a filter against the room, not a security control** — a recording of his
+**It is a filter against the room, not a security control** — a recording of your
 voice passes it.
 
 Checked in the agent *and* on the server. The agent's copy avoids a pointless

@@ -36,7 +36,7 @@ function readFileConfig(): FileConfig {
   } catch (error) {
     // A malformed config is a different problem from a missing one, and
     // swallowing it here produces a "no token configured" message that sends
-    // you looking in entirely the wrong place.
+    // You looking in entirely the wrong place.
     console.error(`${configPath} exists but could not be parsed: ${(error as Error).message}`);
     process.exit(1);
   }

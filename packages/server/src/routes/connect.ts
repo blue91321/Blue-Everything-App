@@ -85,7 +85,7 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
     const info = await tailscaleInfo();
 
     // Only offered once `tailscale serve` is actually proxying — the name
-    // resolves either way, so recommending it early would send Blake to a
+    // resolves either way, so recommending it early would send you to a
     // page that never loads.
     if (info?.serving) {
       addresses.push({

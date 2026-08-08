@@ -4,7 +4,7 @@
  * The file this parses is the single most dangerous thing that will ever touch
  * this app: every password the browser holds, in plaintext. It is therefore
  * handled entirely in memory — never written to disk, never logged, never
- * echoed back in a response — and the UI tells Blake to delete the file
+ * echoed back in a response — and the UI tells you to delete the file
  * afterwards, which is the part that actually matters.
  */
 import type { VaultItemInput } from '@everything/shared';

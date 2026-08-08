@@ -1,8 +1,8 @@
 /**
  * Web push to the phone.
  *
- * Only ever used when Blake is genuinely away from the PC — see `isAwayFromPc`.
- * A toast on a screen he's sitting at is better than a buzz in his pocket, and
+ * Only ever used when you are genuinely away from the PC — see `isAwayFromPc`.
+ * A toast on a screen you're sitting at is better than a buzz in your pocket, and
  * getting both would be worse than either.
  */
 import webpush, { type PushSubscription } from 'web-push';

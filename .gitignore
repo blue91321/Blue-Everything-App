@@ -3,7 +3,7 @@
 # repository, so it is deliberately over-broad and self-contained.
 #
 # Self-contained matters: several of these were previously covered only by
-# Blake's *global* gitignore (~/.config/git/ignore), which does not travel with
+# a *global* gitignore (~/.config/git/ignore), which does not travel with
 # a clone. On any other machine — or a CI checkout — they would have been
 # committed. Rules that protect secrets belong in the repo, not in a profile.
 #
@@ -49,7 +49,7 @@ agent.config.json
 features.json
 
 # ---- Personal artefacts --------------------------------------------------
-# The overlay avatar and the app logo are Blake's own pictures, written beside
+# The overlay avatar and the app logo are your own pictures, written beside
 # the database. `data/` already covers them; named too, so moving the folder
 # cannot silently start committing them.
 avatar.*
@@ -60,7 +60,7 @@ logo.webp
 !packages/web/public/avatar-placeholder.*
 
 # Runtime logs from scripts/start.ps1 (46MB and counting, full of window titles
-# — which is to say, a log of everything he has had open).
+# — which is to say, a log of everything you have had open).
 logs/
 
 # ---- Large third-party binaries -----------------------------------------

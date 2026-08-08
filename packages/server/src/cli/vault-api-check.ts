@@ -52,7 +52,7 @@ check('a second setup is refused', (await post('/api/vault/setup', { masterPassw
 
 console.log('\nitems');
 const item = await post('/api/vault/items', {
-  title: 'Example', username: 'blake', password: 'hunter2',
+  title: 'Example', username: 'sam', password: 'hunter2',
   url: 'https://example.com', notes: 'secret note', totp: 'JBSWY3DPEHPK3PXP',
 });
 check('creates an entry', item.statusCode === 201);
@@ -63,7 +63,7 @@ const listBody = JSON.stringify(listed.json());
 check('lists it', listed.json().length === 1);
 check('the list carries no password', !listBody.includes('hunter2'), 'summaries only');
 check('nor the TOTP secret or notes', !listBody.includes('JBSWY3DPEHPK3PXP') && !listBody.includes('secret note'));
-check('but does carry the title and username', listBody.includes('Example') && listBody.includes('blake'));
+check('but does carry the title and username', listBody.includes('Example') && listBody.includes('sam'));
 
 const secret = await get(`/api/vault/items/${id}/secret`);
 check('the secret is fetchable on its own', secret.json().password === 'hunter2');
@@ -71,7 +71,7 @@ check('with the TOTP and notes', secret.json().totp === 'JBSWY3DPEHPK3PXP' && se
 
 await app.inject({ method: 'PATCH', url: `/api/vault/items/${id}`, payload: { password: 'rotated' } });
 check('updates without losing other fields', (await get(`/api/vault/items/${id}/secret`)).json().password === 'rotated');
-check('and keeps the username', (await get('/api/vault/items')).json()[0].username === 'blake');
+check('and keeps the username', (await get('/api/vault/items')).json()[0].username === 'sam');
 
 console.log('\nnothing readable at rest');
 {
@@ -136,8 +136,8 @@ console.log('\nimporting a browser export');
   // and the entry you would never think to re-check.
   const csv = [
     'name,url,username,password,note',
-    'GitHub,https://github.com/,blake,hunter2,',
-    'Bank,https://bank.example/,blake@example.com,"p,a""ss","a note, with commas"',
+    'GitHub,https://github.com/,sam,hunter2,',
+    'Bank,https://bank.example/,sam@example.com,"p,a""ss","a note, with commas"',
     'Nothing,https://none.example/,someone,,',
   ].join('\n');
 

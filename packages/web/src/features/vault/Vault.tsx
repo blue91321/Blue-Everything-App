@@ -716,9 +716,9 @@ function EntryDetail({ item, onClose, onChanged }: { item: VaultSummary; onClose
  * worse than not importing at all.
  *
  * The file is read in the browser and posted to the server on this same
- * machine. It is never stored — but it is still every password Blake owns
- * sitting in his Downloads folder, which is why the last thing this screen
- * does is tell him to delete it.
+ * machine. It is never stored — but it is still every password you own
+ * sitting in your Downloads folder, which is why the last thing this screen
+ * does is tell you to delete it.
  */
 function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
   const [csv, setCsv] = useState('');

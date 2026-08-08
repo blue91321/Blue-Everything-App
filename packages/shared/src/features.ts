@@ -78,7 +78,7 @@ export const FEATURES: Record<FeatureId, FeatureSpec> = {
   push: {
     id: 'push',
     label: 'Phone notifications',
-    blurb: 'Web push to an installed PWA when Blake is away from the PC.',
+    blurb: 'Web push to an installed PWA when you are away from the PC.',
     defaultEnabled: true,
     removable: true,
     owns: ['packages/server/src/features/push'],

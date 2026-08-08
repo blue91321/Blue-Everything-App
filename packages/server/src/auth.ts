@@ -61,7 +61,7 @@ function addressedToLoopback(hostHeader: string | undefined): boolean {
  * anyone can set must never grant trust.
  *
  * The Origin check is what stops a malicious web page from quietly POSTing to
- * http://127.0.0.1:8787 in the background while Blake reads it. Such a request
+ * http://127.0.0.1:8787 in the background while you read it. Such a request
  * carries `Origin: https://evil.example`, which will not match this server's
  * own host, so it is refused. That also covers DNS rebinding, where the
  * attacker's name resolves to 127.0.0.1 but the Origin still gives it away.
@@ -111,7 +111,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   const header = request.headers.authorization;
 
   if (!header?.startsWith('Bearer ')) {
-    // No token offered. On this machine that's fine — requiring Blake to paste
+    // No token offered. On this machine that's fine — requiring you to paste
     // a token into a browser on the same PC that's running the server protects
     // nothing and is the single biggest piece of friction in the app.
     if (isTrustedLocal(request)) {

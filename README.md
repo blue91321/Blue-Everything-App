@@ -5,7 +5,7 @@ iPhone.
 
 It is not a to-do list. The point is that it knows what you are doing on
 Windows, holds a reminder while you are mid-match, and delivers it the instant
-you hit a natural break. Tasks, habits, time tracking and notes exist to give
+You hit a natural break. Tasks, habits, time tracking and notes exist to give
 that engine something worth saying.
 
 Built for one user. There is no multi-tenancy, no accounts and no sign-up flow,
@@ -108,7 +108,7 @@ npm run voice-setup -w @everything/agent
 prints exactly what to download and where to put it, then proves the microphone
 and recognisers work. Voice is off by default in settings even when installed —
 it is the only feature that holds a microphone open, so it should be something
-you switched on rather than something you find already running.
+You switched on rather than something you find already running.
 
 ## Checking your work
 

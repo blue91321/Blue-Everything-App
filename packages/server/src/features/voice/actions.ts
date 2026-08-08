@@ -10,7 +10,7 @@
  * here, on the server, because the server owns the database. Anything that
  * touches *this machine* — a browser, a keystroke — is returned as an
  * instruction for the agent to carry out, because the server is meant to be
- * movable and has no business assuming it runs on Blake's desk.
+ * movable and has no business assuming it runs on your desk.
  */
 import { and, asc, eq } from 'drizzle-orm';
 import {
@@ -31,7 +31,7 @@ import { habitEntries, habits, notes, settings, voiceCommands } from '../../db/s
 import { periodKeyFor } from '../../routes/habits.js';
 import type { Cadence } from '@everything/shared';
 
-/** Something for the agent to do on the machine Blake is sitting at. */
+/** Something for the agent to do on the machine you are sitting at. */
 export type VoiceAction =
   | { do: 'open-url'; url: string }
   | { do: 'press-keys'; keys: string }
@@ -163,7 +163,7 @@ async function describeHabit(habitId: string): Promise<string> {
  *
  * `matchVoiceCommand` picks a single best candidate. When two commands tie on
  * the same phrase the answer is genuinely ambiguous, and guessing would be the
- * worst option — a wrongly fired hotkey is not something Blake would notice was
+ * worst option — a wrongly fired hotkey is not something you would notice was
  * wrong. Those come back as `ambiguous` for the overlay to ask about.
  */
 export async function resolveVoiceCommand(

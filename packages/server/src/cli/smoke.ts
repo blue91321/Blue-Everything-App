@@ -213,7 +213,7 @@ const { isAwayFromPc, AWAY_FROM_PC_IDLE_MS } = await import('@everything/shared'
 const longIdle = AWAY_FROM_PC_IDLE_MS + 60_000;
 
 // Pure rule checks — no phone needed, and these are the ones that must not be
-// wrong: a false positive buzzes his pocket while he's sat watching something.
+// wrong: a false positive buzzes your pocket while you're sat watching something.
 check('idle + silent counts as away', isAwayFromPc({ idleMs: longIdle, audioPlaying: false }));
 check('idle but audio playing does NOT', !isAwayFromPc({ idleMs: longIdle, audioPlaying: true }));
 check('silent but recently active does NOT', !isAwayFromPc({ idleMs: 60_000, audioPlaying: false }));
@@ -231,12 +231,12 @@ const awayNoPhone = await post(
 );
 const awayBody = awayNoPhone.json();
 check('nothing toasts at an empty desk', awayBody.deliver.length === 0);
-check('the server agrees he is away', awayBody.awayFromPc === true);
+check('the server agrees you are away', awayBody.awayFromPc === true);
 check('and with no phone subscribed nothing is pushed', awayBody.pushed === 0);
 
 // A `prime`-only nudge must still be able to reach the phone: minQuality asks
 // about breaks on the PC, and there is no PC activity to break into.
-await post('/api/nudges', { title: 'Prime-only, but he has left', minQuality: 'prime' });
+await post('/api/nudges', { title: 'Prime-only, but you have left', minQuality: 'prime' });
 const primeWhileAway = await post(
   '/api/attention',
   report({ state: 'away', reason: 'still out', idleMs: longIdle, audioPlaying: false })
@@ -254,7 +254,7 @@ check(
 
 // Back at the desk it should arrive as a toast, proving nothing was lost.
 const backAtDesk = await post('/api/attention', report({ reason: 'back at the keyboard', idleMs: 0 }));
-check('and arrives as a toast once he returns', titles(backAtDesk).includes('Waiting for the phone'), titles(backAtDesk).join(', '));
+check('and arrives as a toast once you return', titles(backAtDesk).includes('Waiting for the phone'), titles(backAtDesk).join(', '));
 
 console.log('\nticking a habit restarts its reminder clock');
 {
@@ -290,7 +290,7 @@ console.log('\nticking a habit restarts its reminder clock');
   await ageOutTheReminder();
   check('a stale reminder means another is due', (await sweepHabitReminders(Date.now())) === 1, '90 minutes on');
 
-  // Now the same situation, except Blake has just drunk a glass.
+  // Now the same situation, except you have just drunk a glass.
   await ageOutTheReminder();
   await post(`/api/habits/${habit.id}/check`);
   check(

@@ -6,6 +6,7 @@ import { hashToken } from '../auth.js';
 import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
 import { activeFeatures, isEnabled, missingFeatures } from '../features.js';
+import { VERSION } from '../version.js';
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -22,6 +23,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     local: request.isLocal,
     deviceId: request.deviceId,
     deviceKind: request.deviceKind,
+    version: VERSION,
     features: activeFeatures(),
     // Switched on but absent from disk. Named separately so the app can say
     // "the folder is gone" rather than "you turned it off" — different fixes.

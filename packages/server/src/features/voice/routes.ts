@@ -175,7 +175,7 @@ const AGENT_STALE_MS = 45_000;
 export async function voiceRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Everything the agent needs to listen. Polled rarely — the wake word only
-   * changes when Blake changes it — so it carries the voiceprint inline rather
+   * changes when you change it — so it carries the voiceprint inline rather
    * than making the agent fetch it separately.
    */
   app.get('/api/voice/config', async () => {
@@ -243,7 +243,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     return {
       version: voiceVersion,
       // A pause is not the same as being switched off: the setting stays on, so
-      // the screen still says "listening" is what Blake asked for, while the
+      // the screen still says "listening" is what you asked for, while the
       // microphone is genuinely closed until the pause lapses.
       enabled: Boolean(row.voiceEnabled) && !isPaused(row.voicePausedUntil),
       pausedUntil: row.voicePausedUntil,
@@ -605,7 +605,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
         voiceprint: JSON.stringify(body.voiceprint),
         voiceprintSamples: body.samples,
         // Enrolling *is* the request to be the only accepted speaker — there is
-        // no other reason to do it. Making him then find a switch would just be
+        // no other reason to do it. Making you then find a switch would just be
         // a second step with one sensible answer.
         requireKnownSpeaker: 1,
       })

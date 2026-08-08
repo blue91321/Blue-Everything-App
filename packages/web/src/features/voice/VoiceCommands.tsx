@@ -11,7 +11,7 @@ const KIND_LABEL: Record<VoiceCommandKind, string> = {
   media: 'Control media',
   pause: 'Stop listening',
   // Not offered on its own — see SELECTABLE_KINDS. `cancel` is presented as one
-  // of the ways to stop listening, because that is what it is from where Blake
+  // of the ways to stop listening, because that is what it is from where you
   // is sitting; only the *duration* differs.
   cancel: 'Stop listening',
 };

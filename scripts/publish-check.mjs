@@ -12,7 +12,7 @@
  *      git is already following.
  *   3. Does any tracked file *contain* a secret or a personal identifier?
  *
- * Exit code 1 means do not push. Warnings do not fail — they are things Blake
+ * Exit code 1 means do not push. Warnings do not fail — they are things you
  * should decide about rather than things that are wrong.
  *
  * Node only, no dependencies, so it runs on a fresh clone before `npm install`.
@@ -73,7 +73,7 @@ const FORBIDDEN_TRACKED = [
   [/(^|\/)\.env($|\.)/, 'environment file', (p) => p.endsWith('.env.example')],
   [/agent\.config\.json$/, "holds this machine's bearer token"],
   [/^features\.json$/, 'a local deployment choice, not a project fact'],
-  [/(^|\/)avatar\./, 'a photo of Blake'],
+  [/(^|\/)avatar\./, 'a photo of you'],
   [/(^|\/)data\/logo\./, 'an uploaded app icon'],
   [/\.(pem|key|p12|pfx)$/, 'key material'],
   [/(^|\/)logs?\//, 'runtime logs record every window title'],
@@ -167,7 +167,7 @@ for (const path of tracked) {
  *
  * `--all` includes `refs/original/*`, the pre-rewrite backup git leaves behind
  * after a filter-branch. Those refs are never pushed — `git push` sends refs
- * you name, and even `--all` means `refs/heads/*` — so warning about an address
+ * You name, and even `--all` means `refs/heads/*` — so warning about an address
  * that only survives there reports a problem that has already been fixed.
  */
 const authors = new Set(git(['log', '--branches', '--pretty=%an <%ae>']).split('\n').filter(Boolean));

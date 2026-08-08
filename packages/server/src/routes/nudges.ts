@@ -30,7 +30,7 @@ export async function nudgeRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send(created);
   });
 
-  /** Blake saw it and acted on it. */
+  /** you saw it and acted on it. */
   app.post('/api/nudges/:id/ack', async (request, reply) => {
     const { id } = request.params as { id: string };
     const [updated] = await db

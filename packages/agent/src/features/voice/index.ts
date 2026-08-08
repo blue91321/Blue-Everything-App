@@ -32,7 +32,7 @@ import { unknownWords, VoskUnavailable } from './vosk.js';
 
 /** How long a result stays up. Long enough to read, short enough not to nag. */
 const OVERLAY_RESULT_MS = 4000;
-/** A question waits longer, because it is waiting on Blake rather than telling him. */
+/** A question waits longer, because it is waiting on you rather than telling you. */
 const OVERLAY_ASK_MS = 12_000;
 
 const TONE_FOR: Record<string, 'good' | 'bad' | 'muted'> = {
@@ -156,7 +156,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
   function performAction(result: VoiceOutcome): void {
     // Anything that touches *this machine* comes back as an instruction; the
     // server does the database half itself. It has no business assuming it runs
-    // on Blake's desk, and one day it won't.
+    // on your desk, and one day it won't.
     if (!result.action) return;
     try {
       if (result.action.do === 'open-url') openUrl(result.action.url);
@@ -209,10 +209,10 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     /*
      * How long to stay open depends on what just happened.
      *
-     *  - a hit: Blake may add a second thing, so the follow-up window — unless
+     *  - a hit: you may add a second thing, so the follow-up window — unless
      *    this command asked not to, which is what `allowFollowUp` is for.
-     *  - a miss: he is about to repeat himself, which takes longer. Once only.
-     *  - a pause: he asked for silence, so carrying on would be perverse.
+     *  - a miss: you are about to repeat yourself, which takes longer. Once only.
+     *  - a pause: you asked for silence, so carrying on would be perverse.
      */
     const failed = result.outcome === 'no-match';
     const followUp =
@@ -286,7 +286,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     if (!overlay?.visible) return;
 
     // Woke but caught nothing — the same failure as a no-match, and it gets the
-    // same one retry rather than closing the moment he pauses to think.
+    // same one retry rather than closing the moment you pause to think.
     const retry = retryUsed ? 0 : retryMs;
     retryUsed = true;
 

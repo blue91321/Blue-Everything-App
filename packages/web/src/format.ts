@@ -54,7 +54,7 @@ export const toTimeInputValue = (at: number): string => toLocalInputValue(at).sl
  *
  * An all-day task must never say "due in 6h" — the time is an implementation
  * detail of storing a date as an instant, and surfacing it makes the app look
- * like it invented a deadline Blake never set.
+ * like it invented a deadline you never set.
  */
 export function dueLabel(at: number, allDay: boolean): string {
   if (!allDay) return relative(at);

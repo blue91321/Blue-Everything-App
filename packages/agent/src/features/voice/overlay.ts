@@ -7,7 +7,7 @@
  * going to accept it now to draw four lines of text. A borderless browser
  * window was the other candidate and fails the case that matters most — it
  * takes most of a second to appear and will not float above an exclusive
- * fullscreen game, which is exactly when Blake is talking rather than typing.
+ * fullscreen game, which is exactly when you are talking rather than typing.
  *
  * So: `CreateWindowExW` and GDI through koffi, the same trick `audio.ts` uses
  * for WASAPI and `mic.ts` for waveIn. It costs a few MB, appears in about a
@@ -33,7 +33,7 @@ const kernel32 = koffi.load('kernel32.dll');
 /**
  * GDI+, purely to decode an image file.
  *
- * `LoadImageW` only understands BMP, and Blake will pick a PNG or a JPG. The
+ * `LoadImageW` only understands BMP, and you will pick a PNG or a JPG. The
  * alternative was decoding PNG in JavaScript — feasible, since node:zlib has
  * the inflate half, but it would be a hundred lines that only ever handle one
  * format. Eight GDI+ calls handle every format Windows knows.
@@ -416,7 +416,7 @@ function loadImage(path: string): { bitmap: unknown; width: number; height: numb
  *
  * Drawing failure is otherwise silent — `drawAvatar` just leaves the gutter
  * empty — so this is how the agent can report "that file could not be read"
- * rather than leaving Blake to wonder why his avatar never appears.
+ * rather than leaving you to wonder why your avatar never appears.
  */
 export function probeAvatar(path: string): { width: number; height: number } | null {
   const image = loadImage(path);
@@ -672,7 +672,7 @@ export function createOverlay(handlers: {
   const MARGIN = 24;
 
   /**
-   * Put the window where Blake asked for it.
+   * Put the window where you asked for it.
    *
    * `cursor` keeps the original behaviour — beside the pointer, flipped back
    * on-screen rather than clipped at an edge. Everything else anchors to a work

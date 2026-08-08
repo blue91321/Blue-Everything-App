@@ -14,7 +14,7 @@
  *     feature's code to find out what to call its tab, which is the opposite of
  *     the point.
  *   - **view** is lazy. This is the part that costs something, and a feature
- *     that is off or that Blake never opens is never downloaded at all.
+ *     that is off or that you never opens is never downloaded at all.
  */
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 

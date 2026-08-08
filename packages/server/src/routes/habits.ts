@@ -7,7 +7,7 @@ import { habitEntries, habits } from '../db/schema.js';
 /**
  * The bucket a moment belongs to: `2026-08-05` for daily habits, `2026-W32`
  * for weekly. Computed from local time on purpose — a habit done at 11pm
- * belongs to that day as Blake experienced it, not as UTC saw it.
+ * belongs to that day as you experienced it, not as UTC saw it.
  */
 export function periodKeyFor(cadence: Cadence, at = new Date()): string {
   const year = at.getFullYear();

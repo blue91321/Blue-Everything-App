@@ -135,7 +135,7 @@ export interface VoiceListener extends EventEmitter {
    * Keep listening for one more command *without* the wake word, for `ms`.
    *
    * What makes the overlay a conversation rather than a receipt: having just
-   * answered, it is still Blake's turn, and making him say "hey jarvis" again
+   * answered, it is still your turn, and making you say "hey jarvis" again
    * to add a second thing would be the whole point missed.
    *
    * The duration is passed in rather than read from config because it differs
@@ -184,8 +184,8 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
    * Whether the open microphone is a follow-up rather than a fresh wake.
    *
    * They wait for different lengths: after the wake word the window is fixed —
-   * you are part-way through one sentence — while after an answer it is however
-   * long Blake set, because that is a choice about how conversational he wants
+   * You are part-way through one sentence — while after an answer it is however
+   * long you set, because that is a choice about how conversational you want
    * it to be.
    */
   let inFollowUp = false;
@@ -219,7 +219,7 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
    * The replay deliberately includes the wake word audio, so the command
    * recogniser transcribes it too. Extra words are harmless to the matcher, but
    * a transcript of *only* the wake word is not a command — and delivering it
-   * would file "jarvis" as a note every time Blake paused to think.
+   * would file "jarvis" as a note every time you paused to think.
    */
   function hasCommand(text: string): boolean {
     const wakeWords = new Set((config?.wakeWord ?? '').toLowerCase().split(/\s+/).filter(Boolean));
@@ -441,7 +441,7 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
       forgetReplay();
 
       // A completed result here means the sentence was already finished — the
-      // run-together case. If it holds only the wake word, Blake paused after
+      // run-together case. If it holds only the wake word, you paused after
       // it and is still to speak, so keep listening rather than filing "jarvis"
       // as a note.
       if (replayed?.text && hasCommand(replayed.text)) {

@@ -4,7 +4,7 @@
  * The icons used to be generated once at build time, which was fine while the
  * mark was a constant. Now that the shape and the colour are settings, a static
  * file would mean the home-screen icon and the browser tab kept showing a
- * choice Blake had already changed — so the same tiny renderer runs per
+ * choice you had already changed — so the same tiny renderer runs per
  * request instead. A 512px icon takes a few milliseconds and is then cached by
  * everything downstream, so this is not on any hot path.
  *

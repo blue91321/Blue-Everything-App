@@ -49,7 +49,7 @@ check('a different password gives a different key', !(await deriveKeyFromPasswor
 
 console.log('\nsealing');
 const vaultKey = newVaultKey();
-const secret = JSON.stringify({ username: 'blake', password: 'hunter2' });
+const secret = JSON.stringify({ username: 'sam', password: 'hunter2' });
 const sealed = seal(vaultKey, secret);
 check('round trips', open(vaultKey, sealed).toString() === secret);
 check('the plaintext does not appear in the ciphertext', !Buffer.from(sealed.blob, 'base64').toString('latin1').includes('hunter2'));

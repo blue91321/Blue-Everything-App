@@ -1,7 +1,7 @@
 /**
  * Pair a device and print its bearer token exactly once.
  *
- *   npm run pair -w @everything/server -- "Blake's Phone" phone
+ *   npm run pair -w @everything/server -- "your Phone" phone
  *
  * Only the SHA-256 hash is stored, so a lost token can't be recovered — pair
  * again and revoke the old device. That's the intended failure mode.

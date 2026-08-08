@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { ZodError } from 'zod';
 import { config, corsOrigins } from './config.js';
+import { VERSION } from './version.js';
 import { authenticate } from './auth.js';
 import { client } from './db/client.js';
 import { eventRoutes, registerChangeAnnouncer } from './events.js';
@@ -48,7 +49,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   /** Unauthenticated on purpose — it's how you tell the box is up from a phone. */
   app.get('/health', async () => {
     await client.execute('select 1');
-    return { ok: true, service: 'everything-app', at: Date.now() };
+    return { ok: true, service: 'blue-everything', version: VERSION, at: Date.now() };
   });
 
   for (const note of featureNotes) app.log.warn(note);

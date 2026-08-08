@@ -274,9 +274,14 @@ export function Settings({ session, onChanged }: { session: Session; onChanged: 
           <div className="title">{session.local ? 'This PC' : 'A connected device'}</div>
           <div className="meta">
             {session.local
-              ? 'Running on the machine hosting Everything, so no code is needed here.'
+              ? 'Running on the machine hosting Blue Everything, so no code is needed here.'
               : 'Connected with a code.'}
           </div>
+          {/* Worth showing because the PWA and the server update independently:
+              a phone holding a cached bundle against a restarted server is the
+              ordinary case, and "which version am I looking at" is the first
+              question when something looks wrong. */}
+          {session.version && <div className="meta">Version {session.version}</div>}
         </div>
       </section>
 
@@ -336,7 +341,7 @@ export function Settings({ session, onChanged }: { session: Session; onChanged: 
 }
 
 /**
- * Notifications on this device, when Blake isn't at the PC.
+ * Notifications on this device, when you aren't at the PC.
  *
  * Shown everywhere, because the useful place to turn it on is the phone itself
  * — but it explains itself differently depending on whether this device can

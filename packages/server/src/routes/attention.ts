@@ -60,7 +60,7 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
   /**
    * The agent's heartbeat, and the busiest endpoint in the app.
    *
-   * One round trip does everything: record what Blake is doing, refresh the
+   * One round trip does everything: record what you are doing, refresh the
    * queue from tasks coming due, and hand back whatever has earned the right to
    * interrupt. The agent stays dumb; all the judgement lives server-side.
    */

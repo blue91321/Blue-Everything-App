@@ -1,7 +1,7 @@
 /**
  * The Windows agent.
  *
- * One headless Node process: watch what Blake is doing, tell the server, raise
+ * One headless Node process: watch what you are doing, tell the server, raise
  * a toast when the server says a nudge has earned it. No tray, no window, no
  * Electron — the UI is the PWA in a browser, and this stays a background
  * service that should be easy to forget is running.

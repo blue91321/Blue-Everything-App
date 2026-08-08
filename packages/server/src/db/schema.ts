@@ -91,7 +91,7 @@ export const habits = sqliteTable('habits', {
    */
   reminderStartMinute: integer('reminder_start_minute'),
   /**
-   * JSON array of things Blake might say to tick this off. A JSON column rather
+   * JSON array of things you might say to tick this off. A JSON column rather
    * than a side table because they are only ever read and written as a whole
    * list, and there is nothing to query or join them by.
    */
@@ -114,7 +114,7 @@ export const voiceCommands = sqliteTable(
     id: id(),
     /** habit | note | url | hotkey | pause. */
     kind: text('kind').notNull(),
-    /** JSON array of the things Blake might say. */
+    /** JSON array of the things you might say. */
     phrases: text('phrases').notNull().default('[]'),
     /**
      * Habit id, URL, or key combo, depending on `kind`. Not a foreign key: it
@@ -235,7 +235,7 @@ export const attentionSamples = sqliteTable(
     stoppingQuality: text('stopping_quality'),
     /**
      * Recorded because idle time alone can't explain why a phone nudge did or
-     * didn't fire. Without it, "he was idle 52 minutes and nothing pushed" is
+     * didn't fire. Without it, "you were idle 52 minutes and nothing pushed" is
      * unanswerable after the fact.
      */
     audioPlaying: integer('audio_playing').notNull().default(0),
@@ -311,13 +311,13 @@ export const settings = sqliteTable('settings', {
   vapidPublicKey: text('vapid_public_key'),
   vapidPrivateKey: text('vapid_private_key'),
 
-  /** Send nudges to the phone when Blake is away from the PC. */
+  /** Send nudges to the phone when you are away from the PC. */
   pushEnabled: integer('push_enabled').notNull().default(1),
 
   /**
    * Off by default, and deliberately so: this is the only feature in the app
-   * that holds the microphone open, and that should be a thing Blake turns on
-   * rather than a thing he discovers is already running.
+   * that holds the microphone open, and that should be a thing you turn on
+   * rather than a thing you discover is already running.
    */
   voiceEnabled: integer('voice_enabled').notNull().default(0),
 
@@ -325,9 +325,9 @@ export const settings = sqliteTable('settings', {
   wakeWord: text('wake_word').notNull().default('hey everything'),
 
   /**
-   * Reject commands that don't sound like Blake. With an always-on microphone
+   * Reject commands that don't sound like you. With an always-on microphone
    * this is doing real work — it is what stops the television, a video, or
-   * someone else in the room from logging his habits.
+   * someone else in the room from logging your habits.
    */
   /**
    * Off until a voiceprint exists, and switched on by enrolment rather than
@@ -341,7 +341,7 @@ export const settings = sqliteTable('settings', {
   /**
    * The enrolled voiceprint: a JSON array of floats, averaged over the
    * enrolment clips. Not a secret in the vault sense — it cannot reconstruct
-   * his voice — but it is personal, so it lives here and never leaves the box.
+   * your voice — but it is personal, so it lives here and never leaves the box.
    */
   voiceprint: text('voiceprint'),
   voiceprintSamples: integer('voiceprint_samples').notNull().default(0),
@@ -354,7 +354,7 @@ export const settings = sqliteTable('settings', {
   voiceInputDevice: text('voice_input_device'),
 
   /**
-   * Listening is paused until this time. `-1` means paused until Blake turns it
+   * Listening is paused until this time. `-1` means paused until you turn it
    * back on by hand — distinct from null (not paused), so "stop listening" can
    * mean either "for a bit" or "until I say so" and the difference survives a
    * restart.
@@ -374,7 +374,7 @@ export const settings = sqliteTable('settings', {
   overlayPlacement: text('overlay_placement').notNull().default('cursor'),
   overlayScreen: text('overlay_screen'),
   /**
-   * An emoji, the literal `file` when Blake uploaded a picture, or empty for
+   * An emoji, the literal `file` when you uploaded a picture, or empty for
    * none. The picture itself lives beside the database rather than in it —
    * a settings row read on every page load has no business carrying an image.
    */
@@ -407,7 +407,7 @@ export const vault = sqliteTable('vault', {
   id: text('id').primaryKey().$defaultFn(() => 'singleton'),
 
   /** Argon2id salt and cost, stored so parameters can be raised later without
-   *  locking Blake out of a vault created under the old ones. */
+   *  locking you out of a vault created under the old ones. */
   kdfSalt: text('kdf_salt').notNull(),
   kdfVersion: integer('kdf_version').notNull().default(1),
   kdfMemoryKiB: integer('kdf_memory_kib').notNull(),
@@ -428,7 +428,7 @@ export const vault = sqliteTable('vault', {
  * username, URL, password, notes.
  *
  * No plaintext label column. This database syncs to OneDrive, and a list of
- * which services Blake has accounts with is worth protecting even when the
+ * which services you have accounts with is worth protecting even when the
  * passwords themselves are safe. The cost is that the item list can't render
  * until the vault is unlocked, which is the correct trade.
  */

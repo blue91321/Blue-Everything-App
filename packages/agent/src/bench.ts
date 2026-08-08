@@ -1,7 +1,7 @@
 /**
  * What does one sensor poll actually cost?
  *
- * The agent runs forever on Blake's gaming PC, so "it's only a few
+ * The agent runs forever on your gaming PC, so "it's only a few
  * milliseconds" needs to be a measurement, not an assumption — especially the
  * full process snapshot, which walks every process on the machine.
  *

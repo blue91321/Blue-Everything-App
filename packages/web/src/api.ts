@@ -85,7 +85,7 @@ export interface Habit {
   reminderEveryMinutes: number | null;
   /** Minutes since midnight before reminders start; null means straight away. */
   reminderStartMinute: number | null;
-  /** Things Blake can say to tick this off. Empty means voice can't reach it. */
+  /** Things you can say to tick this off. Empty means voice can't reach it. */
   voicePhrases: string[];
   periodKey: string;
   doneThisPeriod: number;
@@ -316,6 +316,8 @@ export interface Session {
   local: boolean;
   deviceId: string | null;
   deviceKind: string | null;
+  /** What the server is running. Absent on a server older than this field. */
+  version?: string;
   /**
    * Which optional features this server runs, e.g. `['vault', 'voice']`.
    *

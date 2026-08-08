@@ -55,7 +55,7 @@ const envSchema = z.object({
    * Comma-separated origins allowed to call the API cross-origin. Empty by
    * default, and it should stay that way: the PWA is served from this same
    * origin, so it needs no CORS at all. A wildcard here would let any web page
-   * Blake happens to visit read his data off 127.0.0.1.
+   * You happen to visit read your data off 127.0.0.1.
    */
   CORS_ORIGIN: z.string().default(''),
 
