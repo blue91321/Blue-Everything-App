@@ -5,14 +5,27 @@ import { registerDeviceSchema } from '@everything/shared';
 import { hashToken } from '../auth.js';
 import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
+import { activeFeatures, isEnabled, missingFeatures } from '../features.js';
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
-  /** Who am I, and am I allowed in? The app's first call on load. */
+  /**
+   * Who am I, am I allowed in, and what does this install actually run?
+   *
+   * The feature list rides along here because this is already the app's first
+   * call on load — the PWA needs to know which tabs exist before it draws the
+   * drawer, and a second round trip to find out would show the wrong menu for a
+   * moment. It is a plain `string[]` because the PWA deliberately does not
+   * import `@everything/shared`.
+   */
   app.get('/api/session', async (request) => ({
     ok: true,
     local: request.isLocal,
     deviceId: request.deviceId,
     deviceKind: request.deviceKind,
+    features: activeFeatures(),
+    // Switched on but absent from disk. Named separately so the app can say
+    // "the folder is gone" rather than "you turned it off" — different fixes.
+    featuresMissing: missingFeatures(),
   }));
 
   /**
@@ -72,6 +85,10 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
    * fail every send.
    */
   app.post('/api/devices/me/push', async (request, reply) => {
+    // Storing a subscription nothing will ever send to is inert rather than
+    // harmful, but accepting it would let the phone show "notifications on" for
+    // a feature this install does not run.
+    if (!isEnabled('push')) return reply.code(404).send({ error: 'phone push is switched off on this server' });
     if (!request.deviceId) return reply.code(400).send({ error: 'not running with a paired device' });
 
     const body = request.body as { endpoint?: unknown } | null;

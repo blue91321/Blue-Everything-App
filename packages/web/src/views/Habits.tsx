@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type Habit } from '../api';
 import { useAsync } from '../useAsync';
+import { featureEnabled } from '../features';
 
 const minuteToTime = (minute: number): string =>
   `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
@@ -292,7 +293,10 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
         </div>
       </div>
 
-      <VoicePhrases habitName={name} phrases={phrases} onChange={setPhrases} />
+      {/* Phrases only mean something if there is a listener. With voice off
+          this is an editor for a field nothing reads — and worse, it says
+          "saying one of these ticks it off", which would be untrue. */}
+      {featureEnabled('voice') && <VoicePhrases habitName={name} phrases={phrases} onChange={setPhrases} />}
 
       <div className="row" style={{ marginTop: 10 }}>
         <button className="btn primary" onClick={save}>

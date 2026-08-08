@@ -1,28 +1,86 @@
+# ---------------------------------------------------------------------------
+# This file is the only thing standing between a personal database and a public
+# repository, so it is deliberately over-broad and self-contained.
+#
+# Self-contained matters: several of these were previously covered only by
+# Blake's *global* gitignore (~/.config/git/ignore), which does not travel with
+# a clone. On any other machine — or a CI checkout — they would have been
+# committed. Rules that protect secrets belong in the repo, not in a profile.
+#
+# `npm run publish-check` verifies the intent behind this file rather than its
+# text: it asks git whether the sensitive paths are actually ignored.
+# ---------------------------------------------------------------------------
+
 node_modules/
 dist/
 build/
 out/
 *.log
 
-# Local data — never leaves this machine
+# ---- The database, in every form it takes -------------------------------
+# `data/` at any depth, not just the root: packages/server/data/ is where the
+# real one lives.
 data/
 *.db
+*.sqlite
+*.sqlite3
+# WAL/shared-memory sidecars, and hand-made backups like everything.db.bak-1115
+# — a bare *.db would not catch those.
 *.db-shm
 *.db-wal
+*.db.*
+*.sqlite.*
+
+# ---- Secrets -------------------------------------------------------------
 .env
 .env.*
 !.env.example
-
-# Vault material, when it exists
-*.vault
+*.pem
+*.key
+*.p12
+*.pfx
 secrets/
+*.vault
 
-# Holds this machine's bearer token
+# Holds this machine's bearer token.
 agent.config.json
+# The feature switches are a local deployment choice, not a project fact.
+# features.json is per-install; features.example.json is the checked-in one.
+features.json
 
-# Runtime logs from scripts/start.ps1
+# ---- Personal artefacts --------------------------------------------------
+# The overlay avatar and the app logo are Blake's own pictures, written beside
+# the database. `data/` already covers them; named too, so moving the folder
+# cannot silently start committing them.
+avatar.*
+logo.png
+logo.jpg
+logo.gif
+logo.webp
+!packages/web/public/avatar-placeholder.*
+
+# Runtime logs from scripts/start.ps1 (46MB and counting, full of window titles
+# — which is to say, a log of everything he has had open).
 logs/
 
-# Voice models — ~85MB of third-party binaries, downloaded by voice-setup.
+# ---- Large third-party binaries -----------------------------------------
+# Voice models: ~150MB of third-party binaries, downloaded by voice-setup.
 # Not ours, not small, and not something a git history should carry.
+#
+# They live inside the voice feature so that deleting the feature reclaims the
+# disk. Matched by folder name at any depth as well as by the exact path — this
+# rule named the pre-move location for a while, and an ignore rule that silently
+# stops matching is how 150MB of binaries end up in a first public commit.
+packages/agent/src/features/voice/models/
+**/features/voice/models/
 packages/agent/models/
+
+# ---- Editor and tooling --------------------------------------------------
+# Was only ever ignored globally. It records local permission grants and
+# absolute paths from this machine.
+.claude/settings.local.json
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

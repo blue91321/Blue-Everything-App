@@ -1,4 +1,4 @@
-# Everything App
+# Blue Everything
 
 A personal, single-user assistant for one person on one Windows PC and one iPhone.
 Not a product. No multi-tenancy, no accounts, no sign-up flow — ever.
@@ -28,6 +28,65 @@ Windows Electron agent  ──┐
 - `packages/server` — Fastify + SQLite (Drizzle). The only writer of the database.
 - `packages/web` — React PWA. Served by the server on the same origin; also the Windows UI in a browser.
 - `packages/shared` — types and Zod schemas shared by all three.
+
+## Features: switched off, or gone entirely
+
+The nudge engine is the app; everything else is optional. Which optional parts
+run is a property of the *install*, declared in `features.json` at the repo root
+(gitignored — copy `features.example.json`). `npm run features` shows what is on
+and what is actually on disk.
+
+```
+npm run features                        # what am I running?
+npm run features -- --set voice=off     # switch something off
+npm run features-check                  # prove it still boots without them
+```
+
+`packages/shared/src/features.ts` is the one list all three packages read, so
+they cannot disagree about what "voice is off" means. The PWA is the exception —
+it does not import `shared` — so the server hands it a plain `string[]` on
+`/api/session`.
+
+**Three levels, and they are genuinely different things:**
+
+| | Means | Costs back |
+| --- | --- | --- |
+| **off** | routes unmounted, tab hidden, agent never loads it | the RAM and the microphone |
+| **deleted** | the folder is gone; the app boots and says "not installed" | the disk, and the code you'd otherwise have to trust |
+| **not removable** | can only be switched off | — |
+
+`habits`, `notes` and `time` are switchable but **not** removable: the Dashboard
+renders habits inline, and deleting them would leave a hole in the one screen
+that is the point of the app. The manifest says so rather than pretending
+otherwise, because a `removable: true` that isn't sends somebody deleting a
+folder and into a broken build.
+
+**Enabled and installed are tracked separately**, on purpose. "You switched the
+vault off" and "the vault folder is gone" look identical if you collapse them
+into one boolean, and they have completely different fixes. `/api/session`
+returns `features` and `featuresMissing` for exactly that reason.
+
+**Core must never import a feature — not even a type.** A type-only import is
+erased at runtime, so it would not crash; it would just fail the type check for
+whoever removed the folder, silently, until they tried to build. That is why
+`VoiceConfig` lives in `client.ts` (core, which fetches it) rather than in
+`features/voice/voice.ts` (deletable, which uses it).
+
+Where core genuinely needs a feature, it calls through a port:
+`push-port.ts` holds a no-op implementation that the push feature replaces when
+it loads. The fallback is not a stub — "push is not installed" and "no phone is
+subscribed" are the same situation, and the engine already handled the latter
+correctly.
+
+**What does not go away is the database schema.** Migrations are a linear
+journal and skipping one breaks every later hash, so `vault`, `vault_entries`
+and `voice_commands` are created whatever is switched on. They sit empty. That
+is the honest boundary of "removable" here.
+
+`features-check` copies `src` to `src.featurecheck` — the same depth, so every
+relative path still resolves — deletes a feature from the *copy*, and boots it.
+Nothing in the real tree is renamed or deleted, so an interrupted run cannot
+cost anybody their source.
 
 ## The PWA
 
@@ -116,12 +175,114 @@ Let's Encrypt certificate, which iOS accepts. Use that URL on the phone, not the
 raw tailnet IP. (`tailscale serve` keeps it inside the tailnet; `funnel` would
 expose it to the public internet, which this app should never use.)
 
-Set up on this machine as `desktop-aqo6lhd.tail5a2a48.ts.net`. Note that the
-Windows installer does **not** put `tailscale.exe` on PATH, so anything shelling
-out to it must try `%ProgramFiles%\Tailscale\tailscale.exe` too — looking it up
-by name alone reports "not installed" on a machine where it is running fine.
+This machine's actual name is deliberately not written down here — the repo is
+public, and **Settings → Add a device** reads it live from `tailscale status`
+and shows the URL to use. A hostname in a document is one more thing to keep
+true. Note that the Windows installer does **not** put `tailscale.exe` on PATH,
+so anything shelling out to it must try `%ProgramFiles%\Tailscale\tailscale.exe`
+too — looking it up by name alone reports "not installed" on a machine where it
+is running fine.
 
-### Icons
+### Theme and accent
+
+Two independent axes, both stored server-side so the phone and the PC agree:
+`theme` is `dark` (default) / `light` / `system`, and `accentColor` is one of
+eight names. Blue on dark is what a fresh install gets.
+
+Server-side rather than in `localStorage` because picking a colour on the phone
+and finding the PC still amber reads as the change not having saved. The browser
+still keeps a copy, but only as a *cache* — written from server responses,
+never from a click.
+
+Applied as attributes on `<html>`:
+
+```
+<html data-theme="dark" data-accent="blue">
+```
+
+Kept as two attributes rather than one combined class because they are chosen
+separately, and folding them together would mean eight accents × two themes =
+sixteen blocks to keep in step. Each accent instead declares two lines per
+theme, and nothing else has to know it exists.
+
+**Each accent is defined twice, once per theme, and that is not duplication to
+factor out.** The dark values are light enough to read against `#14161c`; the
+light ones are darkened until they carry white text. No single hex satisfies
+both, and the one that "mostly works" is the one that makes a button label
+unreadable on exactly one screen. `--accent-text` is stored alongside each so
+legibility is a decision someone made rather than a runtime luminance guess.
+
+**`system` is resolved in JS, not by a media query.** The setting has three
+values and CSS understands two, so leaving it to `prefers-color-scheme` would
+make `dark` and `system` indistinguishable in the stylesheet — and an explicit
+`dark` would flip to white the moment Windows decided it was morning.
+`resolveTheme()` in `theme.ts` is the one place that decides.
+
+**An inline script in `index.html` stamps the cached look before first paint.**
+The real setting is a round trip away, which is long enough to paint the default
+first — on a dark app that is a white flash on every cold load, the most
+noticeable thing a theme can get wrong. It is blocking and inline on purpose; a
+deferred module would run after first paint and defeat the point.
+
+The swatches on the Settings screen carry their own `data-accent` and inherit
+the real `--accent` from the same rules the app uses, so the button shows
+literally what applying it will do. A second copy of the palette there would be
+one more thing to keep in step, and the first colour to drift would be the one
+nobody looks at twice.
+
+Changes apply optimistically on click, before the save returns — a colour picker
+that waits for a round trip to show you the colour is the one interaction where
+latency is unacceptable, since you are choosing by looking.
+
+### The mark
+
+Five choices: the pause glyph (default), a circle, a triangle, a square, or an
+uploaded picture. It takes the accent colour, so the icon and the app always
+agree.
+
+**Rendered per request, not at build time.** `src/icon.ts` draws the PNG and
+`routes/icon.ts` serves `/icon/<size>.png` and a generated
+`/manifest.webmanifest`. A static file could not follow a setting — the home
+screen and the tab would keep showing whatever was current when the app was
+built.
+
+Both are **outside `/api/`**, and that is load-bearing: `auth.ts` protects
+exactly that prefix, and the manifest and icons are fetched by the browser
+itself — the iOS installer, the taskbar, the tab strip — none of which will
+ever send a bearer token. Under `/api/` the app would have been uninstallable
+on the phone, and only on the phone. The *writes* are `/api/logo` and local-only
+like every other write that touches this machine.
+
+**Icon URLs carry `?v=accent-shape-version`.** Browsers, the iOS home screen and
+the Windows shell all cache icons hard; without a changing URL a new mark would
+never appear. The server ignores the query — it only exists to change the URL.
+
+In the page the mark is **inline SVG** (`Logo.tsx`) rather than an `<img>`, so it
+repaints from `var(--accent)` in the same frame as everything else. Fetching a
+PNG would make the logo the one thing that lagged a round trip behind the colour
+that was just picked. That means the four shapes exist twice — as SVG here and
+as arithmetic in `icon.ts` — which is real duplication, accepted because the
+alternative was an SVG rasteriser on the server or a visibly laggy logo.
+
+**The accent hex table is also duplicated**, in `ACCENT_HEX` (shared, for the
+renderer) and in `styles.css` (for the app), because the PWA does not import
+shared and CSS cannot import TypeScript. Neither copy can go, so
+`make-icons.mjs` compares them and **fails the build** if they drift.
+
+`logo_shape` is `image` when a picture is uploaded rather than there being a
+separate flag — the two are exclusive, and a `useCustomLogo` boolean alongside
+a shape would allow "custom picture *and* triangle". Setting it to `image` with
+nothing uploaded is refused by the route, since the schema cannot see the disk
+and a silent fallback to the pause glyph looks exactly like a failed upload.
+
+### Icons on disk
+
+Three things still cannot be served: the Windows shortcut's `.ico`, the
+extension's toolbar icons, and the `dist/` fallbacks referenced before any
+JavaScript runs. `npm run icons -w @everything/web` builds those from the
+defaults, and takes `--accent` / `--shape` to match a changed setting. It
+imports `drawIcon` straight from the server — Node strips the types — so there
+is one definition of what a triangle looks like rather than two that disagree.
 
 `packages/web/scripts/make-icons.mjs` generates them at build time with a small
 hand-rolled PNG encoder — no image library, no checked-in binaries. The mark is
@@ -141,7 +302,9 @@ a relative database path would quietly create a second, empty database there.
 | Sync | Server on the Windows PC, reachable over Tailscale | Free, private, no cloud. Trade-off: the phone only syncs while the PC is awake. |
 | Password vault | Own vault, own browser extension | Decided 2026-08-06 after comparing Bitwarden, Vaultwarden, KeePassXC and 1Password. Blake wants to own all of it. |
 | Voice | Always-on wake word → local Vosk | Revised 2026-08-06. Push-to-talk is cheaper and cannot false-positive, but the requirement was a wake word Blake can *change from a text box*, and hands-free mid-game. See **Voice** below for what that costs. |
-| Source control | Local git only | Not going on GitHub until Blake is happy with a version. Keep the repo clean enough to publish later. |
+| Source control | Local git, heading for a public GitHub repo | Revised 2026-08-08. `npm run publish-check` is the gate: it asks git whether the sensitive paths are ignored, refuses to pass on a tracked database or key, and warns about personal identifiers. Run it before pushing. |
+| Licence | MIT | Decided 2026-08-08, over AGPL-3.0. AGPL's network clause would have forced anyone hosting it to publish their changes, which suits a product with users to protect; this has one user and the point of publishing it is that the ideas get taken. Copyright is held as `blue91321` rather than a legal name, matching the history rewrite that took the personal address out. |
+| Commit identity | `blue91321 <blue91321@users.noreply.github.com>` | History was rewritten 2026-08-08 to remove a personal email. Trees verified byte-identical before and after; only metadata changed. `git config user.email` is set locally so new commits match — check it after any fresh clone, because that setting does not travel. |
 | Windows agent | Headless Node service, **not Electron** | Electron costs 150–250MB resident to show a tray icon. The agent is 55MB and has no UI at all — toasts go through WinRT via PowerShell, and the UI is the PWA in a browser. |
 
 ## Leanness
@@ -204,11 +367,20 @@ frees dangle. `shutdown()` does them in that order deliberately.
 
 ## Ground rules
 
-- **Never commit real data.** `data/`, `*.db`, and `.env` are gitignored. The
-  database is personal; treat it as such.
+- **Never commit real data.** `data/`, `*.db`, `.env`, `agent.config.json`,
+  `features.json`, the avatar and `logs/` are gitignored. The database is
+  personal; treat it as such. `npm run publish-check` is the gate — run it
+  before any push, and never loosen a rule to make it pass.
+
+  Two things it exists to catch, both of which had already happened:
+  `.claude/settings.local.json` was covered only by a *global* gitignore, which
+  does not survive a clone; and the models rule named a path that stopped being
+  true when the folder moved, which would have put 150MB of binaries in the
+  first public commit. An ignore rule that silently stops matching looks exactly
+  like one that is working.
 - The agent is read-only about the system, **with one deliberate exception**. It
   observes windows and processes; it does not close, kill, or manipulate them.
-  `packages/agent/src/actions.ts` breaks that rule on purpose so a voice command
+  `packages/agent/src/features/voice/actions.ts` breaks that rule on purpose so a voice command
   can press a hotkey or open a site — decided 2026-08-06. It is the only file
   allowed to, and it is the most dangerous code here: a mis-heard phrase does
   not write a wrong row, it presses keys into whatever window has focus. Keep
@@ -223,8 +395,8 @@ terminal to use his own app:
 
 | File | Does |
 | --- | --- |
-| `Everything App.cmd` | Installs deps on first run, rebuilds the PWA if stale, starts both services, opens the app window. Double-clicking again just re-opens it. |
-| `Stop Everything.cmd` | Stops both. |
+| `Blue Everything.cmd` | Installs deps on first run, rebuilds the PWA if stale, starts both services, opens the app window. Double-clicking again just re-opens it. |
+| `Stop Blue Everything.cmd` | Stops both. |
 | `Create Desktop Icon.cmd` | Desktop + Start Menu shortcut with the app icon. |
 | `Start Automatically.cmd` | Toggles the logon Scheduled Task on or off. |
 
@@ -280,7 +452,16 @@ npm run overlay-try -w @everything/agent   # show the cursor overlay, without sa
 npm run voice-enrol -w @everything/agent   # teach it your voice — say the wake word ten times
 npm run voice-check -w @everything/server  # prove the phrase matcher, in memory
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
+
+npm run features         # what is switched on, and what is actually on disk
+npm run features-check   # prove each one can be switched off and deleted
+npm run publish-check    # is this repo safe to make public?
 ```
+
+The voice CLIs live inside the feature (`src/features/voice/cli/`), so they stop
+existing when it does. That is correct: `npm run voice-setup` failing on an
+install with no voice is a better answer than a setup script for a feature that
+is not there.
 
 The agent reads `packages/agent/agent.config.json` (gitignored — it holds this
 machine's bearer token), or `EVERYTHING_SERVER_URL` / `EVERYTHING_TOKEN`.
@@ -496,7 +677,7 @@ delivery must switch them off first or it passes or fails by time of day.
 ## Password vault
 
 `npm run vault-check -w @everything/server` proves the cryptography. Run it
-before trusting any change to `src/vault/`.
+before trusting any change to `src/features/vault/`.
 
 **No crypto dependencies.** Argon2id and AES-256-GCM both come from Node's
 built-in `crypto`, which is OpenSSL. Node 24 exposes Argon2 directly, so there
@@ -758,7 +939,7 @@ One `libvosk.dll` does both jobs: it recognises the wake word *and* emits a
 separate wake-word engine. Bound through koffi rather than the `vosk` npm
 package, which is built on `ffi-napi` and does not build on Node 24.
 
-The models are **not in git** (`packages/agent/models/`, ~85MB of third-party
+The models are **not in git** (`packages/agent/src/features/voice/models/`, ~150MB of third-party
 binaries). `npm run voice-setup -w @everything/agent` checks what is present and
 prints exactly what to download and where to put it.
 
@@ -977,7 +1158,7 @@ never handed a `file:` path or a protocol handler.
 
 ### The overlay at the cursor
 
-`packages/agent/src/overlay.ts` — `CreateWindowExW` and GDI through koffi, the
+`packages/agent/src/features/voice/overlay.ts` — `CreateWindowExW` and GDI through koffi, the
 same trick `audio.ts` uses for WASAPI and `mic.ts` for waveIn.
 `npm run overlay-try -w @everything/agent` shows it without saying anything.
 

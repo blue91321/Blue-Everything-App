@@ -1,5 +1,5 @@
 @echo off
-REM Double-click this to start Everything and open it.
+REM Double-click this to start Blue Everything and open it.
 REM Everything else - installing dependencies, building the app, starting the
 REM server and the agent - is handled by start.ps1.
 cd /d "%~dp0"

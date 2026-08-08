@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Starts the Everything App server and Windows agent.
+  Starts the Blue Everything server and Windows agent.
 
 .DESCRIPTION
   Does whatever is needed to get to a running app: installs dependencies on
@@ -77,7 +77,7 @@ function Open-AppWindow {
 # Already up: a second double-click should just bring the app to the front
 # rather than complaining.
 if (Test-Listening) {
-  Write-Host "Everything is already running at $url" -ForegroundColor Green
+  Write-Host "Blue Everything is already running at $url" -ForegroundColor Green
   if ($Open) { Open-AppWindow }
   exit 0
 }
@@ -177,4 +177,4 @@ if ($Open) { Open-AppWindow }
 Write-Host ''
 Write-Host "App:  $url" -ForegroundColor Cyan
 Write-Host "Logs: $logDir"
-Write-Host 'Stop: "Stop Everything.cmd"'
+Write-Host 'Stop: "Stop Blue Everything.cmd"'

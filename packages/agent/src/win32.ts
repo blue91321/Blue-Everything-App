@@ -133,7 +133,19 @@ function isWindowFullScreen(hwnd: unknown): boolean {
 }
 
 const TH32CS_SNAPPROCESS = 0x2;
-const INVALID_HANDLE = -1;
+/**
+ * `INVALID_HANDLE_VALUE` — what CreateToolhelp32Snapshot returns on failure.
+ *
+ * Two spellings, because `(HANDLE)-1` on Win64 is either `-1n` or the unsigned
+ * `0xFFFFFFFFFFFFFFFFn` depending on how koffi widens the pointer, and which
+ * one arrives is not worth depending on.
+ *
+ * This was `const INVALID_HANDLE = -1` compared with `===` against
+ * `koffi.address()`, which returns a BigInt — so it was `bigint === number`,
+ * always false. The guard never fired, and a failed snapshot fell through to
+ * iterating an invalid handle instead of returning an empty map.
+ */
+const INVALID_HANDLES = new Set([-1n, 0xffffffffffffffffn]);
 
 const PROCESSENTRY32W = koffi.struct('PROCESSENTRY32W', {
   dwSize: 'uint32',
@@ -167,7 +179,7 @@ const PE32_SIZE = koffi.sizeof(PROCESSENTRY32W);
 export function listProcesses(): Map<string, number> {
   const found = new Map<string, number>();
   const snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-  if (!snap || koffi.address(snap) === INVALID_HANDLE) return found;
+  if (!snap || INVALID_HANDLES.has(koffi.address(snap))) return found;
 
   try {
     const entry: Record<string, unknown> = { dwSize: PE32_SIZE, szExeFile: new Array(260).fill(0) };

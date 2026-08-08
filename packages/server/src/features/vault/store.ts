@@ -7,8 +7,8 @@
  */
 import { desc, eq } from 'drizzle-orm';
 import type { VaultItemInput } from '@everything/shared';
-import { db } from '../db/client.js';
-import { vault, vaultEntries } from '../db/schema.js';
+import { db } from '../../db/client.js';
+import { vault, vaultEntries } from '../../db/schema.js';
 import {
   KDF,
   KDF_VERSION,

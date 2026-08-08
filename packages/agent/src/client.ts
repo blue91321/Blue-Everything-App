@@ -7,7 +7,39 @@
  */
 import type { AttentionReport, DeliverableNudge, VoiceAgentReport, VoiceHeard } from '@everything/shared';
 import { agentConfig } from './config.js';
-import type { VoiceConfig } from './voice.js';
+/**
+ * The shape of `/api/voice/config`.
+ *
+ * Declared here, in core, rather than in the voice feature that consumes it —
+ * this is the client that fetches it, and `features/voice/` can be deleted.
+ * Core must not reach into a folder that may be absent, even for a type.
+ */
+export interface VoiceConfig {
+  enabled: boolean;
+  wakeWord: string;
+  requireKnownSpeaker: boolean;
+  speakerThreshold: number;
+  voiceprint: number[] | null;
+  vocabulary: string[];
+  /** The literal phrase words, for the can-this-be-heard check. */
+  checkWords?: string[];
+  version: string;
+  /** Device name to listen on; null follows the Windows default. */
+  inputDevice?: string | null;
+  /** Where the popup goes, and what face it wears. Passed straight through. */
+  overlayPlacement?: string;
+  overlayScreen?: string | null;
+  overlayAvatar?: string;
+  avatarVersion?: number;
+  /** While in the future, report what is heard instead of acting on it. */
+  testUntil?: number;
+  /** While in the future, collect wake-word samples instead of obeying them. */
+  enrolUntil?: number;
+  /** How long to reopen after a miss. Read by the voice feature, not used here. */
+  retryMs?: number;
+  /** How long to keep listening after answering. 0 switches follow-ups off. */
+  followUpMs?: number;
+}
 
 export interface AttentionResponse {
   moment: string | null;

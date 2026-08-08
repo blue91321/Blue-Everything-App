@@ -6,42 +6,113 @@
  * deciding which behaviour applies.
  */
 
+/*
+ * Theme and accent are two independent axes.
+ *
+ *   <html data-theme="dark|light">   the surfaces
+ *   <html data-accent="blue|…">      the one colour on top of them
+ *
+ * Kept apart because they are chosen separately in Settings, and because
+ * folding them together would mean eight accents × two themes = sixteen blocks
+ * to keep in step. This way each accent declares two lines per theme and
+ * nothing else has to know it exists.
+ *
+ * Both attributes are stamped on <html> before React mounts (see index.html),
+ * so there is no flash of the wrong theme on a cold load.
+ */
+
 :root {
+  --radius: 12px;
+  --gap: 12px;
+  /* Must match DRAWER_WIDTH in useEdgeDrawer.ts. */
+  --drawer-width: 260px;
+}
+
+/* ---- surfaces ---------------------------------------------------- */
+
+/*
+ * Dark is the default, and is what an unattributed document gets. `system`
+ * resolves to one of these two in JS rather than via a media query here — the
+ * stored setting has three values and CSS would only know about two of them,
+ * so the resolution belongs in one place and that place is `theme.ts`.
+ */
+:root,
+:root[data-theme='dark'] {
   --bg: #14161c;
   --surface: #1c1f27;
   --surface-raised: #232734;
   --border: #2b303c;
   --text: #e8e9ed;
   --muted: #8b90a0;
-  --accent: #ffb454;
-  --accent-text: #14161c;
   --danger: #ff6b6b;
   --ok: #5fd18c;
-
-  --radius: 12px;
-  --gap: 12px;
-  /* Must match DRAWER_WIDTH in useEdgeDrawer.ts. */
-  --drawer-width: 260px;
 
   color-scheme: dark;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f6f7f9;
-    --surface: #ffffff;
-    --surface-raised: #eef0f4;
-    --border: #dcdfe6;
-    --text: #1a1c22;
-    --muted: #666c7a;
-    --accent: #b96f00;
-    --accent-text: #ffffff;
-    --danger: #c92a2a;
-    --ok: #2b8a3e;
+:root[data-theme='light'] {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-raised: #eef0f4;
+  --border: #dcdfe6;
+  --text: #1a1c22;
+  --muted: #666c7a;
+  --danger: #c92a2a;
+  --ok: #2b8a3e;
 
-    color-scheme: light;
-  }
+  color-scheme: light;
 }
+
+/* ---- accents ------------------------------------------------------ */
+
+/*
+ * Two values each: the colour, and what stays legible on top of it.
+ *
+ * The dark-theme accents are light enough to read against #14161c; the
+ * light-theme ones are darkened until they carry white text. That is why each
+ * accent appears twice rather than once with an opacity trick — a single hex
+ * cannot satisfy both, and the version that "mostly works" is the one that
+ * makes a button label unreadable on exactly one screen.
+ */
+
+/*
+ * Two things about these selectors are load-bearing.
+ *
+ * **They are not scoped to `:root`.** Any element carrying `data-accent` gets
+ * its own `--accent`, which is what lets the swatches on the Settings screen
+ * paint themselves from the real palette instead of a second copy that can
+ * drift. Written as `:root[data-accent=…]` they matched only <html>, and every
+ * swatch came out the same colour as the current accent.
+ *
+ * **The dark defaults live in `:root` alone, never `:root[data-theme='dark']`.**
+ * That pairing is specificity (0,2,0) and would outrank `[data-accent='amber']`
+ * at (0,1,0) — so with `data-theme` always set by the boot script, the default
+ * blue beat every accent and choosing a colour did nothing at all. The light
+ * overrides below are deliberately (0,2,0) so they *do* outrank the dark set.
+ */
+
+:root {
+  --accent: #4c8dff;
+  --accent-text: #0b1020;
+}
+
+[data-accent='blue'] { --accent: #4c8dff; --accent-text: #0b1020; }
+[data-accent='amber'] { --accent: #ffb454; --accent-text: #14161c; }
+[data-accent='green'] { --accent: #5fd18c; --accent-text: #0d1a12; }
+[data-accent='teal'] { --accent: #3fc9c2; --accent-text: #08191a; }
+[data-accent='purple'] { --accent: #a78bfa; --accent-text: #14102a; }
+[data-accent='pink'] { --accent: #f472b6; --accent-text: #23101a; }
+[data-accent='red'] { --accent: #ff7a7a; --accent-text: #200c0c; }
+[data-accent='grey'] { --accent: #9aa3b8; --accent-text: #14161c; }
+
+[data-theme='light'][data-accent='blue'] { --accent: #1b62d4; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='amber'] { --accent: #b96f00; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='green'] { --accent: #1f7a4d; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='teal'] { --accent: #10727a; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='purple'] { --accent: #6d43d4; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='pink'] { --accent: #b83280; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='red'] { --accent: #c92a2a; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='grey'] { --accent: #4a5262; --accent-text: #ffffff; }
 
 * {
   box-sizing: border-box;
@@ -671,4 +742,97 @@ button {
   .group > summary::before {
     transition: none;
   }
+}
+
+/*
+ * The accent swatches on the Settings screen.
+ *
+ * Each carries its own `data-accent`, so it inherits the real `--accent` from
+ * the blocks at the top of this file rather than repeating the hex values. A
+ * second copy of the palette here would be one more thing to keep in step, and
+ * the first colour to drift would be the one nobody looks at twice.
+ */
+.swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swatch[aria-pressed='true'] {
+  /* A ring rather than a thicker border, so the circle doesn't change size and
+     shuffle the row when the selection moves. */
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+}
+
+.swatch:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.swatch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ---------- the app mark ---------- */
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo-mark {
+  display: block;
+  border-radius: 6px;
+  flex: none;
+}
+
+/*
+ * The shape choices on the Settings screen.
+ *
+ * Each renders the real <Logo>, which paints from the live `--accent`, so this
+ * row is also a preview of the colour picked directly above it.
+ */
+.logo-choices {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.logo-choice {
+  background: none;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.logo-choice[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+
+.logo-choice:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.logo-choice:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.logo-choice .logo-mark {
+  border-radius: 9px;
+  object-fit: cover;
 }

@@ -7,13 +7,18 @@
  * relative path would silently find nothing and report the models as missing on
  * a machine where they are installed fine.
  *
- * `models/` is gitignored. These are ~55MB of third-party binaries; they are
+ * `models/` is gitignored. These are ~150MB of third-party binaries; they are
  * downloaded once by hand and have no business in a git history.
+ *
+ * They sit *inside* this feature folder rather than at the package root, so
+ * that deleting the voice feature reclaims the disk they take with it. Losing
+ * 150MB of models that nothing can load would be a poor reward for switching a
+ * feature off.
  */
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const featureRoot = dirname(fileURLToPath(import.meta.url));
 
 export interface VoicePaths {
   root: string;
@@ -26,7 +31,7 @@ export interface VoicePaths {
 }
 
 export function voiceModelPaths(): VoicePaths {
-  const root = process.env.EVERYTHING_VOICE_DIR ?? resolve(packageRoot, 'models');
+  const root = process.env.EVERYTHING_VOICE_DIR ?? resolve(featureRoot, 'models');
 
   return {
     root,

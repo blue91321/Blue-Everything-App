@@ -19,11 +19,11 @@ import { deviceRoutes } from './routes/devices.js';
 import { habitRoutes } from './routes/habits.js';
 import { noteRoutes } from './routes/notes.js';
 import { nudgeRoutes } from './routes/nudges.js';
+import { iconRoutes } from './routes/icon.js';
 import { settingsRoutes } from './routes/settings.js';
 import { taskRoutes } from './routes/tasks.js';
 import { timeRoutes } from './routes/time.js';
-import { vaultRoutes } from './routes/vault.js';
-import { voiceRoutes } from './routes/voice.js';
+import { featureNotes, isEnabled, registerFeature } from './features.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -51,18 +51,37 @@ export async function buildApp(): Promise<FastifyInstance> {
     return { ok: true, service: 'everything-app', at: Date.now() };
   });
 
+  for (const note of featureNotes) app.log.warn(note);
+
+  /* ---- core: the nudge engine and what feeds it ------------------ */
   await app.register(eventRoutes);
   await app.register(taskRoutes);
-  await app.register(habitRoutes);
-  await app.register(noteRoutes);
-  await app.register(timeRoutes);
   await app.register(nudgeRoutes);
   await app.register(attentionRoutes);
   await app.register(deviceRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);
-  await app.register(vaultRoutes);
-  await app.register(voiceRoutes);
+  // Before the static handler, so the generated manifest wins over the one
+  // sitting in dist/ from the build.
+  await app.register(iconRoutes);
+
+  /*
+   * Switchable, but not removable: the Dashboard renders habits inline, and the
+   * `note` voice command needs somewhere to write. Off means the routes are not
+   * mounted and the app hides them; there is no folder to delete.
+   */
+  if (isEnabled('habits')) await app.register(habitRoutes);
+  if (isEnabled('notes')) await app.register(noteRoutes);
+  if (isEnabled('time')) await app.register(timeRoutes);
+
+  /*
+   * Removable. The `() => import(...)` is a literal rather than a path built
+   * from the id — a dynamic `import(variable)` would be invisible to the type
+   * checker and to every bundler, which is a poor trade for saving three lines.
+   */
+  await registerFeature(app, 'vault', () => import('./features/vault/index.js'));
+  await registerFeature(app, 'voice', () => import('./features/voice/index.js'));
+  await registerFeature(app, 'push', () => import('./features/push/index.js'));
 
   await registerWebApp(app);
 

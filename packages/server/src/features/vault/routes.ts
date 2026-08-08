@@ -10,11 +10,11 @@ import {
   vaultSetupSchema,
   vaultUnlockSchema,
 } from '@everything/shared';
-import { changes } from '../events.js';
-import { combineShares, decodeShare } from '../vault/crypto.js';
-import { isDuplicate, readExport } from '../vault/import.js';
-import * as session from '../vault/session.js';
-import * as store from '../vault/store.js';
+import { changes } from '../../events.js';
+import { combineShares, decodeShare } from './crypto.js';
+import { isDuplicate, readExport } from './import.js';
+import * as session from './session.js';
+import * as store from './store.js';
 
 /**
  * Who may talk to the vault at all.

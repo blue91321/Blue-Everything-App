@@ -7,7 +7,7 @@ import { showToast } from '../notify.js';
 
 const started = Date.now();
 const shown = await showToast({
-  title: 'Everything App',
+  title: 'Blue Everything',
   body: 'If you can see this, nudges will reach you. Buy milk & <eggs>',
   tag: 'test',
 });

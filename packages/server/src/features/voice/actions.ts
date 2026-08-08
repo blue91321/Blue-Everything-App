@@ -26,9 +26,9 @@ import {
   type VoiceCandidate,
   type VoiceCommandKind,
 } from '@everything/shared';
-import { db } from './db/client.js';
-import { habitEntries, habits, notes, settings, voiceCommands } from './db/schema.js';
-import { periodKeyFor } from './routes/habits.js';
+import { db } from '../../db/client.js';
+import { habitEntries, habits, notes, settings, voiceCommands } from '../../db/schema.js';
+import { periodKeyFor } from '../../routes/habits.js';
 import type { Cadence } from '@everything/shared';
 
 /** Something for the agent to do on the machine Blake is sitting at. */

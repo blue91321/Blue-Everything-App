@@ -27,7 +27,7 @@
  * entirely.
  */
 import { VOICE_ENROL_SAMPLES } from '@everything/shared';
-import { ServerClient } from '../client.js';
+import { ServerClient } from '../../../client.js';
 
 const client = new ServerClient();
 
@@ -38,7 +38,7 @@ const status = await client.voiceStatus().catch((error: Error) => {
 
 if (!status.agentRunning) {
   console.error('\nThe agent is not running — it is the thing that holds the microphone.');
-  console.error('Start it with Everything App.cmd, then try again.\n');
+  console.error('Start it with Blue Everything.cmd, then try again.\n');
   process.exit(1);
 }
 

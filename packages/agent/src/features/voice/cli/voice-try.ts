@@ -20,7 +20,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { matchVoiceCommand, matchesWakeWord, spokenCount, type VoiceCandidate } from '@everything/shared';
-import { ServerClient } from '../client.js';
+import { ServerClient } from '../../../client.js';
 import { SAMPLE_RATE } from '../mic.js';
 import { createRecogniser } from '../vosk.js';
 

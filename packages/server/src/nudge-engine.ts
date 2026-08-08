@@ -19,7 +19,7 @@ import {
 } from '@everything/shared';
 import { db } from './db/client.js';
 import { habitEntries, habits, nudges, settings, tasks } from './db/schema.js';
-import { pushIsOnCooldown, sendPushToPhones } from './push.js';
+import { phones } from './push-port.js';
 import { periodKeyFor } from './routes/habits.js';
 
 /**
@@ -153,7 +153,7 @@ export async function collectDeliverable(
   const awayFromPc = isAwayFromPc(report);
   const toPhone = awayFromPc && Boolean(prefs.pushEnabled) && !quiet;
 
-  if (toPhone && pushIsOnCooldown(now)) {
+  if (toPhone && phones().isOnCooldown(now)) {
     // Leave everything queued rather than marking it delivered — it will go out
     // on the next window, or as a toast the moment he sits back down.
     return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
@@ -205,7 +205,7 @@ export async function collectDeliverable(
   // push service refusing, these must stay queued rather than vanish unseen.
   let pushed = 0;
   if (toPhone) {
-    const outcome = await sendPushToPhones(winners.map((w) => w.nudge), now);
+    const outcome = await phones().sendToPhones(winners.map((w) => w.nudge), now);
     pushed = outcome.sent;
     if (pushed === 0) return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
   }

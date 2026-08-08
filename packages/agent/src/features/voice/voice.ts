@@ -49,32 +49,20 @@ import {
   type Utterance,
 } from './vosk.js';
 
-export interface VoiceConfig {
-  enabled: boolean;
-  wakeWord: string;
-  requireKnownSpeaker: boolean;
-  speakerThreshold: number;
-  voiceprint: number[] | null;
-  vocabulary: string[];
-  /** The literal phrase words, for the can-this-be-heard check. */
-  checkWords?: string[];
-  version: string;
-  /** Device name to listen on; null follows the Windows default. */
-  inputDevice?: string | null;
-  /** Where the popup goes, and what face it wears. Passed straight through. */
-  overlayPlacement?: string;
-  overlayScreen?: string | null;
-  overlayAvatar?: string;
-  avatarVersion?: number;
-  /** While in the future, report what is heard instead of acting on it. */
-  testUntil?: number;
-  /** While in the future, collect wake-word samples instead of obeying them. */
-  enrolUntil?: number;
-  /** How long to reopen after a miss. Read by index.ts, not used here. */
-  retryMs?: number;
-  /** How long to keep listening after answering. 0 switches follow-ups off. */
-  followUpMs?: number;
-}
+/**
+ * Re-exported rather than declared here.
+ *
+ * `VoiceConfig` describes what `/api/voice/config` sends back, so it lives with
+ * the HTTP client that fetches it. That is not tidiness: `client.ts` is core and
+ * this folder is deletable, and core importing a type out of a folder that may
+ * not exist is exactly the edge that makes "deletable" a lie. Type-only imports
+ * are erased at runtime and so would not have crashed — they would just have
+ * failed the type check for anyone who removed the feature, which is worse for
+ * being silent until someone tried.
+ */
+import type { VoiceConfig } from '../../client.js';
+
+export type { VoiceConfig };
 
 /** What the listener can say about itself, for the Voice screen. */
 export interface VoiceStatus {

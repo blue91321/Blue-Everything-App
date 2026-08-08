@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from '../api';
-import { useAsync } from '../useAsync';
-import { Toggle } from '../controls';
+import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from '../../api';
+import { useAsync } from '../../useAsync';
+import { Toggle } from '../../controls';
 import { VoicePhrases } from './VoiceCommands';
 import { VoiceLook } from './VoiceLook';
 
@@ -51,7 +51,7 @@ export function Voice({ local }: { local: boolean }) {
             This screen needs voice support on the server, and the process that's running predates it.
             Restart it and this page will work.
           </div>
-          <code className="snippet">Stop Everything.cmd, then Everything App.cmd</code>
+          <code className="snippet">Stop Blue Everything.cmd, then Blue Everything.cmd</code>
         </div>
       </section>
     );
@@ -490,7 +490,7 @@ function LiveStatus({
   // without it this said "Starting up…" indefinitely at something that was
   // never going to start.
   const state = !status.agentRunning
-    ? { text: 'The agent is not running', tone: 'urgent', why: 'Nothing is listening. Start it with Everything App.cmd.' }
+    ? { text: 'The agent is not running', tone: 'urgent', why: 'Nothing is listening. Start it with Blue Everything.cmd.' }
     : status.error
       ? { text: 'Not listening', tone: 'urgent', why: status.error }
       : !enabled

@@ -74,6 +74,17 @@ const envSchema = z.object({
       message: 'must be mailto:name@domain.tld or https://host, and cannot use localhost',
     }),
 
+  /**
+   * Which features to run, comma-separated — `vault,voice`. Overrides
+   * `features.json` entirely, and naming any feature means everything unnamed
+   * is off. Empty (the default) defers to the file, and an absent file defers
+   * to the manifest's own defaults.
+   *
+   * Parsed in `features.ts`; read here only because this is the one file
+   * allowed to touch `process.env`.
+   */
+  FEATURES: z.string().default(''),
+
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
   /** Set when running behind a reverse proxy so client IPs log correctly. */

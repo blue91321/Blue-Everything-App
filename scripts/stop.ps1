@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Stops the Everything App server and agent.
+  Stops the Blue Everything server and agent.
 
 .DESCRIPTION
   Finds them by command line rather than a PID file, so it still works after a

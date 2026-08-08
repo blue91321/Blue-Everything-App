@@ -12,7 +12,7 @@ import webpush, { type PushSubscription } from 'web-push';
 import { and, isNotNull, isNull } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
-import { getVapidKeys } from '../push.js';
+import { getVapidKeys } from '../features/push/push.js';
 
 const subscribed = await db
   .select()

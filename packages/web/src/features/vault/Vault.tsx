@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type ImportResult, type VaultSecret, type VaultStatus, type VaultSummary } from '../api';
-import { useAsync } from '../useAsync';
-import { relative } from '../format';
+import { api, type ImportResult, type VaultSecret, type VaultStatus, type VaultSummary } from '../../api';
+import { useAsync } from '../../useAsync';
+import { relative } from '../../format';
 
 /** Long beats complex — length is where the strength is. */
 const MIN_MASTER_PASSWORD = 12;

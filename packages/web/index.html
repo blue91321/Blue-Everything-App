@@ -6,15 +6,44 @@
          home indicator; styles.css pads it back with safe-area insets. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#14161c" />
-    <title>Everything</title>
+    <title>Blue Everything</title>
 
     <!-- Tells iOS to launch from the home screen without Safari's chrome. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Everything" />
+    <meta name="apple-mobile-web-app-title" content="Blue Everything" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="icon" href="/icon-192.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!--
+      Stamp the last known look before anything renders.
+
+      The real setting comes from the server, which is a round trip away — long
+      enough to paint the default first. On a dark-themed app that shows as a
+      white flash on every cold load, which is the single most noticeable thing
+      a theme can get wrong.
+
+      Inline and blocking on purpose: a deferred module would run after first
+      paint and defeat the point. It is a dozen lines and reads only from
+      localStorage, which `theme.ts` writes from server responses.
+    -->
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('everything:theme') || 'dark';
+          var accent = localStorage.getItem('everything:accent') || 'blue';
+          if (theme === 'system') {
+            theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          }
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.dataset.accent = accent;
+        } catch (e) {
+          // Storage blocked. The stylesheet's own defaults are dark + blue, so
+          // doing nothing here lands on exactly the right place anyway.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

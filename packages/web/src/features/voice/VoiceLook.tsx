@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { api, type VoiceSettings, type VoiceStatus } from '../api';
+import { api, type VoiceSettings, type VoiceStatus } from '../../api';
 
 /** The nine anchors, laid out the way they sit on a screen. */
 const ANCHORS: { value: string; label: string }[][] = [

@@ -110,6 +110,17 @@ export interface AppSettings {
   quietReason: 'reminders-off' | 'paused' | 'quiet-hours' | 'windows-dnd' | null;
 
   /**
+   * How the app looks. Optional for the same reason the voice fields are — a
+   * server that predates the appearance migration sends neither, and the app
+   * falls back to dark + blue rather than rendering an empty picker.
+   */
+  theme?: 'dark' | 'light' | 'system';
+  accentColor?: string;
+  logoShape?: 'pause' | 'circle' | 'triangle' | 'square' | 'image';
+  /** Bumped on every upload; used to bust caches on the icon URLs. */
+  logoVersion?: number;
+
+  /**
    * Optional because the server can genuinely be older than this bundle — the
    * PWA is rebuilt and served by a process that may not have restarted yet.
    * Typed as present when it isn't is what turned a stale server into a blank
@@ -305,6 +316,19 @@ export interface Session {
   local: boolean;
   deviceId: string | null;
   deviceKind: string | null;
+  /**
+   * Which optional features this server runs, e.g. `['vault', 'voice']`.
+   *
+   * Optional for the same reason the voice settings are: the three packages
+   * restart independently and `start.ps1` rebuilds the PWA when its sources are
+   * newer, so a browser holding a new bundle against a server that predates
+   * this field is the *ordinary* case right after an edit. Absent means "an
+   * older server", which is treated as everything on — a stale server should
+   * look stale, not like an app with no features.
+   */
+  features?: string[];
+  /** Switched on but with its folder deleted. Distinct from simply off. */
+  featuresMissing?: string[];
 }
 
 export interface Device {
@@ -362,6 +386,9 @@ export const api = {
   settings: {
     get: () => request<AppSettings>('/api/settings'),
     update: (payload: {
+      theme?: 'dark' | 'light' | 'system';
+      accentColor?: string;
+      logoShape?: 'pause' | 'circle' | 'triangle' | 'square' | 'image';
       quietHoursEnabled?: boolean;
       quietStartMinute?: number;
       quietEndMinute?: number;
@@ -380,6 +407,33 @@ export const api = {
       overlayScreen?: string | null;
       overlayAvatar?: string;
     }) => patch<AppSettings>('/api/settings', payload),
+  },
+
+  logo: {
+    /**
+     * Upload a picture to use as the mark.
+     *
+     * Sent as base64 in JSON rather than multipart, matching the voice avatar:
+     * the server has no multipart parser registered and adding one for a single
+     * endpoint used once in a blue moon is a dependency for nothing.
+     */
+    upload: (file: File) =>
+      new Promise<{ ok: boolean; bytes: number }>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('could not read that file'));
+        reader.onload = () => {
+          const result = String(reader.result);
+          // Strip the `data:image/png;base64,` prefix the reader adds.
+          const data = result.slice(result.indexOf(',') + 1);
+          request<{ ok: boolean; bytes: number }>('/api/logo', {
+            method: 'PUT',
+            body: JSON.stringify({ data, type: file.type }),
+          }).then(resolve, reject);
+        };
+        reader.readAsDataURL(file);
+      }),
+
+    remove: () => request<{ ok: boolean }>('/api/logo', { method: 'DELETE' }),
   },
 
   voice: {

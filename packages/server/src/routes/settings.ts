@@ -4,13 +4,16 @@ import { AWAY_FROM_PC_IDLE_MS, quietReason, updateSettingsSchema } from '@everyt
 import { db } from '../db/client.js';
 import { settings } from '../db/schema.js';
 import { getSettings } from '../nudge-engine.js';
-import { getVapidKeys } from '../push.js';
+import { phones } from '../push-port.js';
+import { clearIconCache, hasStoredLogo } from './icon.js';
 import { currentWindowsDnd } from './attention.js';
 
 async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
   const windowsDnd = currentWindowsDnd();
   // Generated on first read so the phone always has a key to subscribe with.
-  const { publicKey } = await getVapidKeys();
+  // `null` when the push feature is switched off or absent — the screen says so
+  // rather than offering a subscribe button that could never work.
+  const publicKey = await phones().vapidPublicKey();
   const reason = quietReason(new Date(), {
     quietHoursEnabled: Boolean(row.quietHoursEnabled),
     quietStartMinute: row.quietStartMinute,
@@ -56,6 +59,12 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'enrol your voice first — there is nothing to compare against yet' });
     }
 
+    // Same shape of mistake: `image` with nothing uploaded would silently draw
+    // the pause glyph, which looks exactly like the upload having failed.
+    if (body.logoShape === 'image' && !hasStoredLogo()) {
+      return reply.code(400).send({ error: 'upload a picture first — there is nothing to show yet' });
+    }
+
     const [updated] = await db
       .update(settings)
       .set({
@@ -82,9 +91,16 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         overlayPlacement: body.overlayPlacement,
         overlayScreen: body.overlayScreen,
         overlayAvatar: body.overlayAvatar,
+        theme: body.theme,
+        accentColor: body.accentColor,
+        logoShape: body.logoShape,
       })
       .where(eq(settings.id, current.id))
       .returning();
+
+    // The rendered PNGs are keyed on the accent and the shape, so a change to
+    // either makes every cached one wrong.
+    if (body.accentColor || body.logoShape) clearIconCache();
 
     return describe(updated);
   });

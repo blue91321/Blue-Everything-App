@@ -1,28 +1,43 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { api, clearToken, setToken, type Session } from './api';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
+import { setEnabledFeatures, webFeatures } from './features';
+import {
+  applyFavicon,
+  applyLook,
+  watchSystemTheme,
+  DEFAULT_ACCENT,
+  DEFAULT_THEME,
+  type Accent,
+  type AppTheme,
+} from './theme';
+import { Logo, type LogoShape } from './Logo';
+import { onDataChange } from './live';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
 import { Notes } from './views/Notes';
-import { Vault } from './views/Vault';
-import { Voice } from './views/Voice';
 import { Settings } from './views/Settings';
 
-const NAV = [
-  { id: 'dashboard', label: 'Dashboard', glyph: '◒' },
-  { id: 'tasks', label: 'Tasks', glyph: '☑' },
-  { id: 'habits', label: 'Habits', glyph: '↻' },
-  { id: 'notes', label: 'Notes', glyph: '✎' },
-  { id: 'vault', label: 'Vault', glyph: '🔒' },
-  // Its own tab rather than a section of Settings: it is the one feature that
-  // holds a microphone open, so the switch that turns it off should never be
-  // something you have to go looking for.
-  { id: 'voice', label: 'Voice', glyph: '🎙' },
-  { id: 'settings', label: 'Settings', glyph: '⚙' },
-] as const;
+/**
+ * The screens that are always here. Dashboard and Tasks are the nudge engine's
+ * own face and cannot be switched off; Habits and Notes can be, which the
+ * server reports, but they are not separable folders — the Dashboard renders
+ * habits inline.
+ *
+ * `order` interleaves these with the discovered features in `./features`, so a
+ * feature decides where its own tab sits rather than the drawer knowing about
+ * every feature that might ever exist.
+ */
+const CORE_NAV = [
+  { id: 'dashboard', label: 'Dashboard', glyph: '◒', order: 10, always: true },
+  { id: 'tasks', label: 'Tasks', glyph: '☑', order: 20, always: true },
+  { id: 'habits', label: 'Habits', glyph: '↻', order: 30, always: false },
+  { id: 'notes', label: 'Notes', glyph: '✎', order: 40, always: false },
+  { id: 'settings', label: 'Settings', glyph: '⚙', order: 100, always: true },
+];
 
-type NavId = (typeof NAV)[number]['id'];
+type NavId = string;
 
 /** Below this the drawer slides over the content; above it, it's always there. */
 const DESKTOP_QUERY = '(min-width: 900px)';
@@ -31,6 +46,15 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
   const [view, setView] = useState<NavId>('dashboard');
+  /**
+   * The mark, held here so the drawer can draw it.
+   *
+   * Kept in state rather than read from the settings call each render because
+   * the drawer is on screen before any authenticated call returns; the default
+   * is the same one the stylesheet and the server fall back to, so the worst
+   * case is the right shape arriving a moment later rather than a gap.
+   */
+  const [logo, setLogo] = useState<{ shape: LogoShape; version: number }>({ shape: 'pause', version: 0 });
 
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const drawer = useEdgeDrawer(!isDesktop);
@@ -59,6 +83,51 @@ export function App() {
     return () => window.removeEventListener('everything:unauthorized', onUnauthorized);
   }, []);
 
+  /*
+   * Pull the stored look down once the session exists.
+   *
+   * Separate from the inline script in index.html, which applies a *cached*
+   * answer instantly. This is the authoritative one, and it also updates that
+   * cache — so changing the accent on the phone shows up on the PC on its next
+   * load rather than never.
+   *
+   * Re-run on every server change via `onDataChange` — the same SSE stream
+   * every list already listens to — so saving the accent on the phone repaints
+   * the PC without a refresh, and without this needing its own transport.
+   */
+  useEffect(() => {
+    if (!session) return;
+
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const settings = await api.settings.get();
+        if (cancelled) return;
+        const theme = (settings.theme ?? DEFAULT_THEME) as AppTheme;
+        const accent = (settings.accentColor ?? DEFAULT_ACCENT) as Accent;
+        const shape = (settings.logoShape ?? 'pause') as LogoShape;
+        const version = settings.logoVersion ?? 0;
+
+        applyLook(theme, accent);
+        watchSystemTheme(theme, accent);
+        setLogo({ shape, version });
+        // The tab icon is a real file, so it needs a URL that changes when the
+        // mark does — the accent and the shape are both part of the answer.
+        applyFavicon(`${accent}-${shape}-${version}`);
+      } catch {
+        // A failed settings fetch must not blank the app; the cached look from
+        // index.html is already on screen and is almost certainly still right.
+      }
+    };
+
+    void load();
+    const unsubscribe = onDataChange(load);
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [session]);
+
   if (checking) {
     return (
       <div className="pair">
@@ -67,6 +136,33 @@ export function App() {
     );
   }
   if (!session) return <Pairing onPaired={checkSession} />;
+
+  /*
+   * A tab appears only when both halves agree it exists: the server has the
+   * feature switched on *and* this build contains its screen. They are updated
+   * independently — the PWA is rebuilt from source, the server reads
+   * features.json — so either can be ahead of the other, and showing a tab on
+   * one side's say-so alone is how you get a menu item that 404s or throws.
+   *
+   * An older server that predates all this sends no `features` at all, so an
+   * absent list means "everything", not "nothing".
+   */
+  const enabled = session.features;
+  const isOn = (id: string) => enabled === undefined || enabled.includes(id);
+
+  // Published before anything renders, for the screens too deep to be given it
+  // as a prop — see the note in ./features.
+  setEnabledFeatures(enabled);
+
+  const nav = [
+    ...CORE_NAV.filter((item) => item.always || isOn(item.id)),
+    ...webFeatures.filter((f) => isOn(f.id)),
+  ].sort((a, b) => a.order - b.order);
+
+  // Whatever was open may have just been switched off from another device —
+  // the SSE stream reloads every client, so this can change under a live page.
+  const current = nav.find((n) => n.id === view) ?? nav[0];
+  const feature = webFeatures.find((f) => f.id === current.id);
 
   const shown = isDesktop || drawer.open || drawer.dragX !== null;
   const offset = drawer.dragX ?? (drawer.open ? DRAWER_WIDTH : 0);
@@ -89,10 +185,13 @@ export function App() {
   return (
     <div className={isDesktop ? 'shell desktop' : 'shell'}>
       <aside className="drawer" style={drawerStyle} aria-hidden={!shown && !isDesktop}>
-        <div className="drawer-head">Everything</div>
+        <div className="drawer-head">
+          <Logo shape={logo.shape} size={26} version={logo.version} />
+          <span>Blue Everything</span>
+        </div>
         <nav>
-          {NAV.map(({ id, label, glyph }) => (
-            <button key={id} aria-current={view === id} onClick={() => go(id)}>
+          {nav.map(({ id, label, glyph }) => (
+            <button key={id} aria-current={current.id === id} onClick={() => go(id)}>
               <span className="glyph" aria-hidden="true">
                 {glyph}
               </span>
@@ -119,16 +218,26 @@ export function App() {
               ☰
             </button>
           )}
-          <h1>{NAV.find((n) => n.id === view)!.label}</h1>
+          <h1>{current.label}</h1>
         </header>
 
-        {view === 'dashboard' && <Dashboard />}
-        {view === 'tasks' && <Tasks />}
-        {view === 'habits' && <Habits />}
-        {view === 'notes' && <Notes />}
-        {view === 'vault' && <Vault />}
-        {view === 'voice' && <Voice local={session.local} />}
-        {view === 'settings' && <Settings session={session} onChanged={checkSession} />}
+        {current.id === 'dashboard' && <Dashboard />}
+        {current.id === 'tasks' && <Tasks />}
+        {current.id === 'habits' && <Habits />}
+        {current.id === 'notes' && <Notes />}
+        {current.id === 'settings' && <Settings session={session} onChanged={checkSession} />}
+
+        {/*
+          Each feature is its own chunk, fetched the first time its tab is
+          opened. The fallback is deliberately plain: on this network the chunk
+          arrives in a few milliseconds, and a spinner that flashes is worse
+          than a line of text that does not.
+        */}
+        {feature && (
+          <Suspense fallback={<div className="empty">loading…</div>}>
+            <feature.View local={session.local} />
+          </Suspense>
+        )}
       </div>
     </div>
   );

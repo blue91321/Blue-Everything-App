@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Runs the Everything App automatically when you log in.
+  Runs Blue Everything automatically when you log in.
 
 .DESCRIPTION
   Registers a Scheduled Task that runs scripts\start.ps1 at logon, hidden.
@@ -26,7 +26,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$taskName = 'EverythingApp'
+$taskName = 'BlueEverything'
 $root = Split-Path -Parent $PSScriptRoot
 $startScript = Join-Path $PSScriptRoot 'start.ps1'
 
@@ -37,7 +37,7 @@ if ($Toggle) {
 if ($Remove) {
   if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-    Write-Host 'Everything will NO LONGER start automatically when you log in.' -ForegroundColor Yellow
+    Write-Host 'Blue Everything will NO LONGER start automatically when you log in.' -ForegroundColor Yellow
   } else {
     Write-Host "It wasn't set to start automatically."
   }
@@ -73,8 +73,8 @@ Register-ScheduledTask `
   -Trigger $trigger `
   -Settings $settings `
   -Principal $principal `
-  -Description 'Everything App: attention-aware nudge server and Windows agent.' `
+  -Description 'Blue Everything: attention-aware nudge server and Windows agent.' `
   -Force | Out-Null
 
-Write-Host "Everything will now start automatically when you log in (after ${DelaySeconds}s)." -ForegroundColor Green
+Write-Host "Blue Everything will now start automatically when you log in (after ${DelaySeconds}s)." -ForegroundColor Green
 Write-Host 'To turn this off again, double-click "Start Automatically.cmd" a second time.'

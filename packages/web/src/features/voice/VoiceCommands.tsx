@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { api, type Habit, type VoiceCommand, type VoiceCommandKind } from '../api';
-import { useAsync } from '../useAsync';
-import { Toggle } from '../controls';
+import { api, type Habit, type VoiceCommand, type VoiceCommandKind } from '../../api';
+import { useAsync } from '../../useAsync';
+import { Toggle } from '../../controls';
 
 const KIND_LABEL: Record<VoiceCommandKind, string> = {
   habit: 'Tick off a habit',

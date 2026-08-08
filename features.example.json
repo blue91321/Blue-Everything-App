@@ -1,0 +1,21 @@
+{
+  "$comment": [
+    "Copy to features.json to choose what this install runs. Absent means 'use the defaults',",
+    "which is every feature on — an install that has never thought about it behaves exactly as",
+    "the app did before these switches existed.",
+    "",
+    "features.json is gitignored on purpose: which parts you run is a property of your machine,",
+    "not of the project. Run `npm run features` to see what is on, off, and installed.",
+    "",
+    "Switching a feature off unregisters its API routes, hides its tab in the app, and stops the",
+    "agent loading its code. Deleting the folders it owns removes it from disk entirely; the app",
+    "still boots and says 'not installed'. `npm run features` lists the folders for each."
+  ],
+
+  "vault": true,
+  "voice": true,
+  "push": true,
+  "habits": true,
+  "notes": true,
+  "time": true
+}

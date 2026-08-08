@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Everything Vault",
+  "name": "Blue Everything Vault",
   "version": "0.1.0",
-  "description": "Fills passwords from your own Everything vault, running on this PC.",
+  "description": "Fills passwords from your own Blue Everything vault, running on this PC.",
 
   "permissions": ["storage", "activeTab", "scripting"],
 
   "host_permissions": ["http://127.0.0.1:8787/*"],
 
   "action": {
-    "default_title": "Everything Vault",
+    "default_title": "Blue Everything Vault",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",

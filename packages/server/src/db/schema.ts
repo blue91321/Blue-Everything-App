@@ -278,6 +278,30 @@ export const settings = sqliteTable('settings', {
   remindersEnabled: integer('reminders_enabled').notNull().default(1),
 
   /**
+   * How the app looks. Stored server-side rather than in the browser so the
+   * phone and the PC agree — picking a colour on one and finding the other
+   * still amber would read as the setting not having saved.
+   *
+   * `theme` is 'dark' | 'light' | 'system'; `accent_color` is one of
+   * ACCENT_COLORS. Both are validated by the schema in `shared` rather than by
+   * a database constraint, so adding a colour is a one-line change there.
+   */
+  theme: text('theme').notNull().default('dark'),
+  accentColor: text('accent_color').notNull().default('blue'),
+
+  /** One of LOGO_SHAPES. `image` uses the uploaded file. */
+  logoShape: text('logo_shape').notNull().default('pause'),
+  /**
+   * Bumped on every upload, and used as a cache-busting query on the icon URLs.
+   *
+   * Necessary because the icons live at fixed paths that browsers, the iOS home
+   * screen and the Windows shell all cache hard. Without a changing URL,
+   * replacing the picture would leave the old one on screen indefinitely with
+   * nothing to suggest why.
+   */
+  logoVersion: integer('logo_version').notNull().default(0),
+
+  /**
    * VAPID keypair for web push, generated once on first use.
    *
    * The private key is a secret, but it lives in the same gitignored database

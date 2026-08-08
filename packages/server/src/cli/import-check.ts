@@ -7,7 +7,7 @@
  *
  *   npm run import-check -w @everything/server
  */
-import { isDuplicate, parseCsv, readExport } from '../vault/import.js';
+import { isDuplicate, parseCsv, readExport } from '../features/vault/import.js';
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = ''): void {

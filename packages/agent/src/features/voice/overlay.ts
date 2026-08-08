@@ -522,7 +522,7 @@ export function createOverlay(handlers: {
   const hwnd = CreateWindowExW(
     WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
     wide(className),
-    wide('Everything'),
+    wide('Blue Everything'),
     WS_POPUP,
     0,
     0,

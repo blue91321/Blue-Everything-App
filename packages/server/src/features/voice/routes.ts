@@ -36,10 +36,10 @@ import {
   type VoiceCandidate,
   type VoiceHeard,
 } from '@everything/shared';
-import { db } from '../db/client.js';
-import { notes, settings, voiceCommands } from '../db/schema.js';
-import { getSettings } from '../nudge-engine.js';
-import { changes } from '../events.js';
+import { db } from '../../db/client.js';
+import { notes, settings, voiceCommands } from '../../db/schema.js';
+import { getSettings } from '../../nudge-engine.js';
+import { changes } from '../../events.js';
 import {
   labelFor,
   loadCommands,
@@ -48,7 +48,7 @@ import {
   runCommand,
   phraseWordsFor,
   vocabularyFor,
-} from '../voice-actions.js';
+} from './actions.js';
 
 /** Stored as whole percent so the column stays an integer like every other flag. */
 const thresholdFraction = (pct: number): number => pct / 100;

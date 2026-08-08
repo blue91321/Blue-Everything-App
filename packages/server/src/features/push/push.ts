@@ -8,10 +8,10 @@
 import webpush, { type PushSubscription } from 'web-push';
 import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import type { DeliverableNudge } from '@everything/shared';
-import { config } from './config.js';
-import { db } from './db/client.js';
-import { devices, settings } from './db/schema.js';
-import { getSettings } from './nudge-engine.js';
+import { config } from '../../config.js';
+import { db } from '../../db/client.js';
+import { devices, settings } from '../../db/schema.js';
+import { getSettings } from '../../nudge-engine.js';
 
 /**
  * VAPID's `sub` is a contact for the push service, not a destination.

@@ -14,7 +14,17 @@ const badge: Record<string, string> = {
   away: '\x1b[90mAWAY    \x1b[0m',
 };
 
-const monitor = new AttentionMonitor({ pollMs: 2000 });
+/*
+ * No `pollMs` here, deliberately.
+ *
+ * This used to pass `{ pollMs: 2000 }`, which `AttentionMonitor` does not
+ * accept and silently ignored — so the readout never polled at the rate it
+ * appeared to ask for. Adding the option would be the wrong fix: the tick rate
+ * following the state (5s in-game, 15s free, 30s away) is the mechanism that
+ * keeps this under 0.002% of a core, and a spike tool that overrode it would be
+ * measuring something the agent never does.
+ */
+const monitor = new AttentionMonitor();
 
 const describe = (s: AttentionSnapshot) =>
   `${badge[s.state]} ${s.reason}` +
