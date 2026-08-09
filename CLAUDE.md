@@ -435,6 +435,19 @@ fullscreen; that is the whole reason it exists.
 half that gets *noticed*, the toast is the half that *persists* in the Action
 Centre afterwards.
 
+**`show({forMs: 0})` means "stay up"; `hide(0)` means "hide now".** They are
+opposites and they briefly shared a code path, which drew the "Listening…"
+popup and hid it in the same frame. The symptom was not a missing popup — it
+was *apparent latency*: the wake sound played instantly, nothing appeared, and
+the first visible popup was the result one a second later, so the fast path
+looked like the slow one. `npm run popup-check -w @everything/agent` asserts the
+timing against `visible()`, because "did that window flash for one frame" is not
+something anyone can check by eye.
+
+The window itself is not a latency cost and never was: **2ms median to show,
+6ms worst, 2ms to create at boot** — measured, when this was suspected. Anything
+that looks like popup lag is somewhere else.
+
 There is exactly one popup instance. Two owners would eventually both be
 visible, or would fight over the hide timer and leave a window up forever — so
 the lifecycle lives in `popup.ts` and callers pass content. Voice claims only
@@ -574,6 +587,7 @@ npm run toast -w @everything/agent     # prove notifications reach the screen
 npm run tray-try -w @everything/agent  # show the tray icon, without running the agent
 npm run overlay-try -w @everything/agent   # show the popup — core, so it survives deleting voice
 npm run sound-try -w @everything/agent     # hear the generated notification tones
+npm run popup-check -w @everything/agent   # prove the popup stays up and goes when it should
 npm run sensor -w @everything/agent    # live attention readout; --seconds N to bound it
 npm run smoke -w @everything/server    # end-to-end proof the nudge engine holds and releases
 

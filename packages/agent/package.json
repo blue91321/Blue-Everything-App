@@ -14,6 +14,7 @@
     "tray-try": "tsx src/cli/tray-try.ts",
     "voice-latency": "tsx src/features/voice/cli/voice-latency.ts",
     "sound-try": "tsx src/cli/sound-try.ts",
+    "popup-check": "tsx src/cli/popup-check.ts",
     "voice-setup": "tsx src/features/voice/cli/voice-setup.ts",
     "voice-try": "tsx src/features/voice/cli/voice-try.ts",
     "voice-enrol": "tsx src/features/voice/cli/voice-enrol.ts",

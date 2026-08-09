@@ -36,7 +36,14 @@ export const POPUP_RESULT_MS = 4000;
 export const POPUP_ASK_MS = 12_000;
 
 export interface PopupOptions extends OverlayContent {
-  /** How long to leave it up. 0 keeps it there until something replaces it. */
+  /**
+   * How long to leave it up.
+   *
+   * **0 means "until something replaces it"**, not "hide immediately" — the
+   * opposite of what `hide(0)` means, which is exactly the collision that made
+   * "Listening…" invisible. Used for states that end when something else
+   * happens rather than on a clock.
+   */
   forMs?: number;
   /** Played as it appears. Omit for silence. */
   sound?: SoundName;
@@ -89,13 +96,31 @@ export function show(options: PopupOptions): void {
   if (sound) playSound(sound);
 
   ui()?.show(content);
-  hide(forMs);
+
+  /*
+   * Zero means "leave it up", and routing it through `hide` meant the opposite.
+   *
+   * `hide(0)` is "hide now" — that is what dismissing wants. `show({forMs: 0})`
+   * is "stay until something replaces you", which is what "Listening…" needs,
+   * because a timer there would take the window away while the microphone is
+   * still open. The two met in this one line and the popup was drawn and then
+   * hidden in the same frame: the wake sound played, nothing appeared, and the
+   * first thing you actually saw was the *result* popup a second or two later.
+   * The whole thing read as latency, when the wake had in fact been instant.
+   *
+   * So the two meanings no longer share a path. Any pending timer is still
+   * cleared, or a previous popup's countdown would take this one down early.
+   */
+  if (forMs > 0) {
+    hide(forMs);
+  } else {
+    clearHideTimer();
+  }
 }
 
 /** `afterMs` of 0 hides immediately; anything else schedules it. */
 export function hide(afterMs: number): void {
-  if (hideTimer) clearTimeout(hideTimer);
-  hideTimer = null;
+  clearHideTimer();
 
   if (afterMs <= 0) {
     overlay?.hide();
@@ -103,6 +128,11 @@ export function hide(afterMs: number): void {
   }
   hideTimer = setTimeout(() => overlay?.hide(), afterMs);
   hideTimer.unref();
+}
+
+function clearHideTimer(): void {
+  if (hideTimer) clearTimeout(hideTimer);
+  hideTimer = null;
 }
 
 export function visible(): boolean {
