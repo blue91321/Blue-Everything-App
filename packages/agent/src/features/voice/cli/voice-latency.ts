@@ -8,10 +8,15 @@
  * paid twice, once to notice the wake word and again to read the command. Two
  * of those back to back is the whole of the "voice feels laggy" complaint.
  *
- * This measures both, against real synthesised speech, and shows what the
- * partial-result shortcuts in `voice.ts` actually buy. Windows' own synthesiser
- * writes the audio, so it needs no microphone and nobody has to sit repeating a
- * phrase at a log.
+ * This measures both against real synthesised speech. The "SAVED" figures are
+ * what firing on a *partial* would buy — and the live path deliberately does
+ * not take them: `wake-falsing` measures the other side of that trade, which is
+ * three times the false wakes on ordinary conversation. This CLI is kept for
+ * the endpointer numbers, which are what justify flushing at the utterance
+ * boundary rather than waiting for Vosk to volunteer an answer.
+ *
+ * Windows' own synthesiser writes the audio, so it needs no microphone and
+ * nobody has to sit repeating a phrase at a log.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';

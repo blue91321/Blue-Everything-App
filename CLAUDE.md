@@ -597,6 +597,7 @@ npm run voice-enrol -w @everything/agent   # teach it your voice — say the wak
 npm run voice-check -w @everything/server  # prove the phrase matcher, in memory
 npm run voice-latency -w @everything/agent # where the delay between speaking and acting goes
 npm run wake-probe -w @everything/agent    # what the wake partial says, block by block
+npm run wake-falsing -w @everything/agent  # how often ordinary conversation wakes it
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
 npm run features         # what is switched on, and what is actually on disk
@@ -1160,83 +1161,70 @@ Two things keep that affordable:
    cheap enough to run continuously and rarely fires by accident. Only once it
    fires does the wide-vocabulary command recogniser get fed anything.
 
-### The wake word fires on a *partial*, or it feels broken
+### The wake word waits for a settled answer, not a guess
 
-Vosk answers `accept` only when its endpointer decides the speaker has stopped.
-Measured with `npm run voice-latency -w @everything/agent`, against synthesised
-speech and no microphone:
+Vosk answers `accept` only when its endpointer decides the speaker has stopped,
+and it can be slow or simply decline to answer at all. So it was tried the other
+way: fire on `wake.partial()`, the decoder's current best guess, which names the
+wake word around 700ms in — before the word has even finished.
 
-| | wake word |
-| --- | --- |
-| speech ends | 1700ms |
-| **partial names it** | **700ms** — a second *before* the speech ends |
-| endpoint fires | never, inside six seconds of silence |
+**That was wrong, and the number that says so is the false-wake rate.** Measured
+over ten lines of ordinary conversation, none of it addressed to the app, with
+`npm run wake-falsing -w @everything/agent`:
 
-That is the whole of the "voice is laggy" complaint, and it was paid twice —
-once to notice the wake word and again to read the command.
+| | false wakes on chatter | a brisk "hey jarvis" |
+| --- | --- | --- |
+| fire on a partial | **3 / 10** | **misses** |
+| wait for settled | 1 / 10 | fires |
 
-So `voice.ts` watches `wake.partial()` and begins the exchange the moment the
-partial contains the wake word. The popup appears while you are still saying it.
+Three times the interruptions — and it was not even reliable at the job it was
+added for, because a quickly spoken wake word never settles into the partial and
+only appears in the committed result. An always-on microphone in a room with
+other people in it cannot spend that. A wake word that answers a moment later is
+strictly better than one that goes off while you are talking to someone.
 
-**A partial only counts while sound is still arriving**, and that condition is
-the whole difference between hearing the wake word and the recogniser guessing
-it. A grammar holding one phrase will complete that phrase the moment you stop
-talking. Block by block, from `npm run wake-probe -w @everything/agent`:
+The partial is also inherently unable to satisfy the speaker check, since it
+carries no embedding — so waking on one meant running the wake recogniser
+onwards through the command window to collect the evidence afterwards, which is
+a lot of machinery to support a guess.
 
-```
-said "hey"           400ms rms=0.0124 LOUD   partial="hey"
-                     700ms rms=0.0000 quiet  partial="hey jarvis"
-said "hey jarvis"    700ms rms=0.0529 LOUD   partial="hey jarvis"
-```
+`Recogniser.partial()` still exists, and only the diagnostics use it. That is
+how the recogniser inventing "hey jarvis" out of a plain "hey" was caught in the
+first place — `wake-probe` prints it block by block.
 
-The word is in both. What separates them is whether anything is still being
-said — so saying just "hey" woke it, every time, until the loudness check went
-in. The RMS gate keeps feeding the recogniser for `HANGOVER_MS` after the last
-loud block, which is exactly the window those predictions appear in, so the
-check costs nothing real.
+**What replaced it is asking at the right moment instead of guessing early.**
+The RMS gate already knows when an utterance ended: quiet for longer than
+`HANGOVER_MS`. At that boundary the wake recogniser is `flush()`ed — a real
+finalisation, with the embedding attached — rather than waiting for Vosk to
+volunteer an answer, which `voice-latency` shows it may not do inside six
+seconds. The boundary is better defined than the endpointer anyway: it is
+exactly the moment the sentence stopped, and nothing has to infer when that was.
 
-When it does bite — a wake word ending precisely as the sound does — it falls
-back to the endpointer, which is slower and correct. That is the right way
-round. `wake-probe` is kept for exactly this question, because "does it fire on
-'hey'" is answerable in ten seconds with it and only by repetition without.
+The command side is the same: its partial is not consulted either. The command
+endpointer is prompt — measured at 100ms after speech ends — so there was never
+much to win, and acting on a revisable transcript risks running the wrong
+command rather than merely a late one.
 
-**The speaker check must not become collateral.** A partial carries no
-embedding, so waking early takes on a debt: the wake recogniser keeps being fed
-through the command window until it endpoints and produces one, and
-`settleSpeaker()` flushes it if the exchange ends first. That has to run
-*before* `wake.reset()`, which discards the audio the embedding comes from —
-hence one function called from both endings rather than a line each caller has
-to remember. Without it, firing early would report "no voice sample to check
-against" and reject every command on a machine with "only my voice" on: a fast
-path that silently broke the feature it was speeding up.
+**The remaining false wake is acoustic, not a rule.** "harvest festival is on
+the weekend" genuinely sounds like "hey jarvis" to a grammar that is only
+allowed to answer with those words. No decision rule fixes that: a more
+distinctive wake word does, and so does switching on **only respond to my
+voice**, which is what the enrolled voiceprint is for.
 
-Tests and enrolment deliberately stay on the final result. Enrolment needs the
-embedding, and a test is a readout of what the recogniser *decided*, not what it
-was leaning towards.
+**The tone marks the end of the trigger, and the popup goes up with it.** Both
+now happen once you have stopped speaking, so there is no longer a gap to
+manage — the listener emits `wake` for the window and `listening` for the tone,
+and the run-together case skips the tone because there was no pause to
+acknowledge and the result tone is a moment away.
 
-**Waking mid-word means the popup and the sound want different moments.** The
-window should appear the instant the word is recognised — that is the whole
-point — but a tone there lands on top of you still saying it. So the listener
-emits `wake` (popup, immediately) and `listening` (tone) separately, the second
-on the first quiet block, which is when the trigger is actually finished and it
-is genuinely your turn. A run-together sentence skips the tone entirely: there
-was no gap to mark, and the result tone is a moment away.
-
-**And the pause after the wake word is now *inside* the command window**, which
-made "Didn't catch that" arrive before you had said anything. The command
-recogniser endpoints on that pause holding only the replayed wake word —
-measured: `2000ms ENDPOINTED text="hey jarvis"`, then `4600ms ENDPOINTED
-text="drink water"`. That first result is not a miss, it is "you have not
-started yet", so it resets the recogniser and keeps listening.
-`VOICE_COMMAND_TIMEOUT_MS` still bounds the exchange, and a miss is reported
-when the window is genuinely up — which is the point at which it is true.
-
-The command side gets a smaller version of the same idea: a partial that has not
-moved for `SETTLED_POLLS` (300ms) means the decoder has settled and the rest of
-the wait is the endpointer being polite. Flushing then is not acting on a
-partial — `flush()` finalises properly — it is declining to wait for a verdict
-that is already in. In practice the command endpointer is prompt (measured at
-100ms after speech ends), so this is a safety net rather than the main path.
+**The pause after the wake word falls inside the command window**, which made
+"Didn't catch that" arrive before you had said anything. The command recogniser
+endpoints on that pause holding only the replayed wake word — measured:
+`2000ms ENDPOINTED text="hey jarvis"`, then `4600ms ENDPOINTED text="drink
+water"`. That first result is not a miss, it is "you have not started yet", so
+it resets the recogniser and keeps listening. `VOICE_COMMAND_TIMEOUT_MS` still
+bounds the exchange, and a miss is reported when the window is genuinely up —
+which is the point at which it is true.
 
 ### Speaking without a pause used to lose the command
 

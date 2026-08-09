@@ -177,15 +177,16 @@ export interface Recogniser {
   /**
    * What it thinks it has heard *so far*, before deciding the speaker stopped.
    *
-   * The difference matters more than it sounds. `accept` only answers once the
-   * endpointer is satisfied, which means a fixed stretch of silence *after* you
-   * finish — and that silence is paid twice, once to notice the wake word and
-   * again to read the command. The partial is available while you are still
-   * talking, which is what lets the popup appear when you say the wake word
-   * rather than a second after you stop.
+   * **Nothing in the live path acts on this, deliberately.** It was tried, to
+   * make the wake word answer while you were still saying it, and it tripled
+   * the false wakes on ordinary conversation — 3 in 10 against 1 in 10, on the
+   * same ten lines. A revisable guess is exactly what you do not want deciding
+   * whether an always-on microphone starts listening. See `wake-falsing`.
    *
-   * Never a substitute for `accept` where the *text* has consequences: a
-   * partial can be revised, and it carries no speaker embedding.
+   * Kept because the diagnostics need it: `wake-probe` prints it block by block,
+   * which is how the recogniser inventing "hey jarvis" out of a plain "hey" was
+   * caught. A partial also carries no speaker embedding, so it could never have
+   * satisfied the "only my voice" check on its own.
    */
   partial(): string;
   /** Force whatever is buffered to be finalised — used when a command times out. */
