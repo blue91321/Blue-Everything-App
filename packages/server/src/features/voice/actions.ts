@@ -155,9 +155,30 @@ export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): stri
 
   for (const command of commands) {
     for (const phrase of command.phrases) {
-      for (const word of phrase.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)) {
+      const parts = phrase.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+      for (const word of parts) {
         for (const form of spokenVariants(word)) words.add(form);
       }
+
+      /*
+       * The phrase run together as one word, because that is how half of them
+       * get said.
+       *
+       * "never mind" is stored as two words, so the grammar could only ever
+       * offer `never` and `mind` separately — and a closed grammar has to map
+       * every sound onto something it contains. Said as "nevermind", the decoder
+       * cannot answer with the word you actually said and picks whatever is
+       * nearest instead, which on this machine was `went`.
+       *
+       * Adding the joined form is free when it is not a real word: Vosk drops
+       * anything missing from the model's lexicon, so "stopgoaway" costs
+       * nothing and disappears. When it *is* a word — nevermind, logout,
+       * goodnight — the recogniser can finally say what it heard.
+       *
+       * `matchVoiceCommand` knows to treat it as covering the whole phrase, so
+       * the two halves cannot drift.
+       */
+      if (parts.length > 1) words.add(parts.join(''));
     }
   }
 

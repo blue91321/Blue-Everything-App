@@ -181,7 +181,8 @@ function VoiceSettings({
           {wakeWordUnknown.length > 0 && (
             <div className="meta urgent" style={{ marginTop: 6 }}>
               ⚠ {wakeWordUnknown.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so this
-              wake word can never be heard. Pick ordinary words — compounds and invented names are the usual cause.
+              wake word can never be heard. Compounds and invented names are the usual cause — separating one into
+              two ordinary words almost always fixes it.
             </div>
           )}
           <div className="meta" style={{ marginTop: 6 }}>

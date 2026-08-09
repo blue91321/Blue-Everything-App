@@ -1298,6 +1298,25 @@ and can never match. `"unmute my mic"` was live for days before anyone noticed.
 check generalises: it stays right whichever model is installed, because it asks
 that model rather than assuming a word list.
 
+**A phrase said as one word is offered to the grammar too.** "never mind" is
+stored as two words, so the grammar could only ever hold them separately — and
+a closed grammar has to map every sound onto something it contains. Said as
+*"nevermind"*, the recogniser could not answer with the word actually spoken and
+picked whatever was nearest, which on this machine was `went` (present only
+because `go` is, via the phrase "stop go away", and `spokenVariants` reads the
+irregular-past table backwards).
+
+So `vocabularyFor` adds the phrase joined up, and `matchVoiceCommand` treats
+that joined token as covering the whole phrase. The two halves are useless
+apart: the grammar change lets the recogniser say a word the matcher would
+otherwise reject. Adding it is free when it is not a real word — Vosk drops
+anything outside the lexicon, so `stopgoaway` and `forgetit` cost nothing and
+disappear, while `nevermind` and `drinkwater` survive and work.
+
+`remainderAfterPhrase` and `segmentUtterance` both account for the joined form
+as well, or a note would begin with its own trigger and a chained segment would
+report every word of itself as unexplained.
+
 The warning appears **everywhere the word does**, not only as a summary:
 
 - on the command's own row — the one you are looking at when you wonder why the
@@ -1306,6 +1325,12 @@ The warning appears **everywhere the word does**, not only as a summary:
 - on the offending phrase chip inside the editor, and
 - under the wake word, which is the worst case of all: nothing wakes at all and
   every other diagnostic on the screen looks perfectly healthy.
+
+Each warning also says what to *do*, because the fix is nearly always the same
+one and working it out from first principles is a poor use of anybody's evening:
+separate the compound into two ordinary words. That advice sits next to the
+warning rather than in a help page, since the warning is where the question gets
+asked.
 
 **It is not a small-vocabulary problem, and a bigger model would not fix it.**
 Probed against `vosk-model-small-en-us-0.15`: `obstreperous`, `quixotic`,

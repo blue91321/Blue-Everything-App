@@ -801,7 +801,18 @@ export function matchVoiceCommand(text: string, candidates: VoiceCandidate[]): V
       const wanted = voiceTokens(phrase);
       if (wanted.length === 0) continue;
 
-      const hits = wanted.filter((token) => spoken.has(token)).length;
+      /*
+       * A phrase said as one word covers all of it.
+       *
+       * `vocabularyFor` puts the joined form in the grammar so the recogniser
+       * can answer "nevermind" instead of being forced to split a sound it
+       * heard as one word — but the stored phrase is still two tokens, so
+       * without this the transcript it can now produce would match nothing at
+       * all. The two changes are only useful together.
+       */
+      const hits = spoken.has(wanted.join(''))
+        ? wanted.length
+        : wanted.filter((token) => spoken.has(token)).length;
       const score = hits / wanted.length;
       if (score < VOICE_MATCH_FLOOR) continue;
 
@@ -831,7 +842,10 @@ export function remainderAfterPhrase(text: string, phrase: string, wakeWord = ''
   const words = (value: string): string[] =>
     value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
 
-  const strip = [...words(phrase), ...words(wakeWord)];
+  // The joined form too, since the recogniser is now allowed to answer with it
+  // — otherwise "makeanote buy milk" would file a note beginning "makeanote".
+  const phraseWords = words(phrase);
+  const strip = [...phraseWords, ...(phraseWords.length > 1 ? [phraseWords.join('')] : []), ...words(wakeWord)];
   const kept: string[] = [];
 
   for (const word of text.split(/\s+/).filter(Boolean)) {
@@ -980,7 +994,10 @@ export function segmentUtterance(
 
   const expanded: UtteranceSegment[] = [];
   for (const segment of segments) {
-    const accounted = new Set(voiceTokens(segment.match.phrase));
+    const phraseTokens = voiceTokens(segment.match.phrase);
+    // The run-together form accounts for the phrase just as its parts do, or a
+    // segment matched by one would report every word of it as unexplained.
+    const accounted = new Set([...phraseTokens, phraseTokens.join('')]);
     /*
      * Collected as the words that were *said*, not as the tokens they reduce
      * to. Handing stems back to a matcher that stems again is a quiet

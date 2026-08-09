@@ -222,6 +222,28 @@ check('unrelated speech is not a chain', chain('what time is the meeting'), null
 // Trailing filler is not an unmatched command.
 check('trailing filler is tolerated', chain('drink water and drink coffee please'), ['water', 'coffee']);
 
+console.log('\nA phrase said as one word');
+/*
+ * "never mind" is stored as two words, so the grammar could only offer them
+ * separately — and a closed grammar must map every sound onto something it
+ * contains. Said as "nevermind", the decoder could not answer with the word
+ * actually spoken and picked whatever was nearest, which on this machine was
+ * "went" (in the grammar because "go" is, via "stop go away").
+ *
+ * `vocabularyFor` now offers the joined form so it *can* answer, and these are
+ * the matcher's half of that: without them the transcript it can now produce
+ * would match nothing at all.
+ */
+const cancel: VoiceCandidate[] = [{ id: 'cancel', phrases: ['never mind'] }];
+check('"nevermind" matches "never mind"', matchVoiceCommand('nevermind', cancel)?.id, 'cancel');
+check('…and still does said properly', matchVoiceCommand('never mind', cancel)?.id, 'cancel');
+check('…and after the wake word', matchVoiceCommand('hey jarvis nevermind', cancel)?.id, 'cancel');
+// The joined form is the whole phrase, not a licence to match half of it.
+check('"never" alone still does not match', matchVoiceCommand('never', cancel), null);
+check('an unrelated joined word does not match', matchVoiceCommand('nevertheless', cancel), null);
+// A one-word phrase has no joined form to speak of; it must not match on empty.
+check('a one-word phrase is unaffected', matchVoiceCommand('resuming', [{ id: 'r', phrases: ['resume'] }])?.id, 'r');
+
 console.log('\nSpecificity — a longer phrase beats a shorter one');
 const overlapping: VoiceCandidate[] = [
   { id: 'general', phrases: ['exercise'] },
