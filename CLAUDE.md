@@ -596,6 +596,7 @@ npm run voice-try   -w @everything/agent   # prove the recognisers, without sayi
 npm run voice-enrol -w @everything/agent   # teach it your voice — say the wake word ten times
 npm run voice-check -w @everything/server  # prove the phrase matcher, in memory
 npm run voice-latency -w @everything/agent # where the delay between speaking and acting goes
+npm run wake-probe -w @everything/agent    # what the wake partial says, block by block
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
 npm run features         # what is switched on, and what is actually on disk
@@ -1176,6 +1177,28 @@ once to notice the wake word and again to read the command.
 
 So `voice.ts` watches `wake.partial()` and begins the exchange the moment the
 partial contains the wake word. The popup appears while you are still saying it.
+
+**A partial only counts while sound is still arriving**, and that condition is
+the whole difference between hearing the wake word and the recogniser guessing
+it. A grammar holding one phrase will complete that phrase the moment you stop
+talking. Block by block, from `npm run wake-probe -w @everything/agent`:
+
+```
+said "hey"           400ms rms=0.0124 LOUD   partial="hey"
+                     700ms rms=0.0000 quiet  partial="hey jarvis"
+said "hey jarvis"    700ms rms=0.0529 LOUD   partial="hey jarvis"
+```
+
+The word is in both. What separates them is whether anything is still being
+said — so saying just "hey" woke it, every time, until the loudness check went
+in. The RMS gate keeps feeding the recogniser for `HANGOVER_MS` after the last
+loud block, which is exactly the window those predictions appear in, so the
+check costs nothing real.
+
+When it does bite — a wake word ending precisely as the sound does — it falls
+back to the endpointer, which is slower and correct. That is the right way
+round. `wake-probe` is kept for exactly this question, because "does it fire on
+'hey'" is answerable in ten seconds with it and only by repetition without.
 
 **The speaker check must not become collateral.** A partial carries no
 embedding, so waking early takes on a debt: the wake recogniser keeps being fed

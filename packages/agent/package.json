@@ -13,6 +13,7 @@
     "audio": "tsx src/cli/test-audio.ts",
     "tray-try": "tsx src/cli/tray-try.ts",
     "voice-latency": "tsx src/features/voice/cli/voice-latency.ts",
+    "wake-probe": "tsx src/features/voice/cli/wake-probe.ts",
     "sound-try": "tsx src/cli/sound-try.ts",
     "popup-check": "tsx src/cli/popup-check.ts",
     "voice-setup": "tsx src/features/voice/cli/voice-setup.ts",

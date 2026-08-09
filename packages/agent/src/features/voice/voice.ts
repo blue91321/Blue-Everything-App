@@ -440,12 +440,32 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
          * and that is the difference between the popup appearing as you say it
          * and appearing a second after you stop.
          *
+         * **Only while sound is still arriving.** A grammar holding one phrase
+         * will complete that phrase the moment you stop talking: say just "hey"
+         * and the partial reads "hey" for 300ms and then becomes "hey jarvis"
+         * with no further audio at all. Measured, block by block, with
+         * `npm run wake-probe -w @everything/agent`:
+         *
+         *   said "hey"          400ms rms=0.0124 LOUD  partial="hey"
+         *                       700ms rms=0.0000 quiet partial="hey jarvis"
+         *   said "hey jarvis"   700ms rms=0.0529 LOUD  partial="hey jarvis"
+         *
+         * The word is in both partials; what separates hearing it from guessing
+         * it is whether anything is still being said. The RMS gate keeps feeding
+         * the recogniser for `HANGOVER_MS` after the last loud block, which is
+         * exactly the window those predictions appear in — so requiring a loud
+         * block here costs nothing real and removes the whole class.
+         *
+         * The cost when it does bite: a wake word that ends precisely as the
+         * sound does falls back to the endpointer, which is slower and correct.
+         * That is the right way round.
+         *
          * Enrolment and tests deliberately stay on the final result: enrolment
          * needs the speaker embedding, which a partial has not got, and a test
          * is a readout of what the recogniser actually decided rather than what
          * it was leaning towards.
          */
-        if (!enrolling(now) && !testing(now)) {
+        if (level >= SPEECH_FLOOR && !enrolling(now) && !testing(now)) {
           const guess = wake!.partial();
           if (guess && matchesWakeWord(guess, config.wakeWord)) beginExchange(now, level, null, guess);
         }
