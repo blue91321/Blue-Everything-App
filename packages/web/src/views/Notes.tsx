@@ -4,7 +4,7 @@ import { useAsync } from '../useAsync';
 import { relative } from '../format';
 
 export function Notes() {
-  const list = useAsync(() => api.notes.list());
+  const list = useAsync(() => api.notes.list(), [], ['notes']);
   const [body, setBody] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
 

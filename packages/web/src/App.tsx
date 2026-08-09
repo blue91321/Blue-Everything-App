@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { api, clearToken, setToken, type Session } from './api';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
 import { setEnabledFeatures, webFeatures } from './features';
@@ -45,6 +45,14 @@ const DESKTOP_QUERY = '(min-width: 900px)';
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
+  /**
+   * The same value, readable without making `checkSession` depend on it.
+   *
+   * A `useCallback` that closed over `session` would get a new identity on every
+   * session change, and it is the dependency of the mount effect — so the app
+   * would re-check itself in a loop.
+   */
+  const sessionRef = useRef<Session | null>(null);
   const [view, setView] = useState<NavId>('dashboard');
   /**
    * The mark, held here so the drawer can draw it.
@@ -59,11 +67,26 @@ export function App() {
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const drawer = useEdgeDrawer(!isDesktop);
 
+  /**
+   * Re-check who we are, **without taking the app off the screen**.
+   *
+   * `checking` renders a "Connecting…" card *instead of* the whole shell, so
+   * setting it on every re-check unmounted every screen and rebuilt it — which
+   * is a scroll position lost, a form field blanked, and a visible flash. It
+   * looked exactly like a page reload, and got reported as one.
+   *
+   * A first check has nothing to show and must block. A later one is a refresh
+   * of something already on screen: the answer almost never changes, and when
+   * it does the shell re-renders in place with the new tabs.
+   */
   const checkSession = useCallback(async () => {
-    setChecking(true);
+    setChecking((wasChecking) => wasChecking || sessionRef.current === null);
     try {
-      setSession(await api.session());
+      const next = await api.session();
+      sessionRef.current = next;
+      setSession(next);
     } catch {
+      sessionRef.current = null;
       setSession(null);
     } finally {
       setChecking(false);
@@ -77,6 +100,7 @@ export function App() {
   useEffect(() => {
     const onUnauthorized = () => {
       clearToken();
+      sessionRef.current = null;
       setSession(null);
     };
     window.addEventListener('everything:unauthorized', onUnauthorized);

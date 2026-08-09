@@ -31,7 +31,7 @@ function wakeWordAdvice(wakeWord: string): string | null {
  * what it costs rather than what it does, for the same reason.
  */
 export function Voice({ local }: { local: boolean }) {
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
 
   if (settings.loading) return <div className="empty">loading…</div>;
   if (!settings.data) return <div className="empty">Could not load settings.</div>;
@@ -88,7 +88,7 @@ function VoiceSettings({
 
   // Fetched for the screen list, which only the agent can see — `window.screen`
   // describes the display this tab is on and nothing else.
-  const look = useAsync(() => api.voice.status()).data ?? null;
+  const look = useAsync(() => api.voice.status(), [], ['settings']).data ?? null;
 
   // The slider moves freely and saves once, on release. Sending a PATCH per
   // pixel would be a dozen writes and a dozen agent reconfigures for one drag.

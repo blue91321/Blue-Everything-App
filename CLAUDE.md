@@ -651,6 +651,29 @@ while a 15-second poll would wake the database forever whether or not anything
 happened. Rather than WebSockets because updates only ever flow one way and this
 needs no extra dependency.
 
+**The scope is carried through to the client, and readers subscribe to theirs.**
+The server has always sent `{ scope, at }`; `live.ts` used to drop it and wake
+every reader, so one settings toggle refetched the notes list, the task list and
+the device list. `useAsync(fn, deps, ['settings'])` names what a reader is
+actually showing. An unknown scope, or `all`, still wakes everything — the
+server saying "I don't know what changed" must not be silently narrowed.
+
+**Concurrent GETs for the same path are coalesced** in `api.ts`. One
+announcement reaches every reader at once, and the Settings screen alone holds
+three readers of `/api/settings` plus the one in `App` — measured at **six
+identical requests for one click on a toggle**. They ask the same question at
+the same instant and cannot get different answers. The entry is dropped as soon
+as the response settles, so it is a coalescer and not a cache: a stale read is
+the one thing this cannot afford, since the whole point is that two devices
+never disagree. With both changes that click is 3 requests, and the device list
+no longer reloads at all.
+
+**`checkSession` must not blank the app.** `checking` renders "Connecting…"
+*instead of* the shell, so setting it on a re-check unmounted every screen and
+rebuilt it — losing the scroll position and flashing. It was reported as the app
+"refreshing to the top of the page", and looked exactly like one. Only the first
+check blocks now; a later one refreshes in place.
+
 Two things here are load-bearing and easy to get wrong:
 
 - **The `onResponse` announcer must attach to the root instance**, not inside a

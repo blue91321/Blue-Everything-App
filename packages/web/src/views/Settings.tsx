@@ -48,7 +48,7 @@ const THEME_LABELS: { id: AppTheme; label: string; hint: string }[] = [
  * reload triggered by the save puts it right if the write failed.
  */
 function Appearance() {
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const [busy, setBusy] = useState(false);
 
   const current = settings.data;
@@ -253,7 +253,7 @@ function LogoPicker({ current, onChanged }: { current: AppSettings | undefined; 
 }
 
 export function Settings({ session, onChanged }: { session: Session; onChanged: () => void }) {
-  const devices = useAsync(() => api.devices.list());
+  const devices = useAsync(() => api.devices.list(), [], ['devices']);
   const [adding, setAdding] = useState(false);
 
   // An older server sends no feature list; absent means everything, not nothing.
@@ -395,7 +395,7 @@ function DeviceRow({
  * actually receive them.
  */
 function PhoneNudges() {
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -644,7 +644,7 @@ const PAUSE_CHOICES = [
  * switch flipped when you actually go to bed), and a manual pause.
  */
 function QuietHours() {
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const [saving, setSaving] = useState(false);
 
   const current = settings.data;
@@ -801,7 +801,7 @@ function QuietHours() {
  * debug from the sofa — so the guide leads with getting that right.
  */
 function AddDeviceGuide({ onAdded }: { onAdded: () => void }) {
-  const info = useAsync(() => api.connectInfo());
+  const info = useAsync(() => api.connectInfo(), [], ['devices']);
   const [name, setName] = useState('iPhone');
   const [issued, setIssued] = useState<string | null>(null);
   const [error, setError] = useState('');

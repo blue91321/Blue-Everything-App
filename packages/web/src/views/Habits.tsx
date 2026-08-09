@@ -20,7 +20,7 @@ const formatInterval = (minutes: number): string =>
  * a mis-tap. Ticking one off day to day belongs on the Dashboard.
  */
 export function Habits() {
-  const list = useAsync(() => api.habits.list());
+  const list = useAsync(() => api.habits.list(), [], ['habits']);
   const [name, setName] = useState('');
   const [cadence, setCadence] = useState<'daily' | 'weekly'>('daily');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -228,7 +228,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
 
   // Same reasoning as the task editor: loaded by the thing that needs it, only
   // while a row is open.
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const pushDefault = settings.data?.pushDefault !== 0;
   const canChoosePush = featureEnabled('push') && settings.data?.pushDefault !== undefined;
 

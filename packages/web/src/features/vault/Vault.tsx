@@ -7,7 +7,7 @@ import { relative } from '../../format';
 const MIN_MASTER_PASSWORD = 12;
 
 export function Vault() {
-  const status = useAsync(() => api.vault.status());
+  const status = useAsync(() => api.vault.status(), [], ['vault']);
   const [pendingShares, setPendingShares] = useState<{ a: string; b: string } | null>(null);
   const state = status.data;
 
@@ -348,7 +348,7 @@ function OpenVault({
   onLocked: () => void;
   onShares: (shares: { a: string; b: string }) => void;
 }) {
-  const items = useAsync(() => api.vault.items());
+  const items = useAsync(() => api.vault.items(), [], ['vault']);
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);

@@ -9,7 +9,7 @@ import { PushChoice } from '../controls';
 import { featureEnabled } from '../features';
 
 export function Tasks() {
-  const list = useAsync(() => api.tasks.list('todo,doing,done'));
+  const list = useAsync(() => api.tasks.list('todo,doing,done'), [], ['tasks']);
   const [editing, setEditing] = useState<Task | null>(null);
   const settling = useSettling();
 
@@ -71,7 +71,7 @@ function TaskEditor({ task, onClose, onSaved }: { task: Task; onClose: () => voi
   // Fetched here rather than by the screen above, because the editor is what
   // needs it and it only exists while one row is open. The cost is a request per
   // edit, on a screen where opening an editor is already a deliberate act.
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const pushDefault = settings.data?.pushDefault !== 0;
   // A server that predates the column sends nothing, and a control claiming to
   // set something the server will drop is worse than no control.

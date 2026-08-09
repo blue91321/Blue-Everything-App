@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Unauthorized } from './api';
-import { onDataChange } from './live';
+import { onDataChange, type ChangeScope } from './live';
 
 export interface AsyncState<T> {
   data: T | undefined;
@@ -15,7 +15,18 @@ export interface AsyncState<T> {
  * A query library would be ~13KB gzipped to solve caching and deduplication
  * problems a single-user app on a local network doesn't have.
  */
-export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): AsyncState<T> {
+export function useAsync<T>(
+  fn: () => Promise<T>,
+  deps: unknown[] = [],
+  /**
+   * Which change scopes should refetch this.
+   *
+   * Omit and it reloads on every change anywhere, which is where this started
+   * and why one settings toggle refetched the notes list. Naming the scopes is
+   * what stops a screen doing work for a change it is not showing.
+   */
+  watch?: readonly ChangeScope[]
+): AsyncState<T> {
   const [data, setData] = useState<T>();
   const [error, setError] = useState<Error>();
   const [tick, setTick] = useState(0);
@@ -25,7 +36,13 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): AsyncSt
 
   // Anything that changes on the server — from the phone, from the agent
   // delivering a nudge — reloads here too, so two open copies never disagree.
-  useEffect(() => onDataChange(reload), [reload]);
+  // Joined for the dependency because a caller writing the array inline gets a
+  // new identity every render, which would resubscribe on each one.
+  const scopes = watch?.join(',');
+  useEffect(
+    () => onDataChange(reload, scopes ? (scopes.split(',') as ChangeScope[]) : undefined),
+    [reload, scopes]
+  );
 
   useEffect(() => {
     let cancelled = false;

@@ -19,8 +19,41 @@ export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
 /** Thrown on 401 so the UI can drop back to the pairing screen. */
 export class Unauthorized extends Error {}
 
+/**
+ * GETs for the same URL that are already in flight, so they become one.
+ *
+ * A single change announcement reaches every `useAsync` on screen at once, and
+ * the Settings screen alone holds three separate readers of `/api/settings`
+ * plus the one in `App` — so one click on a toggle produced **six identical
+ * requests**, measured. They are all asking the same question at the same
+ * instant and they cannot get different answers.
+ *
+ * Only GETs, and only while genuinely concurrent: the entry is dropped the
+ * moment the response settles, so this is a coalescer and not a cache. A stale
+ * read is the one thing this app cannot afford here — the whole point of the
+ * live stream is that two devices never disagree.
+ */
+const inFlight = new Map<string, Promise<unknown>>();
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? 'GET';
+
+  if (method === 'GET') {
+    const shared = inFlight.get(path);
+    if (shared) return shared as Promise<T>;
+
+    const started = send<T>(path, init, method);
+    inFlight.set(path, started);
+    // `finally` on the promise rather than await/try, so the entry is cleared
+    // for a rejection too — a failed fetch must not wedge the path forever.
+    void started.finally(() => inFlight.delete(path));
+    return started;
+  }
+
+  return send<T>(path, init, method);
+}
+
+async function send<T>(path: string, init: RequestInit, method: string): Promise<T> {
   const body = init.body ?? (method === 'GET' ? undefined : '{}');
 
   const response = await fetch(path, {
