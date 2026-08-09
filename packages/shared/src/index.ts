@@ -266,14 +266,76 @@ export const DEFAULT_VOICE_RETRY_SECONDS = 8;
  * in a fixed spot instead, which is what you want on a multi-monitor desk where
  * the pointer is wherever you last clicked rather than where you are looking.
  */
+/** How many cells the anchor grid has on each axis. */
+export const OVERLAY_GRID = 5;
+
+/**
+ * The nine original anchors.
+ *
+ * Kept valid rather than migrated. They are what is already stored in
+ * `settings.overlay_placement`, and a value the schema no longer accepts is a
+ * settings row that fails to save on the next unrelated change — an expensive
+ * way to tidy up a name. They map onto the corners, edges and middle of the
+ * finer grid, which is exactly where they always were.
+ */
+const LEGACY_ANCHORS = {
+  'top-left': { row: 1, col: 1 },
+  top: { row: 1, col: 3 },
+  'top-right': { row: 1, col: 5 },
+  left: { row: 3, col: 1 },
+  centre: { row: 3, col: 3 },
+  right: { row: 3, col: 5 },
+  'bottom-left': { row: 5, col: 1 },
+  bottom: { row: 5, col: 3 },
+  'bottom-right': { row: 5, col: 5 },
+} as const satisfies Record<string, { row: number; col: number }>;
+
+/**
+ * `grid-<row><col>`, 1-indexed from the top left.
+ *
+ * Coordinates rather than names because there is no honest English for the cell
+ * two-fifths across and one-fifth down, and inventing one ("upper-midleft")
+ * would be worse than a number at saying where it is. The screen draws a grid;
+ * the value says which square.
+ */
+export const overlayGridPlacements = Array.from({ length: OVERLAY_GRID * OVERLAY_GRID }, (_, i) => {
+  const row = Math.floor(i / OVERLAY_GRID) + 1;
+  const col = (i % OVERLAY_GRID) + 1;
+  return `grid-${row}${col}` as const;
+});
+
 export const overlayPlacements = [
   'cursor',
-  'top-left', 'top', 'top-right',
-  'left', 'centre', 'right',
-  'bottom-left', 'bottom', 'bottom-right',
+  ...(Object.keys(LEGACY_ANCHORS) as (keyof typeof LEGACY_ANCHORS)[]),
+  ...overlayGridPlacements,
 ] as const;
-export const overlayPlacementSchema = z.enum(overlayPlacements);
-export type OverlayPlacement = z.infer<typeof overlayPlacementSchema>;
+
+export const overlayPlacementSchema = z.enum(
+  overlayPlacements as unknown as [string, ...string[]]
+);
+export type OverlayPlacement = (typeof overlayPlacements)[number];
+
+/**
+ * Which cell of the grid a placement means, or null for `cursor`.
+ *
+ * The one place the legacy names and the coordinates are reconciled, so the
+ * agent, the settings screen and anything later cannot disagree about where
+ * "bottom" is.
+ */
+export function placementCell(placement: string): { row: number; col: number } | null {
+  const legacy = LEGACY_ANCHORS[placement as keyof typeof LEGACY_ANCHORS];
+  if (legacy) return { row: legacy.row, col: legacy.col };
+
+  const match = /^grid-([1-9])([1-9])$/.exec(placement);
+  if (!match) return null;
+
+  const row = Number(match[1]);
+  const col = Number(match[2]);
+  // A coordinate outside the grid is a value from a newer client, or a typo in
+  // the database. Falling back to the cursor beats putting a window off-screen.
+  if (row > OVERLAY_GRID || col > OVERLAY_GRID) return null;
+  return { row, col };
+}
 
 /**
  * Built-in avatars are emoji, not image files.

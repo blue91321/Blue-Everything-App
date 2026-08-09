@@ -38,6 +38,7 @@
  * ever invoked from a thread V8 has not heard of.
  */
 import koffi from 'koffi';
+import { OVERLAY_GRID, placementCell } from '@everything/shared';
 
 const user32 = koffi.load('user32.dll');
 const gdi32 = koffi.load('gdi32.dll');
@@ -264,17 +265,15 @@ export interface Screen {
 }
 
 /** Anchors, plus `cursor` for the original behaviour. */
-export type Placement =
-  | 'cursor'
-  | 'top-left'
-  | 'top'
-  | 'top-right'
-  | 'left'
-  | 'centre'
-  | 'right'
-  | 'bottom-left'
-  | 'bottom'
-  | 'bottom-right';
+/**
+ * `cursor`, one of the nine original anchor names, or a `grid-RC` cell.
+ *
+ * A plain string rather than a union, because `placementCell` in `shared` is
+ * the one thing that decides what a placement means — re-declaring the values
+ * here would be a second list to keep in step, and the failure mode is a
+ * position the settings screen offers and the agent silently ignores.
+ */
+export type Placement = string;
 
 const MONITOR_PRIMARY = 0x1;
 
@@ -701,10 +700,12 @@ export function createOverlay(handlers: {
     const named = placement.screen ? listScreens().find((s) => s.id === placement.screen) : undefined;
     const work = named?.work ?? cursorWork;
 
+    const cell = placementCell(placement.mode);
+
     let x: number;
     let y: number;
 
-    if (placement.mode === 'cursor' || !work) {
+    if (!cell || !work) {
       x = cursor.x + 16;
       y = cursor.y + 18;
       if (work) {
@@ -712,16 +713,27 @@ export function createOverlay(handlers: {
         if (y + height > work.bottom) y = cursor.y - height - 18;
       }
     } else {
-      const mode = placement.mode;
-      const left = work.left + MARGIN;
-      const right = work.right - WIDTH - MARGIN;
-      const middleX = Math.round((work.left + work.right - WIDTH) / 2);
-      const top = work.top + MARGIN;
-      const bottom = work.bottom - height - MARGIN;
-      const middleY = Math.round((work.top + work.bottom - height) / 2);
+      /*
+       * Interpolate across the work area rather than branching on names.
+       *
+       * The anchors used to be nine cases of left/middle/right; as a grid they
+       * are one fraction per axis, which is both shorter and the reason a finer
+       * grid cost nothing to add — 5×5 and 3×3 are the same arithmetic with a
+       * different divisor.
+       */
+      const fx = (cell.col - 1) / (OVERLAY_GRID - 1);
+      const fy = (cell.row - 1) / (OVERLAY_GRID - 1);
 
-      x = mode.endsWith('-left') || mode === 'left' ? left : mode.endsWith('-right') || mode === 'right' ? right : middleX;
-      y = mode.startsWith('top') ? top : mode.startsWith('bottom') ? bottom : middleY;
+      const left = work.left + MARGIN;
+      const top = work.top + MARGIN;
+      // The span the window's top-left corner can occupy without any of it
+      // leaving the margin — zero on a screen too small to hold it, which the
+      // clamp below then resolves.
+      const spanX = Math.max(0, work.right - MARGIN - WIDTH - left);
+      const spanY = Math.max(0, work.bottom - MARGIN - height - top);
+
+      x = Math.round(left + fx * spanX);
+      y = Math.round(top + fy * spanY);
     }
 
     if (work) {

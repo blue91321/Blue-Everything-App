@@ -674,6 +674,18 @@ rebuilt it — losing the scroll position and flashing. It was reported as the a
 "refreshing to the top of the page", and looked exactly like one. Only the first
 check blocks now; a later one refreshes in place.
 
+**`loading` means "nothing to show yet", never "refreshing".** The same bug one
+level down, and the more common one: screens are written
+`if (x.loading) return <spinner/>`, so a `loading` that went true on every
+reload replaced the whole screen with one line of text — the page collapsed and
+the browser took the scroll position with it. `Voice.tsx` did exactly this, so
+changing where the popup appears sent you back to the top.
+
+That is not a mistake to fix per file. It is the only sensible reading of the
+word, so `useAsync` now means it: `loading` is true only before the first result
+ever arrives, and `refreshing` is there for anything that genuinely wants to
+show a reload happening over data already on screen.
+
 Two things here are load-bearing and easy to get wrong:
 
 - **The `onResponse` announcer must attach to the root instance**, not inside a
@@ -1498,9 +1510,21 @@ to lose the feature.
 
 ### Where it appears, and what face it wears
 
-`cursor` is the original behaviour. The nine anchors pin it to a corner instead,
-which is what a multi-monitor desk wants: the pointer is wherever you last
-clicked, not where you are looking. A pinned popup can follow **whichever screen
+`cursor` is the original behaviour. A **5×5 grid** pins it somewhere fixed
+instead, which is what a multi-monitor desk wants: the pointer is wherever you
+last clicked, not where you are looking. Three by three only offered corners,
+edges and dead centre, and a third of the way down the right-hand edge is a
+perfectly reasonable place to want a popup.
+
+Cells are `grid-<row><col>`, 1-indexed from the top left. Coordinates rather
+than names because there is no honest English for the square two-fifths across
+— "upper-midleft" is worse at saying where it is than a number. **The nine
+original names are still accepted** and map onto the corners, edges and middle
+of the finer grid, so nothing had to be migrated: a value the schema no longer
+accepted would be a settings row that fails to save on the next unrelated
+change. `placementCell()` in `shared` is the one place that reconciles the two,
+and `place()` interpolates a fraction per axis rather than branching on names —
+which is why a finer grid cost nothing to add. A pinned popup can follow **whichever screen
 the mouse is on** or stay on **one named screen** — stored by device name
 (`\.\DISPLAY25`), never by index, because unplugging a monitor renumbers the
 rest exactly as it does microphones. A named screen that has gone falls back to
