@@ -1214,6 +1214,23 @@ Tests and enrolment deliberately stay on the final result. Enrolment needs the
 embedding, and a test is a readout of what the recogniser *decided*, not what it
 was leaning towards.
 
+**Waking mid-word means the popup and the sound want different moments.** The
+window should appear the instant the word is recognised — that is the whole
+point — but a tone there lands on top of you still saying it. So the listener
+emits `wake` (popup, immediately) and `listening` (tone) separately, the second
+on the first quiet block, which is when the trigger is actually finished and it
+is genuinely your turn. A run-together sentence skips the tone entirely: there
+was no gap to mark, and the result tone is a moment away.
+
+**And the pause after the wake word is now *inside* the command window**, which
+made "Didn't catch that" arrive before you had said anything. The command
+recogniser endpoints on that pause holding only the replayed wake word —
+measured: `2000ms ENDPOINTED text="hey jarvis"`, then `4600ms ENDPOINTED
+text="drink water"`. That first result is not a miss, it is "you have not
+started yet", so it resets the recogniser and keeps listening.
+`VOICE_COMMAND_TIMEOUT_MS` still bounds the exchange, and a miss is reported
+when the window is genuinely up — which is the point at which it is true.
+
 The command side gets a smaller version of the same idea: a partial that has not
 moved for `SETTLED_POLLS` (300ms) means the decoder has settled and the rest of
 the wait is the endpointer being polite. Flushing then is not acting on a

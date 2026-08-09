@@ -226,6 +226,19 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
   let lastPartial = '';
   let settledFor = 0;
 
+  /**
+   * The acknowledgement tone is owed, but not yet due.
+   *
+   * Waking on a partial fires roughly mid-word — for "hey jarvis", 700ms into a
+   * 1500ms utterance — so playing the sound there means beeping over the top of
+   * you while you are still saying it. The popup is right to appear then, since
+   * seeing it early is reassuring; a sound cutting across your own voice is not.
+   *
+   * So the tone waits for the first quiet block, which is the moment the trigger
+   * is actually finished and it is genuinely your turn.
+   */
+  let pendingListen = false;
+
   const testing = (now = Date.now()) => (config?.testUntil ?? 0) > now;
   const enrolling = (now = Date.now()) => (config?.enrolUntil ?? 0) > now;
 
@@ -521,6 +534,18 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
       }
     }
 
+    /*
+     * You have stopped saying the trigger, so now it is your turn.
+     *
+     * The one moment worth marking with a sound: the popup already appeared
+     * when the wake word was recognised, part-way through the word, and a tone
+     * there talks over you. This is the beat afterwards.
+     */
+    if (pendingListen && level < SPEECH_FLOOR) {
+      pendingListen = false;
+      emitter.emit('listening');
+    }
+
     // Awake: everything now goes to the command recogniser until it finishes a
     // phrase or the window closes.
     const finished = command!.accept(samples);
@@ -551,23 +576,45 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     if (!finished && !timedOut && !settled) return;
 
     const utterance = finished ?? command!.flush();
+
+    /*
+     * Nothing but the wake word, and the window is still open — you have not
+     * started the command yet. Keep listening.
+     *
+     * This is the other half of the cost of waking on a partial. The exchange
+     * now begins mid-word, so the pause between "hey jarvis" and what you
+     * actually wanted falls *inside* the command window: the recogniser
+     * endpoints on that pause holding only the replayed wake word, and the old
+     * code read that as a miss. The result was "Didn't catch that" arriving
+     * before you had said anything to catch.
+     *
+     * Resetting gives the command a clean recogniser, and `timedOut` still
+     * bounds the whole thing — a wake with genuine silence after it is reported
+     * as a miss once `VOICE_COMMAND_TIMEOUT_MS` is up, which is the point at
+     * which it is true.
+     */
+    if (!timedOut && !hasCommand(utterance.text)) {
+      command!.reset();
+      lastPartial = '';
+      settledFor = 0;
+      return;
+    }
+
     phase = 'idle';
     inFollowUp = false;
+    // The trigger sound is owed only until the exchange ends; past that a quiet
+    // block would fire it long after the moment it was meant to mark.
+    pendingListen = false;
     // Before the reset, which throws away the audio the embedding comes from.
     settleSpeaker();
     wake!.reset();
     forgetReplay();
 
-    // Same guard as the replay path: a transcript of nothing but the wake word
-    // is someone who trailed off, not a command.
-    if (utterance.text && !hasCommand(utterance.text)) {
+    // Reached only once the window is up: this really was someone who woke it
+    // and then said nothing usable.
+    if (!utterance.text || !hasCommand(utterance.text)) {
       emitter.emit('missed');
-      return;
-    }
-
-    if (!utterance.text) {
-      emitter.emit('missed');
-      if (testing(now)) {
+      if (!utterance.text && testing(now)) {
         emitter.emit('heard', { kind: 'command', text: '', speakerScore: lastSpeakerScore, peak: level, matchedWake: false });
       }
       return;
@@ -598,6 +645,8 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     wokeAt = now;
     lastPartial = '';
     settledFor = 0;
+    // Owed from here, and paid on the first quiet block — see `pendingListen`.
+    pendingListen = true;
     command!.reset();
 
     emitter.emit('wake', { speakerScore });
@@ -623,6 +672,9 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     // as a note.
     if (replayed?.text && hasCommand(replayed.text)) {
       phase = 'idle';
+      // Said in one breath, so there was never a gap to mark — and the result
+      // tone is a moment away. Two beeps on top of each other is worse than one.
+      pendingListen = false;
       deliver(replayed.text, level);
       wake!.reset();
     }
@@ -701,6 +753,7 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     inFollowUp = false;
     followWindow = 0;
     awaitingSpeaker = false;
+    pendingListen = false;
     lastPartial = '';
     settledFor = 0;
     wake?.reset();

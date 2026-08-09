@@ -31,6 +31,7 @@ import { listScreens, forgetAvatar, type Avatar, type Placement } from '../../ov
 // Nudges use the same window, which is the point: it is the only surface here
 // that draws above an exclusive-fullscreen game.
 import * as popup from '../../popup.js';
+import { playSound } from '../../sound.js';
 import { createVoiceListener } from './voice.js';
 import { unknownWords, VoskUnavailable } from './vosk.js';
 
@@ -291,14 +292,33 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     console.log(`[${clock()}] listening…${score}`);
     // A fresh wake is a new exchange, so the one retry is available again.
     retryUsed = false;
-    // `forMs: 0` because the result replaces this and `missed` covers trailing
-    // off — a timer here would take the window away while it is still listening.
+    /*
+     * The window appears now; the sound comes on `listening`, a beat later.
+     *
+     * The wake fires part-way through the word, which is exactly what makes it
+     * feel instant to look at — and exactly wrong to listen to, because the
+     * tone lands on top of you still saying it.
+     *
+     * `forMs: 0` because the result replaces this and `missed` covers trailing
+     * off — a timer here would take the window away while it is still listening.
+     */
     popup.show({
       title: 'Listening…',
       lines: [{ text: 'go ahead', tone: 'muted' }],
       forMs: 0,
-      sound: 'wake',
     });
+  });
+
+  /*
+   * The trigger has been said and you have stopped — your turn.
+   *
+   * Split from `wake` purely for timing: the popup wants to appear the instant
+   * the word is recognised, and the tone wants the moment it is finished. They
+   * are the same event about a second apart, and only one of them is allowed to
+   * talk over you.
+   */
+  voice.on('listening', () => {
+    playSound('wake');
   });
 
   // Woke, but nothing usable followed — take the window away rather than leaving
