@@ -10,7 +10,16 @@ import type { FastifyInstance } from 'fastify';
  * because updates only ever flow one way and this needs no extra dependency.
  */
 
-export type ChangeScope = 'tasks' | 'habits' | 'notes' | 'nudges' | 'settings' | 'devices' | 'time' | 'vault';
+export type ChangeScope =
+  | 'tasks'
+  | 'habits'
+  | 'notes'
+  | 'nudges'
+  | 'settings'
+  | 'devices'
+  | 'time'
+  | 'vault'
+  | 'integrations';
 
 interface ChangeEvent {
   scope: ChangeScope | 'all';
@@ -49,6 +58,8 @@ function scopeForPath(path: string): ChangeScope | 'all' {
       return 'time';
     case 'vault':
       return 'vault';
+    case 'integrations':
+      return 'integrations';
     default:
       return 'all';
   }
@@ -79,6 +90,13 @@ export function registerChangeAnnouncer(app: FastifyInstance): void {
     // every open client whenever the room was noisy. These routes announce
     // themselves, with the right scope, only when they actually wrote something.
     if (request.url.startsWith('/api/voice/')) return;
+
+    // And again for the agent's local-presence report, which arrives on a timer
+    // whether or not anybody's status changed. Announcing it would reload every
+    // open client every few seconds — polling with extra steps, which is the one
+    // thing this stream exists to avoid. `recordLocalPresence` announces itself
+    // when the snapshot it was handed is actually different.
+    if (request.url.startsWith('/api/integrations/presence')) return;
 
     changes.emitChange(scopeForPath(request.url));
   });

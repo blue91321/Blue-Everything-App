@@ -1569,3 +1569,21 @@ export interface DeliverableNudge {
   /** True when this fired because its deadline passed, not because the moment was good. */
   escalated: boolean;
 }
+
+/* ------------------------------------------------------------------ */
+/* App integrations                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The provider manifest is at `@everything/shared/integrations`, and is
+ * deliberately **not** re-exported from here — the same arrangement `./features`
+ * has, for a reason that is easy to rediscover the hard way.
+ *
+ * `packages/web/scripts/make-icons.mjs` imports this file with plain `node`,
+ * which strips types but does not resolve `./integrations.js` back to a `.ts`
+ * the way tsx and every bundler do. A re-export here is therefore fine
+ * everywhere except the one place that builds the app icons, where it fails at
+ * module load with ERR_MODULE_NOT_FOUND and takes the whole build with it.
+ *
+ * A subpath costs importers nothing and keeps this file importable by anything.
+ */

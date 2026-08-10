@@ -441,6 +441,156 @@ export interface Device {
   revokedAt: number | null;
 }
 
+/* ------------------------------------------------------------------ */
+/* App integrations                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A capability, and — the point of the whole module — whether it works.
+ *
+ * `status` is never collapsed to a boolean on this side either. Four of the
+ * seven providers cannot do what you would assume they can, for four different
+ * reasons, and a screen that renders "off" for all of them sends you looking for
+ * a setting that does not exist. So `why` is rendered next to the thing it is
+ * about, always.
+ */
+export interface CapabilityInfo {
+  status: 'works' | 'partial' | 'needs-approval' | 'unavailable';
+  why: string;
+  source?: string;
+}
+
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  glyph: string;
+  blurb: string;
+  reach: 'web' | 'local' | 'import';
+  auth: 'oauth2' | 'api-key' | 'client' | 'file';
+  needs: string[];
+  setup: string[];
+  capabilities: Partial<Record<string, CapabilityInfo>>;
+
+  connected: boolean;
+  accountName: string | null;
+  /** What the provider actually granted, which is not what was asked for. */
+  grantedScopes: string[];
+  /** Env vars still unset. Non-empty means Connect cannot work yet. */
+  missingConfig: string[];
+  syncedAt: Record<string, number>;
+  lastError: string | null;
+  /** Capabilities with code behind them, as opposed to merely described. */
+  runnable: string[];
+  local: LocalStatus | null;
+}
+
+export interface LocalStatus {
+  clientRunning: boolean;
+  reportedAt: number | null;
+  /** The agent has gone quiet — a different problem from a closed game client. */
+  stale: boolean;
+  error?: string;
+}
+
+export interface IntegrationsState {
+  providers: ProviderInfo[];
+  capabilities: string[];
+}
+
+export interface SyncOutcome {
+  provider: string;
+  capability: string;
+  ok: boolean;
+  note: string;
+}
+
+export interface FriendRow {
+  id: string;
+  provider: string;
+  providerUserId: string;
+  name: string;
+  avatarUrl: string | null;
+  state: 'offline' | 'online' | 'away' | 'in-game';
+  game: string | null;
+  detail: string | null;
+  lastOnlineAt: number | null;
+  seenAt: number;
+}
+
+export interface FriendSource {
+  provider: string;
+  label: string;
+  status: CapabilityInfo['status'];
+  why: string;
+  connected: boolean;
+  missingConfig: string[];
+  lastError: string | null;
+  local: LocalStatus | null;
+}
+
+export interface FriendsView {
+  friends: FriendRow[];
+  /** Per-provider health, so an empty list can explain itself. */
+  sources: FriendSource[];
+  refreshed: SyncOutcome[];
+}
+
+export interface MediaCollection {
+  id: string;
+  provider: string;
+  kind: 'playlist' | 'saved' | 'subscriptions';
+  name: string;
+  description: string | null;
+  artUrl: string | null;
+  itemCount: number;
+  syncedAt: number | null;
+}
+
+export interface MediaItem {
+  id: string;
+  title: string;
+  creator: string | null;
+  album: string | null;
+  durationMs: number | null;
+  url: string | null;
+  artUrl: string | null;
+  category: string;
+  /** Which genre string decided the category. Null means it was a guess. */
+  categoryBecause: string | null;
+  genres: string;
+  position: number;
+}
+
+export interface MusicView {
+  breakdown: Array<{ category: string; count: number }>;
+  taste: Array<{ category: string; plays: number; distinctItems: number; listenedMs: number }>;
+  recent: Array<{
+    playedAt: number;
+    source: string;
+    title: string;
+    creator: string | null;
+    category: string;
+    url: string | null;
+    artUrl: string | null;
+    provider: string;
+  }>;
+  windowDays: number;
+}
+
+export interface TakeoutResult {
+  summary: {
+    total: number;
+    usable: number;
+    skipped: { noVideo: number; ads: number; noTime: number; otherProduct: number };
+    earliest: number | null;
+    latest: number | null;
+    sample: string[];
+  };
+  committed: boolean;
+  added?: number;
+  videos?: number;
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>('/health'),
   session: () => request<Session>('/api/session'),
@@ -617,6 +767,38 @@ export const api = {
       post<Nudge>('/api/nudges', payload),
     snooze: (id: string, minutes: number) => post(`/api/nudges/${id}/snooze`, { minutes }),
     dismiss: (id: string) => post(`/api/nudges/${id}/dismiss`),
+  },
+
+  /**
+   * App integrations.
+   *
+   * The provider manifest arrives from the server rather than being imported
+   * from `@everything/shared`, for the reason `api.ts` opens with: this bundle
+   * does not pull in that package. It is the same arrangement `/api/session`
+   * uses for the feature list — the server owns the table of facts, and hands
+   * the PWA plain JSON.
+   */
+  integrations: {
+    list: () => request<IntegrationsState>('/api/integrations'),
+    /**
+     * Returns a URL to open rather than redirecting, because a 302 to
+     * accounts.spotify.com would be followed by `fetch` and land as an opaque
+     * CORS failure instead of as a page.
+     */
+    authorize: (provider: string) => post<{ url: string }>(`/api/integrations/${provider}/authorize`),
+    connectSteam: (steamId: string) =>
+      post<{ connected: boolean; accountName: string }>('/api/integrations/steam/connect', { steamId }),
+    disconnect: (provider: string) => request<void>(`/api/integrations/${provider}`, { method: 'DELETE' }),
+    sync: (provider: string, capabilities?: string[]) =>
+      post<{ outcomes: SyncOutcome[] }>(`/api/integrations/${provider}/sync`, { capabilities }),
+    /** `force` is the refresh button; without it the read only refetches if stale. */
+    friends: (force = false) => request<FriendsView>(`/api/integrations/friends${force ? '?force=1' : ''}`),
+    collections: () => request<MediaCollection[]>('/api/integrations/collections'),
+    collectionItems: (id: string) => request<MediaItem[]>(`/api/integrations/collections/${id}`),
+    music: (days = 30) => request<MusicView>(`/api/integrations/music?days=${days}`),
+    /** Two-phase: nothing is written unless `commit` is true. */
+    takeout: (json: string, commit: boolean) =>
+      post<TakeoutResult>('/api/integrations/youtube/takeout', { json, commit }),
   },
 
   time: {

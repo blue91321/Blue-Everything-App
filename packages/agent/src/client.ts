@@ -158,6 +158,26 @@ export class ServerClient {
     return this.request(`/api/nudges/${nudgeId}/ack`, { method: 'POST' });
   }
 
+  /**
+   * A friends snapshot for a provider only this PC can see.
+   *
+   * Lives on the core client rather than inside the integrations feature for
+   * the same reason `voiceAgentReport` does: this class owns the token, the
+   * base URL and the unreachable-server handling, and a feature opening its own
+   * connection would have to reimplement all three slightly differently.
+   */
+  postPresence(report: {
+    provider: string;
+    clientRunning: boolean;
+    friends: unknown[];
+    error?: string;
+  }): Promise<unknown> {
+    return this.request('/api/integrations/presence', {
+      method: 'POST',
+      body: JSON.stringify(report),
+    });
+  }
+
   /** Wake word, phrase vocabulary and the enrolled voiceprint. */
   voiceConfig(): Promise<VoiceConfig> {
     return this.request<VoiceConfig>('/api/voice/config');

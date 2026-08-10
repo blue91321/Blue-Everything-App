@@ -1,0 +1,322 @@
+/**
+ * The OAuth dance, once, for every provider that does it.
+ *
+ * Four services, four sets of documentation, one flow — because they genuinely
+ * are the same flow, and the places they differ are all data: which URL, which
+ * scopes, whether PKCE is offered, and what extra query parameters are needed to
+ * make a refresh token come back. Those live in the manifest in `shared`, so
+ * adding a fifth provider is an entry in a table rather than a fifth copy of
+ * this file with one line changed.
+ *
+ * **Connecting is a local-only operation**, guarded in `routes.ts`. It is the
+ * same rule minting a device token follows and for the same reason: the redirect
+ * comes back to a browser on this PC, and a phone over Tailscale has no business
+ * starting a handshake it cannot finish.
+ */
+import { createHash, randomBytes } from 'node:crypto';
+import { PROVIDERS, type ProviderId, type ProviderSpec } from '@everything/shared/integrations';
+import { config } from '../../config.js';
+import { getAccount, saveAccount, type Account } from './store.js';
+
+/* ------------------------------------------------------------------ */
+/* Credentials                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which env var holds what, per provider.
+ *
+ * A table rather than `config[`${id.toUpperCase()}_CLIENT_ID`]`, because that
+ * form is invisible to the type checker and to anyone grepping for where a
+ * variable is used — and it would have quietly produced `RIOT_CLIENT_ID` for a
+ * provider that has no such thing.
+ */
+const CREDENTIALS: Partial<Record<ProviderId, { id: string; secret?: string }>> = {
+  spotify: { id: 'SPOTIFY_CLIENT_ID' },
+  youtube: { id: 'GOOGLE_CLIENT_ID', secret: 'GOOGLE_CLIENT_SECRET' },
+  discord: { id: 'DISCORD_CLIENT_ID', secret: 'DISCORD_CLIENT_SECRET' },
+  battlenet: { id: 'BATTLENET_CLIENT_ID', secret: 'BATTLENET_CLIENT_SECRET' },
+  steam: { id: 'STEAM_API_KEY' },
+};
+
+type ConfigKey = keyof typeof config;
+
+function envValue(name: string): string {
+  const value = config[name as ConfigKey];
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Which of a provider's required env vars are still unset.
+ *
+ * Reported to the screen so it can say "SPOTIFY_CLIENT_ID is not set" instead of
+ * offering a Connect button that redirects to an error page at Spotify. Same
+ * reasoning as the disabled "Check for updates" button on the Packages screen: a
+ * control that explains why it cannot work beats one that fails when pressed.
+ */
+export function missingCredentials(provider: ProviderId): string[] {
+  return PROVIDERS[provider].needs.filter((name) => !envValue(name));
+}
+
+export function clientId(provider: ProviderId): string {
+  const names = CREDENTIALS[provider];
+  return names ? envValue(names.id) : '';
+}
+
+export function clientSecret(provider: ProviderId): string {
+  const names = CREDENTIALS[provider];
+  return names?.secret ? envValue(names.secret) : '';
+}
+
+export function redirectUri(provider: ProviderId): string {
+  return `${config.OAUTH_REDIRECT_BASE}/api/integrations/callback/${provider}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* The handshake                                                       */
+/* ------------------------------------------------------------------ */
+
+interface PendingAuth {
+  provider: ProviderId;
+  verifier: string;
+  startedAt: number;
+}
+
+/**
+ * In-memory, and that is correct rather than lazy.
+ *
+ * A pending handshake is worthless after a restart — the provider will redirect
+ * back to a process that no longer holds the verifier, and the right answer then
+ * is "start again", which is exactly what an empty map produces. Persisting it
+ * would buy the ability to resume a login across a server restart that happened
+ * inside a thirty-second window.
+ */
+const pending = new Map<string, PendingAuth>();
+const AUTH_WINDOW_MS = 10 * 60_000;
+
+function sweepPending(): void {
+  const cutoff = Date.now() - AUTH_WINDOW_MS;
+  for (const [state, entry] of pending) {
+    if (entry.startedAt < cutoff) pending.delete(state);
+  }
+}
+
+const base64url = (buffer: Buffer): string => buffer.toString('base64url');
+
+/**
+ * Build the URL to send the browser to, and remember what we will need when it
+ * comes back.
+ *
+ * The `state` is a random 32 bytes checked on return — it is what stops a page
+ * you happen to be visiting from feeding this endpoint somebody else's
+ * authorization code and connecting your app to their account. On a loopback
+ * redirect that is not a theoretical concern: the callback URL is guessable, and
+ * `isTrustedLocal` deliberately trusts anything arriving from this machine.
+ */
+export function beginAuthorization(provider: ProviderId): { url: string; state: string } {
+  const spec = PROVIDERS[provider];
+  if (!spec.oauth) throw new Error(`${spec.label} does not use OAuth`);
+
+  const missing = missingCredentials(provider);
+  if (missing.length > 0) throw new Error(`not configured: ${missing.join(', ')} is not set`);
+
+  sweepPending();
+
+  const state = base64url(randomBytes(32));
+  const verifier = base64url(randomBytes(64));
+  pending.set(state, { provider, verifier, startedAt: Date.now() });
+
+  const params = new URLSearchParams({
+    client_id: clientId(provider),
+    response_type: 'code',
+    redirect_uri: redirectUri(provider),
+    scope: spec.oauth.scopes.join(' '),
+    state,
+    ...(spec.oauth.authorizeParams ?? {}),
+  });
+
+  if (spec.oauth.pkce) {
+    params.set('code_challenge_method', 'S256');
+    params.set('code_challenge', base64url(createHash('sha256').update(verifier).digest()));
+  }
+
+  return { url: `${spec.oauth.authorizeUrl}?${params}`, state };
+}
+
+interface TokenResponse {
+  access_token: string;
+  refresh_token?: string;
+  expires_in?: number;
+  scope?: string;
+  token_type?: string;
+}
+
+async function postToken(spec: ProviderSpec, provider: ProviderId, body: URLSearchParams): Promise<TokenResponse> {
+  const headers: Record<string, string> = { 'content-type': 'application/x-www-form-urlencoded' };
+
+  // Confidential clients want the secret as HTTP Basic rather than in the body.
+  // Battle.net is strict about it; Spotify accepts either and never sees one.
+  if (spec.oauth?.needsSecret) {
+    const secret = clientSecret(provider);
+    headers.authorization = `Basic ${Buffer.from(`${clientId(provider)}:${secret}`).toString('base64')}`;
+  } else {
+    body.set('client_id', clientId(provider));
+    // Google issues a "Web application" client that demands a secret even with
+    // PKCE. Sent only when one is actually configured, so the PKCE-only path
+    // stays secretless.
+    const secret = clientSecret(provider);
+    if (secret) body.set('client_secret', secret);
+  }
+
+  const response = await fetch(spec.oauth!.tokenUrl, { method: 'POST', headers, body });
+  const text = await response.text();
+
+  if (!response.ok) {
+    // The provider's own words, not ours. `invalid_grant` and
+    // `redirect_uri_mismatch` are the two failures that actually happen, and
+    // both are fixed by reading exactly what was sent back.
+    throw new Error(`${spec.label} token endpoint said ${response.status}: ${text.slice(0, 300)}`);
+  }
+
+  return JSON.parse(text) as TokenResponse;
+}
+
+/**
+ * Finish the handshake. Returns the provider so the caller can name it.
+ */
+export async function completeAuthorization(state: string, code: string): Promise<ProviderId> {
+  sweepPending();
+
+  const entry = pending.get(state);
+  // One use only. A replayed callback is either a double-click or something
+  // worse, and neither should mint a second token.
+  pending.delete(state);
+  if (!entry) throw new Error('this sign-in has expired or was not started here — try connecting again');
+
+  const spec = PROVIDERS[entry.provider];
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code,
+    redirect_uri: redirectUri(entry.provider),
+  });
+  if (spec.oauth?.pkce) body.set('code_verifier', entry.verifier);
+
+  const token = await postToken(spec, entry.provider, body);
+
+  await saveAccount(entry.provider, {
+    accessToken: token.access_token,
+    // Absent on a re-consent at most providers, and overwriting the stored one
+    // with undefined is how a working connection quietly becomes unrefreshable.
+    ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
+    expiresAt: token.expires_in ? Date.now() + token.expires_in * 1000 : null,
+    scopes: JSON.stringify(token.scope ? token.scope.split(' ') : spec.oauth?.scopes ?? []),
+    lastError: null,
+  });
+
+  return entry.provider;
+}
+
+/* ------------------------------------------------------------------ */
+/* Using it afterwards                                                 */
+/* ------------------------------------------------------------------ */
+
+/** Refresh a minute early, so a token cannot expire between the check and the call. */
+const EXPIRY_MARGIN_MS = 60_000;
+
+/**
+ * A usable access token, refreshing first if it is about to expire.
+ *
+ * Throws rather than returning null, and the message is written to be read on
+ * the screen: every caller is a sync that is about to fail anyway, and "Spotify
+ * is not connected" is more use than a null that turns into a type error three
+ * frames up.
+ */
+export async function accessTokenFor(provider: ProviderId): Promise<string> {
+  const account = await getAccount(provider);
+  if (!account?.accessToken) throw new Error(`${PROVIDERS[provider].label} is not connected`);
+
+  if (!account.expiresAt || account.expiresAt - EXPIRY_MARGIN_MS > Date.now()) {
+    return account.accessToken;
+  }
+
+  return refresh(provider, account);
+}
+
+async function refresh(provider: ProviderId, account: Account): Promise<string> {
+  const spec = PROVIDERS[provider];
+  if (!account.refreshToken) {
+    throw new Error(
+      `${spec.label} needs connecting again — its access token has expired and no refresh token was issued`
+    );
+  }
+
+  const token = await postToken(
+    spec,
+    provider,
+    new URLSearchParams({ grant_type: 'refresh_token', refresh_token: account.refreshToken })
+  );
+
+  await saveAccount(provider, {
+    accessToken: token.access_token,
+    // Providers that rotate refresh tokens hand back a new one; those that do
+    // not omit it, and the old one stays valid. Overwriting unconditionally
+    // breaks the second group.
+    ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
+    expiresAt: token.expires_in ? Date.now() + token.expires_in * 1000 : null,
+    lastError: null,
+  });
+
+  return token.access_token;
+}
+
+/**
+ * A GET against a provider's API with the token attached, refreshing once on a
+ * 401.
+ *
+ * The retry is worth the complication because access tokens expire on the
+ * provider's clock, not ours: a token we believe has nine minutes left is
+ * revoked the moment you change your password, and without this every sync after
+ * that fails until somebody notices and reconnects by hand.
+ */
+export async function apiGet<T>(provider: ProviderId, url: string): Promise<T> {
+  const attempt = async (token: string) =>
+    fetch(url, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' } });
+
+  let response = await attempt(await accessTokenFor(provider));
+
+  if (response.status === 401) {
+    const account = await getAccount(provider);
+    if (account?.refreshToken) response = await attempt(await refresh(provider, account));
+  }
+
+  /*
+   * A first library sync is hundreds of requests in a row, which is precisely
+   * the shape that trips a rate limiter, so waiting is the normal path rather
+   * than an error path. `Retry-After` is honoured because guessing at a backoff
+   * against a service that told you the number is how you get a longer ban.
+   *
+   * Capped at 30s and tried once: a longer wait than that means the sync should
+   * fail visibly and be started again, not sit silently holding a request open.
+   */
+  if (response.status === 429) {
+    const wait = Math.min(Number(response.headers.get('retry-after') ?? 5) * 1000, 30_000);
+    await new Promise((r) => setTimeout(r, wait));
+    response = await attempt(await accessTokenFor(provider));
+  }
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`${PROVIDERS[provider].label} returned ${response.status}: ${body.slice(0, 300)}`);
+  }
+
+  return (await response.json()) as T;
+}
+
+/** Which scopes the provider actually granted, which is not what we asked for. */
+export function grantedScopes(account: Account | null): string[] {
+  if (!account) return [];
+  try {
+    return JSON.parse(account.scopes) as string[];
+  } catch {
+    return [];
+  }
+}

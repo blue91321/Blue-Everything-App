@@ -660,6 +660,8 @@ npm run wake-probe -w @everything/agent    # what the wake partial says, block b
 npm run wake-falsing -w @everything/agent  # how often ordinary conversation wakes it
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
+npm run integrations-check -w @everything/server  # the categoriser and the Takeout reader
+
 npm run features         # what is switched on, and what is actually on disk
 npm run features-check   # prove each one can be switched off and deleted
 npm run publish-check    # is this repo safe to make public?
@@ -1900,6 +1902,170 @@ bypassed by a stale agent config.
 default would have meant the settings screen reading "only respond to my voice:
 on" while nothing was enrolled and nothing was being checked — a switch claiming
 a protection it was not providing.
+
+## App integrations
+
+Spotify and YouTube for what you listen to and watch; Steam, Discord, Riot,
+Battle.net and Epic for who is around. `npm run integrations-check -w
+@everything/server` proves the parts with no network in them — run it before
+trusting a change to the categoriser or the Takeout reader.
+
+**Off by default**, unlike everything else that is switchable. Every other
+feature works the moment it is switched on; this one does nothing at all until
+you have registered an app with a third party and put an id in the environment,
+so defaulting it on would add a tab that can only apologise.
+
+### The capability matrix is the feature
+
+Four of these seven services **cannot do the obvious thing**, for four different
+reasons, and finding that out one provider at a time — after building a screen
+that shows an empty list — is the expensive way to learn it. So a capability in
+`shared/src/integrations.ts` is not a boolean. It carries a `status` and a
+`why`, and the screen renders the `why` next to the thing it explains.
+
+| | playlists | history | who's online |
+| --- | --- | --- | --- |
+| **Spotify** | yes | last 50 plays, ever | no public API |
+| **YouTube** | yes | **not since 2016** — Takeout import | — |
+| **Steam** | — | — | **yes, properly** |
+| **Discord** | — | — | needs their approval |
+| **Riot** | — | — | local client only |
+| **Battle.net** | — | — | **no such API exists** |
+| **Epic** | — | — | per-friend consent, never the launcher list |
+
+The four that hurt, and why they are stated rather than worked around:
+
+- **Spotify no longer tells you how a song sounds.** `audio-features`,
+  `audio-analysis` and `recommendations` were withdrawn on 27 November 2024 and
+  return 403 to any app registered since. There is no replacement. Categories
+  therefore come from the genre strings attached to *artists*, which is why
+  syncing costs an extra `/artists` fetch per batch, and why the Music tab says
+  what it is doing rather than presenting a genre count as taste modelling.
+- **YouTube's watch history has been an empty placeholder since 12 September
+  2016**, and the `activities` endpoint that partly replaced it is deprecated.
+  Takeout is not a workaround for a missing endpoint — it is the only complete
+  record, and it goes back further than an API ever would.
+- **Discord's friends list needs `sdk.social_layer_presence`**, a Social SDK
+  scope granted per-application on request. An unapproved app still gets a
+  working token with the scope silently dropped, so `grantedScopes` is checked
+  rather than assumed — otherwise the screen shows a healthy connection and an
+  empty list. The other route people use is a user token lifted out of the
+  desktop client, which is against Discord's terms and is not implemented.
+- **Battle.net has no social namespace at all.** Not gated, not undocumented —
+  absent. `unavailable` is the honest status, and the row says so instead of
+  leaving a blank that reads as "not built yet".
+
+### Who is online, and which process asks
+
+Steam and Discord are web APIs the server calls. Riot, Epic and Battle.net are
+not reachable that way, so the **agent** gathers them and POSTs to
+`/api/integrations/presence` — the same division the voice feature draws.
+Anything about *data* happens on the server, which owns the database; anything
+about *this machine* happens in the agent, because the server is meant to be
+movable and has no business assuming League is installed on the same box.
+
+- **Riot** is the League client's own loopback API. It writes a `lockfile` next
+  to itself containing a port and a password while it runs, and deletes it on
+  exit — so the file's presence *is* the liveness check. TLS verification is off
+  because the certificate is Riot's own self-signed one; the connection is to
+  `127.0.0.1` on a port named by a file only this user could have written, so
+  there is no network path to sit in the middle of.
+- **Epic and Battle.net** are process names, and detecting them costs
+  **nothing**: `attention.ts` now emits the process scan it already takes, and
+  the feature listens. A second `listProcesses()` on a 30-second timer would
+  have been ~5ms every 30s — several times the agent's entire measured CPU
+  budget — for a fact the tick had already established and thrown away.
+
+Three things there are easy to get wrong:
+
+- **`clientRunning` is stored separately from an empty friends list.** "League
+  is closed" and "everybody is offline" both draw zero rows and mean completely
+  different things. A closed client therefore does **not** write through: the
+  last real snapshot is kept and marked stale, so quitting League leaves the
+  names on screen rather than emptying the list.
+- **A silent agent is a third state again.** Five minutes with no report is
+  reported as stale, distinct from a closed client, because the fixes differ —
+  start the agent, versus start the game.
+- **The presence POST is excluded from the change announcer.** It arrives on a
+  timer and nearly always says the same thing, so `recordLocalPresence`
+  fingerprints the snapshot and announces only a genuine difference. Left to the
+  generic hook it would reload every open browser every thirty seconds, which is
+  the polling the SSE stream exists to replace.
+
+### Refresh-on-read, not a poller
+
+`GET /api/integrations/friends` refreshes anything staler than 60s and returns.
+There is no background poll, and that is a number-backed decision: a 60-second
+poller is 1,440 requests a day forever, against a project that tuned its
+attention loop down to ~1,500 database rows a day and requires anything on a
+timer to justify itself against those figures. Nobody watches a friends list at
+four in the morning, and a list nobody is looking at does not need to be right.
+The cost is that the first render may be a minute old; after that it is live for
+as long as the screen is open.
+
+`friends` is upserted in place and pruned by `seenAt`, never delete-then-insert.
+Forty friends stay forty rows however long the app runs, and nobody is handed a
+new primary key every minute.
+
+### Tokens are not in the vault, deliberately
+
+`integration_accounts` holds live bearer tokens to your Spotify and Google
+accounts in the clear. The vault is unlocked by typing a master password, and a
+library sync that runs while you are out cannot type one — so putting them
+behind it would mean the feature only worked while you were sitting there having
+just unlocked the vault, which is not a feature. Every scope requested is
+read-only, and the mitigation is the one the rest of the app already relies on:
+`npm run publish-check` refuses to pass on a tracked database.
+
+Connecting and disconnecting are **local-only**, like minting a device token.
+The OAuth redirect comes back to a browser on this PC, so a phone over Tailscale
+could not finish a handshake it started. Reading is not restricted — seeing who
+is online from the sofa is the point of the phone.
+
+**The callback lives under `/api/` and that is safe**, unlike the icons and the
+manifest which had to move out. Those are fetched by the browser's own machinery
+and will never send a token; this is a redirect arriving on a loopback socket
+with a loopback Host, which `isTrustedLocal` allows. The `state` parameter is
+what protects it, precisely because everything on this PC is equally trusted.
+
+`OAUTH_REDIRECT_BASE` defaults to the **loopback IP literal**, not `localhost`:
+Spotify and Google both stopped accepting `http://localhost` while continuing to
+accept `http://127.0.0.1`. They are the same machine and not the same string,
+and the error message says neither.
+
+### Categorising, and what it honestly is
+
+`categoriseGenres` folds several thousand provider genre strings into eighteen
+families. Coarse on purpose — `escape room` and `deep filthstep` are wonderful
+and useless for finding anything, because almost every such tag has a handful of
+artists in it and no two people agree what it means.
+
+**The keyword table is an array, not a record, and the order is load-bearing.**
+`melodic death metal` contains "metal" and "death"; `pop punk` contains "pop"
+and "punk"; `jazz rap` contains both. Narrow families are checked first and
+`pop` — a substring of dozens of unrelated names — goes very nearly last. That
+property is a test rather than a comment, and it caught a real one: `jazz rap`
+landed in jazz until hip-hop was moved above it.
+
+`unknown` is a real member, not a failure. Self-released artists routinely have
+no genres at all, and filing those under whatever came closest is how a library
+ends up confidently wrong. `categoryBecause` records *which* string decided it,
+because a category nobody can explain is a category nobody trusts.
+
+### The Takeout import is two-phase
+
+Same shape as the vault's CSV import, for the same reason: a Takeout archive
+contains several files that look alike — search history, comment history,
+YouTube Music — and picking the wrong one produces a plausible number of
+plausible-looking rows. The first call reports what it found and the window it
+covers and writes nothing; you confirm against dates you recognise.
+
+Re-importing is safe. A unique index on `(item, played_at, source)` makes both
+feeding mechanisms idempotent, which they have to be: Spotify hands back its
+last fifty every single time, and a Takeout file is the whole history every time.
+
+Videos already known from a playlist sync keep the details they have, so an
+import can never downgrade a categorised track to a bare title.
 
 ## Attention model
 

@@ -203,6 +203,30 @@ if (voiceInstalled) {
 }
 
 /* ------------------------------------------------------------------ */
+/* App integrations — also optional, also deletable                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The friends only this machine can see: the League client's own API, and
+ * whether the Epic and Battle.net launchers are running.
+ *
+ * Same presence check as voice, for the same reason — a missing folder and a
+ * broken dependency both raise ERR_MODULE_NOT_FOUND, and reporting the second
+ * as the first sends somebody looking for a folder that is right there.
+ *
+ * It is handed the monitor so it can listen for `processes`, which is the scan
+ * the attention loop already pays for. That is what keeps launcher detection at
+ * genuinely zero cost rather than at another 5ms on a timer.
+ */
+let integrations: { stop(): void } | null = null;
+
+const integrationsEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'features/integrations/index');
+if (existsSync(`${integrationsEntry}.ts`) || existsSync(`${integrationsEntry}.js`)) {
+  const { startIntegrations } = await import('./features/integrations/index.js');
+  integrations = startIntegrations(client, monitor, (message) => console.log(`[${clock()}] ${message}`));
+}
+
+/* ------------------------------------------------------------------ */
 /* The notification-area icon                                          */
 /* ------------------------------------------------------------------ */
 
@@ -262,6 +286,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     // installed, which is the ordinary case for anyone who does not want a
     // microphone open.
     voice?.stop();
+    integrations?.stop();
     popup.stopPopups();
     console.log('\nagent stopped.');
     process.exit(0);
