@@ -26,14 +26,17 @@ import { resolve } from 'node:path';
 import { ServerUnreachable, type ServerClient, type VoiceConfig, type VoiceOutcome } from '../../client.js';
 import { mediaIsPlaying } from '../../audio.js';
 import { openUrl, pressKeys, pressMediaKey } from './actions.js';
-import { createOverlay, listScreens, forgetAvatar, type Avatar, type Overlay, type Placement } from './overlay.js';
+import { listScreens, forgetAvatar, type Avatar, type Placement } from '../../overlay.js';
+// The popup is core now, and voice is one of its callers rather than its owner.
+// Nudges use the same window, which is the point: it is the only surface here
+// that draws above an exclusive-fullscreen game.
+import * as popup from '../../popup.js';
+import { playSound } from '../../sound.js';
 import { createVoiceListener } from './voice.js';
 import { unknownWords, VoskUnavailable } from './vosk.js';
 
-/** How long a result stays up. Long enough to read, short enough not to nag. */
-const OVERLAY_RESULT_MS = 4000;
-/** A question waits longer, because it is waiting on you rather than telling you. */
-const OVERLAY_ASK_MS = 12_000;
+const OVERLAY_RESULT_MS = popup.POPUP_RESULT_MS;
+const OVERLAY_ASK_MS = popup.POPUP_ASK_MS;
 
 const TONE_FOR: Record<string, 'good' | 'bad' | 'muted'> = {
   'habit-checked': 'good',
@@ -86,6 +89,15 @@ const VOICE_RETRY_MS = 15_000;
 
 export interface VoiceFeature {
   stop(): void;
+  /**
+   * Whether you are at the desk at all.
+   *
+   * Pushed in by the attention monitor rather than polled from the server: the
+   * agent already has the answer — `isAwayFromPc` is a pure function over the
+   * same snapshot it is about to report — and closing a microphone should not
+   * wait on a round trip, nor stop working because the server is down.
+   */
+  setPresent(present: boolean): void;
 }
 
 /**
@@ -95,41 +107,9 @@ export interface VoiceFeature {
  * the same whichever half of it produced the line.
  */
 export function startVoice(client: ServerClient, clock: () => string): VoiceFeature {
-  /**
-   * The window at the cursor.
-   *
-   * Created lazily and kept: it appears the instant the wake word lands, and
-   * creating it per utterance would waste that. If the window cannot be made at
-   * all — a session with no desktop, say — voice carries on without it, because
-   * a missing overlay is a worse reason to lose the feature than no reason.
-   */
-  let overlay: Overlay | null = null;
-  let overlayFailed = false;
-  let hideTimer: NodeJS.Timeout | null = null;
-
-  function ui(): Overlay | null {
-    if (overlay || overlayFailed) return overlay;
-    try {
-      overlay = createOverlay({
-        onChoice: (id) => void chooseCommand(id),
-        onDismiss: () => hideOverlay(0),
-      });
-    } catch (error) {
-      overlayFailed = true;
-      console.error(`[${clock()}] overlay unavailable: ${(error as Error).message}`);
-    }
-    return overlay;
-  }
-
-  function hideOverlay(afterMs: number): void {
-    if (hideTimer) clearTimeout(hideTimer);
-    if (afterMs <= 0) {
-      overlay?.hide();
-      return;
-    }
-    hideTimer = setTimeout(() => overlay?.hide(), afterMs);
-    hideTimer.unref();
-  }
+  // The popup itself belongs to core and is already running; voice only claims
+  // the click handler, since it is the only thing that ever offers a choice.
+  popup.onChoiceMade((id) => void chooseCommand(id));
 
   /**
    * Whether a media command is allowed to fire right now.
@@ -154,6 +134,14 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
   }
 
   function performAction(result: VoiceOutcome): void {
+    // A chained outcome's instructions live on its parts, in the order they were
+    // said. Run them in that order: "pause the music and open my notes" should
+    // not decide for itself which happens first.
+    if (result.steps?.length) {
+      for (const step of result.steps) performAction(step);
+      return;
+    }
+
     // Anything that touches *this machine* comes back as an instruction; the
     // server does the database half itself. It has no business assuming it runs
     // on your desk, and one day it won't.
@@ -165,11 +153,11 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       if (result.action.do === 'media') {
         if (!mediaAllowed()) {
           console.log(`[${clock()}] media ignored — nothing is playing`);
-          ui()?.show({
+          popup.show({
             title: 'Nothing is playing',
             lines: [{ text: `so "${result.text}" was ignored`, tone: 'muted' }],
           });
-          hideOverlay(OVERLAY_RESULT_MS);
+          popup.hide(OVERLAY_RESULT_MS);
           return;
         }
         pressMediaKey(result.action.action);
@@ -181,8 +169,8 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       // long-poll answer reports voice as disabled, which closes the microphone.
     } catch (error) {
       console.error(`[${clock()}] voice action refused: ${(error as Error).message}`);
-      ui()?.show({ title: 'Refused', lines: [{ text: (error as Error).message, tone: 'bad' }] });
-      hideOverlay(OVERLAY_RESULT_MS);
+      popup.show({ title: 'Refused', lines: [{ text: (error as Error).message, tone: 'bad' }] });
+      popup.hide(OVERLAY_RESULT_MS);
     }
   }
 
@@ -190,21 +178,50 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     console.log(`[${clock()}] voice (${result.outcome}): ${result.say ?? `"${result.text}"`}`);
 
     if (result.outcome === 'ambiguous' && result.choices?.length) {
-      ui()?.show({
+      popup.show({
         title: 'Which one?',
         lines: [{ text: result.say ?? 'That matches more than one thing.', tone: 'muted' }],
         choices: result.choices,
       });
-      hideOverlay(OVERLAY_ASK_MS);
+      popup.hide(OVERLAY_ASK_MS);
       return;
     }
 
-    ui()?.show({
-      title: result.say ?? result.text,
-      // Coloured by outcome, so a miss does not look like a success at a glance —
-      // which matters most for the ones that changed nothing.
-      lines: [{ text: `heard "${result.text}"`, tone: TONE_FOR[result.outcome] ?? 'muted' }],
-    });
+    /*
+     * A chain gets a line each, not one run-together summary.
+     *
+     * The point of showing anything at all is that you can tell at a glance
+     * whether it did what you said. "Drink water · Skip forward" as a single
+     * title reads as one odd command; two lines read as two things that
+     * happened, and a part that failed stands out in its own colour instead of
+     * being buried mid-sentence.
+     */
+    /*
+     * The sound says the same thing as the colour, for the case the popup is
+     * behind a fullscreen game or simply not being looked at. A miss gets its
+     * own falling tone rather than silence, because "it did nothing" and "it
+     * never heard you" are the two outcomes worth telling apart without looking.
+     */
+    const sound = result.outcome === 'no-match' ? 'miss' : 'ok';
+
+    if (result.steps?.length) {
+      popup.show({
+        title: `Heard ${result.steps.length} things`,
+        lines: result.steps.map((step) => ({
+          text: step.say ?? step.text,
+          tone: TONE_FOR[step.outcome] ?? 'muted',
+        })),
+        sound,
+      });
+    } else {
+      popup.show({
+        title: result.say ?? result.text,
+        // Coloured by outcome, so a miss does not look like a success at a glance —
+        // which matters most for the ones that changed nothing.
+        lines: [{ text: `heard "${result.text}"`, tone: TONE_FOR[result.outcome] ?? 'muted' }],
+        sound,
+      });
+    }
 
     /*
      * How long to stay open depends on what just happened.
@@ -215,23 +232,31 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
      *  - a pause: you asked for silence, so carrying on would be perverse.
      */
     const failed = result.outcome === 'no-match';
-    const followUp =
-      result.outcome === 'paused' || result.outcome === 'ambiguous' || result.outcome === 'cancelled'
-        ? 0
-        : failed
-          ? retryUsed
-            ? 0
-            : retryMs
-          : result.allowFollowUp === false
-            ? 0
-            : followUpMs;
+    // A chain reports itself as `chained`, so an ending buried in one of its
+    // parts — "never mind and stop listening" — would otherwise be missed and
+    // the microphone would be reopened on top of a pause that just closed it.
+    const ends = (outcome: VoiceOutcome): boolean =>
+      outcome.outcome === 'paused' ||
+      outcome.outcome === 'ambiguous' ||
+      outcome.outcome === 'cancelled' ||
+      (outcome.steps ?? []).some(ends);
+
+    const followUp = ends(result)
+      ? 0
+      : failed
+        ? retryUsed
+          ? 0
+          : retryMs
+        : result.allowFollowUp === false
+          ? 0
+          : followUpMs;
 
     if (failed) retryUsed = true;
     if (followUp > 0) voice.listenAgain(followUp);
 
     // The window stays up for as long as it is still listening, so "it is waiting
     // for me" and "it has finished" are never the same picture.
-    hideOverlay(result.outcome === 'cancelled' ? 900 : Math.max(OVERLAY_RESULT_MS, followUp));
+    popup.hide(result.outcome === 'cancelled' ? 900 : Math.max(OVERLAY_RESULT_MS, followUp));
   }
 
   async function chooseCommand(id: string): Promise<void> {
@@ -248,8 +273,8 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     if (!heard.accepted) {
       const why = heard.reason === 'wrong-speaker' ? "didn't sound like you" : 'no voice sample to check against';
       console.log(`[${clock()}] voice ignored (${why}): "${heard.text}"`);
-      ui()?.show({ title: 'Not you', lines: [{ text: why, tone: 'bad' }] });
-      hideOverlay(2000);
+      popup.show({ title: 'Not you', lines: [{ text: why, tone: 'bad' }] });
+      popup.hide(2000);
       return;
     }
 
@@ -276,26 +301,52 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     console.log(`[${clock()}] listening…${score}`);
     // A fresh wake is a new exchange, so the one retry is available again.
     retryUsed = false;
-    ui()?.show({ title: 'Listening…', lines: [{ text: 'go ahead', tone: 'muted' }] });
-    // No auto-hide: the result replaces this, and `missed` covers trailing off.
+    /*
+     * The window appears now; the sound comes on `listening`, a beat later.
+     *
+     * The wake fires part-way through the word, which is exactly what makes it
+     * feel instant to look at — and exactly wrong to listen to, because the
+     * tone lands on top of you still saying it.
+     *
+     * `forMs: 0` because the result replaces this and `missed` covers trailing
+     * off — a timer here would take the window away while it is still listening.
+     */
+    popup.show({
+      title: 'Listening…',
+      lines: [{ text: 'go ahead', tone: 'muted' }],
+      forMs: 0,
+    });
+  });
+
+  /*
+   * The trigger has been said and you have stopped — your turn.
+   *
+   * Split from `wake` purely for timing: the popup wants to appear the instant
+   * the word is recognised, and the tone wants the moment it is finished. They
+   * are the same event about a second apart, and only one of them is allowed to
+   * talk over you.
+   */
+  voice.on('listening', () => {
+    playSound('wake');
   });
 
   // Woke, but nothing usable followed — take the window away rather than leaving
   // "Listening…" on screen for a question that was never asked.
   voice.on('missed', () => {
-    if (!overlay?.visible) return;
+    if (!popup.visible()) return;
 
     // Woke but caught nothing — the same failure as a no-match, and it gets the
     // same one retry rather than closing the moment you pause to think.
     const retry = retryUsed ? 0 : retryMs;
     retryUsed = true;
 
-    ui()?.show({
+    popup.show({
       title: "Didn't catch that",
       lines: [{ text: retry > 0 ? 'say it again' : 'say the wake word to try again', tone: 'muted' }],
+      sound: 'miss',
     });
     if (retry > 0) voice.listenAgain(retry);
-    hideOverlay(Math.max(2000, retry));
+    popup.hide(Math.max(2000, retry));
   });
 
   // During a test the screen is showing what the agent hears, so it is posted the
@@ -311,7 +362,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
 
   voice.on('enrol-short', ({ frames }: { frames: number }) => {
     console.log(`[${clock()}] enrol: too short to measure (${frames} frames)`);
-    ui()?.show({
+    popup.show({
       title: `Teaching it your voice — ${enrolSamples.length} of ${VOICE_ENROL_SAMPLES}`,
       lines: [{ text: 'that was too short — say it a little slower', tone: 'bad' }],
     });
@@ -327,7 +378,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     const count = enrolSamples.length;
     console.log(`[${clock()}] enrol: ${count}/${VOICE_ENROL_SAMPLES}`);
 
-    ui()?.show({
+    popup.show({
       title: `Teaching it your voice — ${count} of ${VOICE_ENROL_SAMPLES}`,
       lines: [
         { text: count < VOICE_ENROL_SAMPLES ? 'say it again' : 'that is enough — saving', tone: 'muted' },
@@ -353,19 +404,19 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       .enrolVoice(voiceprint, VOICE_ENROL_SAMPLES)
       .then(() => {
         console.log(`[${clock()}] enrol: stored, worst sample ${Math.round(worst * 100)}%`);
-        ui()?.show({
+        popup.show({
           title: 'Voice learned',
           lines:
             worst < 0.5
               ? [{ text: 'those varied a lot — enrol again somewhere quieter', tone: 'bad' }]
               : [{ text: `only your voice will be obeyed now`, tone: 'good' }],
         });
-        hideOverlay(5000);
+        popup.hide(5000);
       })
       .catch((error) => {
         console.error(`[${clock()}] enrol failed: ${(error as Error).message}`);
-        ui()?.show({ title: 'Could not save', lines: [{ text: (error as Error).message, tone: 'bad' }] });
-        hideOverlay(5000);
+        popup.show({ title: 'Could not save', lines: [{ text: (error as Error).message, tone: 'bad' }] });
+        popup.hide(5000);
       });
   });
 
@@ -450,7 +501,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       avatar = { kind: 'emoji', value: answer.overlayAvatar };
     }
 
-    ui()?.configure({
+    popup.configure({
       placement: {
         mode: (answer.overlayPlacement ?? 'cursor') as Placement,
         screen: answer.overlayScreen ?? null,
@@ -460,6 +511,32 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
   }
 
   let voiceLoopStopped = false;
+
+  /**
+   * The last config the server asked for, and whether anyone is here to use it.
+   *
+   * Held apart so presence can be applied the instant the attention monitor
+   * changes its mind, rather than on the next pass of a loop that spends most
+   * of its life parked in a 20-second long poll. Coming back to the desk and
+   * waiting twenty seconds for the microphone would be the wrong way round —
+   * that is exactly when you are about to say something.
+   */
+  let wanted: VoiceConfig = EMPTY_VOICE_CONFIG;
+  let present = true;
+
+  /**
+   * Hand the listener the config, gated on presence.
+   *
+   * `enabled: false` is the same path that switching voice off takes, so this
+   * releases the microphone *and* the ~123MB of speech models — see
+   * `shutdown()` in voice.ts. That is the point: an empty chair should not be
+   * holding a recording device open, and it should not be holding the memory
+   * either. Reloading costs 0.2s, paid when you sit back down, which is a
+   * rounding error against the fifteen minutes it took to decide you had gone.
+   */
+  function applyConfig(): void {
+    voice.configure(present ? wanted : { ...wanted, enabled: false });
+  }
 
   async function voiceTick(): Promise<number> {
     const status = voice.status();
@@ -474,6 +551,9 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       unknownWords: missingWords,
       error: status.error,
       peak: status.peak,
+      // So the screen can say "you walked away" rather than leaving the reader
+      // to guess why a switch that reads "on" is not listening.
+      awayFromPc: !present,
       // While testing or enrolling the screen wants live progress, so ask now.
       waitMs: busy ? 0 : VOICE_WAIT_MS,
       since: voiceVersion,
@@ -522,10 +602,11 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
         }
       }
 
-      voice.configure({ ...full, ...answer });
+      wanted = { ...full, ...answer };
     } else {
-      voice.configure({ ...EMPTY_VOICE_CONFIG, wakeWord: answer.wakeWord ?? '' });
+      wanted = { ...EMPTY_VOICE_CONFIG, wakeWord: answer.wakeWord ?? '' };
     }
+    applyConfig();
 
     /*
      * A report is gathered *before* the config that arrives with it is applied,
@@ -534,7 +615,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
      * was added to remove. When something actually changed, report again once the
      * new device has had a moment to open.
      */
-    const signature = `${answer.enabled}:${answer.inputDevice ?? ''}:${answer.wakeWord ?? ''}`;
+    const signature = `${answer.enabled && present}:${answer.inputDevice ?? ''}:${answer.wakeWord ?? ''}`;
     const changed = signature !== appliedVoice;
     appliedVoice = signature;
 
@@ -573,10 +654,19 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
   void voiceLoop();
 
   return {
+    setPresent(next: boolean) {
+      if (next === present) return;
+      present = next;
+      console.log(`[${clock()}] ${next ? 'back at the desk — voice may listen again' : 'away from the desk — releasing the microphone'}`);
+      applyConfig();
+    },
+
     stop() {
       voiceLoopStopped = true;
       voice.stop();
-      overlay?.destroy();
+      // The popup is core and outlives this feature — nudges still use it. Only
+      // the click handler was ours, so it goes back to doing nothing.
+      popup.onChoiceMade(() => {});
     },
   };
 }

@@ -19,8 +19,41 @@ export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
 /** Thrown on 401 so the UI can drop back to the pairing screen. */
 export class Unauthorized extends Error {}
 
+/**
+ * GETs for the same URL that are already in flight, so they become one.
+ *
+ * A single change announcement reaches every `useAsync` on screen at once, and
+ * the Settings screen alone holds three separate readers of `/api/settings`
+ * plus the one in `App` — so one click on a toggle produced **six identical
+ * requests**, measured. They are all asking the same question at the same
+ * instant and they cannot get different answers.
+ *
+ * Only GETs, and only while genuinely concurrent: the entry is dropped the
+ * moment the response settles, so this is a coalescer and not a cache. A stale
+ * read is the one thing this app cannot afford here — the whole point of the
+ * live stream is that two devices never disagree.
+ */
+const inFlight = new Map<string, Promise<unknown>>();
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = init.method ?? 'GET';
+
+  if (method === 'GET') {
+    const shared = inFlight.get(path);
+    if (shared) return shared as Promise<T>;
+
+    const started = send<T>(path, init, method);
+    inFlight.set(path, started);
+    // `finally` on the promise rather than await/try, so the entry is cleared
+    // for a rejection too — a failed fetch must not wedge the path forever.
+    void started.finally(() => inFlight.delete(path));
+    return started;
+  }
+
+  return send<T>(path, init, method);
+}
+
+async function send<T>(path: string, init: RequestInit, method: string): Promise<T> {
   const body = init.body ?? (method === 'GET' ? undefined : '{}');
 
   const response = await fetch(path, {
@@ -59,6 +92,8 @@ export interface Task {
   dueAt: number | null;
   /** The date matters, the time of day doesn't. `dueAt` is end of that day. */
   dueIsAllDay: number;
+  /** 1 yes, 0 no, null follows the default in Settings. */
+  pushToPhone: number | null;
   projectId: string | null;
   createdAt: number;
   completedAt: number | null;
@@ -72,6 +107,8 @@ export interface TaskInput {
   priority?: number;
   dueAt?: number | null;
   dueIsAllDay?: boolean;
+  /** null puts it back to following the default rather than meaning "no". */
+  pushToPhone?: boolean | null;
 }
 
 export interface Habit {
@@ -85,6 +122,8 @@ export interface Habit {
   reminderEveryMinutes: number | null;
   /** Minutes since midnight before reminders start; null means straight away. */
   reminderStartMinute: number | null;
+  /** 1 yes, 0 no, null follows the default in Settings. */
+  pushToPhone: number | null;
   /** Things you can say to tick this off. Empty means voice can't reach it. */
   voicePhrases: string[];
   periodKey: string;
@@ -99,7 +138,15 @@ export interface AppSettings {
   followWindowsDnd: number;
   dndUntil: number | null;
   remindersEnabled: number;
+  /** A short tone with each popup. Absent on a server older than the column. */
+  soundEnabled?: number;
   pushEnabled: number;
+  /**
+   * What a task or habit that hasn't chosen gets. Optional for the same reason
+   * the voice fields are — a server predating the column sends nothing, and the
+   * screen should hide the control rather than render a switch stuck on.
+   */
+  pushDefault?: number;
   /** Public half only; the private key never leaves the server. */
   vapidPublicKey: string;
   awayFromPcIdleMinutes: number;
@@ -168,6 +215,8 @@ export interface VoiceStatus {
   paused: boolean;
   /** -1 means until switched back on by hand; a timestamp means until then. */
   pausedUntil: number | null;
+  /** Closed because the desk is empty — distinct from off, paused and broken. */
+  awayFromPc?: boolean;
   testing: boolean;
   testUntil: number;
   /** The last test ended because a command matched, not because it ran out. */
@@ -223,6 +272,16 @@ export interface VoiceTest {
   tokens: string[];
   count: number;
   match: { id: string; phrase: string; score: number; habitName: string | null } | null;
+  /**
+   * Set when the sentence is several commands joined by "and", in the order
+   * they would run. `match` is null whenever this is present — a chain is not
+   * one match, and showing the first would describe a fraction of what happens.
+   *
+   * Optional because a server older than chaining sends neither field.
+   */
+  chain?:
+    | { phrase: string; kind: VoiceCommandKind; habitName: string | null; count: number }[]
+    | null;
 }
 
 export interface VaultStatus {
@@ -333,6 +392,47 @@ export interface Session {
   featuresMissing?: string[];
 }
 
+/**
+ * One switchable part of the app.
+ *
+ * `running` is what the server booted with; `wanted` is what `features.json`
+ * now says. They differ exactly when a restart is owed, which is the whole
+ * reason both are sent rather than one.
+ */
+export interface FeatureInfo {
+  id: string;
+  label: string;
+  blurb: string;
+  /** What it costs to have on, measured. Null when negligible. */
+  cost: string | null;
+  /** Its own version, or the app's when it ships with the app. */
+  version: string;
+  /** True when it has no version of its own and moves with the app. */
+  bundled: boolean;
+  /** Whether its folders can be deleted, as opposed to merely switched off. */
+  removable: boolean;
+  defaultEnabled: boolean;
+  running: boolean;
+  wanted: boolean;
+  /** On, but its folders are gone from disk — a different problem from off. */
+  missing: boolean;
+  active: boolean;
+  owns: string[];
+}
+
+export interface FeatureState {
+  /** `EVERYTHING_FEATURES` is set and overrides the file, so the switches can't apply. */
+  lockedByEnv: boolean;
+  /** The file no longer matches what is running. */
+  pendingRestart: boolean;
+  hasFile: boolean;
+  /** Absent on a server older than per-package versions. */
+  appVersion?: string;
+  /** Whether there is anywhere to check for updates yet. */
+  updates?: { configured: boolean; source: string | null };
+  features: FeatureInfo[];
+}
+
 export interface Device {
   id: string;
   name: string;
@@ -350,6 +450,8 @@ export const api = {
     create: (payload: { name: string; kind: 'phone' | 'browser' | 'windows-agent' | 'extension' }) =>
       post<Device & { token: string }>('/api/devices', payload),
     revoke: (id: string) => post(`/api/devices/${id}/revoke`),
+    /** Only works on an already-revoked device — the server enforces that. */
+    remove: (id: string) => request<void>(`/api/devices/${id}`, { method: 'DELETE' }),
   },
 
   tasks: {
@@ -374,6 +476,7 @@ export const api = {
         active?: boolean;
         reminderEveryMinutes?: number | null;
         reminderStartMinute?: number | null;
+        pushToPhone?: boolean | null;
         voicePhrases?: string[];
       }
     ) => patch<Habit>(`/api/habits/${id}`, payload),
@@ -384,6 +487,16 @@ export const api = {
   },
 
   connectInfo: () => request<ConnectInfo>('/api/connect-info'),
+
+  features: {
+    get: () => request<FeatureState>('/api/features'),
+    /** Local-only, and it takes a restart — the response says whether one is owed. */
+    set: (id: string, enabled: boolean) =>
+      patch<{ ok: boolean; id: string; wanted: boolean; pendingRestart: boolean }>('/api/features', {
+        id,
+        enabled,
+      }),
+  },
 
   settings: {
     get: () => request<AppSettings>('/api/settings'),
@@ -397,7 +510,9 @@ export const api = {
       followWindowsDnd?: boolean;
       dndUntil?: number | null;
       remindersEnabled?: boolean;
+      soundEnabled?: boolean;
       pushEnabled?: boolean;
+      pushDefault?: boolean;
       voiceEnabled?: boolean;
       wakeWord?: string;
       requireKnownSpeaker?: boolean;

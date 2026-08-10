@@ -124,6 +124,7 @@ const POLL_MS = 100;
  */
 const REPLAY_BUFFER_SAMPLES = SAMPLE_RATE * 4;
 
+
 export interface VoiceListener extends EventEmitter {
   start(): void;
   stop(): void;
@@ -191,6 +192,9 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
   let inFollowUp = false;
   /** How long the current follow-up lasts; set by `listenAgain`. */
   let followWindow = 0;
+
+
+
 
   const testing = (now = Date.now()) => (config?.testUntil ?? 0) > now;
   const enrolling = (now = Date.now()) => (config?.enrolUntil ?? 0) > now;
@@ -316,6 +320,7 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
 
   let lastSpeakerScore: number | null = null;
 
+
   function poll(): void {
     if (!config?.enabled) return;
 
@@ -348,12 +353,34 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     // been asked for and clipping it would be worse than the cost.
     if (phase === 'idle' && now - lastLoudAt > HANGOVER_MS) {
       stats.gated++;
-      // Silence this long is an utterance boundary, so anything still buffered
-      // belongs to a sentence that is over. Without this the replay is a flat
-      // four-second window: say something, get no reaction, say it again, and
-      // both deliveries end up in the buffer and come back transcribed as one
-      // utterance — "hey jarvis drink water hey jarvis drink water".
-      if (replay.length > 0) forgetReplay();
+
+      /*
+       * Silence this long is an utterance boundary — so settle the question now
+       * rather than waiting for Vosk to volunteer an answer.
+       *
+       * The recogniser's own endpointer is unreliable here: fed a phrase and
+       * then digital silence it can sit for six seconds without committing to
+       * anything (`npm run voice-latency`). Asking it directly at the boundary
+       * is both faster and better defined — this is exactly the moment the
+       * sentence ended, and nothing else has to guess when that was.
+       *
+       * `flush()` is a real finalisation, not a peek at a partial: it returns
+       * the decoder's committed answer with the speaker embedding attached.
+       */
+      if (replay.length > 0) {
+        const settled = wake!.flush();
+        if (settled.text) {
+          settledWake(settled, now, level);
+        } else {
+          wake!.reset();
+        }
+        // `settledWake` consumes the buffer when it wakes; anything left after
+        // it belongs to a sentence that is over. Without this the replay is a
+        // flat four-second window: say something, get no reaction, say it
+        // again, and both deliveries come back transcribed as one utterance —
+        // "hey jarvis drink water hey jarvis drink water".
+        if (phase === 'idle') forgetReplay();
+      }
       return;
     }
     stats.recognised++;
@@ -383,77 +410,17 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
         }
       }
 
-      if (!heard) return;
-
-      // Grammar mode still returns `[unk]` for anything off-list, so this means
-      // the wake word rather than merely "some speech happened". Leading
-      // attention words are optional — see `wakeWordRequired`: "hey" is dropped
-      // by the recogniser far more often than the name it precedes is.
-      if (!matchesWakeWord(heard.text, config.wakeWord)) {
-        // Vosk just decided a sentence ended and it was not for us, so nothing
-        // buffered belongs to whatever comes next. This is a better boundary
-        // than the RMS gate, which a close-talk headset can hold open through
-        // breathing between sentences.
-        forgetReplay();
-        return;
-      }
-
-      stats.wakes++;
-
-      /*
-       * Enrolling: the wake word is a sample, not an instruction.
-       *
-       * Collected from the wake word rather than free speech on purpose — the
-       * enrolled vectors and the ones compared against them at runtime then
-       * come from the same words, at the same distance, on the same
-       * microphone, which is what lets the threshold be strict.
-       */
-      if (enrolling(now)) {
-        if (heard.speaker && heard.speakerFrames >= VOICE_ENROL_MIN_FRAMES) {
-          emitter.emit('enrol-sample', { embedding: heard.speaker, frames: heard.speakerFrames });
-        } else {
-          emitter.emit('enrol-short', { frames: heard.speakerFrames });
-        }
-        wake!.reset();
-        forgetReplay();
-        return;
-      }
-
-      lastSpeakerScore = scoreSpeaker(heard.speaker);
-      inFollowUp = false;
-      phase = 'awake';
-      wokeAt = now;
-      command!.reset();
-      emitter.emit('wake', { speakerScore: lastSpeakerScore });
-      if (testing(now))
-        emitter.emit('heard', { kind: 'wake', text: heard.text, speakerScore: lastSpeakerScore, peak: level, matchedWake: true });
-
-      /*
-       * Replay everything the wake recogniser just consumed.
-       *
-       * Vosk reports the wake word only once the whole utterance ends, so for
-       * anyone who doesn't pause after it, the command has already gone by. The
-       * buffer holds it; feeding it to the command recogniser is what lets
-       * "hey jarvis I drank water" work said as one sentence.
-       */
-      let replayed: Utterance | null = null;
-      for (const block of replay) replayed = command!.accept(block) ?? replayed;
-      forgetReplay();
-
-      // A completed result here means the sentence was already finished — the
-      // run-together case. If it holds only the wake word, you paused after
-      // it and is still to speak, so keep listening rather than filing "jarvis"
-      // as a note.
-      if (replayed?.text && hasCommand(replayed.text)) {
-        phase = 'idle';
-        wake!.reset();
-        deliver(replayed.text, level);
-      }
+      // Nothing settled yet. Whatever the recogniser is *leaning towards* is
+      // not consulted — see `settledWake`.
+      if (heard) settledWake(heard, now, level);
       return;
     }
 
     // Awake: everything now goes to the command recogniser until it finishes a
-    // phrase or the window closes.
+    // phrase or the window closes. Its partial is not consulted either — the
+    // command endpointer is prompt (measured at 100ms after speech ends), so
+    // there was never much to win and acting early on a revisable transcript
+    // risks running the wrong command.
     const finished = command!.accept(samples);
     const window = inFollowUp ? followWindow : VOICE_COMMAND_TIMEOUT_MS;
     const timedOut = now - wokeAt > window;
@@ -461,21 +428,38 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     if (!finished && !timedOut) return;
 
     const utterance = finished ?? command!.flush();
+
+    /*
+     * Nothing but the wake word, and the window is still open — you have not
+     * started the command yet. Keep listening.
+     *
+     * This is the other half of the cost of waking on a partial. The exchange
+     * now begins mid-word, so the pause between "hey jarvis" and what you
+     * actually wanted falls *inside* the command window: the recogniser
+     * endpoints on that pause holding only the replayed wake word, and the old
+     * code read that as a miss. The result was "Didn't catch that" arriving
+     * before you had said anything to catch.
+     *
+     * Resetting gives the command a clean recogniser, and `timedOut` still
+     * bounds the whole thing — a wake with genuine silence after it is reported
+     * as a miss once `VOICE_COMMAND_TIMEOUT_MS` is up, which is the point at
+     * which it is true.
+     */
+    if (!timedOut && !hasCommand(utterance.text)) {
+      command!.reset();
+      return;
+    }
+
     phase = 'idle';
     inFollowUp = false;
     wake!.reset();
     forgetReplay();
 
-    // Same guard as the replay path: a transcript of nothing but the wake word
-    // is someone who trailed off, not a command.
-    if (utterance.text && !hasCommand(utterance.text)) {
+    // Reached only once the window is up: this really was someone who woke it
+    // and then said nothing usable.
+    if (!utterance.text || !hasCommand(utterance.text)) {
       emitter.emit('missed');
-      return;
-    }
-
-    if (!utterance.text) {
-      emitter.emit('missed');
-      if (testing(now)) {
+      if (!utterance.text && testing(now)) {
         emitter.emit('heard', { kind: 'command', text: '', speakerScore: lastSpeakerScore, peak: level, matchedWake: false });
       }
       return;
@@ -486,6 +470,120 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     emitter.emit('sleep');
 
     deliver(utterance.text, level);
+  }
+
+  /**
+   * A **settled** answer from the wake recogniser — act on it, or don't.
+   *
+   * Only ever called with a committed result: either Vosk's own endpointer
+   * fired, or the utterance boundary made us ask. Deliberately *not* called
+   * with a partial.
+   *
+   * Firing on partials was tried, to make the popup appear while you were still
+   * saying the word, and it cost far too much. Measured over ten lines of
+   * ordinary conversation with `npm run wake-falsing -w @everything/agent`:
+   *
+   *   false wakes on a partial : 3 / 10
+   *   false wakes when settled : 1 / 10
+   *
+   * Three times the interruptions, in exchange for about 700ms — and it was not
+   * even reliable at the job it was added for: a briskly spoken "hey jarvis"
+   * *missed* on the partial and landed only once settled. A wake word that goes
+   * off while you are talking to somebody else is worse than one that answers a
+   * moment later, and this is an always-on microphone in a room with people in
+   * it.
+   */
+  function settledWake(heard: Utterance, now: number, level: number): void {
+    // Grammar mode still returns `[unk]` for anything off-list, so this means
+    // the wake word rather than merely "some speech happened". Leading
+    // attention words are optional — see `wakeWordRequired`: "hey" is dropped
+    // by the recogniser far more often than the name it precedes is.
+    if (!matchesWakeWord(heard.text, config!.wakeWord)) {
+      // That sentence was not for us, so nothing buffered belongs to whatever
+      // comes next.
+      forgetReplay();
+      wake!.reset();
+      return;
+    }
+
+    /*
+     * Enrolling: the wake word is a sample, not an instruction.
+     *
+     * Collected from the wake word rather than free speech on purpose — the
+     * enrolled vectors and the ones compared against them at runtime then come
+     * from the same words, at the same distance, on the same microphone, which
+     * is what lets the threshold be strict.
+     */
+    if (enrolling(now)) {
+      if (heard.speaker && heard.speakerFrames >= VOICE_ENROL_MIN_FRAMES) {
+        emitter.emit('enrol-sample', { embedding: heard.speaker, frames: heard.speakerFrames });
+      } else {
+        emitter.emit('enrol-short', { frames: heard.speakerFrames });
+      }
+      wake!.reset();
+      forgetReplay();
+      return;
+    }
+
+    beginExchange(now, level, scoreSpeaker(heard.speaker), heard.text);
+  }
+
+  /**
+   * Start listening for a command.
+   *
+   * Always reached with a real speaker score, because the wake word is only
+   * ever acted on once the recogniser has committed to it — and a committed
+   * result carries the embedding.
+   */
+  function beginExchange(now: number, level: number, speakerScore: number | null, text: string): void {
+    stats.wakes++;
+
+    lastSpeakerScore = speakerScore;
+    inFollowUp = false;
+    phase = 'awake';
+    wokeAt = now;
+    command!.reset();
+
+    emitter.emit('wake', { speakerScore });
+    if (testing(now)) {
+      emitter.emit('heard', { kind: 'wake', text, speakerScore, peak: level, matchedWake: true });
+    }
+
+    /*
+     * Replay everything the wake recogniser just consumed.
+     *
+     * Vosk reports the wake word only once the whole utterance ends, so for
+     * anyone who doesn't pause after it, the command has already gone by. The
+     * buffer holds it; feeding it to the command recogniser is what lets
+     * "hey jarvis I drank water" work said as one sentence.
+     */
+    let replayed: Utterance | null = null;
+    for (const block of replay) replayed = command!.accept(block) ?? replayed;
+    forgetReplay();
+
+    // A completed result here means the sentence was already finished — the
+    // run-together case. If it holds only the wake word, you paused after
+    // it and is still to speak, so keep listening rather than filing "jarvis"
+    // as a note.
+    if (replayed?.text && hasCommand(replayed.text)) {
+      phase = 'idle';
+      deliver(replayed.text, level);
+      wake!.reset();
+      return;
+    }
+
+    /*
+     * Now it is your turn, and that is the moment the tone marks.
+     *
+     * Emitted here rather than with `wake` so the run-together case above can
+     * skip it: said in one breath there was never a gap to acknowledge, and the
+     * result tone is a moment away. Two beeps on top of each other is worse
+     * than one.
+     *
+     * The wake word is only ever acted on once you have stopped speaking, so
+     * "now" is already the right instant — no waiting for a quiet block.
+     */
+    emitter.emit('listening');
   }
 
   function deliver(text: string, level = 0): void {

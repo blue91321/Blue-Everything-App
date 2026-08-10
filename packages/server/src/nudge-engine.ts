@@ -11,6 +11,7 @@ import {
   isAwayFromPc,
   quietReason,
   qualityRank,
+  resolvePush,
   type AttentionReport,
   type AttentionState,
   type DeliverableNudge,
@@ -178,13 +179,14 @@ export async function collectDeliverable(
       )
     );
 
-  const winners: { nudge: DeliverableNudge; escalated: boolean }[] = [];
+  const winners: { nudge: DeliverableNudge; escalated: boolean; mayPush: boolean }[] = [];
   for (const nudge of candidates) {
     const decision = shouldDeliver(nudge, { now, state: report.state, moment: effectiveMoment, quiet });
     if (!decision.deliver) continue;
 
     winners.push({
       escalated: decision.escalated,
+      mayPush: Boolean(nudge.pushToPhone),
       nudge: {
         id: nudge.id,
         title: nudge.title,
@@ -201,16 +203,29 @@ export async function collectDeliverable(
     return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
   }
 
+  /**
+   * On the phone leg, drop the ones that asked not to buzz a pocket.
+   *
+   * They are not consumed — nothing marks them delivered — so they simply keep
+   * waiting and become a toast the moment you sit back down. That is the whole
+   * point of the setting: "not worth a phone" and "not worth telling me" are
+   * different claims, and only the first is being made here.
+   */
+  const going = toPhone ? winners.filter((w) => w.mayPush) : winners;
+  // Checked before the send so a queue of desk-only nudges cannot spend the
+  // ten-minute push cooldown on a notification that was never going out.
+  if (going.length === 0) return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
+
   // Send before marking anything delivered: with no phone subscribed, or the
   // push service refusing, these must stay queued rather than vanish unseen.
   let pushed = 0;
   if (toPhone) {
-    const outcome = await phones().sendToPhones(winners.map((w) => w.nudge), now);
+    const outcome = await phones().sendToPhones(going.map((w) => w.nudge), now);
     pushed = outcome.sent;
     if (pushed === 0) return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
   }
 
-  for (const { nudge, escalated } of winners) {
+  for (const { nudge, escalated } of going) {
     await db
       .update(nudges)
       .set({
@@ -225,7 +240,7 @@ export async function collectDeliverable(
   }
 
   return {
-    deliver: toPhone ? [] : winners.map((w) => w.nudge),
+    deliver: toPhone ? [] : going.map((w) => w.nudge),
     pushed,
     channel: toPhone ? 'push' : 'toast',
     awayFromPc,
@@ -278,6 +293,10 @@ export async function sweepHabitReminders(now = Date.now()): Promise<number> {
     .where(and(eq(habits.active, 1), isNotNull(habits.reminderEveryMinutes)));
 
   if (due.length === 0) return 0;
+
+  // Resolved here rather than at delivery: the queued nudge should carry the
+  // answer that applied when it was raised, and its habit may be gone by then.
+  const pushDefault = Boolean((await getSettings()).pushDefault);
 
   const live = await db
     .select({ habitId: nudges.habitId })
@@ -336,6 +355,7 @@ export async function sweepHabitReminders(now = Date.now()): Promise<number> {
       // Habits are small and frequent; they should never break a match, and
       // never carry a deadline that would escalate.
       minQuality: 'any',
+      pushToPhone: resolvePush(habit.pushToPhone, pushDefault) ? 1 : 0,
     });
     created++;
   }
@@ -414,6 +434,9 @@ export async function sweepDueTasks(now = Date.now()): Promise<number> {
   }
 
   const fresh = dueTasks.filter((t) => !spokenFor.has(t.id));
+  // Read once for the batch rather than per task — see `sweepHabitReminders`.
+  const pushDefault = fresh.length > 0 ? Boolean((await getSettings()).pushDefault) : true;
+
   for (const task of fresh) {
     /**
      * An all-day task is due *that day*, not at 23:59 — so it becomes eligible
@@ -434,6 +457,7 @@ export async function sweepDueTasks(now = Date.now()): Promise<number> {
       // after it, interrupt. For an all-day task that is the end of the day.
       deadlineAt: task.dueAt,
       minQuality: task.priority >= 2 ? 'decent' : 'prime',
+      pushToPhone: resolvePush(task.pushToPhone, pushDefault) ? 1 : 0,
     });
   }
 

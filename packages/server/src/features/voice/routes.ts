@@ -44,10 +44,12 @@ import {
   labelFor,
   loadCommands,
   parsePhrases,
+  planChain,
   resolveVoiceCommand,
   runCommand,
   phraseWordsFor,
   vocabularyFor,
+  type VoiceOutcome,
 } from './actions.js';
 
 /** Stored as whole percent so the column stays an integer like every other flag. */
@@ -172,6 +174,29 @@ const HEARD_LIMIT = 40;
  */
 const AGENT_STALE_MS = 45_000;
 
+/**
+ * Tell the open clients what a spoken command actually changed.
+ *
+ * Only what *wrote* something. An ambiguous or unmatched utterance changed
+ * nothing, and with an always-on microphone those are the common case —
+ * broadcasting them would reload every client on room noise.
+ *
+ * Recursive for `chained`, whose steps are ordinary outcomes and can be any mix
+ * of them. Written as one function rather than three copies because the chain
+ * added a third caller, and the copy that gets forgotten is always the one that
+ * leaves the phone showing a habit as undone after you said you'd done it.
+ */
+function announce(result: VoiceOutcome): void {
+  for (const step of result.steps ?? []) announce(step);
+
+  if (result.outcome === 'habit-checked') changes.emitChange('habits');
+  if (result.outcome === 'note-added' || result.outcome === 'captured-as-note') changes.emitChange('notes');
+  if (result.outcome === 'paused') {
+    changes.emitChange('settings');
+    bumpVoice();
+  }
+}
+
 export async function voiceRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Everything the agent needs to listen. Polled rarely — the wake word only
@@ -285,6 +310,14 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       device: fresh ? (agentState!.device ?? null) : null,
       devices: fresh ? agentState!.devices : [],
       error: fresh ? (agentState!.error ?? null) : null,
+      /**
+       * The microphone is closed because the chair is empty.
+       *
+       * A separate answer from `paused` and from `error`: nothing is wrong and
+       * nothing was switched off, so the screen should say so rather than
+       * leaving a switch reading "on" next to a microphone that is shut.
+       */
+      awayFromPc: fresh ? (agentState!.awayFromPc ?? false) : false,
       peak: fresh ? agentState!.peak : 0,
       lastReportAt: agentState?.at ?? null,
       selectedDevice: row.voiceInputDevice,
@@ -388,17 +421,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const result = await resolveVoiceCommand(body.text, await loadCommands(), row.wakeWord);
-
-    // Announce only what actually wrote something. An ambiguous or unmatched
-    // utterance changed nothing, and with an always-on microphone those are the
-    // common case — broadcasting them would reload every client on room noise.
-    if (result.outcome === 'habit-checked') changes.emitChange('habits');
-    if (result.outcome === 'note-added' || result.outcome === 'captured-as-note') changes.emitChange('notes');
-    if (result.outcome === 'paused') {
-      changes.emitChange('settings');
-      bumpVoice();
-    }
-
+    announce(result);
     return result;
   });
 
@@ -412,12 +435,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     if (!command) return reply.code(404).send({ error: 'no such command' });
 
     const result = { ...(await runCommand(command, text, command.phrases[0] ?? '', row.wakeWord)), allowFollowUp: command.allowFollowUp };
-    if (result.outcome === 'habit-checked') changes.emitChange('habits');
-    if (result.outcome === 'note-added') changes.emitChange('notes');
-    if (result.outcome === 'paused') {
-      changes.emitChange('settings');
-      bumpVoice();
-    }
+    announce(result);
     return result;
   });
 
@@ -649,6 +667,28 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       .filter((command) => command.phrases.length > 0)
       .map((command) => ({ id: command.id, phrases: command.phrases }));
 
+    // Asked first, exactly as the real path does — "drink water and skip this
+    // track" matches "drink water" as a whole sentence, so reporting the single
+    // match would describe half of what would actually happen.
+    const chain = planChain(body.text, commands, candidates, (await getSettings()).wakeWord);
+    if (chain) {
+      return {
+        heard: body.text,
+        tokens: voiceTokens(body.text),
+        count: spokenCount(body.text),
+        match: null,
+        chain: await Promise.all(
+          chain.map(async (step) => ({
+            phrase: step.phrase,
+            kind: step.command.kind,
+            habitName: await labelFor(step.command),
+            // Per segment, because that is how the real path counts them.
+            count: spokenCount(step.segment),
+          }))
+        ),
+      };
+    }
+
     const match = matchVoiceCommand(body.text, candidates);
     const matched = match ? commands.find((c) => c.id === match.id) : undefined;
     return {
@@ -656,6 +696,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       tokens: voiceTokens(body.text),
       count: spokenCount(body.text),
       match: match && matched ? { ...match, habitName: await labelFor(matched), kind: matched.kind } : null,
+      chain: null,
     };
   });
 

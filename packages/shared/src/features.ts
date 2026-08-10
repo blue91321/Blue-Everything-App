@@ -43,6 +43,20 @@ export interface FeatureSpec {
   cost?: string;
   /** Must be on for this one to work. */
   requires?: FeatureId[];
+  /**
+   * Its own version, for a feature that does **not** ship with the app.
+   *
+   * Absent is the honest answer for everything here today: they all come out of
+   * this repo, in one commit, and the five workspace packages deliberately
+   * share one number — see the Versions section in CLAUDE.md. A feature with no
+   * `version` reports the app's, and the Packages screen says it moves with the
+   * app rather than showing a number that looks independent and is not.
+   *
+   * It exists for the case being built toward: a feature downloaded separately,
+   * which genuinely can be a different version from the app around it. Adding
+   * that field then is a one-line change here rather than a new concept.
+   */
+  version?: string;
 }
 
 export const FEATURES: Record<FeatureId, FeatureSpec> = {

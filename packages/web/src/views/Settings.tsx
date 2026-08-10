@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type AppSettings, type Session } from '../api';
+import { api, type AppSettings, type Device, type Session } from '../api';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
 import { Toggle } from '../controls';
@@ -48,7 +48,7 @@ const THEME_LABELS: { id: AppTheme; label: string; hint: string }[] = [
  * reload triggered by the save puts it right if the write failed.
  */
 function Appearance() {
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const [busy, setBusy] = useState(false);
 
   const current = settings.data;
@@ -252,22 +252,93 @@ function LogoPicker({ current, onChanged }: { current: AppSettings | undefined; 
   );
 }
 
-export function Settings({ session, onChanged }: { session: Session; onChanged: () => void }) {
-  const devices = useAsync(() => api.devices.list());
-  const [adding, setAdding] = useState(false);
+/**
+ * The Settings tabs.
+ *
+ * One long scroll was fine when this screen was a theme picker and a quiet-hours
+ * switch. It is now appearance, reminders, phone push, sound, four kinds of
+ * device, and the switches that decide which parts of the app exist at all —
+ * and the thing you came to change was always somewhere in the middle of it.
+ *
+ * Which tab is open lives in `useState` like every other bit of navigation
+ * here: there is no router, and the app has never had a URL for a screen.
+ */
+const TABS = [
+  { id: 'general', label: 'General', hint: 'Appearance and reminders' },
+  { id: 'notifications', label: 'Notifications', hint: 'Sound, quiet hours and the phone' },
+  { id: 'devices', label: 'Devices', hint: 'Phones, browsers and the extension' },
+  { id: 'packages', label: 'Packages', hint: 'Which parts of the app run' },
+] as const;
 
+type TabId = (typeof TABS)[number]['id'];
+
+export function Settings({ session, onChanged }: { session: Session; onChanged: () => void }) {
+  const [tab, setTab] = useState<TabId>('general');
+
+  return (
+    <>
+      <div className="tabs" role="tablist" aria-label="Settings sections">
+        {TABS.map((entry) => (
+          <button
+            key={entry.id}
+            role="tab"
+            className={`tab${tab === entry.id ? ' on' : ''}`}
+            aria-selected={tab === entry.id}
+            title={entry.hint}
+            onClick={() => setTab(entry.id)}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'general' && <GeneralTab />}
+      {tab === 'notifications' && <NotificationsTab session={session} />}
+      {tab === 'devices' && <DevicesTab session={session} onChanged={onChanged} />}
+      {tab === 'packages' && <PackagesTab session={session} />}
+    </>
+  );
+}
+
+function GeneralTab() {
+  return (
+    <>
+      <Appearance />
+      <section>
+        <h2>This app</h2>
+        <div className="card">
+          <div className="meta">
+            Everything here is stored on the PC running the server, so the phone and the desktop always
+            agree. Nothing is sent anywhere else.
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function NotificationsTab({ session }: { session: Session }) {
   // An older server sends no feature list; absent means everything, not nothing.
   const has = (id: string) => session.features === undefined || session.features.includes(id);
 
   return (
     <>
-      <Appearance />
       <QuietHours />
-      {/* Both of these configure a feature. With it switched off they would be
-          settings for something that cannot happen — the phone section in
-          particular would offer a subscribe button with no key behind it. */}
+      {/* Configures a feature. With push off this would be a subscribe button
+          with no key behind it. */}
       {has('push') && <PhoneNudges />}
+    </>
+  );
+}
 
+function DevicesTab({ session, onChanged }: { session: Session; onChanged: () => void }) {
+  const devices = useAsync(() => api.devices.list(), [], ['devices']);
+  const [adding, setAdding] = useState(false);
+
+  const has = (id: string) => session.features === undefined || session.features.includes(id);
+
+  return (
+    <>
       <section>
         <h2>This device</h2>
         <div className="card">
@@ -306,37 +377,249 @@ export function Settings({ session, onChanged }: { session: Session; onChanged: 
         {devices.loading && <div className="empty">loading…</div>}
         {devices.data?.length === 0 && <div className="empty">No devices connected yet.</div>}
         {devices.data?.map((device) => (
-          <div className="card" key={device.id}>
-            <div className="row between">
-              <div className="grow">
-                <div className={`title${device.revokedAt ? ' struck' : ''}`}>{device.name}</div>
-                <div className="meta">
-                  {device.kind}
-                  {device.revokedAt
-                    ? ' · revoked'
-                    : device.lastSeenAt
-                      ? ` · seen ${relative(device.lastSeenAt)}`
-                      : ' · never used'}
-                </div>
-              </div>
-              {!device.revokedAt && session.local && (
-                <button
-                  className="btn subtle danger"
-                  onClick={() =>
-                    api.devices.revoke(device.id).then(() => {
-                      devices.reload();
-                      onChanged();
-                    })
-                  }
-                >
-                  revoke
-                </button>
-              )}
-            </div>
-          </div>
+          <DeviceRow
+            key={device.id}
+            device={device}
+            local={session.local}
+            onChanged={() => {
+              devices.reload();
+              onChanged();
+            }}
+          />
         ))}
       </section>
     </>
+  );
+}
+
+/**
+ * Which parts of the app run at all.
+ *
+ * Not the same question as any other switch on this screen. Turning quiet hours
+ * off changes what the app *does*; turning the vault off means its routes are
+ * never registered, its tab never appears, and the agent never loads its code.
+ * That is why it needs a restart and says so rather than pretending to be
+ * instant — the alternative was unregistering Fastify routes at runtime, which
+ * is a large fragile thing to build for a switch flipped twice a year.
+ */
+function PackagesTab({ session }: { session: Session }) {
+  const state = useAsync(() => api.features.get(), [], ['settings']);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  const data = state.data;
+  if (state.loading) return <div className="empty">loading…</div>;
+  if (!data) return <div className="banner">Could not read the feature list.</div>;
+
+  async function toggle(id: string, enabled: boolean) {
+    setError('');
+    setBusy(id);
+    try {
+      await api.features.set(id, enabled);
+      state.reload();
+    } catch {
+      setError('That could not be saved. Features can only be changed from the PC running the server.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const updates = data.updates;
+
+  return (
+    <section>
+      <h2>Packages</h2>
+      <div className="meta" style={{ marginBottom: 12 }}>
+        Optional parts of the app. Switching one off unregisters its API routes, hides its tab, and stops
+        the agent loading it — you get the memory and the disk back, not just the menu entry.
+      </div>
+
+      {/* Absent on a server older than per-package versions. */}
+      {data.appVersion && (
+        <div className="card">
+          <div className="row between">
+            <div className="grow">
+              <div className="title">Blue Everything {data.appVersion}</div>
+              <div className="meta" style={{ marginTop: 4 }}>
+                {updates?.configured
+                  ? `Updates come from ${updates.source}.`
+                  : 'Everything below ships with the app, so it is all this version. Packages downloaded separately will show their own.'}
+              </div>
+              {/* Says why rather than leaving a dead button to be poked at.
+                  The same reasoning as the switches being disabled when
+                  EVERYTHING_FEATURES overrides them. */}
+              {!updates?.configured && (
+                <div className="meta" style={{ marginTop: 4 }}>
+                  No update source is set up yet — set <code>UPDATE_URL</code> once the download site exists.
+                </div>
+              )}
+            </div>
+            <button
+              className="btn"
+              disabled={!updates?.configured}
+              title={updates?.configured ? 'Check the download site for newer versions' : 'No update source configured'}
+              onClick={() => setError('Update checking is not wired up yet.')}
+            >
+              Check for updates
+            </button>
+          </div>
+        </div>
+      )}
+
+      {data.lockedByEnv && (
+        <div className="banner">
+          <strong>EVERYTHING_FEATURES is set</strong>, and it overrides <code>features.json</code>. These
+          switches would write a file nothing reads, so they are disabled until it is unset.
+        </div>
+      )}
+
+      {data.pendingRestart && (
+        <div className="banner">
+          <strong>Restart to apply.</strong> The choices below are saved, but the running app still has the
+          old set — features are resolved once when it starts. Right-click the tray icon and choose
+          <strong> Restart</strong>.
+        </div>
+      )}
+
+      {!session.local && (
+        <div className="meta" style={{ marginBottom: 10 }}>
+          These can only be changed from the PC running the server.
+        </div>
+      )}
+
+      {error && <div className="banner">{error}</div>}
+
+      {data.features.map((feature) => (
+        <div className="card" key={feature.id}>
+          <div className="row between">
+            <div className="grow">
+              <div className="title">
+                {feature.label}
+                {/* The version sits on the row rather than in a column of its
+                    own: with everything bundled they are all the same number,
+                    and a column of identical values reads as noise until one
+                    of them genuinely diverges. */}
+                {feature.version && (
+                  <span className="meta" title={feature.bundled ? 'ships with the app' : 'installed separately'}>
+                    {' '}
+                    · {feature.version}
+                    {feature.bundled ? '' : ' (separate)'}
+                  </span>
+                )}
+                {feature.missing && (
+                  <span className="urgent" title="switched on, but its folders are gone from disk">
+                    {' '}
+                    ⚠ not installed
+                  </span>
+                )}
+                {/* Saved but not yet live — the restart banner explains it once,
+                    this says which rows it is about. */}
+                {feature.wanted !== feature.running && (
+                  <span className="meta"> · {feature.wanted ? 'on' : 'off'} after restart</span>
+                )}
+              </div>
+              <div className="meta" style={{ marginTop: 4 }}>
+                {feature.blurb}
+              </div>
+              {feature.cost && (
+                <div className="meta" style={{ marginTop: 4 }}>
+                  Costs: {feature.cost}
+                </div>
+              )}
+              {/* The honest boundary: some of these switch off cleanly but
+                  cannot be deleted, because the Dashboard renders them inline.
+                  Saying so beats a `removable: true` that sends somebody
+                  deleting a folder and into a broken build. */}
+              <div className="meta" style={{ marginTop: 4 }}>
+                {feature.removable
+                  ? 'Can also be deleted from disk entirely.'
+                  : 'Can be switched off, but not removed — the Dashboard uses it.'}
+              </div>
+            </div>
+
+            <Toggle
+              on={feature.wanted}
+              disabled={busy !== null || data.lockedByEnv || !session.local}
+              label={`${feature.label} on`}
+              onChange={(on) => void toggle(feature.id, on)}
+            />
+          </div>
+
+          {feature.missing && (
+            <div className="meta" style={{ marginTop: 8 }}>
+              Its folders have been removed: {feature.owns.join(', ') || 'none listed'}. Switching it off
+              stops the app expecting it.
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/**
+ * One paired device, and what can be done to it.
+ *
+ * Revoked ones stay on the list until they are cleared by hand, because the row
+ * *is* the record that it happened — but a list that only ever grows turns into
+ * a wall of struck-through names, and there is no way to tell which of four
+ * revoked "iPhone" entries is which. So the record can be closed once it has
+ * been read.
+ *
+ * Removing asks first. It is the only irreversible thing on this screen, and it
+ * sits one button away from `revoke`, which is not.
+ */
+function DeviceRow({
+  device,
+  local,
+  onChanged,
+}: {
+  device: Device;
+  local: boolean;
+  onChanged: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <div className="card">
+      <div className="row between">
+        <div className="grow">
+          <div className={`title${device.revokedAt ? ' struck' : ''}`}>{device.name}</div>
+          <div className="meta">
+            {device.kind}
+            {device.revokedAt
+              ? ` · revoked ${relative(device.revokedAt)}`
+              : device.lastSeenAt
+                ? ` · seen ${relative(device.lastSeenAt)}`
+                : ' · never used'}
+          </div>
+        </div>
+
+        {!device.revokedAt && local && (
+          <button className="btn subtle danger" onClick={() => api.devices.revoke(device.id).then(onChanged)}>
+            revoke
+          </button>
+        )}
+
+        {device.revokedAt &&
+          local &&
+          (confirming ? (
+            <>
+              <span className="meta">remove for good?</span>
+              <button className="btn subtle danger" onClick={() => api.devices.remove(device.id).then(onChanged)}>
+                yes
+              </button>
+              <button className="btn subtle" onClick={() => setConfirming(false)}>
+                no
+              </button>
+            </>
+          ) : (
+            <button className="btn subtle" onClick={() => setConfirming(true)}>
+              remove
+            </button>
+          ))}
+      </div>
+    </div>
   );
 }
 
@@ -348,7 +631,7 @@ export function Settings({ session, onChanged }: { session: Session; onChanged: 
  * actually receive them.
  */
 function PhoneNudges() {
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const [subscribed, setSubscribed] = useState<boolean | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -410,6 +693,37 @@ function PhoneNudges() {
           />
         </div>
       </div>
+
+      {/* Absent on a server older than the column. Rendering a switch that
+          would be silently dropped is worse than not offering it. */}
+      {current.pushDefault !== undefined && (
+        <div className="card">
+          <div className="row between">
+            <div className="grow">
+              <div className="title">Push new tasks and habits by default</div>
+              <div className="meta">
+                What something gets when you haven't said either way. Each task and habit can override
+                this in its own editor, and anything left on <em>Default</em> follows this switch —
+                including things you made before you changed it.
+              </div>
+            </div>
+            <Toggle
+              on={Boolean(current.pushDefault)}
+              disabled={busy || !current.pushEnabled}
+              label="Push new tasks and habits by default"
+              onChange={async (on) => {
+                await api.settings.update({ pushDefault: on });
+                settings.reload();
+              }}
+            />
+          </div>
+          {!current.pushEnabled && (
+            <div className="meta" style={{ marginTop: 8 }}>
+              Nothing goes to the phone at all while the switch above is off, so this has no effect yet.
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card">
         <div className="row between">
@@ -566,7 +880,7 @@ const PAUSE_CHOICES = [
  * switch flipped when you actually go to bed), and a manual pause.
  */
 function QuietHours() {
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const [saving, setSaving] = useState(false);
 
   const current = settings.data;
@@ -603,6 +917,29 @@ function QuietHours() {
           </button>
         </div>
       </div>
+
+      {/* Absent on a server older than the column — see AppSettings. */}
+      {current.soundEnabled !== undefined && (
+        <div className="card">
+          <div className="row between">
+            <div className="grow">
+              <div className="title">Play a sound</div>
+              <div className="meta">
+                A short tone with each popup — one for a nudge, and for voice, one when it starts
+                listening and another when it did or didn't catch you. A nudge that quiet hours are
+                holding makes no sound because it never arrives; a voice reply still will, since you
+                asked for it.
+              </div>
+            </div>
+            <Toggle
+              on={Boolean(current.soundEnabled)}
+              disabled={saving}
+              label="Play a sound with popups"
+              onChange={(on) => update({ soundEnabled: on })}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="row between">
@@ -700,7 +1037,7 @@ function QuietHours() {
  * debug from the sofa — so the guide leads with getting that right.
  */
 function AddDeviceGuide({ onAdded }: { onAdded: () => void }) {
-  const info = useAsync(() => api.connectInfo());
+  const info = useAsync(() => api.connectInfo(), [], ['devices']);
   const [name, setName] = useState('iPhone');
   const [issued, setIssued] = useState<string | null>(null);
   const [error, setError] = useState('');

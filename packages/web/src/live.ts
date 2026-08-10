@@ -12,7 +12,30 @@ import { getToken } from './api';
  * costs about thirty lines and keeps the token in a header.
  */
 
-type Listener = () => void;
+/**
+ * Which part of the app changed.
+ *
+ * The server has always sent this and the client used to drop it on the floor,
+ * so a change to one setting reloaded every list on screen. Passing it through
+ * is what lets a reader say "only wake me for the thing I am showing".
+ *
+ * Deliberately a plain string union rather than an import from
+ * `@everything/shared` — see the note in `api.ts` about the bundle. Extra
+ * scopes the client does not know about still work, because an unrecognised
+ * one is treated as `all`.
+ */
+export type ChangeScope =
+  | 'tasks'
+  | 'habits'
+  | 'notes'
+  | 'nudges'
+  | 'settings'
+  | 'devices'
+  | 'time'
+  | 'vault'
+  | 'all';
+
+type Listener = (scope: ChangeScope) => void;
 
 const listeners = new Set<Listener>();
 
@@ -26,11 +49,25 @@ let notifyTimer: ReturnType<typeof setTimeout> | null = null;
 let retryDelay = RECONNECT_MIN_MS;
 let running = false;
 
-function notify(): void {
+/**
+ * Scopes seen since the last flush.
+ *
+ * Debouncing collapses a burst into one notification, so the scopes have to be
+ * collected rather than overwritten — a save that touches settings *and* habits
+ * within 150ms must wake both readers, not only the later one.
+ */
+let pending = new Set<ChangeScope>();
+
+function notify(scope: ChangeScope): void {
+  pending.add(scope);
   if (notifyTimer) clearTimeout(notifyTimer);
   notifyTimer = setTimeout(() => {
     notifyTimer = null;
-    for (const listener of listeners) listener();
+    const scopes = pending;
+    pending = new Set();
+    for (const listener of listeners) {
+      for (const each of scopes) listener(each);
+    }
   }, DEBOUNCE_MS);
 }
 
@@ -61,7 +98,22 @@ async function readStream(signal: AbortSignal): Promise<void> {
     while (split !== -1) {
       const frame = buffer.slice(0, split);
       buffer = buffer.slice(split + 2);
-      if (frame.split('\n').some((line) => line.startsWith('data:'))) notify();
+
+      const data = frame.split('\n').find((line) => line.startsWith('data:'));
+      if (data) {
+        let scope: ChangeScope = 'all';
+        try {
+          // A server older than the scope field, or a frame we cannot read,
+          // falls back to "everything changed" — the previous behaviour, and
+          // the safe direction to be wrong in.
+          const parsed = JSON.parse(data.slice('data:'.length)) as { scope?: string };
+          if (parsed.scope) scope = parsed.scope as ChangeScope;
+        } catch {
+          /* keep `all` */
+        }
+        notify(scope);
+      }
+
       split = buffer.indexOf('\n\n');
     }
   }
@@ -92,17 +144,31 @@ function start(): void {
   // reconnect that may be seconds away.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
-    notify();
+    // Anything could have happened while it was asleep, so everything refetches.
+    notify('all');
     retryDelay = RECONNECT_MIN_MS;
     connection?.abort(); // forces the loop to reconnect now
   });
 }
 
-/** Call the listener whenever server data changes. Returns an unsubscribe. */
-export function onDataChange(listener: Listener): () => void {
-  listeners.add(listener);
+/**
+ * Call the listener when server data changes. Returns an unsubscribe.
+ *
+ * `watch` narrows it to the scopes that reader actually shows; omit it to hear
+ * everything, which is what the app did before scopes were passed through.
+ * `all` always gets through — it is the server saying it does not know what
+ * changed, and guessing on its behalf is how a screen goes stale.
+ */
+export function onDataChange(listener: Listener, watch?: readonly ChangeScope[]): () => void {
+  const filtered: Listener = watch
+    ? (scope) => {
+        if (scope === 'all' || watch.includes(scope)) listener(scope);
+      }
+    : listener;
+
+  listeners.add(filtered);
   start();
   return () => {
-    listeners.delete(listener);
+    listeners.delete(filtered);
   };
 }

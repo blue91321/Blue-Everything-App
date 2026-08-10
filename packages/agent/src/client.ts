@@ -44,6 +44,16 @@ export interface VoiceConfig {
 export interface AttentionResponse {
   moment: string | null;
   deliver: DeliverableNudge[];
+  /**
+   * Whether popups should make a noise.
+   *
+   * Rides on the heartbeat rather than the voice config because popups are core
+   * — an install with `features/voice` deleted still raises nudges, and this is
+   * the only request the agent always makes. Optional, because a server older
+   * than the column sends nothing and silence-by-accident would be the wrong
+   * default for a setting that is on.
+   */
+  soundEnabled?: boolean;
 }
 
 /** Something for the agent to do on the machine you are sitting at. */
@@ -66,6 +76,8 @@ export interface VoiceOutcome {
     | 'cancelled'
     | 'captured-as-note'
     | 'ambiguous'
+    /** Several commands in one sentence, joined by "and". See `steps`. */
+    | 'chained'
     | 'no-match'
     | 'wrong-speaker'
     | 'disabled';
@@ -73,6 +85,14 @@ export interface VoiceOutcome {
   /** Human-readable summary — what the overlay will show. */
   say?: string;
   action?: VoiceAction;
+  /**
+   * The parts of a `chained` outcome, in the order they were said.
+   *
+   * Each is an ordinary outcome and may carry its own `action`, so the agent
+   * runs them in turn rather than looking for a flattened list of instructions.
+   * Absent on everything else.
+   */
+  steps?: VoiceOutcome[];
   choices?: { id: string; label: string }[];
   /** Whether this command lets the microphone stay open afterwards. */
   allowFollowUp?: boolean;

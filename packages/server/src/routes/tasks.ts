@@ -27,6 +27,19 @@ function normaliseDue(body: { dueAt?: number | null; dueIsAllDay?: boolean }) {
   };
 }
 
+/**
+ * Three states into a nullable integer, since SQLite has no boolean.
+ *
+ * `undefined` (not in the patch) has to stay out of the object entirely or
+ * Drizzle would write it; `null` is a deliberate "go back to following the
+ * default" and must be written. Those two look the same in a spread, which is
+ * why this is a function rather than an inline ternary.
+ */
+function normalisePush(body: { pushToPhone?: boolean | null }) {
+  if (body.pushToPhone === undefined) return {};
+  return { pushToPhone: body.pushToPhone === null ? null : body.pushToPhone ? 1 : 0 };
+}
+
 export async function taskRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/tasks', async (request) => {
     const { status, projectId } = request.query as { status?: string; projectId?: string };
@@ -52,7 +65,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     const body = createTaskSchema.parse(request.body);
     const [created] = await db
       .insert(tasks)
-      .values({ ...body, ...normaliseDue(body) })
+      .values({ ...body, ...normaliseDue(body), ...normalisePush(body) })
       .returning();
     return reply.code(201).send(created);
   });
@@ -67,7 +80,12 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
 
     const [updated] = await db
       .update(tasks)
-      .set({ ...body, ...normaliseDue(body), ...(completedAt !== undefined ? { completedAt } : {}) })
+      .set({
+        ...body,
+        ...normaliseDue(body),
+        ...normalisePush(body),
+        ...(completedAt !== undefined ? { completedAt } : {}),
+      })
       .where(eq(tasks.id, id))
       .returning();
 

@@ -133,11 +133,11 @@ function readCollapsed(): Set<string> {
  * support and the open/closed semantics for free.
  */
 export function VoicePhrases() {
-  const commands = useAsync(() => api.voice.commands());
+  const commands = useAsync(() => api.voice.commands(), [], ['settings', 'habits']);
   // Only the agent can answer "does the model know this word", because only it
   // has the model loaded.
-  const status = useAsync(() => api.voice.status());
-  const habits = useAsync(() => api.habits.list());
+  const status = useAsync(() => api.voice.status(), [], ['settings']);
+  const habits = useAsync(() => api.habits.list(), [], ['habits']);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
@@ -222,6 +222,14 @@ export function VoicePhrases() {
             {bad.length > 0 && (
               <div className="meta urgent" style={{ marginTop: 4 }}>
                 {bad.map((w) => `"${w}"`).join(', ')} cannot be recognised, so this never fires
+                {/* The fix is nearly always the same one, and saying so here
+                    saves working it out from first principles: what is missing
+                    from the dictionary is coinages and compounds, not ordinary
+                    words. "un mute" is two words it knows. */}
+                <div style={{ marginTop: 2 }}>
+                  Try writing {bad.length > 1 ? 'them' : 'it'} as two ordinary words — a compound like
+                  "unmute" is usually missing where "un mute" is not.
+                </div>
               </div>
             )}
           </div>

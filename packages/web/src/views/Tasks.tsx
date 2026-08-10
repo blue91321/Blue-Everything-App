@@ -5,9 +5,11 @@ import { toDateInputValue, toTimeInputValue } from '../format';
 import { Capture } from './Capture';
 import { TaskRow } from '../rows';
 import { useSettling } from '../useSettling';
+import { PushChoice } from '../controls';
+import { featureEnabled } from '../features';
 
 export function Tasks() {
-  const list = useAsync(() => api.tasks.list('todo,doing,done'));
+  const list = useAsync(() => api.tasks.list('todo,doing,done'), [], ['tasks']);
   const [editing, setEditing] = useState<Task | null>(null);
   const settling = useSettling();
 
@@ -64,6 +66,16 @@ function TaskEditor({ task, onClose, onSaved }: { task: Task; onClose: () => voi
   const [dueTime, setDueTime] = useState(
     task.dueAt && !task.dueIsAllDay ? toTimeInputValue(task.dueAt) : ''
   );
+  const [push, setPush] = useState<boolean | null>(task.pushToPhone === null ? null : Boolean(task.pushToPhone));
+
+  // Fetched here rather than by the screen above, because the editor is what
+  // needs it and it only exists while one row is open. The cost is a request per
+  // edit, on a screen where opening an editor is already a deliberate act.
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
+  const pushDefault = settings.data?.pushDefault !== 0;
+  // A server that predates the column sends nothing, and a control claiming to
+  // set something the server will drop is worse than no control.
+  const canChoosePush = featureEnabled('push') && settings.data?.pushDefault !== undefined;
 
   async function save() {
     const allDay = Boolean(dueDate) && !dueTime;
@@ -78,6 +90,7 @@ function TaskEditor({ task, onClose, onSaved }: { task: Task; onClose: () => voi
       priority,
       dueAt,
       dueIsAllDay: allDay,
+      ...(canChoosePush ? { pushToPhone: push } : {}),
     });
     onSaved();
     onClose();
@@ -134,6 +147,17 @@ function TaskEditor({ task, onClose, onSaved }: { task: Task; onClose: () => voi
       <div className="meta" style={{ marginTop: 4 }}>
         High and urgent tasks interrupt at any break; the rest wait for a proper stopping point.
       </div>
+
+      {canChoosePush && (
+        <div style={{ marginTop: 12 }}>
+          <div className="title">Send this to my phone</div>
+          <div className="meta" style={{ marginTop: 4, marginBottom: 8 }}>
+            Only ever when you are away from the PC — never while you are sat in front of it. Saying no
+            doesn't lose the reminder; it waits and shows up on screen when you come back.
+          </div>
+          <PushChoice value={push} fallback={pushDefault} onChange={setPush} />
+        </div>
+      )}
       <div className="row" style={{ marginTop: 10 }}>
         <button className="btn primary" onClick={save}>
           Save

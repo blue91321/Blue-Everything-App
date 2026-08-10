@@ -74,7 +74,9 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         quietHoursEnabled: toInt(body.quietHoursEnabled),
         followWindowsDnd: toInt(body.followWindowsDnd),
         remindersEnabled: toInt(body.remindersEnabled),
+        soundEnabled: toInt(body.soundEnabled),
         pushEnabled: toInt(body.pushEnabled),
+        pushDefault: toInt(body.pushDefault),
         voiceEnabled: toInt(body.voiceEnabled),
         // Switching voice on clears any pause. "Stop listening until I turn it
         // back on" has to mean the obvious switch, or the only way out of an

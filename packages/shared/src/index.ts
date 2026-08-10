@@ -69,6 +69,8 @@ export const createTaskSchema = z.object({
   dueAt: z.number().int().nullish(),
   /** The date matters but the time of day doesn't. `dueAt` holds end of day. */
   dueIsAllDay: z.boolean().default(false),
+  /** May this reach the phone? Null follows the default — see `resolvePush`. */
+  pushToPhone: z.boolean().nullish(),
   scheduledAt: z.number().int().nullish(),
   estimateMinutes: z.number().int().positive().nullish(),
 });
@@ -111,6 +113,8 @@ export const createHabitSchema = z.object({
    * soon as the period begins.
    */
   reminderStartMinute: z.number().int().min(0).max(24 * 60 - 1).nullish(),
+  /** May this reach the phone? Null follows the default — see `resolvePush`. */
+  pushToPhone: z.boolean().nullish(),
   /**
    * Things you might say to tick this off — "i drank water", "had a glass".
    * Empty means the habit can't be reached by voice at all, which is the
@@ -262,14 +266,76 @@ export const DEFAULT_VOICE_RETRY_SECONDS = 8;
  * in a fixed spot instead, which is what you want on a multi-monitor desk where
  * the pointer is wherever you last clicked rather than where you are looking.
  */
+/** How many cells the anchor grid has on each axis. */
+export const OVERLAY_GRID = 5;
+
+/**
+ * The nine original anchors.
+ *
+ * Kept valid rather than migrated. They are what is already stored in
+ * `settings.overlay_placement`, and a value the schema no longer accepts is a
+ * settings row that fails to save on the next unrelated change — an expensive
+ * way to tidy up a name. They map onto the corners, edges and middle of the
+ * finer grid, which is exactly where they always were.
+ */
+const LEGACY_ANCHORS = {
+  'top-left': { row: 1, col: 1 },
+  top: { row: 1, col: 3 },
+  'top-right': { row: 1, col: 5 },
+  left: { row: 3, col: 1 },
+  centre: { row: 3, col: 3 },
+  right: { row: 3, col: 5 },
+  'bottom-left': { row: 5, col: 1 },
+  bottom: { row: 5, col: 3 },
+  'bottom-right': { row: 5, col: 5 },
+} as const satisfies Record<string, { row: number; col: number }>;
+
+/**
+ * `grid-<row><col>`, 1-indexed from the top left.
+ *
+ * Coordinates rather than names because there is no honest English for the cell
+ * two-fifths across and one-fifth down, and inventing one ("upper-midleft")
+ * would be worse than a number at saying where it is. The screen draws a grid;
+ * the value says which square.
+ */
+export const overlayGridPlacements = Array.from({ length: OVERLAY_GRID * OVERLAY_GRID }, (_, i) => {
+  const row = Math.floor(i / OVERLAY_GRID) + 1;
+  const col = (i % OVERLAY_GRID) + 1;
+  return `grid-${row}${col}` as const;
+});
+
 export const overlayPlacements = [
   'cursor',
-  'top-left', 'top', 'top-right',
-  'left', 'centre', 'right',
-  'bottom-left', 'bottom', 'bottom-right',
+  ...(Object.keys(LEGACY_ANCHORS) as (keyof typeof LEGACY_ANCHORS)[]),
+  ...overlayGridPlacements,
 ] as const;
-export const overlayPlacementSchema = z.enum(overlayPlacements);
-export type OverlayPlacement = z.infer<typeof overlayPlacementSchema>;
+
+export const overlayPlacementSchema = z.enum(
+  overlayPlacements as unknown as [string, ...string[]]
+);
+export type OverlayPlacement = (typeof overlayPlacements)[number];
+
+/**
+ * Which cell of the grid a placement means, or null for `cursor`.
+ *
+ * The one place the legacy names and the coordinates are reconciled, so the
+ * agent, the settings screen and anything later cannot disagree about where
+ * "bottom" is.
+ */
+export function placementCell(placement: string): { row: number; col: number } | null {
+  const legacy = LEGACY_ANCHORS[placement as keyof typeof LEGACY_ANCHORS];
+  if (legacy) return { row: legacy.row, col: legacy.col };
+
+  const match = /^grid-([1-9])([1-9])$/.exec(placement);
+  if (!match) return null;
+
+  const row = Number(match[1]);
+  const col = Number(match[2]);
+  // A coordinate outside the grid is a value from a newer client, or a typo in
+  // the database. Falling back to the cursor beats putting a window off-screen.
+  if (row > OVERLAY_GRID || col > OVERLAY_GRID) return null;
+  return { row, col };
+}
 
 /**
  * Built-in avatars are emoji, not image files.
@@ -323,6 +389,15 @@ export const voiceAgentReportSchema = z.object({
     .default([]),
   /** Why it isn't listening, when it isn't. */
   error: z.string().max(300).nullish(),
+  /**
+   * The microphone is closed because nobody is at the desk.
+   *
+   * Reported rather than inferred, because "not listening" has several causes
+   * with different fixes and a screen that cannot tell them apart is the
+   * write-only screen this whole report exists to avoid. Without it, walking
+   * away would make the Voice tab say "starting up…" indefinitely.
+   */
+  awayFromPc: z.boolean().default(false),
   /** Loudest RMS since the last report, 0-1. Drives the level meter. */
   peak: z.number().min(0).max(1).default(0),
   /**
@@ -454,6 +529,17 @@ const FILLER = new Set([
 export const ALWAYS_IN_VOCABULARY = [
   'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
   'twice', 'once', 'couple',
+  /*
+   * `and` earns its place differently from the counting words, and more
+   * modestly. Nothing *reads* it — `segmentUtterance` deliberately does not look
+   * for the joint, having learned that "water and" comes back as "watering".
+   *
+   * It is here so the recogniser has somewhere harmless to put the sound. A
+   * closed grammar must emit *something* for every noise it hears, and denying
+   * it the actual word only pushes the guess onto a neighbour. It is filler to
+   * the matcher, so it can never affect which command wins.
+   */
+  'and',
 ] as const;
 
 /** Spoken counts, so "I drank two waters" adds two rather than one. */
@@ -463,13 +549,67 @@ const NUMBER_WORDS: Record<string, number> = {
 };
 
 function stem(word: string): string {
-  if (IRREGULAR[word]) return IRREGULAR[word];
+  // Through `dropSilentE` like every other path: the table maps "took" to
+  // "take", and returning that raw would leave it disagreeing with the "tak"
+  // that "take" itself reduces to — the one word in the sentence that had to
+  // agree.
+  if (IRREGULAR[word]) return dropSilentE(IRREGULAR[word]);
   // Order matters: check the longer suffixes first, and never strip a word down
   // to nothing or to a single letter.
   for (const suffix of ['ing', 'ed', 'es', 's']) {
-    if (word.length > suffix.length + 2 && word.endsWith(suffix)) return word.slice(0, -suffix.length);
+    if (word.length <= suffix.length + 2 || !word.endsWith(suffix)) continue;
+
+    /*
+     * `-es` is only a plural ending after a sibilant, and checking that is what
+     * makes this the inverse of `spokenVariants` rather than merely its rough
+     * shape.
+     *
+     * Without it, "coffees" stripped to "coffe" while the stored "coffee"
+     * stemmed to itself — so a phrase of "drink coffee" could never be reached
+     * by saying "I drank two coffees", which is the ordinary way to say it. The
+     * two functions have to agree or the grammar is being widened with forms the
+     * matcher then fails to fold back, which is the exact failure the widening
+     * was introduced to prevent.
+     */
+    if (suffix === 'es' && !/(s|x|z|ch|sh)$/.test(word.slice(0, -2))) continue;
+
+    const base = word.slice(0, -suffix.length);
+    /*
+     * `-ing` and `-ed` attach to a stem that has *already* lost its silent `e`
+     * — "pause" gives "pausing", "take" gives "taking" — so stripping the
+     * suffix has undone it and taking another `e` would go one too far.
+     * "coffeed" is the case that shows it: strip `ed` and you have "coffe",
+     * which is exactly what "coffee" itself reduces to.
+     *
+     * The plural endings are the other way round; they leave the `e` in place.
+     */
+    return suffix === 'ing' || suffix === 'ed' ? base : dropSilentE(base);
   }
-  return word;
+  return dropSilentE(word);
+}
+
+/**
+ * Collapse a trailing `e`, on the stem rather than trying to restore it.
+ *
+ * English drops the `e` before `-ing` and `-ed`, so "take" gives "taking" and
+ * "pause" gives "pausing". Putting it back correctly is a genuinely hard
+ * problem — Porter needs a syllable measure and still gets "agreed" and "paused"
+ * wrong in opposite directions. Removing it needs none of that, and both sides
+ * land in the same place, which is all this has to achieve:
+ *
+ *   take, taking, taked  -> tak
+ *   coffee, coffees      -> coffe
+ *   pause, pausing       -> paus
+ *
+ * The cost is that two words differing only by a final `e` would collide. That
+ * is a real loss in a dictionary and no loss at all here: the vocabulary is a
+ * handful of phrases you wrote yourself, and the alternative was **"I'm taking
+ * my vitamins" never matching a stored "take vitamins"** — a common sentence,
+ * failing silently, because the grammar offered "taking" and the matcher then
+ * refused to fold it back.
+ */
+function dropSilentE(word: string): string {
+  return word.length > 3 && word.endsWith('e') ? word.slice(0, -1) : word;
 }
 
 /**
@@ -511,13 +651,26 @@ export function spokenVariants(word: string): string[] {
 
 /** Meaningful, stemmed words. The unit both sides of a match are reduced to. */
 export function voiceTokens(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map(stem)
-    .filter((word) => !FILLER.has(word));
+  return (
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      /*
+       * Filler goes *before* stemming as well as after, and the first pass is
+       * the one that matters.
+       *
+       * `FILLER` is spelled the way people write these words — "have", "some",
+       * "please" — and stemming reaches them first: `dropSilentE` turns "have"
+       * into "hav", which is in no list at all. Filtering only afterwards left
+       * every filler word in the sentence counting as content, so "just had some
+       * water" stopped reducing to "water".
+       */
+      .filter((word) => !FILLER.has(word))
+      .map(stem)
+      .filter((word) => !FILLER.has(word))
+  );
 }
 
 /** How many the speaker asked for, defaulting to one. */
@@ -719,7 +872,18 @@ export function matchVoiceCommand(text: string, candidates: VoiceCandidate[]): V
       const wanted = voiceTokens(phrase);
       if (wanted.length === 0) continue;
 
-      const hits = wanted.filter((token) => spoken.has(token)).length;
+      /*
+       * A phrase said as one word covers all of it.
+       *
+       * `vocabularyFor` puts the joined form in the grammar so the recogniser
+       * can answer "nevermind" instead of being forced to split a sound it
+       * heard as one word — but the stored phrase is still two tokens, so
+       * without this the transcript it can now produce would match nothing at
+       * all. The two changes are only useful together.
+       */
+      const hits = spoken.has(wanted.join(''))
+        ? wanted.length
+        : wanted.filter((token) => spoken.has(token)).length;
       const score = hits / wanted.length;
       if (score < VOICE_MATCH_FLOOR) continue;
 
@@ -749,7 +913,10 @@ export function remainderAfterPhrase(text: string, phrase: string, wakeWord = ''
   const words = (value: string): string[] =>
     value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
 
-  const strip = [...words(phrase), ...words(wakeWord)];
+  // The joined form too, since the recogniser is now allowed to answer with it
+  // — otherwise "makeanote buy milk" would file a note beginning "makeanote".
+  const phraseWords = words(phrase);
+  const strip = [...phraseWords, ...(phraseWords.length > 1 ? [phraseWords.join('')] : []), ...words(wakeWord)];
   const kept: string[] = [];
 
   for (const word of text.split(/\s+/).filter(Boolean)) {
@@ -769,6 +936,193 @@ export function remainderAfterPhrase(text: string, phrase: string, wakeWord = ''
   }
 
   return kept.join(' ').trim();
+}
+
+/**
+ * One sentence into the several commands it might be.
+ *
+ * "I drank water and skip this track" is two instructions joined by a word that
+ * carries no meaning of its own — which is exactly why `and` is already filler
+ * to the matcher, and why splitting on it costs nothing when it turns out not
+ * to be a joint.
+ *
+ * This only *proposes* a split. It cannot know whether "salt and pepper" is one
+ * phrase or two, and nothing here tries to: the caller requires every segment
+ * to match a stored command strictly, and abandons the whole idea if any does
+ * not. That is what keeps a phrase containing `and` working — its halves match
+ * nothing on their own, so the split is discarded and the sentence is resolved
+ * whole, exactly as before.
+ *
+ * Empty segments are dropped, so a trailing "and" is harmless rather than
+ * producing a segment that matches nothing and kills the chain.
+ */
+export interface UtteranceSegment {
+  /** The words of this part, as they were said. */
+  text: string;
+  match: VoiceMatch;
+}
+
+/**
+ * One sentence into the several commands it turns out to be.
+ *
+ * **Splitting on the word "and" does not work, and cannot be made to.** That was
+ * the first attempt and it failed against the recogniser rather than against the
+ * logic: `spokenVariants` puts `-ing` forms of every phrase word into the
+ * grammar, so `watering` is a word the recogniser can emit — and "water and" is
+ * acoustically identical to "watering". Asked to choose, it often chose the
+ * single word, the joint disappeared, and the sentence quietly did only its
+ * first half. Widening or narrowing the grammar just moves which pairs collide;
+ * `tracking`, `backing` and `minding` are all sitting in there too.
+ *
+ * So this looks for the joint nowhere. It walks the words left to right and
+ * closes a segment the moment what it has accumulated matches a stored command,
+ * then starts a new one. "and" needs never be heard — it is filler to
+ * `voiceTokens` and simply lands inside whichever segment it falls in. Neither
+ * does it matter that "water and" came back as "watering", because that stems
+ * straight back to `water` and the segment matches anyway.
+ *
+ * Returns null unless there are **at least two** segments and every meaningful
+ * word was consumed by one of them. That trailing-words rule is what keeps this
+ * conservative: "I drank water and went to the shops" closes one segment and
+ * then never matches again, so the leftovers abandon the whole idea and the
+ * caller resolves the sentence as a single command, exactly as before.
+ *
+ * Segments close at the *earliest* point they match. A phrase that is a strict
+ * prefix of another would therefore close early — but such a pair is already
+ * ambiguous in the single-command path, and the leftover rule turns a
+ * mis-segmentation into a clean fallback rather than a wrong action.
+ */
+export function segmentUtterance(
+  text: string,
+  candidates: VoiceCandidate[],
+  options: { wakeWord?: string } = {}
+): UtteranceSegment[] | null {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+
+  const segments: UtteranceSegment[] = [];
+  let current: string[] = [];
+
+  for (const word of words) {
+    current.push(word);
+    const phrase = current.join(' ');
+    const match = matchVoiceCommand(phrase, candidates);
+    if (match) {
+      segments.push({ text: phrase, match });
+      current = [];
+    }
+  }
+
+  if (segments.length === 0) return null;
+
+  /*
+   * Words a segment carried that its own phrase cannot account for.
+   *
+   * This is the repair for the failure that made chaining look broken: a
+   * segment only has to *contain* its phrase's words, so when the first command
+   * is half-heard it never closes, and its words get carried along until the
+   * next one closes for both. "pause the [music] and I drank water" arrived as
+   * tokens `[paus, drink, water]`, matched `drink water`, and the pause was
+   * silently dropped — one command where two were asked for, which is worse
+   * than failing outright because the half that worked hides the half that did
+   * not.
+   *
+   * The leftover `paus` is exactly what `matchVoiceCommandLoosely` exists for:
+   * a command whose tail got clipped. So it is offered there, and a single
+   * confident answer becomes a step of its own.
+   */
+  const explained = new Set<string>([
+    // The wake word rides on the front of the first segment and is not a
+    // command — see the replay buffer in the agent's voice.ts.
+    ...voiceTokens(options.wakeWord ?? ''),
+    // "drank two waters" leaves a "two" behind that spokenCount will read.
+    ...ALWAYS_IN_VOCABULARY.flatMap((word) => voiceTokens(word)),
+  ]);
+
+  /**
+   * The one command those leftover words can only have been, or null.
+   *
+   * Two conditions, and the second is what stops this inventing commands.
+   * A single loose candidate is not enough on its own: "went to the shops"
+   * loosely matches "go for a walk", because "went" stems to "go" and the
+   * lenient matcher is allowed to lose the phrase's last word. Nobody asked to
+   * go for a walk.
+   *
+   * What separates that from a genuinely clipped "pause the…" is that a clipped
+   * command contains **only words of the command it was**. "pause" is entirely
+   * accounted for by "pause the music"; "shops" is accounted for by nothing in
+   * "go for a walk", and its presence says these words are a sentence about
+   * something else.
+   */
+  function onlyCommand(words: string[]): VoiceMatch | null {
+    const loose = matchVoiceCommandLoosely(words.join(' '), candidates);
+    if (loose.length !== 1) return null;
+
+    const phrase = new Set(voiceTokens(loose[0].phrase));
+    const strays = voiceTokens(words.join(' ')).filter((token) => !phrase.has(token));
+    return strays.length === 0 ? loose[0] : null;
+  }
+
+  const expanded: UtteranceSegment[] = [];
+  for (const segment of segments) {
+    const phraseTokens = voiceTokens(segment.match.phrase);
+    // The run-together form accounts for the phrase just as its parts do, or a
+    // segment matched by one would report every word of it as unexplained.
+    const accounted = new Set([...phraseTokens, phraseTokens.join('')]);
+    /*
+     * Collected as the words that were *said*, not as the tokens they reduce
+     * to. Handing stems back to a matcher that stems again is a quiet
+     * corruption — "pause" reduces to "paus", and a second pass strips the "s"
+     * and leaves "pau", which matches nothing at all.
+     */
+    const residue = segment.text.split(/\s+/).filter((word) => {
+      const [token] = voiceTokens(word);
+      return token !== undefined && !accounted.has(token) && !explained.has(token);
+    });
+
+    if (residue.length > 0) {
+      /*
+       * A residue that names nothing is left alone rather than being fatal,
+       * which keeps this purely additive: a stray word the recogniser invented
+       * used to be ignored and still is, so every sentence that chained before
+       * still chains. Only a residue that can only have been one clipped
+       * command earns a step of its own.
+       */
+      const clipped = onlyCommand(residue);
+      if (clipped) {
+        // Before the segment, because the walk only moves forward: a command
+        // that failed to close left its words at the front of the one that did.
+        expanded.push({ text: residue.join(' '), match: clipped });
+      }
+    }
+
+    expanded.push(segment);
+  }
+
+  /*
+   * Words after the last match get the same treatment, because a clipped
+   * command is just as likely to be the last thing said as the first — "I drank
+   * water and pause the…" trails off exactly as often as it starts badly.
+   *
+   * The one asymmetry is what happens when they name nothing: trailing words
+   * are explained by *no* matched command, so they mean part of the sentence
+   * was not understood and the chain is abandoned. A residue inside a segment
+   * sits alongside a command that did match, so ignoring it is safe.
+   */
+  const trailing = current.filter((word) => {
+    const [token] = voiceTokens(word);
+    return token !== undefined && !explained.has(token);
+  });
+
+  if (trailing.length > 0) {
+    const clipped = onlyCommand(trailing);
+    if (!clipped) return null;
+    expanded.push({ text: trailing.join(' '), match: clipped });
+  }
+
+  if (expanded.length < 2) return null;
+
+  return expanded;
 }
 
 /**
@@ -993,7 +1347,11 @@ export const updateSettingsSchema = z.object({
   /** Absolute time; null clears the manual pause. */
   dndUntil: z.number().int().nullish(),
   remindersEnabled: z.boolean().optional(),
+  /** A short tone with each popup. On by default; see the schema. */
+  soundEnabled: z.boolean().optional(),
   pushEnabled: z.boolean().optional(),
+  /** What a task or habit that hasn't chosen gets. Not the master switch. */
+  pushDefault: z.boolean().optional(),
   voiceEnabled: z.boolean().optional(),
   wakeWord: wakeWordSchema.optional(),
   requireKnownSpeaker: z.boolean().optional(),
@@ -1088,6 +1446,27 @@ export const AWAY_FROM_PC_IDLE_MS = 15 * 60_000;
  */
 export function isAwayFromPc(input: { idleMs: number; audioPlaying?: boolean }): boolean {
   return input.idleMs >= AWAY_FROM_PC_IDLE_MS && !input.audioPlaying;
+}
+
+/**
+ * Does this particular thing get to buzz your pocket?
+ *
+ * Three states collapsed to two, in one place so the sweep, the API and the
+ * settings screen cannot disagree about what an unset value means.
+ *
+ * The point of the null is that it keeps *tracking* the default. Stamping every
+ * task with the default at creation would look identical on the day it was
+ * made and diverge silently forever after: changing your mind about the default
+ * would leave everything already on the list answering the old question, and
+ * nothing on screen to say why.
+ *
+ * Deliberately not consulted for whether push happens *at all* — `pushEnabled`
+ * is that switch, and it outranks this. A task saying "yes, push me" on an
+ * install with the phone switched off means nothing, and should.
+ */
+export function resolvePush(own: boolean | number | null | undefined, fallback: boolean): boolean {
+  if (own === null || own === undefined) return fallback;
+  return Boolean(own);
 }
 
 /* ------------------------------------------------------------------ */

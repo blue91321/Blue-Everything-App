@@ -174,6 +174,21 @@ export interface Recogniser {
    * stopped, or null while they're still going.
    */
   accept(samples: Int16Array): Utterance | null;
+  /**
+   * What it thinks it has heard *so far*, before deciding the speaker stopped.
+   *
+   * **Nothing in the live path acts on this, deliberately.** It was tried, to
+   * make the wake word answer while you were still saying it, and it tripled
+   * the false wakes on ordinary conversation — 3 in 10 against 1 in 10, on the
+   * same ten lines. A revisable guess is exactly what you do not want deciding
+   * whether an always-on microphone starts listening. See `wake-falsing`.
+   *
+   * Kept because the diagnostics need it: `wake-probe` prints it block by block,
+   * which is how the recogniser inventing "hey jarvis" out of a plain "hey" was
+   * caught. A partial also carries no speaker embedding, so it could never have
+   * satisfied the "only my voice" check on its own.
+   */
+  partial(): string;
   /** Force whatever is buffered to be finalised — used when a command times out. */
   flush(): Utterance;
   reset(): void;
@@ -241,6 +256,18 @@ export function createRecogniser(phrases: string[], options: { withSpeaker?: boo
 
       const utterance = parse(vosk.result(recogniser));
       return utterance.text ? utterance : null;
+    },
+
+    partial(): string {
+      if (closed) return '';
+      // `parse` reads `text`; a partial result carries `partial` instead, so it
+      // is normalised here rather than teaching `parse` about both shapes.
+      try {
+        const { partial } = JSON.parse(vosk.partialResult(recogniser)) as VoskResult;
+        return (partial ?? '').replace(/\[unk\]/g, ' ').replace(/\s+/g, ' ').trim();
+      } catch {
+        return '';
+      }
     },
 
     flush(): Utterance {

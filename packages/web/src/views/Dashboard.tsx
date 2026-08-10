@@ -11,9 +11,9 @@ import { Capture } from './Capture';
  */
 export function Dashboard() {
   // 'done' is included so finished items can be shown rather than vanishing.
-  const tasks = useAsync(() => api.tasks.list('todo,doing,done'));
-  const queue = useAsync(() => api.nudges.queue());
-  const habits = useAsync(() => api.habits.list());
+  const tasks = useAsync(() => api.tasks.list('todo,doing,done'), [], ['tasks']);
+  const queue = useAsync(() => api.nudges.queue(), [], ['nudges', 'tasks', 'habits']);
+  const habits = useAsync(() => api.habits.list(), [], ['habits']);
   const settling = useSettling();
 
   const reloadAll = () => {

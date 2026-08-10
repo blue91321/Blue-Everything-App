@@ -352,6 +352,94 @@ const afterSnooze = await post('/api/attention', report({ reason: 'right after s
 const snoozedFired = afterSnooze.json().deliver.some((n: { title: string }) => n.title === 'Snooze me');
 check('a snoozed nudge stays quiet', !snoozedFired);
 
+/*
+ * Per-item phone push.
+ *
+ * Last, because it installs a fake phone that reports every send as a success —
+ * which drains whatever is still queued from the sections above. Nothing after
+ * this could assume a queue it had left full.
+ */
+console.log('\nper-item phone push');
+{
+  const { resolvePush } = await import('@everything/shared');
+  const { providePush, resetPushPort } = await import('../push-port.js');
+  const { sweepDueTasks } = await import('../nudge-engine.js');
+  const { db } = await import('../db/client.js');
+  const { nudges: nudgeTable } = await import('../db/schema.js');
+  const { eq: whereEq } = await import('drizzle-orm');
+
+  // The three-state rule on its own. The null is the whole point of the design:
+  // it has to keep tracking the default rather than freezing today's answer.
+  check('an unset item follows the default', resolvePush(null, true) === true);
+  check('…and follows it downwards too', resolvePush(null, false) === false);
+  check('an explicit no beats a yes default', resolvePush(0, true) === false);
+  check('an explicit yes beats a no default', resolvePush(1, false) === true);
+
+  const soon = Date.now() + 30 * 60_000;
+  const deskOnly = (await post('/api/tasks', { title: 'Desk only', dueAt: soon, pushToPhone: false })).json();
+  const anywhere = (await post('/api/tasks', { title: 'Anywhere', dueAt: soon, pushToPhone: true })).json();
+  check('a task can refuse the phone', deskOnly.pushToPhone === 0);
+  check('…and another can insist on it', anywhere.pushToPhone === 1);
+
+  // The answer is resolved when the nudge is raised, not when it is delivered,
+  // so this is where it has to be right.
+  await sweepDueTasks(Date.now());
+  const stamped = async (taskId: string): Promise<number | undefined> =>
+    (await db.select().from(nudgeTable).where(whereEq(nudgeTable.taskId, taskId)))[0]?.pushToPhone;
+  check('the refusal is stamped onto its nudge', (await stamped(deskOnly.id)) === 0);
+  check('and so is the acceptance', (await stamped(anywhere.id)) === 1);
+
+  /*
+   * A phone that always answers. Without one, "nothing was pushed" is the
+   * answer for every nudge whether or not the filter works, so this suite would
+   * pass with the feature removed entirely.
+   */
+  const buzzed: string[] = [];
+  providePush({
+    isOnCooldown: () => false,
+    sendToPhones: async (list) => {
+      buzzed.push(...list.map((n) => n.title));
+      return { sent: list.length, failed: 0, removed: 0 };
+    },
+    vapidPublicKey: async () => 'test',
+    resetCooldown: () => {},
+  });
+
+  await post(
+    '/api/attention',
+    report({ state: 'away', reason: 'out of the room', idleMs: longIdle, audioPlaying: false })
+  );
+  check('the one that opted in reaches the phone', buzzed.includes('Anywhere'), buzzed.join(', '));
+  check('the one that opted out does not', !buzzed.includes('Desk only'));
+
+  /*
+   * And it was skipped, not consumed. The distinction the whole setting rests
+   * on is "not worth a phone", never "not worth telling me".
+   *
+   * Sitting back down is not enough by itself and should not be: this came from
+   * an ordinary task, so its nudge asks for a `prime` moment and simply being
+   * at the keyboard is only an `any`. So the queue is checked first — that is
+   * the claim — and then a real stopping point is offered to prove it comes out.
+   */
+  const waiting = (await app.inject({ method: 'GET', url: '/api/nudges/queue' })).json();
+  check(
+    'it is still queued rather than consumed',
+    waiting.some((n: { title: string }) => n.title === 'Desk only')
+  );
+
+  const back = await post(
+    '/api/attention',
+    report({
+      reason: 'match over, back at the keyboard',
+      idleMs: 0,
+      stoppingPoint: { quality: 'prime', reason: 'a match just ended' },
+    })
+  );
+  check('and toasts at the next good break', titles(back).includes('Desk only'), titles(back).join(', '));
+
+  resetPushPort();
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

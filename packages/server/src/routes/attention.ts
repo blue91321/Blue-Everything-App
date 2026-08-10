@@ -7,6 +7,7 @@ import { changes } from '../events.js';
 import {
   collectDeliverable,
   expireStaleNudges,
+  getSettings,
   momentQuality,
   sweepDueTasks,
   sweepHabitReminders,
@@ -114,6 +115,13 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
       deliver: result.deliver,
       pushed: result.pushed,
       awayFromPc: result.awayFromPc,
+      /*
+       * Carried on the *attention* heartbeat rather than the voice one, because
+       * popups and their sounds are core: an install with `features/voice`
+       * deleted still raises nudges, and the switch has to reach it. This is the
+       * only request the agent always makes.
+       */
+      soundEnabled: Boolean((await getSettings()).soundEnabled),
     };
   });
 

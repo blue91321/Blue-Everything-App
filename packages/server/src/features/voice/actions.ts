@@ -21,6 +21,7 @@ import {
   spokenVariants,
   parseHotkey,
   remainderAfterPhrase,
+  segmentUtterance,
   spokenCount,
   type MediaAction,
   type VoiceCandidate,
@@ -52,11 +53,21 @@ export interface VoiceOutcome {
     | 'cancelled'
     | 'captured-as-note'
     | 'ambiguous'
+    /** Several commands in one sentence, joined by "and". See `steps`. */
+    | 'chained'
     | 'no-match';
   text: string;
   /** Human-readable summary, shown in the overlay and the test readout. */
   say?: string;
   action?: VoiceAction;
+  /**
+   * The parts of a `chained` outcome, in the order they were said and run.
+   *
+   * A list rather than a flattened set of fields because each part is a whole
+   * outcome — its own `say`, its own action, its own habit tally — and the
+   * overlay wants to show what each one did. Absent on every other outcome.
+   */
+  steps?: VoiceOutcome[];
   /** When more than one command matched equally well, so the agent can ask. */
   choices?: { id: string; label: string }[];
   /** Whether this command lets the microphone stay open afterwards. */
@@ -144,9 +155,30 @@ export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): stri
 
   for (const command of commands) {
     for (const phrase of command.phrases) {
-      for (const word of phrase.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/)) {
+      const parts = phrase.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+      for (const word of parts) {
         for (const form of spokenVariants(word)) words.add(form);
       }
+
+      /*
+       * The phrase run together as one word, because that is how half of them
+       * get said.
+       *
+       * "never mind" is stored as two words, so the grammar could only ever
+       * offer `never` and `mind` separately — and a closed grammar has to map
+       * every sound onto something it contains. Said as "nevermind", the decoder
+       * cannot answer with the word you actually said and picks whatever is
+       * nearest instead, which on this machine was `went`.
+       *
+       * Adding the joined form is free when it is not a real word: Vosk drops
+       * anything missing from the model's lexicon, so "stopgoaway" costs
+       * nothing and disappears. When it *is* a word — nevermind, logout,
+       * goodnight — the recogniser can finally say what it heard.
+       *
+       * `matchVoiceCommand` knows to treat it as covering the whole phrase, so
+       * the two halves cannot drift.
+       */
+      if (parts.length > 1) words.add(parts.join(''));
     }
   }
 
@@ -174,6 +206,13 @@ export async function resolveVoiceCommand(
   const candidates: VoiceCandidate[] = commands
     .filter((command) => command.phrases.length > 0)
     .map((command) => ({ id: command.id, phrases: command.phrases }));
+
+  // Tried before the single-command path, and it has to be — "I drank water and
+  // took my meds" matches "drink water" perfectly as a whole sentence, so
+  // resolving first and splitting on failure would never chain anything.
+  const chain = await resolveChain(text, commands, candidates, wakeWord);
+  if (chain) return chain;
+
 
   let match = matchVoiceCommand(text, candidates);
 
@@ -246,6 +285,118 @@ export async function resolveVoiceCommand(
   // prompt going to look for it is the thing to fear here, and this is the
   // prompt — it costs four words on a popup that is already on screen.
   return match.lenient ? { ...result, say: `${result.say ?? ''} (heard "${match.phrase}" partly)`.trim() } : result;
+}
+
+/**
+ * "Drink water and skip this track" — two commands in one breath.
+ *
+ * Returns null for anything that is not unambiguously a chain, and null is the
+ * common answer: a sentence with no "and" in it, one whose halves do not both
+ * match, one that matched only loosely. The caller then resolves the sentence
+ * whole, exactly as it did before this existed. **Nothing is run until every
+ * segment has resolved**, so a chain never half-fires and leaves you guessing
+ * which end of the sentence landed.
+ *
+ * The rules are deliberately strict, because the cost of being wrong is
+ * asymmetric. Failing to chain means saying the second thing again — mildly
+ * annoying. Chaining something that was not a chain means firing a command
+ * nobody asked for, and with a hotkey in the list that is not something you
+ * would notice was wrong.
+ *
+ *  - **Every segment must match strictly.** No loose matching, no
+ *    last-word-clipped allowance: those exist to rescue a sentence that would
+ *    otherwise be lost entirely, and here there is a perfectly good fallback.
+ *    This is also what keeps a stored phrase containing "and" working — its
+ *    halves match nothing on their own, so the split is discarded.
+ *  - **No segment may be ambiguous.** Asking about one part of a chain would
+ *    mean holding the rest of the sentence somewhere while the popup waits,
+ *    which is a lot of machinery for a rare case. Falling back is honest.
+ *  - **No `note`.** Its content is whatever was said after the trigger, so
+ *    "note buy milk and eggs" would file "buy milk" and try to run "eggs" as a
+ *    command. A note is allowed to contain the word "and"; that is the point of
+ *    dictating one.
+ */
+export interface ChainStep {
+  command: LoadedCommand;
+  /** The stored phrase that matched this segment. */
+  phrase: string;
+  /** The words this part of the sentence was reduced to. */
+  segment: string;
+}
+
+/**
+ * Decide whether a sentence is a chain, without running any of it.
+ *
+ * Split out from `resolveChain` so "Try a phrase" on the Voice tab can answer
+ * the question the same way the microphone does. It reported only
+ * `matchVoiceCommand` before chaining existed, which for "drink water and skip
+ * this track" would have said "this ticks off water" — true of the first half
+ * and a lie about the sentence. A dry run that disagrees with the real one is
+ * worse than no dry run, because it is believed.
+ */
+export function planChain(
+  text: string,
+  commands: LoadedCommand[],
+  candidates: VoiceCandidate[],
+  wakeWord = ''
+): ChainStep[] | null {
+  // The wake word is passed so it is not mistaken for a half-heard command: it
+  // rides on the front of the first segment and belongs to no phrase, which is
+  // precisely the shape of the residue this now looks for.
+  const segments = segmentUtterance(text, candidates, { wakeWord });
+  if (!segments) return null;
+
+  const resolved: ChainStep[] = [];
+
+  for (const { text: segment, match } of segments) {
+    // The same tie the single path treats as a question. Here it is a reason to
+    // stop rather than to ask: holding the rest of a sentence somewhere while a
+    // popup waits is a lot of machinery for a rare case, and falling back to
+    // resolving the whole thing is an honest answer.
+    const tied = commands.some(
+      (command) => command.id !== match.id && command.phrases.some((p) => p === match.phrase)
+    );
+    if (tied) return null;
+
+    const command = commands.find((c) => c.id === match.id)!;
+    // A note's content is whatever was said after its trigger, so segmenting it
+    // would file half a sentence and try to run the rest. Dictating a note that
+    // contains "and" is rather the point of dictating one.
+    if (command.kind === 'note') return null;
+
+    resolved.push({ command, phrase: match.phrase, segment });
+  }
+
+  return resolved;
+}
+
+async function resolveChain(
+  text: string,
+  commands: LoadedCommand[],
+  candidates: VoiceCandidate[],
+  wakeWord: string
+): Promise<VoiceOutcome | null> {
+  const resolved = planChain(text, commands, candidates, wakeWord);
+  if (!resolved) return null;
+
+  const steps: VoiceOutcome[] = [];
+  for (const { command, phrase, segment } of resolved) {
+    // The *segment*, not the whole sentence, so `spokenCount` reads the number
+    // that belongs to this part — "two waters and one coffee" is 2 then 1, not
+    // 2 twice.
+    steps.push(await runCommand(command, segment, phrase, wakeWord));
+  }
+
+  return {
+    outcome: 'chained',
+    text,
+    say: steps.map((step) => step.say ?? '').filter(Boolean).join(' · '),
+    steps,
+    // Only if every part was happy to keep the microphone open. One command
+    // saying "don't linger after me" has to win, or opting out would mean
+    // nothing the moment it was said as part of a chain.
+    allowFollowUp: resolved.every(({ command }) => command.allowFollowUp),
+  };
 }
 
 export async function labelFor(command: LoadedCommand): Promise<string> {

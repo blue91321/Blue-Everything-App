@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { api, clearToken, setToken, type Session } from './api';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
 import { setEnabledFeatures, webFeatures } from './features';
@@ -29,12 +29,24 @@ import { Settings } from './views/Settings';
  * feature decides where its own tab sits rather than the drawer knowing about
  * every feature that might ever exist.
  */
-const CORE_NAV = [
+interface NavItem {
+  id: string;
+  label: string;
+  glyph: string;
+  order: number;
+  always: boolean;
+  /** Sits at the foot of the drawer rather than in the flow of the list. */
+  pinned?: boolean;
+}
+
+const CORE_NAV: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', glyph: '◒', order: 10, always: true },
   { id: 'tasks', label: 'Tasks', glyph: '☑', order: 20, always: true },
   { id: 'habits', label: 'Habits', glyph: '↻', order: 30, always: false },
   { id: 'notes', label: 'Notes', glyph: '✎', order: 40, always: false },
-  { id: 'settings', label: 'Settings', glyph: '⚙', order: 100, always: true },
+  // `pinned` puts it at the foot of the drawer rather than merely last in the
+  // list — features add tabs above it, and it should stay where it was.
+  { id: 'settings', label: 'Settings', glyph: '⚙', order: 100, always: true, pinned: true },
 ];
 
 type NavId = string;
@@ -45,6 +57,14 @@ const DESKTOP_QUERY = '(min-width: 900px)';
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
+  /**
+   * The same value, readable without making `checkSession` depend on it.
+   *
+   * A `useCallback` that closed over `session` would get a new identity on every
+   * session change, and it is the dependency of the mount effect — so the app
+   * would re-check itself in a loop.
+   */
+  const sessionRef = useRef<Session | null>(null);
   const [view, setView] = useState<NavId>('dashboard');
   /**
    * The mark, held here so the drawer can draw it.
@@ -59,11 +79,26 @@ export function App() {
   const isDesktop = useMediaQuery(DESKTOP_QUERY);
   const drawer = useEdgeDrawer(!isDesktop);
 
+  /**
+   * Re-check who we are, **without taking the app off the screen**.
+   *
+   * `checking` renders a "Connecting…" card *instead of* the whole shell, so
+   * setting it on every re-check unmounted every screen and rebuilt it — which
+   * is a scroll position lost, a form field blanked, and a visible flash. It
+   * looked exactly like a page reload, and got reported as one.
+   *
+   * A first check has nothing to show and must block. A later one is a refresh
+   * of something already on screen: the answer almost never changes, and when
+   * it does the shell re-renders in place with the new tabs.
+   */
   const checkSession = useCallback(async () => {
-    setChecking(true);
+    setChecking((wasChecking) => wasChecking || sessionRef.current === null);
     try {
-      setSession(await api.session());
+      const next = await api.session();
+      sessionRef.current = next;
+      setSession(next);
     } catch {
+      sessionRef.current = null;
       setSession(null);
     } finally {
       setChecking(false);
@@ -77,6 +112,7 @@ export function App() {
   useEffect(() => {
     const onUnauthorized = () => {
       clearToken();
+      sessionRef.current = null;
       setSession(null);
     };
     window.addEventListener('everything:unauthorized', onUnauthorized);
@@ -154,9 +190,11 @@ export function App() {
   // as a prop — see the note in ./features.
   setEnabledFeatures(enabled);
 
-  const nav = [
+  // Widened to NavItem so a discovered feature and a core screen are the same
+  // shape here; features never pin, but the drawer should not have to care.
+  const nav: NavItem[] = [
     ...CORE_NAV.filter((item) => item.always || isOn(item.id)),
-    ...webFeatures.filter((f) => isOn(f.id)),
+    ...webFeatures.filter((f) => isOn(f.id)).map((f) => ({ ...f, always: false })),
   ].sort((a, b) => a.order - b.order);
 
   // Whatever was open may have just been switched off from another device —
@@ -190,8 +228,13 @@ export function App() {
           <span>Blue Everything</span>
         </div>
         <nav>
-          {nav.map(({ id, label, glyph }) => (
-            <button key={id} aria-current={current.id === id} onClick={() => go(id)}>
+          {nav.map(({ id, label, glyph, pinned }) => (
+            <button
+              key={id}
+              className={pinned ? 'pinned' : undefined}
+              aria-current={current.id === id}
+              onClick={() => go(id)}
+            >
               <span className="glyph" aria-hidden="true">
                 {glyph}
               </span>

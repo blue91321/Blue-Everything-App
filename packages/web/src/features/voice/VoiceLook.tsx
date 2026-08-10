@@ -1,24 +1,83 @@
 import { useRef, useState } from 'react';
 import { api, type VoiceSettings, type VoiceStatus } from '../../api';
 
-/** The nine anchors, laid out the way they sit on a screen. */
-const ANCHORS: { value: string; label: string }[][] = [
-  [
-    { value: 'top-left', label: '↖' },
-    { value: 'top', label: '↑' },
-    { value: 'top-right', label: '↗' },
-  ],
-  [
-    { value: 'left', label: '←' },
-    { value: 'centre', label: '•' },
-    { value: 'right', label: '→' },
-  ],
-  [
-    { value: 'bottom-left', label: '↙' },
-    { value: 'bottom', label: '↓' },
-    { value: 'bottom-right', label: '↘' },
-  ],
-];
+/**
+ * The anchor grid, laid out the way it sits on a screen.
+ *
+ * Five across rather than three, so a popup can be put somewhere that is not a
+ * corner or dead centre — a third of the way down the right-hand edge is a
+ * perfectly reasonable place to want it, and used not to be expressible.
+ *
+ * Duplicated from `OVERLAY_GRID` in @everything/shared rather than imported, for
+ * the reason every other constant here is: that package pulls in zod, and this
+ * bundle is meant to be almost entirely framework. The server validates the
+ * value, and a mismatch would show up immediately as a grid that writes cells
+ * the server rejects.
+ */
+const GRID = 5;
+
+/** Which way this cell pulls, for the arrow on the button. */
+function glyphFor(row: number, col: number): string {
+  const middle = (GRID + 1) / 2;
+  const up = row < middle;
+  const down = row > middle;
+  const left = col < middle;
+  const right = col > middle;
+
+  if (up && left) return '↖';
+  if (up && right) return '↗';
+  if (down && left) return '↙';
+  if (down && right) return '↘';
+  if (up) return '↑';
+  if (down) return '↓';
+  if (left) return '←';
+  if (right) return '→';
+  return '•';
+}
+
+/**
+ * Human wording for the label, since "grid-24" is not something to read out.
+ *
+ * Tables rather than clever banding arithmetic: the first attempt derived these
+ * and produced "upper top left" and "lower bottom right", which are not things
+ * anybody says. Five words per axis is a shorter thing to read than the rule
+ * that would generate them, and it cannot be subtly wrong.
+ */
+const ROW_WORDS = ['top', 'upper', 'middle', 'lower', 'bottom'];
+const COL_WORDS = ['left', 'centre left', 'centre', 'centre right', 'right'];
+
+function describeCell(row: number, col: number): string {
+  // Dead centre is just "centre" — "middle centre" says the same thing twice.
+  if (row === 3 && col === 3) return 'centre';
+  return `${ROW_WORDS[row - 1]} ${COL_WORDS[col - 1]}`;
+}
+
+const ANCHORS = Array.from({ length: GRID }, (_, r) =>
+  Array.from({ length: GRID }, (_, c) => ({
+    value: `grid-${r + 1}${c + 1}`,
+    label: glyphFor(r + 1, c + 1),
+    describe: describeCell(r + 1, c + 1),
+  }))
+);
+
+/**
+ * The nine original names, mapped onto the cells they always meant.
+ *
+ * A stored `bottom` has to light up the bottom-middle square rather than
+ * nothing at all — the value is still perfectly valid, it just predates the
+ * coordinates.
+ */
+const LEGACY_CELL: Record<string, string> = {
+  'top-left': 'grid-11',
+  top: 'grid-13',
+  'top-right': 'grid-15',
+  left: 'grid-31',
+  centre: 'grid-33',
+  right: 'grid-35',
+  'bottom-left': 'grid-51',
+  bottom: 'grid-53',
+  'bottom-right': 'grid-55',
+};
 
 const AVATARS = ['🤖', '🎧', '🐈', '🦉', '👾', '🫡', '🧠', '⭐'];
 
@@ -51,6 +110,9 @@ export function VoiceLook({
   const avatar = settings.overlayAvatar ?? '';
   const screens = status?.screens ?? [];
   const atCursor = placement === 'cursor';
+  // Whichever square is lit, whether it was saved as a coordinate or as one of
+  // the nine original names.
+  const selectedCell = LEGACY_CELL[placement] ?? placement;
 
   async function upload(chosen: File) {
     setError('');
@@ -107,9 +169,10 @@ export function VoiceLook({
               {row.map((anchor) => (
                 <button
                   key={anchor.value}
-                  className={`anchor${placement === anchor.value ? ' on' : ''}`}
-                  aria-label={anchor.value.replace('-', ' ')}
-                  aria-pressed={placement === anchor.value}
+                  className={`anchor${selectedCell === anchor.value ? ' on' : ''}`}
+                  aria-label={anchor.describe}
+                  title={anchor.describe}
+                  aria-pressed={selectedCell === anchor.value}
                   disabled={saving}
                   onClick={() => void onChange({ overlayPlacement: anchor.value })}
                 >

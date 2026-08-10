@@ -31,7 +31,7 @@ function wakeWordAdvice(wakeWord: string): string | null {
  * what it costs rather than what it does, for the same reason.
  */
 export function Voice({ local }: { local: boolean }) {
-  const settings = useAsync(() => api.settings.get());
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
 
   if (settings.loading) return <div className="empty">loading…</div>;
   if (!settings.data) return <div className="empty">Could not load settings.</div>;
@@ -88,7 +88,7 @@ function VoiceSettings({
 
   // Fetched for the screen list, which only the agent can see — `window.screen`
   // describes the display this tab is on and nothing else.
-  const look = useAsync(() => api.voice.status()).data ?? null;
+  const look = useAsync(() => api.voice.status(), [], ['settings']).data ?? null;
 
   // The slider moves freely and saves once, on release. Sending a PATCH per
   // pixel would be a dozen writes and a dozen agent reconfigures for one drag.
@@ -181,7 +181,8 @@ function VoiceSettings({
           {wakeWordUnknown.length > 0 && (
             <div className="meta urgent" style={{ marginTop: 6 }}>
               ⚠ {wakeWordUnknown.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so this
-              wake word can never be heard. Pick ordinary words — compounds and invented names are the usual cause.
+              wake word can never be heard. Compounds and invented names are the usual cause — separating one into
+              two ordinary words almost always fixes it.
             </div>
           )}
           <div className="meta" style={{ marginTop: 6 }}>
@@ -497,9 +498,19 @@ function LiveStatus({
         ? { text: 'Switched off', tone: 'meta', why: 'The microphone is closed and the models are unloaded.' }
         : status.paused
           ? { text: 'Paused', tone: 'urgent', why: `You asked it to stop listening, ${pausedFor}.` }
-          : status.listening
-            ? { text: `Listening on ${status.device ?? 'the default microphone'}`, tone: 'ok-text', why: '' }
-            : { text: 'Starting up…', tone: 'meta', why: 'Loading the speech models — this takes a moment.' };
+          : // Before `listening`, for the same reason `paused` is: the setting
+            // is still on, so without this the screen said "Starting up…" at a
+            // microphone that had been closed deliberately and was not coming
+            // back until somebody touched the keyboard.
+            status.awayFromPc
+            ? {
+                text: 'Asleep — you are away',
+                tone: 'meta',
+                why: 'The microphone and the speech models are released while the desk is empty. Move the mouse and it comes back.',
+              }
+            : status.listening
+              ? { text: `Listening on ${status.device ?? 'the default microphone'}`, tone: 'ok-text', why: '' }
+              : { text: 'Starting up…', tone: 'meta', why: 'Loading the speech models — this takes a moment.' };
 
   return (
     <div className="card">
@@ -696,7 +707,19 @@ function PhraseTester() {
 
       {result && (
         <div className="meta" style={{ marginTop: 10 }}>
-          {result.match ? (
+          {result.chain?.length ? (
+            <>
+              <span className="ok-text">Would do {result.chain.length} things, in order:</span>
+              <ol style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+                {result.chain.map((step, index) => (
+                  <li key={`${step.phrase}-${index}`}>
+                    <strong>{step.habitName}</strong>
+                    {step.count > 1 ? ` ${step.count} times` : ''} — matched "{step.phrase}"
+                  </li>
+                ))}
+              </ol>
+            </>
+          ) : result.match ? (
             <>
               <span className="ok-text">
                 Would tick off <strong>{result.match.habitName}</strong>
@@ -706,8 +729,11 @@ function PhraseTester() {
             </>
           ) : (
             <>
-              <span className="meta urgent">No habit matches.</span> It would be saved as a note instead.
-              Heard words: {result.tokens.join(', ') || '(none)'}.
+              {/* Not "it would be saved as a note" — that stopped being true when
+                  the overlay made a miss visible as it happens, and unmatched
+                  speech started being dropped instead of filed. */}
+              <span className="meta urgent">Nothing matches.</span> It would be dropped, and the popup
+              would say so. Heard words: {result.tokens.join(', ') || '(none)'}.
             </>
           )}
         </div>

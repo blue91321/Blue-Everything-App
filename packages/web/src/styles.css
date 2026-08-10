@@ -182,6 +182,67 @@ body {
   cursor: pointer;
 }
 
+/*
+ * Settings sits at the foot of the list, not in it.
+ *
+ * `nav` is already a flex column with `flex: 1`, so one `margin-top: auto`
+ * takes up every spare pixel above this item and pins it to the bottom
+ * whatever else is in the menu. That matters because the list grows: each
+ * feature adds a tab, and Settings drifting down the middle of a list of
+ * things you use daily is how it becomes hard to find.
+ */
+/*
+ * Settings tabs.
+ *
+ * Scrolls sideways rather than wrapping, so four or five of them stay on one
+ * line on a phone instead of becoming a two-row block that pushes the content
+ * down. `scrollbar-width: none` because a scrollbar under four words is noise.
+ */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: 0 0 auto;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 15px;
+  padding: 10px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.on {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.drawer nav button.pinned {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  padding-top: 14px;
+}
+
 .drawer nav button:hover {
   background: var(--surface-raised);
   color: var(--text);
