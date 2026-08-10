@@ -144,6 +144,20 @@ changed nothing at all.
 disabled with that as the reason. A toggle that silently fails to apply is worse
 than one that explains why it cannot.
 
+**Each package shows a version, and today they are all the app's.** That is the
+honest answer rather than a limitation: everything in the list ships out of this
+repo in one commit, and the five workspace packages deliberately share one
+number. A `FeatureSpec` may carry its own `version`, and when it does the row
+says **(separate)** — that field exists for the case being built toward, a
+package downloaded rather than bundled, which genuinely can differ from the app
+around it. Verified by giving one a version and watching the row diverge.
+
+**Check for updates is present and disabled**, with the reason on screen:
+`UPDATE_URL` is unset and there is nowhere to ask yet. Nothing is fetched from
+it even when set, because the format does not exist — declaring the setting now
+is what makes turning it on a small change rather than a new concept. A button
+that fails when pressed would be worse than one that says why it cannot.
+
 ### Finishing something takes a moment to move
 
 `useSettling.ts` pins a just-ticked row in place for 1.8s before it drops to the
@@ -419,6 +433,12 @@ PWA and the server update independently, so "which version am I looking at" is
 the first question whenever something looks wrong.
 
 Bump with `npm version <patch|minor|major> --workspaces --include-workspace-root`.
+
+That is about the **workspace packages**, which are one app. The *features* on
+the Packages screen are a different axis: they report the app's version while
+they ship with it, and gain their own `version` in the manifest if one is ever
+downloaded separately. Keeping those apart is what stops "one version for the
+app" and "this package is newer than that one" contradicting each other.
 
 ## Ground rules
 

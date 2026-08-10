@@ -403,6 +403,10 @@ export interface FeatureInfo {
   blurb: string;
   /** What it costs to have on, measured. Null when negligible. */
   cost: string | null;
+  /** Its own version, or the app's when it ships with the app. */
+  version: string;
+  /** True when it has no version of its own and moves with the app. */
+  bundled: boolean;
   /** Whether its folders can be deleted, as opposed to merely switched off. */
   removable: boolean;
   defaultEnabled: boolean;
@@ -420,6 +424,10 @@ export interface FeatureState {
   /** The file no longer matches what is running. */
   pendingRestart: boolean;
   hasFile: boolean;
+  /** Absent on a server older than per-package versions. */
+  appVersion?: string;
+  /** Whether there is anywhere to check for updates yet. */
+  updates?: { configured: boolean; source: string | null };
   features: FeatureInfo[];
 }
 

@@ -85,6 +85,20 @@ const envSchema = z.object({
    */
   FEATURES: z.string().default(''),
 
+  /**
+   * Where to ask whether a newer version of anything exists.
+   *
+   * Empty by default and empty today: there is nowhere to ask yet. The Packages
+   * screen reads this to decide whether "Check for updates" can do anything,
+   * and says so plainly rather than offering a button that fails — the same
+   * reasoning as the feature switches being disabled with a reason when
+   * `EVERYTHING_FEATURES` overrides them.
+   *
+   * Nothing is fetched from it until there is a format to fetch. Declaring it
+   * now is what makes turning that on a small change rather than a new concept.
+   */
+  UPDATE_URL: z.string().default(''),
+
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
   /** Set when running behind a reverse proxy so client IPs log correctly. */

@@ -424,6 +424,8 @@ function PackagesTab({ session }: { session: Session }) {
     }
   }
 
+  const updates = data.updates;
+
   return (
     <section>
       <h2>Packages</h2>
@@ -431,6 +433,38 @@ function PackagesTab({ session }: { session: Session }) {
         Optional parts of the app. Switching one off unregisters its API routes, hides its tab, and stops
         the agent loading it — you get the memory and the disk back, not just the menu entry.
       </div>
+
+      {/* Absent on a server older than per-package versions. */}
+      {data.appVersion && (
+        <div className="card">
+          <div className="row between">
+            <div className="grow">
+              <div className="title">Blue Everything {data.appVersion}</div>
+              <div className="meta" style={{ marginTop: 4 }}>
+                {updates?.configured
+                  ? `Updates come from ${updates.source}.`
+                  : 'Everything below ships with the app, so it is all this version. Packages downloaded separately will show their own.'}
+              </div>
+              {/* Says why rather than leaving a dead button to be poked at.
+                  The same reasoning as the switches being disabled when
+                  EVERYTHING_FEATURES overrides them. */}
+              {!updates?.configured && (
+                <div className="meta" style={{ marginTop: 4 }}>
+                  No update source is set up yet — set <code>UPDATE_URL</code> once the download site exists.
+                </div>
+              )}
+            </div>
+            <button
+              className="btn"
+              disabled={!updates?.configured}
+              title={updates?.configured ? 'Check the download site for newer versions' : 'No update source configured'}
+              onClick={() => setError('Update checking is not wired up yet.')}
+            >
+              Check for updates
+            </button>
+          </div>
+        </div>
+      )}
 
       {data.lockedByEnv && (
         <div className="banner">
@@ -461,6 +495,17 @@ function PackagesTab({ session }: { session: Session }) {
             <div className="grow">
               <div className="title">
                 {feature.label}
+                {/* The version sits on the row rather than in a column of its
+                    own: with everything bundled they are all the same number,
+                    and a column of identical values reads as noise until one
+                    of them genuinely diverges. */}
+                {feature.version && (
+                  <span className="meta" title={feature.bundled ? 'ships with the app' : 'installed separately'}>
+                    {' '}
+                    · {feature.version}
+                    {feature.bundled ? '' : ' (separate)'}
+                  </span>
+                )}
                 {feature.missing && (
                   <span className="urgent" title="switched on, but its folders are gone from disk">
                     {' '}

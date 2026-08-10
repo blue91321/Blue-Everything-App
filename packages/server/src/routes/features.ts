@@ -29,6 +29,7 @@ import type { FastifyInstance } from 'fastify';
 import { FEATURE_LIST, isFeatureId, resolveFeatures, type FeatureId } from '@everything/shared/features';
 import { config } from '../config.js';
 import { activeFeatures, enabledFeatures, featuresFilePath, missingFeatures } from '../features.js';
+import { VERSION } from '../version.js';
 
 /**
  * Imported, never re-derived.
@@ -96,11 +97,32 @@ export async function featureRoutes(app: FastifyInstance): Promise<void> {
       lockedByEnv: lockedByEnv(),
       pendingRestart,
       hasFile: readFile() !== null,
+      /** What the app itself is, and what a bundled feature therefore reports. */
+      appVersion: VERSION,
+      /**
+       * Whether "check for updates" can do anything yet.
+       *
+       * There is nowhere to ask until `UPDATE_URL` is set, and nothing is
+       * fetched from it even then — the format does not exist. Reporting it
+       * lets the screen disable the button with a reason instead of offering
+       * one that fails.
+       */
+      updates: {
+        configured: config.UPDATE_URL.trim().length > 0,
+        source: config.UPDATE_URL.trim() || null,
+      },
       features: FEATURE_LIST.map((spec) => ({
         id: spec.id,
         label: spec.label,
         blurb: spec.blurb,
         cost: spec.cost ?? null,
+        /**
+         * Its own version if it has one, otherwise the app's — because it ships
+         * with the app and genuinely is that version.
+         */
+        version: spec.version ?? VERSION,
+        /** No version of its own: it moves with the app rather than separately. */
+        bundled: spec.version === undefined,
         removable: spec.removable,
         defaultEnabled: spec.defaultEnabled,
         /** What the app is running with right now. */
