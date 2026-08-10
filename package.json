@@ -1,7 +1,7 @@
 {
   "name": "blue-everything",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "workspaces": [
     "packages/*"
@@ -13,6 +13,6 @@
     "features": "node --import tsx packages/server/src/cli/features.ts",
     "features-check": "node --import tsx packages/server/src/cli/features-check.ts"
   },
-  "comment2": "The feature scripts invoke tsx directly rather than delegating with `npm run -w`, because npm does not forward `--` arguments through a nested `npm run` \u2014 `npm run features -- --set voice=off` silently lost the flag and printed the report instead of writing anything.",
+  "comment2": "The feature scripts invoke tsx directly rather than delegating with `npm run -w`, because npm does not forward `--` arguments through a nested `npm run` — `npm run features -- --set voice=off` silently lost the flag and printed the report instead of writing anything.",
   "comment": "The vault deliberately has no crypto dependencies: Argon2id and AES-256-GCM both come from Node's built-in crypto, which is OpenSSL. The one library that would have saved work (kdbxweb, for KeePass files) shipped a vulnerable XML parser that npm would not let us override, and it is not needed."
 }
