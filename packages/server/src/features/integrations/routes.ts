@@ -31,6 +31,7 @@ import {
   type ProviderId,
 } from '@everything/shared/integrations';
 import { z } from 'zod';
+import { config } from '../../config.js';
 import { changes } from '../../events.js';
 import { beginAuthorization, completeAuthorization, grantedScopes, missingCredentials } from './oauth.js';
 import { localStatusOf, recordLocalPresence } from './providers/local.js';
@@ -73,6 +74,15 @@ async function providerState(id: ProviderId) {
     lastError: account?.lastError ?? null,
     /** Which capabilities have code behind them, as opposed to being described. */
     runnable: runnableCapabilities(id),
+    /**
+     * An environment variable is already supplying this provider's key.
+     *
+     * Only Steam has one, and the form needs it to answer a question the user
+     * would otherwise have to guess at: is the key box something I must fill
+     * in, or is it already handled? Without this the field is indistinguishable
+     * from required, which is how the previous version went wrong.
+     */
+    envFallback: id === 'steam' && config.STEAM_API_KEY !== '',
     /** For `local` providers: what the agent last said. */
     local: spec.reach === 'local' ? localStatusOf(id) : null,
   };
@@ -176,17 +186,45 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  /** Steam has no OAuth — a key in the environment and an id you paste. */
+  /**
+   * Steam has no OAuth: a personal API key and a profile, both typed here.
+   *
+   * Both, together, in one submission — that is the whole point of this route.
+   * The key used to live in an environment variable, which meant connecting
+   * Steam was a two-place job with an app restart between the halves, and the
+   * profile box on the screen sat disabled until the other half was done.
+   */
   app.post('/api/integrations/steam/connect', async (request) => {
     localOnly(request);
-    const { steamId } = connectSteamSchema.parse(request.body);
+    const { apiKey, profile } = connectSteamSchema.parse(request.body);
 
-    // Verified before it is stored, because a wrong id is stored perfectly
-    // happily and then fails on every refresh with a message about privacy
-    // settings, which sends you to entirely the wrong place.
-    const me = await steam.verify(steamId);
-    await saveAccount('steam', { externalId: me.id, accountId: me.id, accountName: me.name, lastError: null });
-    return { connected: true, accountName: me.name };
+    // The env var remains a fallback for anyone who would rather keep it there,
+    // so an empty key field is legitimate rather than a validation error.
+    const key = apiKey ?? config.STEAM_API_KEY;
+    if (!key) {
+      throw Object.assign(
+        new Error('Steam needs an API key — get one at steamcommunity.com/dev/apikey and paste it above.'),
+        { statusCode: 400 }
+      );
+    }
+
+    // Verified before either is stored. A revoked key and a mistyped profile
+    // both store perfectly happily and then fail on every refresh afterwards,
+    // with a message about privacy settings that sends you to the wrong place.
+    const me = await steam.verify(key, profile);
+
+    await saveAccount('steam', {
+      // Stored only when it was actually typed here. Copying the env var into
+      // the row would make it look editable in the app while the variable was
+      // still the thing that mattered on the next restart.
+      ...(apiKey ? { apiKey } : {}),
+      externalId: me.id,
+      accountId: me.id,
+      accountName: me.name,
+      lastError: null,
+    });
+
+    return { connected: true, accountName: me.name, steamId: me.id };
   });
 
   app.delete('/api/integrations/:provider', async (request, reply) => {

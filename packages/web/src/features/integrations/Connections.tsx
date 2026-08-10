@@ -57,9 +57,22 @@ function ProviderCard({
 }) {
   const [busy, setBusy] = useState('');
   const [outcomes, setOutcomes] = useState<SyncOutcome[]>([]);
-  const [steamId, setSteamId] = useState('');
+  const [steamKey, setSteamKey] = useState('');
+  const [steamProfile, setSteamProfile] = useState('');
   const [problem, setProblem] = useState('');
 
+  /**
+   * Whether the controls that *start* a connection can be used.
+   *
+   * `missingConfig` belongs in here for OAuth, where a missing client id means
+   * the redirect would land on the provider's own error page. It must **not**
+   * gate a text box: Steam's form used to be disabled whenever `STEAM_API_KEY`
+   * was unset, which is to say almost always, and a field that looks typeable
+   * and silently is not is the worst way to communicate a prerequisite.
+   *
+   * Steam no longer declares any `needs`, so this is true for it regardless —
+   * but the split is kept because the two answer different questions.
+   */
   const canConfigure = local && provider.missingConfig.length === 0;
 
   /**
@@ -100,8 +113,11 @@ function ProviderCard({
 
   const connectSteam = () =>
     guard('steam', async () => {
-      await api.integrations.connectSteam(steamId.trim());
-      setSteamId('');
+      await api.integrations.connectSteam(steamProfile.trim(), steamKey.trim() || undefined);
+      // Cleared on success only — `guard` throws before this on failure, so a
+      // rejected key stays in the box to be corrected rather than retyped.
+      setSteamKey('');
+      setSteamProfile('');
       reload();
     });
 
@@ -215,32 +231,95 @@ function ProviderCard({
         </div>
       )}
 
+      {/*
+        ---- Steam: both credentials, in one place, in one submission ----
+
+        A real <form> rather than an input beside a button, so Enter submits and
+        the browser groups the two fields as one thing to fill in. Neither is
+        ever disabled: the previous version gated the box on STEAM_API_KEY being
+        set in the environment, which meant it was dead until you had already
+        done the hard half somewhere else.
+      */}
+      {provider.auth === 'api-key' && !provider.connected && local && (
+        <form
+          style={{ marginTop: '.75rem', display: 'grid', gap: '.5rem' }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void connectSteam();
+          }}
+        >
+          <label style={{ display: 'grid', gap: '.25rem' }}>
+            <span className="meta">
+              {provider.envFallback ? (
+                <>
+                  Steam Web API key — <code>STEAM_API_KEY</code> is set in the environment, so leave this
+                  blank to use it. Paste one here to store it with the account instead.
+                </>
+              ) : (
+                <>
+                  Your Steam Web API key —{' '}
+                  <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noreferrer noopener">
+                    get one here
+                  </a>
+                  . It asks for a domain; <code>localhost</code> is fine.
+                </>
+              )}
+            </span>
+            <input
+              value={steamKey}
+              onChange={(e) => setSteamKey(e.target.value)}
+              placeholder={provider.envFallback ? 'Using STEAM_API_KEY' : 'Paste the key'}
+              aria-label="Steam Web API key"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+
+          <label style={{ display: 'grid', gap: '.25rem' }}>
+            <span className="meta">
+              Your profile — the URL, your custom name, or the 17-digit ID. Any of the three.
+            </span>
+            <input
+              value={steamProfile}
+              onChange={(e) => setSteamProfile(e.target.value)}
+              placeholder="steamcommunity.com/id/yourname"
+              aria-label="Steam profile"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+
+          <div className="row wrap row-actions">
+            <button
+              type="submit"
+              className="btn primary"
+              // Only the profile is genuinely required — the key may already be
+              // in the environment, and the server says so plainly if it is not.
+              disabled={steamProfile.trim() === '' || busy !== ''}
+            >
+              {busy === 'steam' ? 'Checking with Steam…' : 'Connect'}
+            </button>
+          </div>
+
+          <div className="meta">
+            Both are stored with your account here, not in a config file. Your profile and friends list
+            have to be Public in Steam's privacy settings, or the API returns an empty list with no error.
+          </div>
+        </form>
+      )}
+
+      {provider.auth === 'api-key' && !provider.connected && !local && (
+        <div className="meta" style={{ marginTop: '.75rem' }}>
+          Steam is connected from the PC running the server.
+        </div>
+      )}
+
       {/* ---- actions ---- */}
       <div className="row wrap row-actions" style={{ marginTop: '.75rem' }}>
         {provider.auth === 'oauth2' && !provider.connected && anythingUsable && (
           <button className="btn primary" disabled={!canConfigure || busy !== ''} onClick={connect}>
             {busy === 'connect' ? 'Opening…' : 'Connect'}
           </button>
-        )}
-
-        {provider.auth === 'api-key' && !provider.connected && (
-          <>
-            <input
-              value={steamId}
-              onChange={(e) => setSteamId(e.target.value)}
-              placeholder="17-digit Steam ID"
-              inputMode="numeric"
-              aria-label="Steam ID"
-              disabled={!canConfigure}
-            />
-            <button
-              className="btn primary"
-              disabled={!canConfigure || steamId.trim().length !== 17 || busy !== ''}
-              onClick={connectSteam}
-            >
-              {busy === 'steam' ? 'Checking…' : 'Connect'}
-            </button>
-          </>
         )}
 
         {provider.runnable.length > 0 && provider.connected && (

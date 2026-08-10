@@ -67,9 +67,34 @@ async function send<T>(path: string, init: RequestInit, method: string): Promise
   });
 
   if (response.status === 401) throw new Unauthorized('this device is not paired');
-  if (!response.ok) throw new Error(`${method} ${path} failed (${response.status})`);
+  if (!response.ok) throw new Error(await errorMessage(response, method, path));
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/**
+ * The server's own words, when it sent any.
+ *
+ * Every route in this app answers a failure with `{ error }`, and this used to
+ * throw that away and show `POST /api/… failed (500)` instead. The effect was
+ * invisible for a long time because most failures here are "the server is not
+ * running", where a status code is as much as anyone can say — but the moment a
+ * route had something useful to report, the screen could not show it. Steam
+ * answering "that API key was rejected, keys are revoked when you change your
+ * password" arrived as a 500 and a path.
+ *
+ * The status is kept as a fallback rather than dropped: a proxy error page or a
+ * crash before the handler produces no JSON at all, and "failed (502)" is still
+ * better than an empty string.
+ */
+async function errorMessage(response: Response, method: string, path: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error.trim() !== '') return body.error;
+  } catch {
+    // Not JSON, or no body. Fall through to the status.
+  }
+  return `${method} ${path} failed (${response.status})`;
 }
 
 const post = <T>(path: string, payload?: unknown) =>
@@ -481,6 +506,11 @@ export interface ProviderInfo {
   lastError: string | null;
   /** Capabilities with code behind them, as opposed to merely described. */
   runnable: string[];
+  /**
+   * An env var already supplies this provider's key, so the field asking for one
+   * is optional. Without this the form cannot say whether it needs filling in.
+   */
+  envFallback: boolean;
   local: LocalStatus | null;
 }
 
@@ -786,8 +816,16 @@ export const api = {
      * CORS failure instead of as a page.
      */
     authorize: (provider: string) => post<{ url: string }>(`/api/integrations/${provider}/authorize`),
-    connectSteam: (steamId: string) =>
-      post<{ connected: boolean; accountName: string }>('/api/integrations/steam/connect', { steamId }),
+    /**
+     * `profile` takes a URL, a custom name or the 17-digit id — the server
+     * resolves it, so the first step is no longer "go and look up a number".
+     * `apiKey` is optional only because STEAM_API_KEY remains a fallback.
+     */
+    connectSteam: (profile: string, apiKey?: string) =>
+      post<{ connected: boolean; accountName: string; steamId: string }>('/api/integrations/steam/connect', {
+        profile,
+        apiKey,
+      }),
     disconnect: (provider: string) => request<void>(`/api/integrations/${provider}`, { method: 'DELETE' }),
     sync: (provider: string, capabilities?: string[]) =>
       post<{ outcomes: SyncOutcome[] }>(`/api/integrations/${provider}/sync`, { capabilities }),

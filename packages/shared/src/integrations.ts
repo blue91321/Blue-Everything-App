@@ -239,7 +239,23 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     blurb: "Who is online, and what they're playing.",
     reach: 'web',
     auth: 'api-key',
-    needs: ['STEAM_API_KEY'],
+    /*
+     * Nothing, and that is a correction rather than an omission.
+     *
+     * Both of Steam's credentials are typed into the app and stored with the
+     * account, unlike every OAuth provider here. The distinction is real: a
+     * Spotify or Discord client id identifies the *application* — registered
+     * once, unchanged by a reinstall, no business being editable from a phone —
+     * so it belongs in the environment. A Steam Web API key is issued to *your
+     * account*. It is personal data of exactly the same kind as the Steam ID it
+     * sits next to, and splitting the pair across an env var and a text box
+     * made connecting a two-place job with an app restart in the middle, and
+     * left the text box disabled until the other half was done.
+     *
+     * STEAM_API_KEY is still read as a fallback for anyone who would rather
+     * keep it there, but nothing requires it.
+     */
+    needs: [],
     capabilities: {
       friends: {
         status: 'works',
@@ -250,9 +266,9 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       },
     },
     setup: [
-      'Get a key at steamcommunity.com/dev/apikey and put it in STEAM_API_KEY.',
-      'Find your 64-bit Steam ID (steamid.io works) and paste it when connecting.',
-      'Set Steam → Privacy Settings → My profile and Friends List to Public, or the API returns an empty list.',
+      'Get a key at steamcommunity.com/dev/apikey — it asks for a domain, and localhost is fine.',
+      'Paste it below with your profile: the URL, your custom name, or the 17-digit ID all work.',
+      'Set Steam → Privacy Settings → My profile and Friends List to Public, or the API returns an empty list with no error at all.',
     ],
   },
 
@@ -651,9 +667,50 @@ export function categoriseVideo(categoryId: string | null, topics: readonly stri
 /* ------------------------------------------------------------------ */
 
 export const connectSteamSchema = z.object({
-  /** 17 digits. Vanity URLs are resolved separately; this is the real id. */
-  steamId: z.string().regex(/^\d{17}$/, 'a 64-bit Steam ID is 17 digits'),
+  /**
+   * Optional only because `STEAM_API_KEY` is still honoured as a fallback.
+   * Given here it is stored with the account, which is where it belongs.
+   */
+  apiKey: z.string().trim().min(10).max(200).optional(),
+  /**
+   * Your profile, in whatever form you have it to hand.
+   *
+   * Deliberately not a 17-digit regex. That was the original shape and it made
+   * the first step of connecting Steam "go to a third-party site and look up a
+   * number", which is a chore the API can do itself: `ResolveVanityURL` turns a
+   * custom name into the id, and a profile URL contains one or the other. So
+   * the box takes a URL, a custom name, or the raw id, and the server sorts it
+   * out — see `steamProfileInput`.
+   */
+  profile: z.string().trim().min(1).max(300),
 });
+
+/**
+ * Work out what somebody pasted into the profile box.
+ *
+ * Pure, and in `shared` rather than beside the fetch, so the parsing half is
+ * covered by `integrations-check` without a network. Only the vanity case needs
+ * Steam to resolve it; the other two are already the answer.
+ */
+export function steamProfileInput(raw: string): { steamId: string } | { vanity: string } {
+  // Trailing slashes are how a copied URL usually arrives.
+  const input = raw.trim().replace(/\/+$/, '');
+
+  if (/^\d{17}$/.test(input)) return { steamId: input };
+
+  // .../profiles/76561198000000000 — already an id, wearing a URL.
+  const byId = /steamcommunity\.com\/profiles\/(\d{17})/i.exec(input);
+  if (byId) return { steamId: byId[1] };
+
+  // .../id/somename — a custom URL, which needs resolving.
+  const byVanity = /steamcommunity\.com\/id\/([^/?#]+)/i.exec(input);
+  if (byVanity) return { vanity: decodeURIComponent(byVanity[1]) };
+
+  // Anything else is treated as the custom name typed on its own. A wrong
+  // guess here fails with "Steam does not know that profile", which is the
+  // right message for a mistyped name as well as for a mistyped URL.
+  return { vanity: input };
+}
 
 export const syncRequestSchema = z.object({
   /** Omitted means everything this provider can do. */

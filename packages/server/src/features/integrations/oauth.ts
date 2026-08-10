@@ -23,19 +23,31 @@ import { getAccount, saveAccount, type Account } from './store.js';
 /* ------------------------------------------------------------------ */
 
 /**
- * Which env var holds what, per provider.
+ * Which env var holds what, per provider. **Names, never values.**
  *
  * A table rather than `config[`${id.toUpperCase()}_CLIENT_ID`]`, because that
  * form is invisible to the type checker and to anyone grepping for where a
  * variable is used — and it would have quietly produced `RIOT_CLIENT_ID` for a
  * provider that has no such thing.
+ *
+ * The fields are `idEnv`/`secretEnv` rather than `id`/`secret`, and that is not
+ * cosmetic. `publish-check` refuses to pass on a key called `secret` assigned a
+ * long string literal, which is precisely the shape the old field names
+ * produced — and it was right to refuse: nothing in such a line distinguishes a
+ * variable's *name* from its *value*. The fix belongs here rather than in the
+ * allowlist, because the old name genuinely misdescribed the field. Loosening
+ * the pattern would have stopped it catching the real thing everywhere else.
+ *
+ * (Quoting the offending form in a comment trips it too, which is why this
+ * paragraph describes the shape instead of showing it.)
  */
-const CREDENTIALS: Partial<Record<ProviderId, { id: string; secret?: string }>> = {
-  spotify: { id: 'SPOTIFY_CLIENT_ID' },
-  youtube: { id: 'GOOGLE_CLIENT_ID', secret: 'GOOGLE_CLIENT_SECRET' },
-  discord: { id: 'DISCORD_CLIENT_ID', secret: 'DISCORD_CLIENT_SECRET' },
-  battlenet: { id: 'BATTLENET_CLIENT_ID', secret: 'BATTLENET_CLIENT_SECRET' },
-  steam: { id: 'STEAM_API_KEY' },
+const CREDENTIALS: Partial<Record<ProviderId, { idEnv: string; secretEnv?: string }>> = {
+  spotify: { idEnv: 'SPOTIFY_CLIENT_ID' },
+  youtube: { idEnv: 'GOOGLE_CLIENT_ID', secretEnv: 'GOOGLE_CLIENT_SECRET' },
+  discord: { idEnv: 'DISCORD_CLIENT_ID', secretEnv: 'DISCORD_CLIENT_SECRET' },
+  battlenet: { idEnv: 'BATTLENET_CLIENT_ID', secretEnv: 'BATTLENET_CLIENT_SECRET' },
+  // Steam has no OAuth client. Its key is personal and is typed into the app;
+  // the env var remains only as a fallback, read directly in the provider.
 };
 
 type ConfigKey = keyof typeof config;
@@ -59,12 +71,12 @@ export function missingCredentials(provider: ProviderId): string[] {
 
 export function clientId(provider: ProviderId): string {
   const names = CREDENTIALS[provider];
-  return names ? envValue(names.id) : '';
+  return names ? envValue(names.idEnv) : '';
 }
 
 export function clientSecret(provider: ProviderId): string {
   const names = CREDENTIALS[provider];
-  return names?.secret ? envValue(names.secret) : '';
+  return names?.secretEnv ? envValue(names.secretEnv) : '';
 }
 
 export function redirectUri(provider: ProviderId): string {

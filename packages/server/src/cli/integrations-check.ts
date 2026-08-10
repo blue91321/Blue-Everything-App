@@ -18,6 +18,7 @@ import {
   PROVIDER_LIST,
   categoriseGenres,
   categoriseVideo,
+  steamProfileInput,
   type MusicCategory,
 } from '@everything/shared/integrations';
 import { parseIsoDuration } from '../features/integrations/providers/youtube.js';
@@ -190,6 +191,40 @@ try {
 }
 
 /* ------------------------------------------------------------------ */
+
+console.log('\nWhat someone pasted into the Steam profile box');
+
+{
+  const ID = '76561198000000000';
+  const cases: Array<[string, { steamId: string } | { vanity: string }]> = [
+    // The three shapes that need no help from Steam.
+    [ID, { steamId: ID }],
+    [`https://steamcommunity.com/profiles/${ID}`, { steamId: ID }],
+    [`https://steamcommunity.com/profiles/${ID}/`, { steamId: ID }],
+    // The one that does.
+    ['https://steamcommunity.com/id/gaben', { vanity: 'gaben' }],
+    ['https://steamcommunity.com/id/gaben/', { vanity: 'gaben' }],
+    ['steamcommunity.com/id/gaben', { vanity: 'gaben' }],
+    ['gaben', { vanity: 'gaben' }],
+    // Whitespace from a copy-paste must not become part of the name.
+    ['  gaben  ', { vanity: 'gaben' }],
+    // A profile URL with a trailing path, which is what "copy link" often gives.
+    ['https://steamcommunity.com/id/gaben/games/?tab=all', { vanity: 'gaben' }],
+  ];
+
+  for (const [input, expected] of cases) {
+    const got = steamProfileInput(input);
+    check(
+      `${JSON.stringify(input)} → ${JSON.stringify(expected)}`,
+      JSON.stringify(got) === JSON.stringify(expected),
+      JSON.stringify(got)
+    );
+  }
+
+  // A 16- or 18-digit number is not an id, and must not be sent as one — it
+  // goes to ResolveVanityURL, which fails with a message naming the profile.
+  check('a 16-digit number is not treated as an ID', 'vanity' in steamProfileInput('7656119800000000'));
+}
 
 console.log('\nThe provider manifest');
 
