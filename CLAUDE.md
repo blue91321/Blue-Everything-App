@@ -104,6 +104,46 @@ dependencies, which is 66KB gzipped and nearly all of it framework.
   correct the tally. Ticking one off day to day belongs on the Dashboard.
 - **Notes**, **Settings**.
 
+**Settings is pinned to the foot of the drawer**, not merely last in the list.
+The list grows — every feature adds a tab above it — and a Settings entry
+drifting down the middle of things you use daily is how it becomes hard to find.
+One `margin-top: auto`, since the nav is already a flex column.
+
+**Settings has tabs**: *General*, *Notifications*, *Devices*, *Packages*. One
+long scroll was fine when the screen was a theme picker and a quiet-hours
+switch; it is now appearance, reminders, push, sound, four kinds of device and
+the switches that decide which parts of the app exist — and whatever you came to
+change was always in the middle of it. Which tab is open is `useState`, like
+every other bit of navigation here.
+
+### Packages, from the app rather than a terminal
+
+`npm run features -- --set voice=off` has always written `features.json`. Having
+that as the *only* way meant the answer to "how do I turn the microphone off"
+was "open a terminal", which is the friction the three double-clickable files in
+the repo root exist to remove. `GET/PATCH /api/features` does the same write,
+local-only like every other change that touches this machine.
+
+**It takes a restart and says so.** `features.ts` resolves the set once at
+module load, because half the app's structure depends on it — routes registered
+or not, the agent importing a folder or not. Re-resolving live would mean
+unregistering Fastify routes at runtime, which is a large fragile thing to build
+for a switch flipped twice a year. So the screen reports `pendingRestart` when
+the file no longer matches what is running, and the tray's **Restart** is one
+click away. Verified end to end: switching `time` off wrote the file, and after
+a restart `/api/time/current` returned 404 and the feature left
+`/api/session`.
+
+**The path to `features.json` is exported from `features.ts`, never re-derived.**
+The route sits one directory deeper and counted `..` by hand, so it read *and
+wrote* `packages/features.json` — self-consistent, and therefore convincing: the
+screen reported the change, asked for a restart, and the restart would have
+changed nothing at all.
+
+`EVERYTHING_FEATURES` overrides the file, so when it is set the switches are
+disabled with that as the reason. A toggle that silently fails to apply is worse
+than one that explains why it cannot.
+
 ### Finishing something takes a moment to move
 
 `useSettling.ts` pins a just-ticked row in place for 1.8s before it drops to the

@@ -26,12 +26,23 @@ import { config } from './config.js';
  */
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
+/**
+ * The one definition of where `features.json` lives.
+ *
+ * Exported rather than re-derived by anything that needs it. `routes/features.ts`
+ * computed its own and was one `..` short — it sits a directory deeper — so it
+ * read and wrote `packages/features.json`, which is *self-consistent* and
+ * therefore looked correct: the screen reported the change, said a restart was
+ * owed, and a restart would have changed nothing at all. A relative path
+ * counted by hand is exactly the sort of thing to have one of.
+ */
+export const featuresFilePath = resolve(repoRoot, 'features.json');
+
 function readFeaturesFile(): Partial<Record<string, boolean>> | undefined {
-  const path = resolve(repoRoot, 'features.json');
-  if (!existsSync(path)) return undefined;
+  if (!existsSync(featuresFilePath)) return undefined;
 
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    const parsed = JSON.parse(readFileSync(featuresFilePath, 'utf8')) as Record<string, unknown>;
     const out: Partial<Record<string, boolean>> = {};
     for (const [key, value] of Object.entries(parsed)) {
       // The example file carries a "$comment" array to explain itself. Skipping

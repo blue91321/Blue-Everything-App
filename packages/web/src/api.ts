@@ -390,6 +390,39 @@ export interface Session {
   featuresMissing?: string[];
 }
 
+/**
+ * One switchable part of the app.
+ *
+ * `running` is what the server booted with; `wanted` is what `features.json`
+ * now says. They differ exactly when a restart is owed, which is the whole
+ * reason both are sent rather than one.
+ */
+export interface FeatureInfo {
+  id: string;
+  label: string;
+  blurb: string;
+  /** What it costs to have on, measured. Null when negligible. */
+  cost: string | null;
+  /** Whether its folders can be deleted, as opposed to merely switched off. */
+  removable: boolean;
+  defaultEnabled: boolean;
+  running: boolean;
+  wanted: boolean;
+  /** On, but its folders are gone from disk — a different problem from off. */
+  missing: boolean;
+  active: boolean;
+  owns: string[];
+}
+
+export interface FeatureState {
+  /** `EVERYTHING_FEATURES` is set and overrides the file, so the switches can't apply. */
+  lockedByEnv: boolean;
+  /** The file no longer matches what is running. */
+  pendingRestart: boolean;
+  hasFile: boolean;
+  features: FeatureInfo[];
+}
+
 export interface Device {
   id: string;
   name: string;
@@ -444,6 +477,16 @@ export const api = {
   },
 
   connectInfo: () => request<ConnectInfo>('/api/connect-info'),
+
+  features: {
+    get: () => request<FeatureState>('/api/features'),
+    /** Local-only, and it takes a restart — the response says whether one is owed. */
+    set: (id: string, enabled: boolean) =>
+      patch<{ ok: boolean; id: string; wanted: boolean; pendingRestart: boolean }>('/api/features', {
+        id,
+        enabled,
+      }),
+  },
 
   settings: {
     get: () => request<AppSettings>('/api/settings'),

@@ -29,12 +29,24 @@ import { Settings } from './views/Settings';
  * feature decides where its own tab sits rather than the drawer knowing about
  * every feature that might ever exist.
  */
-const CORE_NAV = [
+interface NavItem {
+  id: string;
+  label: string;
+  glyph: string;
+  order: number;
+  always: boolean;
+  /** Sits at the foot of the drawer rather than in the flow of the list. */
+  pinned?: boolean;
+}
+
+const CORE_NAV: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', glyph: '◒', order: 10, always: true },
   { id: 'tasks', label: 'Tasks', glyph: '☑', order: 20, always: true },
   { id: 'habits', label: 'Habits', glyph: '↻', order: 30, always: false },
   { id: 'notes', label: 'Notes', glyph: '✎', order: 40, always: false },
-  { id: 'settings', label: 'Settings', glyph: '⚙', order: 100, always: true },
+  // `pinned` puts it at the foot of the drawer rather than merely last in the
+  // list — features add tabs above it, and it should stay where it was.
+  { id: 'settings', label: 'Settings', glyph: '⚙', order: 100, always: true, pinned: true },
 ];
 
 type NavId = string;
@@ -178,9 +190,11 @@ export function App() {
   // as a prop — see the note in ./features.
   setEnabledFeatures(enabled);
 
-  const nav = [
+  // Widened to NavItem so a discovered feature and a core screen are the same
+  // shape here; features never pin, but the drawer should not have to care.
+  const nav: NavItem[] = [
     ...CORE_NAV.filter((item) => item.always || isOn(item.id)),
-    ...webFeatures.filter((f) => isOn(f.id)),
+    ...webFeatures.filter((f) => isOn(f.id)).map((f) => ({ ...f, always: false })),
   ].sort((a, b) => a.order - b.order);
 
   // Whatever was open may have just been switched off from another device —
@@ -214,8 +228,13 @@ export function App() {
           <span>Blue Everything</span>
         </div>
         <nav>
-          {nav.map(({ id, label, glyph }) => (
-            <button key={id} aria-current={current.id === id} onClick={() => go(id)}>
+          {nav.map(({ id, label, glyph, pinned }) => (
+            <button
+              key={id}
+              className={pinned ? 'pinned' : undefined}
+              aria-current={current.id === id}
+              onClick={() => go(id)}
+            >
               <span className="glyph" aria-hidden="true">
                 {glyph}
               </span>

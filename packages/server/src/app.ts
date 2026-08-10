@@ -17,6 +17,7 @@ import { eventRoutes, registerChangeAnnouncer } from './events.js';
 import { attentionRoutes } from './routes/attention.js';
 import { connectRoutes } from './routes/connect.js';
 import { deviceRoutes } from './routes/devices.js';
+import { featureRoutes } from './routes/features.js';
 import { habitRoutes } from './routes/habits.js';
 import { noteRoutes } from './routes/notes.js';
 import { nudgeRoutes } from './routes/nudges.js';
@@ -62,6 +63,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deviceRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);
+  // Core: the one screen that can tell you a feature is off has to work when it is.
+  await app.register(featureRoutes);
   // Before the static handler, so the generated manifest wins over the one
   // sitting in dist/ from the build.
   await app.register(iconRoutes);
