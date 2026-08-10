@@ -1205,6 +1205,38 @@ look stale, not broken.
 is something you switched on, not something you find already running. Turning
 it off in Settings releases the device immediately.
 
+### It stops listening when you are not there
+
+An always-on microphone in an empty room is the one state this app should never
+leave running by accident, so the agent closes it when `isAwayFromPc()` says the
+chair is empty — the *same* function the server uses to decide whether a nudge
+may go to your phone, so the two can never disagree about what "away" means.
+
+It goes through the same `enabled: false` path as the off switch, which means
+the speech models go too. Measured:
+
+| | listening | resident |
+| --- | --- | --- |
+| at the desk | yes | 204MB |
+| away | no | **80MB** |
+| back | yes | 199MB |
+
+Decided in the agent from the snapshot it already has, rather than read back
+from the server: closing a recording device must not wait on a round trip, and
+must keep working while the server is down. So the call sits *above* the
+in-flight and backoff guards in the attention tick.
+
+The reason is reported on the heartbeat and the Voice screen has its own rung
+for it — **"Asleep — you are away"** — placed before `listening` for the same
+reason `paused` is: the setting is still on, so without it the screen would say
+"Starting up…" at a microphone that had been closed deliberately.
+
+**The trade is real and worth knowing.** Away needs 15 minutes with no keyboard
+or mouse *and* no sound played, so reading something long in silence eventually
+counts as gone — and the wake word will not answer until you move the mouse.
+That is the honest cost of not holding a microphone open at an empty desk, and
+the screen says which state it is in rather than leaving you guessing.
+
 ```
 microphone ──► RMS gate ──► wake recogniser ──► command recogniser
   (winmm)      (silence is    ("hey everything",      (habit vocabulary)

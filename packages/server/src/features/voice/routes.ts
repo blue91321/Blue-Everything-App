@@ -310,6 +310,14 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       device: fresh ? (agentState!.device ?? null) : null,
       devices: fresh ? agentState!.devices : [],
       error: fresh ? (agentState!.error ?? null) : null,
+      /**
+       * The microphone is closed because the chair is empty.
+       *
+       * A separate answer from `paused` and from `error`: nothing is wrong and
+       * nothing was switched off, so the screen should say so rather than
+       * leaving a switch reading "on" next to a microphone that is shut.
+       */
+      awayFromPc: fresh ? (agentState!.awayFromPc ?? false) : false,
       peak: fresh ? agentState!.peak : 0,
       lastReportAt: agentState?.at ?? null,
       selectedDevice: row.voiceInputDevice,

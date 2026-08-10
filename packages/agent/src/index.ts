@@ -17,7 +17,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import type { AttentionReport } from '@everything/shared';
+import { isAwayFromPc, type AttentionReport } from '@everything/shared';
 import { AttentionMonitor, type AttentionSnapshot, type StoppingPoint } from './attention.js';
 import { ServerClient, ServerUnreachable } from './client.js';
 import { agentConfig, assertConfigured } from './config.js';
@@ -70,6 +70,20 @@ function toReport(snapshot: AttentionSnapshot, stoppingPoint: StoppingPoint | nu
 }
 
 monitor.on('tick', async (snapshot, stoppingPoint) => {
+  /*
+   * Release the microphone when the chair is empty.
+   *
+   * Decided here, from the snapshot the agent already has, using the same
+   * `isAwayFromPc` the server uses to decide whether a nudge may go to the
+   * phone — one definition of "away", so the two can never disagree about it.
+   *
+   * Deliberately *above* the in-flight and backoff guards: whether to hold a
+   * recording device open must not depend on a round trip, and must keep
+   * working while the server is down. An always-on microphone in an empty room
+   * is the one state this app should never leave running by accident.
+   */
+  voice?.setPresent(!isAwayFromPc(snapshot));
+
   if (inFlight || Date.now() < backoffUntil) return;
   inFlight = true;
 
@@ -166,7 +180,15 @@ monitor.on('unknown-fullscreen-app', (exe) => {
  * The cost is that the attention monitor starts a few milliseconds later, which
  * matters not at all against a 5-second tick.
  */
-let voice: { stop(): void } | null = null;
+/**
+ * Structurally typed rather than imported from the feature.
+ *
+ * Core must not import `features/voice`, not even a type: a type-only import is
+ * erased at runtime and so would not crash, it would just fail the type check
+ * for whoever deleted the folder — silently, until they tried to build. Naming
+ * the two methods used here costs a line and keeps the boundary real.
+ */
+let voice: { stop(): void; setPresent(present: boolean): void } | null = null;
 
 const voiceEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'features/voice/index');
 // Both extensions: the agent runs through tsx from source today, but a compiled

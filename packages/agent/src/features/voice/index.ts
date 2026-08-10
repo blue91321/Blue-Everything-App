@@ -89,6 +89,15 @@ const VOICE_RETRY_MS = 15_000;
 
 export interface VoiceFeature {
   stop(): void;
+  /**
+   * Whether you are at the desk at all.
+   *
+   * Pushed in by the attention monitor rather than polled from the server: the
+   * agent already has the answer — `isAwayFromPc` is a pure function over the
+   * same snapshot it is about to report — and closing a microphone should not
+   * wait on a round trip, nor stop working because the server is down.
+   */
+  setPresent(present: boolean): void;
 }
 
 /**
@@ -503,6 +512,32 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
 
   let voiceLoopStopped = false;
 
+  /**
+   * The last config the server asked for, and whether anyone is here to use it.
+   *
+   * Held apart so presence can be applied the instant the attention monitor
+   * changes its mind, rather than on the next pass of a loop that spends most
+   * of its life parked in a 20-second long poll. Coming back to the desk and
+   * waiting twenty seconds for the microphone would be the wrong way round —
+   * that is exactly when you are about to say something.
+   */
+  let wanted: VoiceConfig = EMPTY_VOICE_CONFIG;
+  let present = true;
+
+  /**
+   * Hand the listener the config, gated on presence.
+   *
+   * `enabled: false` is the same path that switching voice off takes, so this
+   * releases the microphone *and* the ~123MB of speech models — see
+   * `shutdown()` in voice.ts. That is the point: an empty chair should not be
+   * holding a recording device open, and it should not be holding the memory
+   * either. Reloading costs 0.2s, paid when you sit back down, which is a
+   * rounding error against the fifteen minutes it took to decide you had gone.
+   */
+  function applyConfig(): void {
+    voice.configure(present ? wanted : { ...wanted, enabled: false });
+  }
+
   async function voiceTick(): Promise<number> {
     const status = voice.status();
     // Both modes want a live screen rather than a held connection.
@@ -516,6 +551,9 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       unknownWords: missingWords,
       error: status.error,
       peak: status.peak,
+      // So the screen can say "you walked away" rather than leaving the reader
+      // to guess why a switch that reads "on" is not listening.
+      awayFromPc: !present,
       // While testing or enrolling the screen wants live progress, so ask now.
       waitMs: busy ? 0 : VOICE_WAIT_MS,
       since: voiceVersion,
@@ -564,10 +602,11 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
         }
       }
 
-      voice.configure({ ...full, ...answer });
+      wanted = { ...full, ...answer };
     } else {
-      voice.configure({ ...EMPTY_VOICE_CONFIG, wakeWord: answer.wakeWord ?? '' });
+      wanted = { ...EMPTY_VOICE_CONFIG, wakeWord: answer.wakeWord ?? '' };
     }
+    applyConfig();
 
     /*
      * A report is gathered *before* the config that arrives with it is applied,
@@ -576,7 +615,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
      * was added to remove. When something actually changed, report again once the
      * new device has had a moment to open.
      */
-    const signature = `${answer.enabled}:${answer.inputDevice ?? ''}:${answer.wakeWord ?? ''}`;
+    const signature = `${answer.enabled && present}:${answer.inputDevice ?? ''}:${answer.wakeWord ?? ''}`;
     const changed = signature !== appliedVoice;
     appliedVoice = signature;
 
@@ -615,6 +654,13 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
   void voiceLoop();
 
   return {
+    setPresent(next: boolean) {
+      if (next === present) return;
+      present = next;
+      console.log(`[${clock()}] ${next ? 'back at the desk — voice may listen again' : 'away from the desk — releasing the microphone'}`);
+      applyConfig();
+    },
+
     stop() {
       voiceLoopStopped = true;
       voice.stop();

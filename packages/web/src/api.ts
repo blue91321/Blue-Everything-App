@@ -215,6 +215,8 @@ export interface VoiceStatus {
   paused: boolean;
   /** -1 means until switched back on by hand; a timestamp means until then. */
   pausedUntil: number | null;
+  /** Closed because the desk is empty — distinct from off, paused and broken. */
+  awayFromPc?: boolean;
   testing: boolean;
   testUntil: number;
   /** The last test ended because a command matched, not because it ran out. */

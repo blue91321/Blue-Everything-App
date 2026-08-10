@@ -498,9 +498,19 @@ function LiveStatus({
         ? { text: 'Switched off', tone: 'meta', why: 'The microphone is closed and the models are unloaded.' }
         : status.paused
           ? { text: 'Paused', tone: 'urgent', why: `You asked it to stop listening, ${pausedFor}.` }
-          : status.listening
-            ? { text: `Listening on ${status.device ?? 'the default microphone'}`, tone: 'ok-text', why: '' }
-            : { text: 'Starting up…', tone: 'meta', why: 'Loading the speech models — this takes a moment.' };
+          : // Before `listening`, for the same reason `paused` is: the setting
+            // is still on, so without this the screen said "Starting up…" at a
+            // microphone that had been closed deliberately and was not coming
+            // back until somebody touched the keyboard.
+            status.awayFromPc
+            ? {
+                text: 'Asleep — you are away',
+                tone: 'meta',
+                why: 'The microphone and the speech models are released while the desk is empty. Move the mouse and it comes back.',
+              }
+            : status.listening
+              ? { text: `Listening on ${status.device ?? 'the default microphone'}`, tone: 'ok-text', why: '' }
+              : { text: 'Starting up…', tone: 'meta', why: 'Loading the speech models — this takes a moment.' };
 
   return (
     <div className="card">

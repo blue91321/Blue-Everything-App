@@ -389,6 +389,15 @@ export const voiceAgentReportSchema = z.object({
     .default([]),
   /** Why it isn't listening, when it isn't. */
   error: z.string().max(300).nullish(),
+  /**
+   * The microphone is closed because nobody is at the desk.
+   *
+   * Reported rather than inferred, because "not listening" has several causes
+   * with different fixes and a screen that cannot tell them apart is the
+   * write-only screen this whole report exists to avoid. Without it, walking
+   * away would make the Voice tab say "starting up…" indefinitely.
+   */
+  awayFromPc: z.boolean().default(false),
   /** Loudest RMS since the last report, 0-1. Drives the level meter. */
   peak: z.number().min(0).max(1).default(0),
   /**
