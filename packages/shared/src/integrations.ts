@@ -70,8 +70,17 @@ export type Reach = (typeof REACHES)[number];
 export const AUTH_KINDS = ['oauth2', 'api-key', 'client', 'file'] as const;
 export type AuthKind = (typeof AUTH_KINDS)[number];
 
-/** What a provider might be asked for. */
-export const CAPABILITIES = ['playlists', 'history', 'taste', 'friends'] as const;
+/**
+ * What a provider might be asked for.
+ *
+ * `follows` and `friends` are deliberately separate, and collapsing them was the
+ * original mistake. A Steam friend is a mutual relationship with somebody who is
+ * either around or not; a YouTube subscription or a followed Spotify artist is a
+ * one-way interest in an account that has no presence at all. Filing the second
+ * under the first put "Spotify — friends: not possible" on a screen about who is
+ * online, which answers a question nobody asked and buries the one they did.
+ */
+export const CAPABILITIES = ['playlists', 'history', 'taste', 'follows', 'friends'] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
@@ -93,6 +102,14 @@ export interface CapabilitySpec {
   why: string;
   /** Where the limit comes from, for when the sentence above is not believed. */
   source?: string;
+  /**
+   * The page that `source` refers to, when there is one to open.
+   *
+   * Separate from `source` rather than inferred from it, because half of these
+   * citations are not addresses — `ISteamUser/GetFriendList + GetPlayerSummaries`
+   * names two endpoints, and turning that into a link would invent a page.
+   */
+  sourceUrl?: string;
 }
 
 export interface ProviderSpec {
@@ -126,7 +143,26 @@ export interface ProviderSpec {
   needs: string[];
   capabilities: Partial<Record<Capability, CapabilitySpec>>;
   /** What you have to go and do at their end. Shown before you connect. */
-  setup: string[];
+  setup: SetupStep[];
+}
+
+/**
+ * One instruction, with the site it sends you to.
+ *
+ * Structured rather than a sentence with a URL inside it, because every one of
+ * these steps ends in "…go to this page", and a domain rendered as plain text is
+ * a step that has to be retyped into the address bar by hand. Linkifying prose
+ * with a regex was the alternative and it gets the boundaries wrong exactly
+ * where these strings are worst — `steamcommunity.com/dev/apikey — it asks for a
+ * domain` has an em dash immediately after the path.
+ *
+ * `url` is always absolute and always https, which `integrations-check` asserts:
+ * a relative one would resolve against the app's own origin and quietly open a
+ * 404 inside the PWA.
+ */
+export interface SetupStep {
+  text: string;
+  link?: { url: string; label: string };
 }
 
 /* ------------------------------------------------------------------ */
@@ -148,6 +184,11 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         'user-library-read',
         'user-read-recently-played',
         'user-top-read',
+        // The artists you follow. Added when the Following tab arrived, so a
+        // Spotify connected before that has to be connected again — a token
+        // carries the scopes it was issued with, and nothing can widen it after
+        // the fact. The screen reports what was granted, so this shows up.
+        'user-follow-read',
       ],
       pkce: true,
     },
@@ -172,16 +213,32 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
           'on 27 November 2024 and return 403 to any app registered since, so nothing here infers ' +
           'energy, tempo or mood.',
         source: 'developer.spotify.com/blog/2024-11-27-changes-to-the-web-api',
+        sourceUrl: 'https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api',
       },
-      friends: {
-        status: 'unavailable',
-        why: 'The Friend Activity panel in the desktop app is a private endpoint with no public equivalent.',
+      follows: {
+        status: 'works',
+        why: 'Every artist you follow, with the genres Spotify gives them.',
+        source: 'GET /v1/me/following?type=artist',
       },
+      /*
+       * No `friends` entry at all, which is the point rather than an omission.
+       *
+       * It used to say "not possible — the Friend Activity panel is private",
+       * and that was true and unhelpful: it put Spotify on a screen about who is
+       * online, to say nothing. Following an artist is not a friendship, and the
+       * question people actually have about Spotify accounts — which ones am I
+       * following — is answered by `follows` above.
+       */
     },
     setup: [
-      'Create an app at developer.spotify.com/dashboard.',
-      'Add this exact redirect URI: http://127.0.0.1:8787/api/integrations/callback/spotify',
-      'Put its Client ID in SPOTIFY_CLIENT_ID. There is no secret to store — this uses PKCE.',
+      {
+        text: 'Create an app in the Spotify developer dashboard.',
+        link: { url: 'https://developer.spotify.com/dashboard', label: 'developer.spotify.com/dashboard' },
+      },
+      {
+        text: 'Add this exact redirect URI (a trailing slash is a rejected login): http://127.0.0.1:8787/api/integrations/callback/spotify',
+      },
+      { text: 'Put its Client ID in SPOTIFY_CLIENT_ID. There is no secret to store — this uses PKCE.' },
     ],
   },
 
@@ -189,7 +246,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     id: 'youtube',
     label: 'YouTube',
     glyph: '📺',
-    blurb: 'Playlists, liked videos and subscriptions over the API; watch history from a Takeout export.',
+    blurb: 'Playlists, liked videos and the channels you subscribe to; watch history from a Takeout export.',
     reach: 'web',
     auth: 'oauth2',
     oauth: {
@@ -206,7 +263,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     capabilities: {
       playlists: {
         status: 'works',
-        why: 'Your playlists, Liked Videos, and the channels you subscribe to.',
+        why: 'Your playlists and Liked Videos, with every video in them.',
       },
       history: {
         status: 'unavailable',
@@ -215,6 +272,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
           '12 September 2016, and the activities endpoint that partly replaced it is deprecated. ' +
           'Import a Google Takeout export instead — it is complete, which the API never was.',
         source: 'developers.google.com/youtube/v3/revision_history (12 September 2016)',
+        sourceUrl: 'https://developers.google.com/youtube/v3/revision_history',
       },
       taste: {
         status: 'partial',
@@ -222,13 +280,34 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
           "Uses the video's own category and topic tags. Music videos carry the artist " +
           'inconsistently, so a track that Spotify also knows about is categorised better there.',
       },
+      follows: {
+        status: 'works',
+        why: 'Every channel you subscribe to.',
+        source: 'GET /youtube/v3/subscriptions?mine=true',
+      },
     },
     setup: [
-      'Create an OAuth client (type: Web application) at console.cloud.google.com.',
-      'Enable the YouTube Data API v3 for that project.',
-      'Add this exact redirect URI: http://127.0.0.1:8787/api/integrations/callback/youtube',
-      'Put the Client ID in GOOGLE_CLIENT_ID, and the secret in GOOGLE_CLIENT_SECRET if the client type demands one.',
-      'For watch history: takeout.google.com → YouTube → history → JSON, then upload watch-history.json here.',
+      {
+        text: 'Create an OAuth client (type: Web application) in the Google Cloud console.',
+        link: { url: 'https://console.cloud.google.com/apis/credentials', label: 'console.cloud.google.com' },
+      },
+      {
+        text: 'Enable the YouTube Data API v3 for that same project.',
+        link: {
+          url: 'https://console.cloud.google.com/apis/library/youtube.googleapis.com',
+          label: 'enable YouTube Data API v3',
+        },
+      },
+      {
+        text: 'Add this exact redirect URI (a trailing slash is a rejected login): http://127.0.0.1:8787/api/integrations/callback/youtube',
+      },
+      {
+        text: 'Put the Client ID in GOOGLE_CLIENT_ID, and the secret in GOOGLE_CLIENT_SECRET if the client type demands one.',
+      },
+      {
+        text: 'Watch history is not in the API at all — export it instead, then upload watch-history.json below.',
+        link: { url: 'https://takeout.google.com/settings/takeout', label: 'takeout.google.com' },
+      },
     ],
   },
 
@@ -266,9 +345,15 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       },
     },
     setup: [
-      'Get a key at steamcommunity.com/dev/apikey — it asks for a domain, and localhost is fine.',
-      'Paste it below with your profile: the URL, your custom name, or the 17-digit ID all work.',
-      'Set Steam → Privacy Settings → My profile and Friends List to Public, or the API returns an empty list with no error at all.',
+      {
+        text: 'Get a Web API key. It asks for a domain, and localhost is fine.',
+        link: { url: 'https://steamcommunity.com/dev/apikey', label: 'steamcommunity.com/dev/apikey' },
+      },
+      { text: 'Paste it below with your profile: the URL, your custom name, or the 17-digit ID all work.' },
+      {
+        text: 'Set both My Profile and My Friends List to Public, or the API returns an empty list with no error at all.',
+        link: { url: 'https://steamcommunity.com/my/edit/settings', label: 'your Steam privacy settings' },
+      },
     ],
   },
 
@@ -299,13 +384,28 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
           'approved the authorize page refuses the scope. There is no ordinary OAuth scope for it, ' +
           'and reading your own account with a user token is against their terms.',
         source: 'Discord Social SDK OAuth2 scopes — sdk.social_layer_presence requires portal approval',
+        sourceUrl: 'https://discord.com/developers/docs/discord-social-sdk/core-concepts/oauth2-scopes',
       },
     },
     setup: [
-      'Create an application at discord.com/developers/applications.',
-      'Add this exact redirect URI: http://127.0.0.1:8787/api/integrations/callback/discord',
-      'Put the Client ID in DISCORD_CLIENT_ID.',
-      'Request Social SDK access in the portal. Without it, connecting proves who you are and nothing more.',
+      {
+        text: 'Create an application in the Discord developer portal.',
+        link: {
+          url: 'https://discord.com/developers/applications',
+          label: 'discord.com/developers/applications',
+        },
+      },
+      {
+        text: 'Add this exact redirect URI (a trailing slash is a rejected login): http://127.0.0.1:8787/api/integrations/callback/discord',
+      },
+      { text: 'Put the Client ID in DISCORD_CLIENT_ID.' },
+      {
+        text: 'Request Social SDK access for that application. Without it, connecting proves who you are and nothing more.',
+        link: {
+          url: 'https://discord.com/developers/docs/discord-social-sdk/getting-started',
+          label: 'how to request access',
+        },
+      },
     ],
   },
 
@@ -327,7 +427,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         source: 'LCU lockfile at Riot Games/League of Legends/lockfile',
       },
     },
-    setup: ['Nothing to connect. Start the League client and the agent finds it.'],
+    setup: [{ text: 'Nothing to connect. Start the League client and the agent finds it.' }],
   },
 
   battlenet: {
@@ -354,12 +454,20 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
           'than merely not being built yet. The agent can tell you whether Battle.net is running on this ' +
           'PC, which is the whole of what is available.',
         source: 'develop.battle.net — no social or presence namespace exists',
+        sourceUrl: 'https://develop.battle.net/documentation',
       },
     },
     setup: [
-      'Create a client at develop.battle.net.',
-      'Add this exact redirect URI: http://127.0.0.1:8787/api/integrations/callback/battlenet',
-      'Put the id and secret in BATTLENET_CLIENT_ID and BATTLENET_CLIENT_SECRET — this one is a confidential client and PKCE is not offered.',
+      {
+        text: 'Create a client in the Blizzard developer portal.',
+        link: { url: 'https://develop.battle.net/access/clients', label: 'develop.battle.net' },
+      },
+      {
+        text: 'Add this exact redirect URI (a trailing slash is a rejected login): http://127.0.0.1:8787/api/integrations/callback/battlenet',
+      },
+      {
+        text: 'Put the id and secret in BATTLENET_CLIENT_ID and BATTLENET_CLIENT_SECRET — this one is a confidential client and PKCE is not offered.',
+      },
     ],
   },
 
@@ -380,9 +488,10 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
           'a subset, never the launcher list. The launcher itself uses private endpoints. What is left is ' +
           'local: the agent can see whether the launcher is running.',
         source: 'dev.epicgames.com — Friends Interface requires per-friend consent per product',
+        sourceUrl: 'https://dev.epicgames.com/docs/web-api-ref/friends-web-api',
       },
     },
-    setup: ['Nothing to connect. The agent reports whether the Epic launcher is running.'],
+    setup: [{ text: 'Nothing to connect. The agent reports whether the Epic launcher is running.' }],
   },
 };
 
@@ -391,6 +500,11 @@ export const PROVIDER_LIST: ProviderSpec[] = PROVIDER_IDS.map((id) => PROVIDERS[
 /** Providers that can contribute anything at all to a friends list. */
 export const PRESENCE_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter(
   (p) => p.capabilities.friends && p.capabilities.friends.status !== 'unavailable'
+).map((p) => p.id);
+
+/** Providers that can say which accounts you follow or subscribe to. */
+export const FOLLOW_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter(
+  (p) => p.capabilities.follows && p.capabilities.follows.status !== 'unavailable'
 ).map((p) => p.id);
 
 /** Providers whose presence the agent gathers, because only this PC can see it. */
@@ -483,10 +597,17 @@ export type MediaKind = (typeof MEDIA_KINDS)[number];
  * A playlist, or one of the pseudo-playlists every service has ("Liked Songs",
  * "Liked Videos") and treats as special right up until you try to read it.
  *
- * `saved` and `subscriptions` are separate kinds rather than playlists with
- * reserved names, because a name is a thing you can rename.
+ * `saved` is a separate kind rather than a playlist with a reserved name,
+ * because a name is a thing you can rename.
+ *
+ * **`subscriptions` used to be a third kind and is not any more.** Channels were
+ * being stored as `media_items` of kind `video` inside a collection, which is
+ * the sort of shape that works until you look at it: a channel has no duration,
+ * no album and no play, and it was sitting in the middle of the music library
+ * being counted as one. Followed accounts have their own table now — see
+ * `FOLLOW_KINDS`.
  */
-export const COLLECTION_KINDS = ['playlist', 'saved', 'subscriptions'] as const;
+export const COLLECTION_KINDS = ['playlist', 'saved'] as const;
 export const collectionKindSchema = z.enum(COLLECTION_KINDS);
 export type CollectionKind = (typeof COLLECTION_KINDS)[number];
 
@@ -494,6 +615,41 @@ export type CollectionKind = (typeof COLLECTION_KINDS)[number];
 export const PLAY_SOURCES = ['spotify-recent', 'youtube-takeout'] as const;
 export const playSourceSchema = z.enum(PLAY_SOURCES);
 export type PlaySource = (typeof PLAY_SOURCES)[number];
+
+/* ------------------------------------------------------------------ */
+/* Accounts you follow                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A followed account, which is not a friend and not a track.
+ *
+ * Kept apart from both on purpose. It is not a `Friend` because there is no
+ * presence — a channel is never "online" — and putting these on the friends
+ * screen meant Spotify appeared there only to say it could not help. It is not a
+ * `media_item` because a channel has none of the fields one has, and the
+ * category counts on the Music tab were quietly including them.
+ */
+export const FOLLOW_KINDS = ['channel', 'artist'] as const;
+export const followKindSchema = z.enum(FOLLOW_KINDS);
+export type FollowKind = (typeof FOLLOW_KINDS)[number];
+
+export const FOLLOW_KIND_LABELS: Record<FollowKind, string> = {
+  channel: 'Subscribed',
+  artist: 'Following',
+};
+
+export interface FollowedAccount {
+  provider: ProviderId;
+  providerAccountId: string;
+  kind: FollowKind;
+  name: string;
+  url?: string;
+  avatarUrl?: string;
+  /** Provider genre strings, for artists. Channels have none. */
+  genres?: string[];
+  /** How many other people follow them, when the provider says. */
+  followerCount?: number;
+}
 
 /* ------------------------------------------------------------------ */
 /* Categories                                                          */

@@ -22,6 +22,7 @@ import {
   CAPABILITIES,
   PROVIDERS,
   PROVIDER_LIST,
+  FOLLOW_PROVIDERS,
   connectSteamSchema,
   isProviderId,
   localPresenceSchema,
@@ -39,6 +40,7 @@ import * as spotify from './providers/spotify.js';
 import * as steam from './providers/steam.js';
 import * as youtube from './providers/youtube.js';
 import {
+  allFollows,
   allFriends,
   categoryBreakdown,
   collectionsFor,
@@ -48,6 +50,7 @@ import {
   listAccounts,
   recentPlays,
   saveAccount,
+  followsFreshness,
   syncedAtOf,
   tasteProfile,
 } from './store.js';
@@ -297,6 +300,29 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     const report = localPresenceSchema.parse(request.body);
     await recordLocalPresence(report);
     return { ok: true };
+  });
+
+  /**
+   * Accounts you follow — YouTube channels, Spotify artists.
+   *
+   * A plain read with no refresh-on-read, unlike friends. A subscription list
+   * changes when *you* change it, perhaps monthly; presence changes minute to
+   * minute. Refreshing this on every open would spend YouTube quota to confirm
+   * what it said yesterday, so it is synced on demand like a playlist.
+   */
+  app.get('/api/integrations/follows', async () => {
+    const freshness = await followsFreshness();
+
+    return {
+      follows: await allFollows(),
+      sources: FOLLOW_PROVIDERS.map((id) => ({
+        provider: id,
+        label: PROVIDERS[id].label,
+        status: PROVIDERS[id].capabilities.follows!.status,
+        why: PROVIDERS[id].capabilities.follows!.why,
+        syncedAt: freshness.get(id) ?? null,
+      })),
+    };
   });
 
   /* ---- the library ----------------------------------------------- */

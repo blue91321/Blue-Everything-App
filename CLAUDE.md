@@ -1941,15 +1941,50 @@ that shows an empty list — is the expensive way to learn it. So a capability i
 `shared/src/integrations.ts` is not a boolean. It carries a `status` and a
 `why`, and the screen renders the `why` next to the thing it explains.
 
-| | playlists | history | who's online |
-| --- | --- | --- | --- |
-| **Spotify** | yes | last 50 plays, ever | no public API |
-| **YouTube** | yes | **not since 2016** — Takeout import | — |
-| **Steam** | — | — | **yes, properly** |
-| **Discord** | — | — | needs their approval |
-| **Riot** | — | — | local client only |
-| **Battle.net** | — | — | **no such API exists** |
-| **Epic** | — | — | per-friend consent, never the launcher list |
+| | playlists | history | following | who's online |
+| --- | --- | --- | --- | --- |
+| **Spotify** | yes | last 50 plays, ever | artists you follow | — |
+| **YouTube** | yes | **not since 2016** — Takeout import | subscriptions | — |
+| **Steam** | — | — | — | **yes, properly** |
+| **Discord** | — | — | — | needs their approval |
+| **Riot** | — | — | — | local client only |
+| **Battle.net** | — | — | — | **no such API exists** |
+| **Epic** | — | — | — | per-friend consent, never the launcher list |
+
+**`follows` and `friends` are separate capabilities, and collapsing them was the
+first mistake here.** A Steam friend is a mutual relationship with somebody who
+is either around or not; a subscribed channel or a followed artist is a one-way
+interest in an account that has no presence and never will. Filing the second
+under the first put *"Spotify — friends: not possible"* on a screen about who is
+online, which answers a question nobody asked and pushes down the one they did.
+`integrations-check` asserts the split in both directions, because the tempting
+fix is to add the key back "for completeness".
+
+Followed accounts get **their own table** rather than a collection of channels,
+which is what they were first. That shape stored a channel as a `media_item` of
+kind `video`, so every subscription arrived in the music library with no
+duration and no plays, and was counted in the category breakdown as though it
+were a track.
+
+### Every site you have to visit is a link
+
+`setup` is a list of `SetupStep`, not of strings: each step carries an optional
+`{ url, label }`, and the screen renders a real anchor. A domain in prose is a
+step you retype into the address bar by hand, and linkifying prose with a regex
+gets the boundaries wrong exactly where these strings are worst — the Steam one
+is `steamcommunity.com/dev/apikey — it asks for a domain`, where the em dash
+lands against the path. `integrations-check` asserts every link is an absolute
+`https:` URL; a relative one would resolve against the app's own origin and open
+a 404 inside the PWA, which reads as a broken app rather than a bad link.
+
+`sourceUrl` is separate from `source` for the same reason it is optional: half
+the citations name endpoints rather than pages — `ISteamUser/GetFriendList +
+GetPlayerSummaries` — and linking those would invent a URL.
+
+**The setup list stays visible after connecting**, collapsed, retitled *Setup
+and troubleshooting*. Hiding it on success removed the links at exactly the
+moment they became useful: "Steam returned no friends" is nearly always the
+privacy setting, and the link that fixes it is in that list.
 
 The four that hurt, and why they are stated rather than worked around:
 

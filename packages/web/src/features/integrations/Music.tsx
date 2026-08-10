@@ -16,27 +16,8 @@
 import { useState } from 'react';
 import { api } from '../../api';
 import { useAsync } from '../../useAsync';
+import { CATEGORY_LABELS } from './Integrations';
 
-const CATEGORY_LABELS: Record<string, string> = {
-  rock: 'Rock',
-  metal: 'Metal',
-  punk: 'Punk',
-  pop: 'Pop',
-  hiphop: 'Hip-hop',
-  rnb: 'R&B / Soul',
-  electronic: 'Electronic',
-  dance: 'Dance / House',
-  jazz: 'Jazz / Blues',
-  classical: 'Classical',
-  folk: 'Folk / Acoustic',
-  country: 'Country',
-  latin: 'Latin',
-  world: 'World',
-  soundtrack: 'Soundtrack / Game',
-  ambient: 'Ambient / Chill',
-  spoken: 'Spoken word',
-  unknown: 'Uncategorised',
-};
 
 const label = (category: string) => CATEGORY_LABELS[category] ?? category;
 

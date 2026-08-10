@@ -483,6 +483,19 @@ export interface CapabilityInfo {
   status: 'works' | 'partial' | 'needs-approval' | 'unavailable';
   why: string;
   source?: string;
+  /** Present only when `source` names a page that can actually be opened. */
+  sourceUrl?: string;
+}
+
+/**
+ * One setup instruction, with the site it sends you to.
+ *
+ * `link` is structured rather than a URL buried in `text`, so the screen can
+ * render a real anchor instead of a domain you have to retype.
+ */
+export interface SetupStep {
+  text: string;
+  link?: { url: string; label: string };
 }
 
 export interface ProviderInfo {
@@ -493,7 +506,7 @@ export interface ProviderInfo {
   reach: 'web' | 'local' | 'import';
   auth: 'oauth2' | 'api-key' | 'client' | 'file';
   needs: string[];
-  setup: string[];
+  setup: SetupStep[];
   capabilities: Partial<Record<string, CapabilityInfo>>;
 
   connected: boolean;
@@ -589,6 +602,32 @@ export interface MediaItem {
   categoryBecause: string | null;
   genres: string;
   position: number;
+}
+
+export interface FollowRow {
+  id: string;
+  provider: string;
+  providerAccountId: string;
+  kind: 'channel' | 'artist';
+  name: string;
+  url: string | null;
+  avatarUrl: string | null;
+  genres: string;
+  category: string;
+  categoryBecause: string | null;
+  followerCount: number | null;
+  seenAt: number;
+}
+
+export interface FollowsView {
+  follows: FollowRow[];
+  sources: Array<{
+    provider: string;
+    label: string;
+    status: CapabilityInfo['status'];
+    why: string;
+    syncedAt: number | null;
+  }>;
 }
 
 export interface MusicView {
@@ -832,6 +871,8 @@ export const api = {
     /** `force` is the refresh button; without it the read only refetches if stale. */
     friends: (force = false) => request<FriendsView>(`/api/integrations/friends${force ? '?force=1' : ''}`),
     collections: () => request<MediaCollection[]>('/api/integrations/collections'),
+    /** Channels and artists you follow. Synced on demand, not refreshed on read. */
+    follows: () => request<FollowsView>('/api/integrations/follows'),
     collectionItems: (id: string) => request<MediaItem[]>(`/api/integrations/collections/${id}`),
     music: (days = 30) => request<MusicView>(`/api/integrations/music?days=${days}`),
     /** Two-phase: nothing is written unless `commit` is true. */

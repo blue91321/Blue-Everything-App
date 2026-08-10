@@ -20,6 +20,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   playlists: 'Playlists',
   history: 'History',
   taste: 'Categories',
+  follows: 'Following',
   friends: 'Friends',
 };
 
@@ -168,7 +169,16 @@ function ProviderCard({
                   something its documentation appears to describe. */}
               {spec.source && (
                 <div className="meta" style={{ marginTop: 2, opacity: 0.7 }}>
-                  {spec.source}
+                  {/* Linked only where the citation is a page. Half of them name
+                      endpoints rather than documents, and linking those would
+                      invent a URL. */}
+                  {spec.sourceUrl ? (
+                    <a href={spec.sourceUrl} target="_blank" rel="noreferrer noopener">
+                      {spec.source} ↗
+                    </a>
+                  ) : (
+                    spec.source
+                  )}
                 </div>
               )}
             </div>
@@ -203,13 +213,38 @@ function ProviderCard({
         character, and a trailing slash is a rejected login with an error page
         that does not say so.
       */}
-      {!provider.connected && anythingUsable && provider.auth !== 'client' && provider.setup.length > 0 && (
+      {/*
+        Rendered when connected too, which it was not at first.
+
+        Hiding these the moment a connection succeeded meant the links vanished
+        exactly when they became most useful: "Steam returned no friends" is
+        nearly always the privacy setting, and the link that fixes it is in this
+        list. The same goes for a revoked key or a client id that has to be
+        re-created. Collapsed by default, so it costs a line either way.
+      */}
+      {anythingUsable && provider.auth !== 'client' && provider.setup.length > 0 && (
         <details style={{ marginTop: '.5rem' }}>
-          <summary className="meta">What you have to set up at their end</summary>
+          <summary className="meta">
+            {provider.connected ? 'Setup and troubleshooting' : 'What you have to set up at their end'}
+          </summary>
           <ol className="meta" style={{ marginTop: '.4rem', paddingLeft: '1.2rem' }}>
             {provider.setup.map((step) => (
-              <li key={step} style={{ marginBottom: '.25rem' }}>
-                {step}
+              <li key={step.text} style={{ marginBottom: '.35rem' }}>
+                {step.text}
+                {/*
+                  A real anchor, not a domain rendered as text you have to retype
+                  into the address bar. `noreferrer noopener` because these open
+                  in a new tab and the target has no business with a handle on
+                  this window.
+                */}
+                {step.link && (
+                  <>
+                    {' '}
+                    <a href={step.link.url} target="_blank" rel="noreferrer noopener">
+                      {step.link.label} ↗
+                    </a>
+                  </>
+                )}
               </li>
             ))}
           </ol>

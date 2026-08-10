@@ -14,11 +14,13 @@
  * rather than presenting a genre guess as if it were a measurement.
  */
 import { apiGet } from '../oauth.js';
+import type { FollowedAccount } from '@everything/shared/integrations';
 import {
   findItemIds,
   markCollectionSynced,
   recordPlays,
   replaceCollectionItems,
+  replaceFollows,
   upsertCollection,
   upsertItems,
   type IncomingItem,
@@ -302,4 +304,65 @@ export async function syncHistory(): Promise<SyncResult> {
         : `${added} new ${added === 1 ? 'play' : 'plays'} (of the 50 Spotify keeps)`,
     ],
   };
+}
+
+/**
+ * The artists you follow.
+ *
+ * Paged differently from everything else here, and that is Spotify's doing
+ * rather than a choice: `/me/following` returns its cursor nested under an
+ * `artists` key and pages by `after` rather than by offset, so the generic
+ * walker above cannot be pointed at it. Following a few hundred artists is
+ * normal, so the loop is bounded for the same reason the others are.
+ *
+ * Needs `user-follow-read`, which was added to the scope list when this arrived.
+ * A connection made before that carries a token without it and gets a 403 —
+ * which is why the screen reports granted scopes rather than assuming.
+ */
+export async function syncFollows(): Promise<SyncResult> {
+  const accounts: FollowedAccount[] = [];
+  let after: string | undefined;
+
+  do {
+    const query = new URLSearchParams({ type: 'artist', limit: '50' });
+    if (after) query.set('after', after);
+
+    const page = await apiGet<{
+      artists: {
+        items: Array<{
+          id: string;
+          name: string;
+          genres?: string[];
+          followers?: { total?: number };
+          images?: Array<{ url: string }>;
+          external_urls?: { spotify?: string };
+        }>;
+        next: string | null;
+        cursors?: { after?: string | null };
+      };
+    }>('spotify', `${API}/me/following?${query}`);
+
+    for (const artist of page.artists.items) {
+      accounts.push({
+        provider: 'spotify',
+        providerAccountId: artist.id,
+        kind: 'artist',
+        name: artist.name,
+        url: artist.external_urls?.spotify ?? `https://open.spotify.com/artist/${artist.id}`,
+        // The smallest image, not the first: the first is 640px, and a list of
+        // three hundred artists should not pull three hundred large images.
+        avatarUrl: artist.images?.[artist.images.length - 1]?.url,
+        genres: artist.genres ?? [],
+        followerCount: artist.followers?.total,
+      });
+    }
+
+    // `next` going null is the end; the cursor is only meaningful while it does
+    // not. Checking both means a malformed page ends the loop rather than
+    // spinning on the same `after` forever.
+    after = page.artists.next ? page.artists.cursors?.after ?? undefined : undefined;
+  } while (after && accounts.length < 5000);
+
+  await replaceFollows('spotify', accounts);
+  return { notes: [`${accounts.length} artists followed`] };
 }

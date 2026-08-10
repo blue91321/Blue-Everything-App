@@ -12,10 +12,11 @@
  * whenever you started rather than to whenever you connected.
  */
 import { apiGet } from '../oauth.js';
-import { categoriseVideo } from '@everything/shared/integrations';
+import { categoriseVideo, type FollowedAccount } from '@everything/shared/integrations';
 import {
   markCollectionSynced,
   replaceCollectionItems,
+  replaceFollows,
   upsertCollection,
   upsertItems,
   type IncomingItem,
@@ -213,39 +214,48 @@ export async function syncPlaylists(): Promise<SyncResult> {
   }
   notes.push(`${playlists.length} playlists`);
 
-  /*
-   * Subscriptions are stored as a collection of their own rather than as
-   * playlists, because a channel is not a video and pretending otherwise would
-   * put channels in the middle of the music library.
-   */
-  const subscriptions = await pageThrough<{
-    snippet: { title: string; description: string; resourceId: { channelId: string }; thumbnails?: { medium?: { url: string } } };
-  }>(`${API}/subscriptions?part=snippet&mine=true&maxResults=50&order=alphabetical`);
-
-  const subsCollection = await upsertCollection('youtube', {
-    providerCollectionId: 'subscriptions',
-    kind: 'subscriptions',
-    name: 'Subscriptions',
-    itemCount: subscriptions.length,
-  });
-
-  const subIds = await upsertItems(
-    'youtube',
-    subscriptions.map((s) => ({
-      providerItemId: `channel:${s.snippet.resourceId.channelId}`,
-      kind: 'video' as const,
-      title: s.snippet.title,
-      creator: s.snippet.title,
-      url: `https://www.youtube.com/channel/${s.snippet.resourceId.channelId}`,
-      artUrl: s.snippet.thumbnails?.medium?.url ?? null,
-      // A channel has no genres of its own, and guessing one from its name would
-      // put it confidently in the wrong family.
-      category: 'unknown',
-    }))
-  );
-  await replaceCollectionItems(subsCollection.id, subIds);
-  await markCollectionSynced(subsCollection.id, null);
-  notes.push(`${subscriptions.length} subscriptions`);
-
   return { notes };
+}
+
+/**
+ * The channels you subscribe to.
+ *
+ * Its own capability rather than a tail on the playlist sync, which is where it
+ * started. A subscription is not a playlist and a channel is not a video: the
+ * old shape stored each one as a `media_item` of kind `video` inside a
+ * collection called "Subscriptions", so every channel you follow arrived in the
+ * music library with no duration and no plays and was counted in the category
+ * breakdown as though it were a track.
+ *
+ * Splitting it also means syncing playlists no longer spends quota on
+ * subscriptions and the other way round, which matters on an API budgeted per
+ * day rather than per second.
+ */
+export async function syncFollows(): Promise<SyncResult> {
+  const subscriptions = await pageThrough<{
+    snippet: {
+      title: string;
+      description: string;
+      resourceId: { channelId: string };
+      thumbnails?: { default?: { url: string }; medium?: { url: string } };
+    };
+    contentDetails?: { totalItemCount?: number };
+  }>(`${API}/subscriptions?part=snippet,contentDetails&mine=true&maxResults=50&order=alphabetical`);
+
+  const accounts: FollowedAccount[] = subscriptions.map((sub) => ({
+    provider: 'youtube',
+    providerAccountId: sub.snippet.resourceId.channelId,
+    kind: 'channel',
+    name: sub.snippet.title,
+    url: `https://www.youtube.com/channel/${sub.snippet.resourceId.channelId}`,
+    // The small thumbnail: this is a list, and the default size is 88px against
+    // the medium 240px, which is three hundred images nobody looks at closely.
+    avatarUrl: sub.snippet.thumbnails?.default?.url ?? sub.snippet.thumbnails?.medium?.url,
+    // No genres. A channel has none, and inferring one from its name would put
+    // it confidently in the wrong family — `unknown` is the honest answer and
+    // the categoriser already returns it for an empty list.
+  }));
+
+  await replaceFollows('youtube', accounts);
+  return { notes: [`${accounts.length} subscriptions`] };
 }

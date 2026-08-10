@@ -44,9 +44,11 @@ const RUNNERS: Partial<Record<ProviderId, Partial<Record<Capability, Runner>>>> 
   spotify: {
     playlists: spotify.syncPlaylists,
     history: spotify.syncHistory,
+    follows: spotify.syncFollows,
   },
   youtube: {
     playlists: youtube.syncPlaylists,
+    follows: youtube.syncFollows,
   },
   steam: {
     friends: async () => {

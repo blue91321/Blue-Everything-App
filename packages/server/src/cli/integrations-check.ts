@@ -14,7 +14,10 @@
  * change to the logic it covers.
  */
 import {
+  FOLLOW_PROVIDERS,
   MUSIC_CATEGORIES,
+  PRESENCE_PROVIDERS,
+  PROVIDERS,
   PROVIDER_LIST,
   categoriseGenres,
   categoriseVideo,
@@ -241,6 +244,33 @@ for (const spec of PROVIDER_LIST) {
     check(`${spec.id}: has an authorize and a token URL`, !!spec.oauth?.authorizeUrl && !!spec.oauth?.tokenUrl);
   }
 
+  /*
+   * Every setup link is an absolute https URL.
+   *
+   * A relative one would resolve against the app's own origin and open a 404
+   * inside the PWA, which reads as a broken app rather than a bad link — and it
+   * is exactly what a copy-paste from documentation produces.
+   */
+  for (const step of spec.setup) {
+    if (!step.link) continue;
+    check(
+      `${spec.id}: "${step.link.label}" is an absolute https link`,
+      /^https:\/\/\S+$/.test(step.link.url),
+      step.link.url
+    );
+    check(`${spec.id}: "${step.link.label}" has something to click`, step.link.label.trim().length > 0);
+  }
+
+  // Same for a citation that claims to be a page rather than an endpoint name.
+  for (const [name, capability] of Object.entries(spec.capabilities)) {
+    if (!capability?.sourceUrl) continue;
+    check(
+      `${spec.id}/${name}: sourceUrl is an absolute https link`,
+      /^https:\/\/\S+$/.test(capability.sourceUrl),
+      capability.sourceUrl
+    );
+  }
+
   // `client` providers have nothing to configure by definition, and a `needs`
   // entry on one would put an un-fixable "not configured" on the screen.
   if (spec.auth === 'client') {
@@ -250,6 +280,28 @@ for (const spec of PROVIDER_LIST) {
 }
 
 /* ------------------------------------------------------------------ */
+
+console.log('\nFollowing is not friendship');
+
+/*
+ * The distinction the Following tab exists for, asserted rather than trusted.
+ *
+ * Spotify declaring a `friends` capability is precisely what put it on the
+ * friends screen only to say it could not help, and it would do so again the
+ * moment somebody adds the key back "for completeness".
+ */
+for (const id of ['spotify', 'youtube'] as const) {
+  check(`${id} declares no friends capability`, PROVIDERS[id].capabilities.friends === undefined);
+  check(`${id} declares follows instead`, PROVIDERS[id].capabilities.follows !== undefined);
+  check(`${id} is not a presence provider`, !PRESENCE_PROVIDERS.includes(id));
+  check(`${id} is a follow provider`, FOLLOW_PROVIDERS.includes(id));
+}
+
+// And the other way round: a presence provider must not claim a follow list it
+// has no way to produce.
+for (const id of ['steam', 'riot', 'battlenet', 'epic'] as const) {
+  check(`${id} declares no follows capability`, PROVIDERS[id].capabilities.follows === undefined);
+}
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

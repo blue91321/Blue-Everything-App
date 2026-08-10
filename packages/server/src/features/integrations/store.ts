@@ -9,6 +9,7 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   categoriseGenres,
+  type FollowedAccount,
   type CollectionKind,
   type Friend,
   type MediaKind,
@@ -17,6 +18,7 @@ import {
 } from '@everything/shared/integrations';
 import { db } from '../../db/client.js';
 import {
+  follows,
   friends,
   integrationAccounts,
   mediaCollectionItems,
@@ -464,5 +466,79 @@ export async function friendsFreshness(): Promise<Map<string, number>> {
     .select({ provider: friends.provider, seenAt: sql<number>`max(${friends.seenAt})`.as('seenAt') })
     .from(friends)
     .groupBy(friends.provider);
+  return new Map(rows.map((r) => [r.provider, r.seenAt]));
+}
+
+/* ------------------------------------------------------------------ */
+/* Accounts you follow                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Replace what we know about one provider's followed accounts.
+ *
+ * Identical shape to `replaceFriends`, deliberately: upsert then prune by
+ * `seenAt`, so ids survive a refresh and an unsubscribe actually leaves. The
+ * duplication between the two is four lines of column names, and the
+ * alternative — one generic snapshot writer over two tables with different
+ * columns — would be harder to read than either.
+ */
+export async function replaceFollows(provider: ProviderId, incoming: FollowedAccount[]): Promise<void> {
+  const now = Date.now();
+
+  const rows = incoming.map((account) => {
+    // Categorised here rather than in the provider, so one definition of what a
+    // genre string means covers tracks and artists alike.
+    const decided = categoriseGenres(account.genres ?? []);
+    return {
+      provider,
+      providerAccountId: account.providerAccountId,
+      kind: account.kind,
+      name: account.name,
+      url: account.url ?? null,
+      avatarUrl: account.avatarUrl ?? null,
+      genres: JSON.stringify(account.genres ?? []),
+      category: decided.category,
+      categoryBecause: decided.because,
+      followerCount: account.followerCount ?? null,
+      seenAt: now,
+    };
+  });
+
+  for (let i = 0; i < rows.length; i += 100) {
+    await db
+      .insert(follows)
+      .values(rows.slice(i, i + 100))
+      .onConflictDoUpdate({
+        target: [follows.provider, follows.providerAccountId],
+        set: {
+          kind: sql`excluded.kind`,
+          name: sql`excluded.name`,
+          url: sql`excluded.url`,
+          avatarUrl: sql`excluded.avatar_url`,
+          genres: sql`excluded.genres`,
+          category: sql`excluded.category`,
+          categoryBecause: sql`excluded.category_because`,
+          followerCount: sql`excluded.follower_count`,
+          seenAt: now,
+          updatedAt: now,
+        },
+      });
+  }
+
+  // Anyone this provider no longer lists — an unsubscribe, or an artist you
+  // stopped following. One statement however long the list is.
+  await db.delete(follows).where(and(eq(follows.provider, provider), sql`${follows.seenAt} < ${now}`));
+}
+
+export async function allFollows() {
+  return db.select().from(follows).orderBy(follows.provider, follows.name);
+}
+
+/** When each provider's follow list was last written, for the staleness note. */
+export async function followsFreshness(): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ provider: follows.provider, seenAt: sql<number>`max(${follows.seenAt})`.as('seenAt') })
+    .from(follows)
+    .groupBy(follows.provider);
   return new Map(rows.map((r) => [r.provider, r.seenAt]));
 }

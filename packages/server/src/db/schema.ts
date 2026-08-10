@@ -694,6 +694,46 @@ export const friends = sqliteTable(
   (t) => [uniqueIndex('friends_provider_user_idx').on(t.provider, t.providerUserId)]
 );
 
+/**
+ * Accounts you follow or subscribe to — YouTube channels, Spotify artists.
+ *
+ * Its own table rather than a collection of channels, which is what this was
+ * first. That shape stored a channel as a `media_item` of kind `video`, so every
+ * subscription landed in the library with no duration, no album and no play, and
+ * was counted in the Music tab's category breakdown as though it were a track.
+ *
+ * A followed account is a third kind of thing here: not a friend, because it has
+ * no presence and never will, and not a track, because it has none of a track's
+ * fields. Filing it as either is what put "Spotify — friends: not possible" on a
+ * screen about who is online.
+ *
+ * Snapshot-shaped like `friends`, for the same reasons: upserted in place so ids
+ * stay stable, pruned by `seenAt` so an unsubscribe actually disappears.
+ */
+export const follows = sqliteTable(
+  'follows',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    providerAccountId: text('provider_account_id').notNull(),
+    /** channel | artist. */
+    kind: text('kind').notNull(),
+    name: text('name').notNull(),
+    url: text('url'),
+    avatarUrl: text('avatar_url'),
+    /** JSON array of the provider's genre strings. Artists only. */
+    genres: text('genres').notNull().default('[]'),
+    /** Folded from `genres`, so the list groups without re-deriving on read. */
+    category: text('category').notNull().default('unknown'),
+    categoryBecause: text('category_because'),
+    followerCount: integer('follower_count'),
+    seenAt: integer('seen_at').notNull().$defaultFn(() => Date.now()),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [uniqueIndex('follows_provider_account_idx').on(t.provider, t.providerAccountId)]
+);
+
 export const schema = {
   projects,
   tasks,
@@ -713,6 +753,7 @@ export const schema = {
   mediaCollectionItems,
   mediaPlays,
   friends,
+  follows,
 };
 
 /** Used by the health check to prove the database is actually reachable. */

@@ -17,17 +17,21 @@
 import { useState } from 'react';
 import { api } from '../../api';
 import { Connections } from './Connections';
+import { Following } from './Following';
 import { Friends } from './Friends';
 import { Music } from './Music';
 
-type Tab = 'friends' | 'connections' | 'music';
+type Tab = 'friends' | 'following' | 'connections' | 'music';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   // Friends first, and deliberately: it is the one you open repeatedly, while
   // connections is a screen you visit twice a year.
   { id: 'friends', label: 'Friends' },
-  { id: 'connections', label: 'Services' },
+  // Next to Friends because they answer neighbouring questions — who do I know,
+  // and who do I follow — but separate because only one of them has a status.
+  { id: 'following', label: 'Following' },
   { id: 'music', label: 'Music' },
+  { id: 'connections', label: 'Services' },
 ];
 
 export function Integrations({ local }: { local: boolean }) {
@@ -52,8 +56,9 @@ export function Integrations({ local }: { local: boolean }) {
       </div>
 
       {tab === 'friends' && <Friends />}
-      {tab === 'connections' && <Connections local={local} />}
+      {tab === 'following' && <Following />}
       {tab === 'music' && <Music local={local} />}
+      {tab === 'connections' && <Connections local={local} />}
     </section>
   );
 }
@@ -83,6 +88,40 @@ export function StatusChip({ status }: { status: string }) {
     </span>
   );
 }
+
+/**
+ * The eighteen families, in English.
+ *
+ * Here rather than in Music.tsx because Following needs them too — an artist
+ * carries the same category a track does. A second copy would be the first
+ * thing to drift, and the one that drifted would be a label nobody looks at
+ * twice.
+ *
+ * Duplicated from `MUSIC_CATEGORY_LABELS` in shared, which this bundle
+ * deliberately does not import — see the note at the top of api.ts. Display
+ * copy only; nothing here refuses anything.
+ */
+export const CATEGORY_LABELS: Record<string, string> = {
+  rock: 'Rock',
+  metal: 'Metal',
+  punk: 'Punk',
+  pop: 'Pop',
+  hiphop: 'Hip-hop',
+  rnb: 'R&B / Soul',
+  electronic: 'Electronic',
+  dance: 'Dance / House',
+  jazz: 'Jazz / Blues',
+  classical: 'Classical',
+  folk: 'Folk / Acoustic',
+  country: 'Country',
+  latin: 'Latin',
+  world: 'World',
+  soundtrack: 'Soundtrack / Game',
+  ambient: 'Ambient / Chill',
+  spoken: 'Spoken word',
+  unknown: 'Uncategorised',
+};
+
 
 export function relativeTime(at: number | null | undefined): string {
   if (!at) return 'never';

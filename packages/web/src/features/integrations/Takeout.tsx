@@ -62,7 +62,11 @@ export function TakeoutImport({ onDone }: { onDone: () => void }) {
 
       <ol className="meta" style={{ marginTop: '.5rem', paddingLeft: '1.2rem' }}>
         <li>
-          At <code>takeout.google.com</code>, deselect everything and choose YouTube.
+          At{' '}
+          <a href="https://takeout.google.com/settings/takeout" target="_blank" rel="noreferrer noopener">
+            takeout.google.com ↗
+          </a>
+          , deselect everything and choose YouTube.
         </li>
         <li>
           In "All YouTube data included", keep only <strong>history</strong>.
