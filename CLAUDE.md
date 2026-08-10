@@ -434,6 +434,24 @@ the first question whenever something looks wrong.
 
 Bump with `npm version <patch|minor|major> --workspaces --include-workspace-root`.
 
+**Check what it committed before you walk away, because it does not commit all
+of it.** That command bumps all five files, but the commit and tag it creates
+contain **only the root `package.json`** — the four workspace bumps are left
+sitting in the working tree, unstaged. Nothing warns you.
+
+That is worse than untidy. `version.ts` reads `packages/server/package.json`, so
+a clone at the tag `v0.2.0` starts up and reports `0.1.0` on `/health` and on the
+Settings screen — the exact question the version exists to answer, answered
+wrongly, by a tag that looks authoritative. Caught when 0.2.0 was cut for the
+integrations module.
+
+So the bump is two steps, and the second is not optional:
+
+```bash
+npm version minor --workspaces --include-workspace-root
+git add -A && git commit --amend --no-edit && git tag -d v0.2.0 && git tag v0.2.0
+```
+
 That is about the **workspace packages**, which are one app. The *features* on
 the Packages screen are a different axis: they report the app's version while
 they ship with it, and gain their own `version` in the manifest if one is ever
