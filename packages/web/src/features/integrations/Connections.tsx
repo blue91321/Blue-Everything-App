@@ -219,6 +219,50 @@ function ProviderCard({
         </div>
       )}
 
+      {/* ---- what to do, before the boxes that do it ---- */}
+      {/*
+        **Above the credential form, and open until it is connected.**
+
+        It was below, inside a collapsed disclosure — so the default view was a
+        form with no instructions, and the steps themselves said "paste it into
+        the box below" while sitting underneath the box they meant. Reported as
+        not being able to see what to do, which is exactly right: the reading
+        order was backwards and the reading material was hidden.
+
+        Once connected it collapses and is retitled, because by then it is
+        reference rather than instruction — but it stays, since "Steam returned
+        no friends" is nearly always the privacy setting and the link that fixes
+        it is in this list.
+      */}
+      {anythingUsable && provider.auth !== 'client' && provider.setup.length > 0 && (
+        <details className="setup" style={{ marginTop: '.75rem' }} open={!provider.connected}>
+          <summary className="meta">
+            {provider.connected ? 'Setup and troubleshooting' : `Setting up ${provider.label}`}
+          </summary>
+          <ol style={{ marginTop: '.5rem', paddingLeft: '1.3rem' }}>
+            {provider.setup.map((step) => (
+              <li key={step.text} className="meta" style={{ marginBottom: '.5rem' }}>
+                {step.text}
+                {/*
+                  A real anchor, not a domain rendered as text you have to retype
+                  into the address bar. `noreferrer noopener` because these open
+                  in a new tab and the target has no business with a handle on
+                  this window.
+                */}
+                {step.link && (
+                  <>
+                    {' '}
+                    <a href={step.link.url} target="_blank" rel="noreferrer noopener">
+                      {step.link.label} ↗
+                    </a>
+                  </>
+                )}
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+
       {/*
         The credentials, as text boxes.
 
@@ -248,49 +292,6 @@ function ProviderCard({
         </div>
       )}
 
-      {/*
-        The setup steps live next to the button they unblock rather than in a
-        readme. The redirect URI in particular has to match character for
-        character, and a trailing slash is a rejected login with an error page
-        that does not say so.
-      */}
-      {/*
-        Rendered when connected too, which it was not at first.
-
-        Hiding these the moment a connection succeeded meant the links vanished
-        exactly when they became most useful: "Steam returned no friends" is
-        nearly always the privacy setting, and the link that fixes it is in this
-        list. The same goes for a revoked key or a client id that has to be
-        re-created. Collapsed by default, so it costs a line either way.
-      */}
-      {anythingUsable && provider.auth !== 'client' && provider.setup.length > 0 && (
-        <details style={{ marginTop: '.5rem' }}>
-          <summary className="meta">
-            {provider.connected ? 'Setup and troubleshooting' : 'What you have to set up at their end'}
-          </summary>
-          <ol className="meta" style={{ marginTop: '.4rem', paddingLeft: '1.2rem' }}>
-            {provider.setup.map((step) => (
-              <li key={step.text} style={{ marginBottom: '.35rem' }}>
-                {step.text}
-                {/*
-                  A real anchor, not a domain rendered as text you have to retype
-                  into the address bar. `noreferrer noopener` because these open
-                  in a new tab and the target has no business with a handle on
-                  this window.
-                */}
-                {step.link && (
-                  <>
-                    {' '}
-                    <a href={step.link.url} target="_blank" rel="noreferrer noopener">
-                      {step.link.label} ↗
-                    </a>
-                  </>
-                )}
-              </li>
-            ))}
-          </ol>
-        </details>
-      )}
 
       {/* ---- the granted-scope warning, which is the Discord case ---- */}
       {provider.connected && provider.id === 'discord' && !provider.grantedScopes.includes('sdk.social_layer_presence') && (

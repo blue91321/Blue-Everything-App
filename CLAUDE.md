@@ -2147,6 +2147,16 @@ items going back years, which swamps both the category breakdown and the "in my
 playlists" counts the Following tab sorts by — a channel you liked one video
 from a decade ago otherwise outranks one you have a playlist of.
 
+**The setup steps come before the form, and stay open until it is connected.**
+They were below it, inside a collapsed disclosure, and said "paste it into the
+box below" while sitting underneath the box they meant — so the default view of
+an unconnected provider was a form with no instructions and a backwards
+reference. Reported, accurately, as not being able to see what to do.
+
+Each step also names the tab and the button. "Add the redirect URI" is not an
+instruction if you are looking at a portal with eleven sections; "on the OAuth2
+page, under Redirects, press Add Redirect, then Save Changes at the bottom" is.
+
 **Every provider card is a `<details>`, collapsed.** Five providers with their
 capability lists, citations, credential forms and setup steps is several screens
 to scroll past on the way to the one you came to change, on a screen visited

@@ -495,24 +495,39 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         sourceUrl: 'https://discord.com/developers/docs/discord-social-sdk/core-concepts/oauth2-scopes',
       },
     },
+    /*
+     * Written to be followed while looking at Discord's portal, naming the tab
+     * and the button at each step.
+     *
+     * The previous version was four sentences that never said *where* anything
+     * was, and ended on "request Social SDK access" — a step with no concrete
+     * action, pointing at a documentation index, warning that the whole thing
+     * might not work. It was left behind when the approval tag was removed and
+     * it was the part that made the list unfollowable.
+     */
     setup: [
       {
-        text: 'Create an application in the Discord developer portal.',
+        text: 'Sign in and press "New Application", top right. Any name will do — it is only ever shown to you.',
         link: {
           url: 'https://discord.com/developers/applications',
-          label: 'discord.com/developers/applications',
+          label: 'open the Discord developer portal',
         },
       },
       {
-        text: 'Add the redirect URI shown below as a redirect/callback URL, exactly as it appears — a trailing slash is a rejected login.',
+        text:
+          'In the left menu, click OAuth2. Your Client ID is at the top of that page, under "Client information" — ' +
+          'copy it into the Client ID box below.',
       },
-      { text: 'Paste the Client ID into the box below.' },
       {
-        text: 'Request Social SDK access for that application. Without it, connecting proves who you are and nothing more.',
-        link: {
-          url: 'https://discord.com/developers/docs/discord-social-sdk/getting-started',
-          label: 'how to request access',
-        },
+        text:
+          'Still on the OAuth2 page, find "Redirects" and press "Add Redirect". Paste the redirect URI shown ' +
+          'below, then press "Save Changes" at the bottom of the page — the redirect is not stored until you do, ' +
+          'and this is the step people miss.',
+      },
+      {
+        text:
+          'Come back here, press Connect, and approve it at Discord. It asks for your identity and your friends ' +
+          'list; the card will say so if it was only granted the first.',
       },
     ],
   },
