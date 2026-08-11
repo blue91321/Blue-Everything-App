@@ -914,36 +914,6 @@ button {
   white-space: nowrap;
 }
 
-/* Four statuses, and the colour is doing real work here: this module exists
-   because half of these services cannot do the obvious thing, and the four
-   answers need to be distinguishable at a glance rather than read one by one.
-
-   Colour is never the only signal — every chip carries its own word, and the
-   sentence explaining it sits directly underneath. A red dot nobody can read
-   would be exactly the failure this screen is meant to avoid. */
-.chip.status-works {
-  border-color: var(--ok);
-  color: var(--ok);
-}
-
-.chip.status-partial {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.chip.status-needs-approval,
-.chip.status-unavailable {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-/* `unavailable` is dimmed as well as coloured: it is not a warning to act on,
-   it is a fact that will not change, and it should not compete for attention
-   with a connection that is genuinely broken. */
-.chip.status-unavailable {
-  opacity: 0.75;
-}
-
 .chip.presence-in-game,
 .chip.presence-online {
   border-color: var(--accent);
@@ -992,10 +962,12 @@ button {
   border-radius: 6px;
 }
 
-/* Something went wrong with a connection — distinct from a capability that can
-   never work. `status-unavailable` reads "not possible", which is a claim about
-   the service; this is a claim about the last attempt, and it clears itself on
-   the next success. */
+/* Something went wrong with a connection.
+
+   The only chip left on a provider card, now that the per-capability status
+   labels have gone: those graded things that the sentence beneath them already
+   described, whereas this reports a fact about the last attempt and clears
+   itself on the next success. */
 .chip.problem {
   border-color: var(--danger);
   color: var(--danger);

@@ -29,7 +29,9 @@ function check(label: string, ok: boolean, detail = ''): void {
   if (!ok) failures++;
 }
 
-const post = async (url: string, payload: unknown) =>
+// Several of these endpoints take no body; Fastify still wants one, so the
+// default stands in rather than every call site writing `{}`.
+const post = async (url: string, payload: unknown = {}) =>
   app.inject({ method: 'POST', url, payload: payload as object });
 
 const report = (over: Partial<AttentionReport>): AttentionReport => ({
@@ -37,6 +39,10 @@ const report = (over: Partial<AttentionReport>): AttentionReport => ({
   reason: 'smoke test',
   idleMs: 0,
   liveGames: [],
+  // Both are required on the report and were being left out, so the base object
+  // was not actually an AttentionReport. Silent until the server was typechecked.
+  audioPlaying: false,
+  windowsDnd: false,
   ...over,
 });
 

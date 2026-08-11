@@ -14,7 +14,7 @@ import { useState } from 'react';
 import { api, type ProviderInfo, type SetupStep, type SyncOutcome } from '../../api';
 import { useAsync } from '../../useAsync';
 import { Credentials } from './Credentials';
-import { StatusChip, relativeTime } from './Integrations';
+import { relativeTime } from './Integrations';
 
 /**
  * A numbered list of steps with their links.
@@ -216,9 +216,19 @@ function ProviderCard({
         {Object.entries(provider.capabilities).map(([capability, spec]) =>
           spec ? (
             <div key={capability} style={{ marginTop: '.5rem' }}>
+              {/*
+                No status chip. It read "works" / "partly" / "needs approval",
+                which is a grade rather than information — the sentence
+                underneath already says exactly what is and is not covered, and
+                three of them stacked down a card turned the useful part into
+                the small print beneath a label.
+
+                `status` itself stays: it decides whether a Connect button is
+                offered at all and whether the unlock steps appear. It is a fact
+                the screen acts on, not one it needs to announce.
+              */}
               <div className="row" style={{ alignItems: 'center', gap: '.5rem' }}>
                 <strong>{CAPABILITY_LABEL[capability] ?? capability}</strong>
-                <StatusChip status={spec.status} />
                 {provider.syncedAt[capability] ? (
                   <span className="meta">synced {relativeTime(provider.syncedAt[capability])}</span>
                 ) : null}
@@ -334,8 +344,8 @@ function ProviderCard({
       {provider.optionalScopesRefused && (
         <div className="banner" style={{ marginTop: '.75rem' }}>
           {provider.label} would not grant everything this asks for, so it is no longer asking — the
-          connection works, and the capability above marked <em>needs approval</em> is the part you do not
-          have.
+          connection works, and the part it refused is the one described above as needing to be enabled
+          for your application.
           {/*
             The steps repeated here rather than pointed at. This banner is the
             moment you want them, and "see the list above" is one more thing to

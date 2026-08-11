@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { api, type FriendRow, type FriendSource } from '../../api';
 import { useAsync } from '../../useAsync';
-import { StatusChip, relativeTime } from './Integrations';
+import { relativeTime } from './Integrations';
 
 const STATE_LABEL: Record<FriendRow['state'], string> = {
   'in-game': 'playing',
@@ -132,7 +132,6 @@ function Sources({ sources, anyFriends }: { sources: FriendSource[]; anyFriends:
         <div key={source.provider} style={{ marginTop: '.75rem' }}>
           <div className="row" style={{ alignItems: 'center', gap: '.5rem' }}>
             <strong>{source.label}</strong>
-            <StatusChip status={source.status} />
             {/*
               Only for providers there is something to connect. Riot and Epic
               have no account to link — the agent finds the client or it does

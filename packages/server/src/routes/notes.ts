@@ -20,10 +20,13 @@ export async function noteRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch('/api/notes/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = updateNoteSchema.parse(request.body);
+    // `pinned` out of the spread rather than overridden after it: the override
+    // is conditional, so on the other branch the schema's boolean is left where
+    // the integer column wants a number.
+    const { pinned, ...rest } = updateNoteSchema.parse(request.body);
     const [updated] = await db
       .update(notes)
-      .set({ ...body, ...(body.pinned === undefined ? {} : { pinned: body.pinned ? 1 : 0 }) })
+      .set({ ...rest, ...(pinned === undefined ? {} : { pinned: pinned ? 1 : 0 }) })
       .where(eq(notes.id, id))
       .returning();
     return updated ?? reply.code(404).send({ error: 'no such note' });

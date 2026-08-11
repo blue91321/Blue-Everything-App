@@ -458,6 +458,35 @@ they ship with it, and gain their own `version` in the manifest if one is ever
 downloaded separately. Keeping those apart is what stops "one version for the
 app" and "this package is newer than that one" contradicting each other.
 
+## Typechecking
+
+`npm run typecheck` covers **server, agent and web**. The server was missing for
+a long time and that is worth knowing about, because it is the package with the
+most code in it and the one that runs through `tsx` — which strips types without
+looking at them. The first thing to notice a mistake was therefore the process
+failing to start, and a deleted closing brace shipped exactly that way.
+
+Adding a tsconfig turned up eleven errors. Ten were one bug written ten times
+and one was cosmetic:
+
+- **A conditional spread does not override.** The zod schemas describe the
+  *input* — booleans, because that is what JSON has — while the columns are
+  integers, because SQLite has no boolean type. `{ ...body, pinned: x ? 1 : 0 }`
+  is fine; `{ ...body, ...(x === undefined ? {} : { pinned: … }) }` is not,
+  because on one branch it contributes nothing and the schema's boolean is left
+  where a number belongs. The fix is to pull the field *out* of the spread,
+  which `habits.ts` already did for `voicePhrases` and had already written down
+  the reason for. The idiom was here; it just had not been applied to the
+  booleans, because nothing was checking.
+- `smoke.ts` built an `AttentionReport` without `audioPlaying` or `windowsDnd`,
+  both of which are required — so the helper's return type was a claim it did
+  not meet.
+- `tasks.ts` re-tested `body.status !== 'done'` in an arm the first branch had
+  already taken every `'done'` out of. Harmless, and dead.
+
+None of these were live bugs. That is the point: they are the class of thing
+that is invisible until it isn't, and the server had no net under it.
+
 ## Ground rules
 
 - **Never commit real data.** `data/`, `*.db`, `.env`, `agent.config.json`,
@@ -683,6 +712,7 @@ npm run integrations-check -w @everything/server  # the categoriser and the Take
 npm run features         # what is switched on, and what is actually on disk
 npm run features-check   # prove each one can be switched off and deleted
 npm run publish-check    # is this repo safe to make public?
+npm run typecheck        # all three TypeScript packages, server included
 ```
 
 The voice CLIs live inside the feature (`src/features/voice/cli/`), so they stop

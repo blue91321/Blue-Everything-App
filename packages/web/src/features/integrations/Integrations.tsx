@@ -72,28 +72,6 @@ export function Integrations({ local }: { local: boolean }) {
 /* ------------------------------------------------------------------ */
 
 /**
- * How a capability's status is drawn, everywhere it appears.
- *
- * One definition because the same four words show up on the services list, the
- * friends list and the music tab, and three copies would eventually disagree
- * about what "partial" looks like.
- */
-export const STATUS_LABEL: Record<string, string> = {
-  works: 'works',
-  partial: 'partly',
-  'needs-approval': 'needs approval',
-  unavailable: 'not possible',
-};
-
-export function StatusChip({ status }: { status: string }) {
-  return (
-    <span className={`chip status-${status}`} title={STATUS_LABEL[status] ?? status}>
-      {STATUS_LABEL[status] ?? status}
-    </span>
-  );
-}
-
-/**
  * The eighteen families, in English.
  *
  * Here rather than in Music.tsx because Following needs them too — an artist

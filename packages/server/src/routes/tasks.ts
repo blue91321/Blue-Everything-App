@@ -63,9 +63,17 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/api/tasks', async (request, reply) => {
     const body = createTaskSchema.parse(request.body);
+    /*
+     * The booleans come out of the spread rather than being overridden after
+     * it — the same move `habits.ts` makes for `voicePhrases`, and for the same
+     * reason. An override only wins when it is unconditional, and both of these
+     * are optional, so the normalisers spread a `{}` on one branch and leave the
+     * schema's `boolean` sitting where the column wants a number.
+     */
+    const { dueIsAllDay, pushToPhone, ...rest } = body;
     const [created] = await db
       .insert(tasks)
-      .values({ ...body, ...normaliseDue(body), ...normalisePush(body) })
+      .values({ ...rest, ...normaliseDue(body), ...normalisePush(body) })
       .returning();
     return reply.code(201).send(created);
   });
@@ -74,14 +82,22 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const body = updateTaskSchema.parse(request.body);
 
-    // Completing a task is the one update with a side effect worth recording.
-    const completedAt =
-      body.status === 'done' ? Date.now() : body.status && body.status !== 'done' ? null : undefined;
+    /*
+     * Completing a task is the one update with a side effect worth recording.
+     *
+     * The second arm used to re-test `body.status !== 'done'`, which cannot be
+     * false there — the first arm already took every 'done'. Harmless, and
+     * flagged as a comparison with no overlap the moment the server was
+     * typechecked. `body.status` alone says the same thing: a status was sent,
+     * and it was not 'done', so the task is being reopened.
+     */
+    const completedAt = body.status === 'done' ? Date.now() : body.status ? null : undefined;
 
+    const { dueIsAllDay, pushToPhone, ...rest } = body;
     const [updated] = await db
       .update(tasks)
       .set({
-        ...body,
+        ...rest,
         ...normaliseDue(body),
         ...normalisePush(body),
         ...(completedAt !== undefined ? { completedAt } : {}),
@@ -113,10 +129,10 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch('/api/projects/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = updateProjectSchema.parse(request.body);
+    const { archived, ...rest } = updateProjectSchema.parse(request.body);
     const [updated] = await db
       .update(projects)
-      .set({ ...body, ...(body.archived === undefined ? {} : { archived: body.archived ? 1 : 0 }) })
+      .set({ ...rest, ...(archived === undefined ? {} : { archived: archived ? 1 : 0 }) })
       .where(eq(projects.id, id))
       .returning();
     return updated ?? reply.code(404).send({ error: 'no such project' });
