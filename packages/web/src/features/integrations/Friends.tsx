@@ -19,10 +19,16 @@ const STATE_LABEL: Record<FriendRow['state'], string> = {
   online: 'online',
   away: 'away',
   offline: 'offline',
-  // Not "offline". Discord returns its friends list with no presence on it at
-  // all, and reporting a hundred people as away from their computers on that
-  // basis was a claim the data never supported.
-  unknown: 'status unknown',
+  /*
+   * Named after the service rather than the absence.
+   *
+   * It read "status unknown", which is accurate and says nothing you can act
+   * on. These rows are Discord friends and nothing else — Discord is the only
+   * provider here whose API carries no presence — so naming the service tells
+   * you where the entry came from and, by implication, why there is no status
+   * next to it.
+   */
+  unknown: 'discord',
 };
 
 export function Friends() {
@@ -103,8 +109,8 @@ export function Friends() {
       {unknown.length > 0 && (
         <>
           <div className="meta" style={{ margin: '1rem 0 .5rem' }}>
-            Status unknown — Discord does not publish presence over its API, so link these to a Steam
-            account to see whether they are about
+            Discord — its API carries no presence, so link one to a Steam account to see whether they are
+            about
           </div>
           <div className="done-area">
             {unknown.map((friend) => (
@@ -146,19 +152,30 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
             {friend.state === 'offline' && friend.lastOnlineAt
               ? ` · last on ${relativeTime(friend.lastOnlineAt)}`
               : ''}
-            {friend.alsoOn.length > 0
-              ? ` · also ${friend.alsoOn.map((other) => `${other.provider}: ${other.name}`).join(', ')}`
+            {/* The handles this was merged from, so a name you do not recognise
+                on one service can still be placed by the other. */}
+            {friend.accounts.length > 1
+              ? ` · ${friend.accounts
+                  .filter((account) => account.name !== friend.name)
+                  .map((account) => `${account.provider}: ${account.name}`)
+                  .join(', ')}`
               : ''}
           </div>
         </div>
 
-        <span className={`chip presence-${friend.state}`}>{friend.provider}</span>
+        {/* Every service this person is on, not just the one whose name is
+            being shown — a merged row is two accounts and should look it. */}
+        <span className={`chip presence-${friend.state}`}>
+          {friend.accounts.map((account) => account.provider).join(' + ')}
+        </span>
 
         {friend.personId ? (
           <button
             className="btn subtle"
             title="Stop treating these as the same person"
-            onClick={() => void api.integrations.unlinkFriend(friend.id).then(onChanged)}
+            // By person, because the row is the person: unlinking one account
+            // of a pair would leave the other looking unchanged.
+            onClick={() => void api.integrations.unlinkPerson(friend.personId!).then(onChanged)}
           >
             Unlink
           </button>
@@ -188,13 +205,14 @@ function LinkPicker({ friend, onDone }: { friend: FriendRow; onDone: () => void 
   const all = useAsync(() => api.integrations.friends(), [], ['integrations']);
 
   const options = (all.data?.friends ?? [])
+    // Other services only, and nothing already spoken for.
     .filter((other) => other.provider !== friend.provider && !other.personId)
     .filter((other) => other.name.toLowerCase().includes(search.trim().toLowerCase()))
     .slice(0, 8);
 
   const link = async (otherId: string) => {
     try {
-      await api.integrations.linkFriends(friend.id, otherId);
+      await api.integrations.linkFriends(friend.accounts[0].id, otherId);
       onDone();
     } catch (error) {
       setProblem((error as Error).message);

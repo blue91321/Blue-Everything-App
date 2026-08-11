@@ -26,6 +26,7 @@ import {
   connectSteamSchema,
   credentialsSchema,
   providerOptionsSchema,
+  IDENTITY_PREFERENCE,
   isProviderId,
   linkFriendsSchema,
   localPresenceSchema,
@@ -64,6 +65,7 @@ import {
   optionsFor,
   suggestFriendLinks,
   unlinkFriend,
+  unlinkPerson,
   listAccounts,
   saveAccount,
   followPlaylistCounts,
@@ -447,40 +449,64 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     const rows = await allFriends();
 
     /*
-     * Linked accounts inherit the best status in their group.
+     * One row per person, not per account.
      *
-     * Discord returns no presence at all, so a Discord friend on their own is
-     * `unknown` forever. Linked to a Steam account, the pair knows what that
-     * Steam account is doing — and that is the whole point of linking: one
-     * service knows who your friends are, another knows whether they are about.
+     * Linked accounts were each returned separately, so a person you had
+     * matched up appeared twice — which is the opposite of what linking them
+     * was for. They are merged here, and the merge answers two questions from
+     * two different rows:
      *
-     * Applied on read rather than stored, because it is derived from two rows
-     * that each refresh on their own schedule; writing it down would give two
-     * places to disagree.
+     *   - *who is this* comes from `IDENTITY_PREFERENCE`, Discord first,
+     *     because that is where somebody chose a name and a picture for
+     *     themselves rather than whatever their Steam persona happens to be;
+     *   - *what are they doing* comes from whichever account actually knows,
+     *     which is never Discord — its API carries no presence at all.
+     *
+     * Done on read rather than stored: the underlying rows refresh on their own
+     * schedules, and a merged copy in the database would be a third thing to
+     * keep in step.
      */
-    const byPerson = new Map<string, typeof rows>();
+    const groups = new Map<string, typeof rows>();
     for (const row of rows) {
-      if (!row.personId) continue;
-      byPerson.set(row.personId, [...(byPerson.get(row.personId) ?? []), row]);
+      const key = row.personId ?? `solo:${row.id}`;
+      groups.set(key, [...(groups.get(key) ?? []), row]);
     }
 
-    const resolved = rows.map((row) => {
-      const group = row.personId ? byPerson.get(row.personId) ?? [] : [];
-      const best = group
+    const identityRank = (provider: string) => {
+      const index = IDENTITY_PREFERENCE.indexOf(provider as ProviderId);
+      return index === -1 ? IDENTITY_PREFERENCE.length : index;
+    };
+
+    const resolved = [...groups.entries()].map(([key, group]) => {
+      const identity = [...group].sort((a, b) => identityRank(a.provider) - identityRank(b.provider))[0];
+
+      // The best thing anybody can actually vouch for. `unknown` is excluded
+      // rather than ranked, so a Discord row never outvotes a Steam one that
+      // knows the answer.
+      const knows = group
         .filter((r) => r.state !== 'unknown')
         .sort(
           (x, y) =>
             presenceRank[x.state as keyof typeof presenceRank] - presenceRank[y.state as keyof typeof presenceRank]
         )[0];
 
+      const speaking = knows ?? identity;
+
       return {
-        ...row,
-        // Only borrowed when this row has nothing of its own to say.
-        ...(row.state === 'unknown' && best
-          ? { state: best.state, game: best.game, detail: best.detail, statusFrom: best.provider }
-          : { statusFrom: null }),
-        /** The other services this person is on, for the row to show. */
-        alsoOn: group.filter((r) => r.id !== row.id).map((r) => ({ provider: r.provider, name: r.name })),
+        id: key,
+        personId: identity.personId,
+        name: identity.name,
+        avatarUrl: identity.avatarUrl,
+        provider: identity.provider,
+        state: speaking.state,
+        game: speaking.game,
+        detail: speaking.detail,
+        lastOnlineAt: speaking.lastOnlineAt,
+        seenAt: identity.seenAt,
+        /** Named when the status came from a different account than the name. */
+        statusFrom: knows && knows.provider !== identity.provider ? knows.provider : null,
+        /** Every service this person is on, for the row and for unlinking. */
+        accounts: group.map((r) => ({ id: r.id, provider: r.provider, name: r.name })),
       };
     });
 
@@ -525,10 +551,24 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     return { personId };
   });
 
+  /**
+   * Undo a link.
+   *
+   * By `personId` for a merged row, which is one thing on screen and should
+   * come apart in one action; by `id` to take a single account out of a group
+   * of three and leave the rest joined. The screen uses the first, and the
+   * second exists because a group is not always a pair.
+   */
   app.post('/api/integrations/friends/unlink', async (request) => {
     localOnly(request);
-    const { id } = z.object({ id: z.string().min(1) }).parse(request.body);
-    await unlinkFriend(id);
+    const body = z
+      .object({ id: z.string().min(1).optional(), personId: z.string().min(1).optional() })
+      .refine((v) => v.id || v.personId, { message: 'give an id or a personId' })
+      .parse(request.body);
+
+    if (body.personId) await unlinkPerson(body.personId);
+    else if (body.id) await unlinkFriend(body.id);
+
     changes.emitChange('integrations');
     return { ok: true };
   });

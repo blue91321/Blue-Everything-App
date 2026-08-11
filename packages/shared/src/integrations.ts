@@ -702,6 +702,16 @@ export const PRESENCE_STATES = ['offline', 'online', 'away', 'in-game', 'unknown
 export const presenceStateSchema = z.enum(PRESENCE_STATES);
 export type PresenceState = (typeof PRESENCE_STATES)[number];
 
+/**
+ * Whose name and picture a merged row wears, best first.
+ *
+ * Discord leads because that is where the person chose a name for themselves
+ * and set a picture; a Steam persona is frequently a joke, a clan tag, or
+ * whatever it was in 2014. The status still comes from whichever account
+ * actually knows — the two questions have different best answers.
+ */
+export const IDENTITY_PREFERENCE: ProviderId[] = ['discord', 'steam', 'riot'];
+
 /** Sort order for the friends list: something to do about, first. */
 export const presenceRank: Record<PresenceState, number> = {
   'in-game': 0,

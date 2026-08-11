@@ -556,6 +556,11 @@ export async function linkFriends(idA: string, idB: string): Promise<string> {
   return personId;
 }
 
+/** Dissolve a whole group, which is what "Unlink" on a merged row means. */
+export async function unlinkPerson(personId: string): Promise<void> {
+  await db.update(friends).set({ personId: null }).where(eq(friends.personId, personId));
+}
+
 /** Take one account back out of its group. The others stay linked to each other. */
 export async function unlinkFriend(id: string): Promise<void> {
   const [row] = await db.select().from(friends).where(eq(friends.id, id));

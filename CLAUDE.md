@@ -2196,19 +2196,35 @@ and there are two ways to reach it:
   `GUILD_MEMBERS` as well, and both are ticked on in the portal without review
   while the bot is unverified and in under a hundred servers. The cost is a
   persistent WebSocket in the server process and a bot token to keep.
+  **Decided against 2026-08-11** — it buys presence for the subset of friends who
+  share a server with a bot, where linking already buys it for the subset who
+  have Steam, and only one of those needs a socket held open forever.
 - **The Social SDK's own gateway session**, which is what the SDK does with the
   OAuth token. It is a native library and the wire protocol is not documented
   for third-party clients, so this route is reverse-engineering.
 
-Neither is built. The friends list says "Discord does not publish presence over
-its API", which is the accurate claim.
+Neither is built. Discord rows read `discord` where a status would go — naming
+the service rather than the absence, since they are the only rows that can have
+one and it says where the entry came from.
 
-**Linking is what makes it useful.** `friends.person_id` marks two accounts as
-one human, and a row with nothing to say inherits the best status in its group —
-so a Discord friend linked to a Steam account shows what that account is doing,
-labelled `via steam` so a borrowed status is never mistaken for a reported one.
-Applied on read rather than stored: the two rows refresh on their own schedules,
-and writing it down would give two places to disagree.
+**Linking is what makes it useful, and a linked person is one row.** They were
+returned per account, so somebody you had just matched up appeared twice — the
+opposite of what linking them was for. `friends.person_id` marks two accounts as
+one human and the read merges them, answering two questions from two rows:
+
+- *who is this* follows `IDENTITY_PREFERENCE`, **Discord first**, because that is
+  where somebody chose a name and a picture for themselves rather than whatever
+  their Steam persona happens to be. `imacowboyybaybaayy` on Steam is
+  `THEREALCTHULHU` on Discord, and only one of those is any use to you;
+- *what are they doing* comes from whichever account actually knows, which is
+  never Discord — labelled `via steam` so a borrowed status is never mistaken
+  for a reported one.
+
+Merged on read rather than stored: the underlying rows refresh on their own
+schedules, and a merged copy in the database would be a third thing to keep in
+step. Unlinking works by `personId` and dissolves the group, because the row *is*
+the person — taking one account out of a pair would leave the other looking
+unchanged.
 
 A shared id rather than a links table, because the relation is a grouping and
 not a pair — a third service joins by taking the same id, and unlinking is

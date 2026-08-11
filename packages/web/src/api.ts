@@ -577,23 +577,31 @@ export interface SyncOutcome {
   note: string;
 }
 
+/**
+ * One *person*, not one account.
+ *
+ * Linked accounts are merged by the server: the name and picture come from
+ * whichever service is highest in its identity preference (Discord first), and
+ * the status from whichever one actually knows. `accounts` is what it was
+ * merged from, and is what the row unlinks.
+ */
 export interface FriendRow {
+  /** The person id when linked, otherwise a per-row key. Stable across a refresh. */
   id: string;
-  provider: string;
-  providerUserId: string;
+  personId: string | null;
   name: string;
   avatarUrl: string | null;
-  /** `unknown` means the service did not say — not that they are away. */
+  /** Whose name and picture this row is wearing. */
+  provider: string;
+  /** `unknown` means nobody could say — not that they are away. */
   state: 'offline' | 'online' | 'away' | 'in-game' | 'unknown';
   game: string | null;
   detail: string | null;
   lastOnlineAt: number | null;
   seenAt: number;
-  /** Set when this row's status was borrowed from a linked account. */
+  /** Set when the status came from a different account than the name. */
   statusFrom: string | null;
-  /** The same person's other accounts. */
-  alsoOn: Array<{ provider: string; name: string }>;
-  personId: string | null;
+  accounts: Array<{ id: string; provider: string; name: string }>;
 }
 
 export interface LinkSuggestion {
@@ -909,6 +917,8 @@ export const api = {
     linkSuggestions: () => request<{ suggestions: LinkSuggestion[] }>('/api/integrations/friends/suggestions'),
     linkFriends: (a: string, b: string) => post<{ personId: string }>('/api/integrations/friends/link', { a, b }),
     unlinkFriend: (id: string) => post<{ ok: boolean }>('/api/integrations/friends/unlink', { id }),
+    /** Dissolve a whole group, which is what a merged row comes apart into. */
+    unlinkPerson: (personId: string) => post<{ ok: boolean }>('/api/integrations/friends/unlink', { personId }),
     collections: () => request<MediaCollection[]>('/api/integrations/collections'),
     /** Channels and artists you follow. Synced on demand, not refreshed on read. */
     follows: () => request<FollowsView>('/api/integrations/follows'),
