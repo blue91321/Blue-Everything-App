@@ -583,11 +583,23 @@ export interface FriendRow {
   providerUserId: string;
   name: string;
   avatarUrl: string | null;
-  state: 'offline' | 'online' | 'away' | 'in-game';
+  /** `unknown` means the service did not say — not that they are away. */
+  state: 'offline' | 'online' | 'away' | 'in-game' | 'unknown';
   game: string | null;
   detail: string | null;
   lastOnlineAt: number | null;
   seenAt: number;
+  /** Set when this row's status was borrowed from a linked account. */
+  statusFrom: string | null;
+  /** The same person's other accounts. */
+  alsoOn: Array<{ provider: string; name: string }>;
+  personId: string | null;
+}
+
+export interface LinkSuggestion {
+  a: { id: string; provider: string; name: string };
+  b: { id: string; provider: string; name: string };
+  because: string;
 }
 
 export interface FriendSource {
@@ -893,6 +905,10 @@ export const api = {
       post<{ outcomes: SyncOutcome[] }>(`/api/integrations/${provider}/sync`, { capabilities }),
     /** `force` is the refresh button; without it the read only refetches if stale. */
     friends: (force = false) => request<FriendsView>(`/api/integrations/friends${force ? '?force=1' : ''}`),
+    /** Accounts that look like the same person. Proposals, not links. */
+    linkSuggestions: () => request<{ suggestions: LinkSuggestion[] }>('/api/integrations/friends/suggestions'),
+    linkFriends: (a: string, b: string) => post<{ personId: string }>('/api/integrations/friends/link', { a, b }),
+    unlinkFriend: (id: string) => post<{ ok: boolean }>('/api/integrations/friends/unlink', { id }),
     collections: () => request<MediaCollection[]>('/api/integrations/collections'),
     /** Channels and artists you follow. Synced on demand, not refreshed on read. */
     follows: () => request<FollowsView>('/api/integrations/follows'),

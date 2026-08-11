@@ -710,12 +710,32 @@ export const friends = sqliteTable(
     game: text('game'),
     detail: text('detail'),
     lastOnlineAt: integer('last_online_at'),
+    /**
+     * Which real person this account belongs to, when you have said.
+     *
+     * Two rows sharing one of these are the same human on two services — a
+     * Discord handle and a Steam profile — and the friends list shows them as
+     * one entry. Null means unlinked, which is most of them.
+     *
+     * A shared id rather than a `links` table because the relation is a
+     * grouping, not a pair: a third service joins by taking the same id, and
+     * unlinking is setting one back to null. There is no join to write and no
+     * pair to keep symmetrical.
+     *
+     * It survives a sync because `replaceFriends` upserts and never touches
+     * this column — losing your linking every time Steam refreshed would make
+     * the feature pointless.
+     */
+    personId: text('person_id'),
     /** When we last heard anything about this person, fresh or not. */
     seenAt: integer('seen_at').notNull().$defaultFn(() => Date.now()),
     createdAt: now(),
     updatedAt: touched(),
   },
-  (t) => [uniqueIndex('friends_provider_user_idx').on(t.provider, t.providerUserId)]
+  (t) => [
+    uniqueIndex('friends_provider_user_idx').on(t.provider, t.providerUserId),
+    index('friends_person_idx').on(t.personId),
+  ]
 );
 
 /**

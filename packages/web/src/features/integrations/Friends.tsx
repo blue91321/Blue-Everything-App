@@ -19,6 +19,10 @@ const STATE_LABEL: Record<FriendRow['state'], string> = {
   online: 'online',
   away: 'away',
   offline: 'offline',
+  // Not "offline". Discord returns its friends list with no presence on it at
+  // all, and reporting a hundred people as away from their computers on that
+  // basis was a claim the data never supported.
+  unknown: 'status unknown',
 };
 
 export function Friends() {
@@ -46,25 +50,46 @@ export function Friends() {
   if (view.error) return <div className="empty">Could not load: {view.error.message}</div>;
   if (!view.data) return null;
 
-  const online = view.data.friends.filter((f) => f.state !== 'offline');
+  const around = view.data.friends.filter((f) => f.state !== 'offline' && f.state !== 'unknown');
+  const unknown = view.data.friends.filter((f) => f.state === 'unknown');
   const offline = view.data.friends.filter((f) => f.state === 'offline');
 
   return (
     <>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="meta">
-          {online.length === 0
-            ? 'Nobody online'
-            : `${online.length} online${offline.length ? ` · ${offline.length} offline` : ''}`}
+          {around.length === 0 ? 'Nobody online' : `${around.length} online`}
+          {offline.length ? ` · ${offline.length} offline` : ''}
+          {/* Counted separately and named, so a hundred rows nobody can vouch
+              for never read as a hundred people who are definitely out. */}
+          {unknown.length ? ` · ${unknown.length} unknown` : ''}
         </div>
         <button className="btn subtle" onClick={forceRefresh} disabled={refreshing}>
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
-      {online.map((friend) => (
-        <FriendCard key={friend.id} friend={friend} />
+      <Suggestions onLinked={view.reload} />
+
+      {around.map((friend) => (
+        <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
       ))}
+
+      {/*
+        Between "around" and "offline", which is where they belong: more
+        interesting than a confirmed no, less than a confirmed yes.
+      */}
+      {unknown.length > 0 && (
+        <>
+          <div className="meta" style={{ margin: '1rem 0 .5rem' }}>
+            Status unknown — Discord does not publish presence, so link these to a Steam account to see
+            whether they are about
+          </div>
+          {unknown.map((friend) => (
+            <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
+          ))}
+        </>
+      )}
 
       {/*
         Offline friends stay on screen below a divider rather than being hidden
@@ -77,7 +102,7 @@ export function Friends() {
           <div className="meta" style={{ margin: '1rem 0 .5rem' }}>Offline</div>
           <div className="done-area">
             {offline.map((friend) => (
-              <FriendCard key={friend.id} friend={friend} />
+              <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
             ))}
           </div>
         </>
@@ -88,30 +113,156 @@ export function Friends() {
   );
 }
 
-function FriendCard({ friend }: { friend: FriendRow }) {
-  return (
-    <div className="card row" style={{ alignItems: 'center', gap: '.75rem' }}>
-      {friend.avatarUrl ? (
-        <img src={friend.avatarUrl} alt="" width={32} height={32} style={{ borderRadius: 6 }} />
-      ) : (
-        <span className="glyph" aria-hidden="true">
-          👤
-        </span>
-      )}
+function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () => void }) {
+  const [linking, setLinking] = useState(false);
 
-      <div className="grow">
-        <div className="title">{friend.name}</div>
-        <div className="meta">
-          {/* What they are playing outranks the status word: "playing Deep Rock
-              Galactic" is the answer, and "online" is the less useful half of it. */}
-          {friend.game ?? friend.detail ?? STATE_LABEL[friend.state]}
-          {friend.state === 'offline' && friend.lastOnlineAt
-            ? ` · last on ${relativeTime(friend.lastOnlineAt)}`
-            : ''}
+  return (
+    <div className="card">
+      <div className="row" style={{ alignItems: 'center', gap: '.75rem' }}>
+        {friend.avatarUrl ? (
+          <img src={friend.avatarUrl} alt="" width={32} height={32} style={{ borderRadius: 6 }} />
+        ) : (
+          <span className="glyph" aria-hidden="true">
+            👤
+          </span>
+        )}
+
+        <div className="grow">
+          <div className="title">{friend.name}</div>
+          <div className="meta">
+            {/* What they are playing outranks the status word: "playing Deep Rock
+                Galactic" is the answer, and "online" is the less useful half of it. */}
+            {friend.game ?? friend.detail ?? STATE_LABEL[friend.state]}
+            {/* Where a borrowed status came from. Without it, a Discord row
+                showing a game looks like Discord told us, and the next person to
+                wonder why the others are blank has nothing to go on. */}
+            {friend.statusFrom ? ` · via ${friend.statusFrom}` : ''}
+            {friend.state === 'offline' && friend.lastOnlineAt
+              ? ` · last on ${relativeTime(friend.lastOnlineAt)}`
+              : ''}
+            {friend.alsoOn.length > 0
+              ? ` · also ${friend.alsoOn.map((other) => `${other.provider}: ${other.name}`).join(', ')}`
+              : ''}
+          </div>
         </div>
+
+        <span className={`chip presence-${friend.state}`}>{friend.provider}</span>
+
+        {friend.personId ? (
+          <button
+            className="btn subtle"
+            title="Stop treating these as the same person"
+            onClick={() => void api.integrations.unlinkFriend(friend.id).then(onChanged)}
+          >
+            Unlink
+          </button>
+        ) : (
+          <button className="btn subtle" onClick={() => setLinking((open) => !open)}>
+            {linking ? 'Cancel' : 'Link'}
+          </button>
+        )}
       </div>
 
-      <span className={`chip presence-${friend.state}`}>{friend.provider}</span>
+      {linking && <LinkPicker friend={friend} onDone={() => { setLinking(false); onChanged(); }} />}
+    </div>
+  );
+}
+
+/**
+ * Pick the account on another service that is the same person.
+ *
+ * Searchable, because the list it picks from is everybody on every *other*
+ * service — a hundred names is not something to scroll through in a dropdown.
+ * Restricted to other providers because linking two Discord accounts to each
+ * other says nothing, and the server refuses it anyway.
+ */
+function LinkPicker({ friend, onDone }: { friend: FriendRow; onDone: () => void }) {
+  const [search, setSearch] = useState('');
+  const [problem, setProblem] = useState('');
+  const all = useAsync(() => api.integrations.friends(), [], ['integrations']);
+
+  const options = (all.data?.friends ?? [])
+    .filter((other) => other.provider !== friend.provider && !other.personId)
+    .filter((other) => other.name.toLowerCase().includes(search.trim().toLowerCase()))
+    .slice(0, 8);
+
+  const link = async (otherId: string) => {
+    try {
+      await api.integrations.linkFriends(friend.id, otherId);
+      onDone();
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: '.6rem', display: 'grid', gap: '.4rem' }}>
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={`Search other services for ${friend.name}`}
+        aria-label="Search for the matching account"
+        type="search"
+        autoFocus
+      />
+      {options.length === 0 ? (
+        <span className="meta">Nothing unlinked matches on another service.</span>
+      ) : (
+        options.map((other) => (
+          <button key={other.id} className="btn subtle" style={{ justifyContent: 'flex-start' }} onClick={() => void link(other.id)}>
+            {other.provider}: {other.name}
+          </button>
+        ))
+      )}
+      {problem && <div className="banner">{problem}</div>}
+    </div>
+  );
+}
+
+/**
+ * Accounts whose names look like the same person.
+ *
+ * Proposals, never applied automatically. Discord will not tell us a friend's
+ * Steam profile — that endpoint is client-only and answers 401 to an OAuth app
+ * — so there is nothing authoritative to import and a name match is a guess. A
+ * wrong link silently attributes one person's status to another, which is worth
+ * one click to avoid.
+ */
+function Suggestions({ onLinked }: { onLinked: () => void }) {
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  const view = useAsync(() => api.integrations.linkSuggestions(), [], ['integrations']);
+
+  const shown = (view.data?.suggestions ?? []).filter((s) => !dismissed.includes(s.a.id));
+  if (shown.length === 0) return null;
+
+  return (
+    <div className="card">
+      <div className="title">These might be the same people</div>
+      <div className="meta" style={{ marginTop: 2 }}>
+        Matched on name only — Discord does not publish its friends' other accounts, so this is a guess
+        worth checking. Linking one lets a Discord friend show their Steam status.
+      </div>
+
+      {shown.map((suggestion) => (
+        <div key={suggestion.a.id} className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: '.5rem' }}>
+          <div className="grow">
+            <div className="title">
+              {suggestion.a.name} <span className="meta">({suggestion.a.provider})</span> ={' '}
+              {suggestion.b.name} <span className="meta">({suggestion.b.provider})</span>
+            </div>
+            <div className="meta">{suggestion.because}</div>
+          </div>
+          <button
+            className="btn primary"
+            onClick={() => void api.integrations.linkFriends(suggestion.a.id, suggestion.b.id).then(onLinked)}
+          >
+            Same person
+          </button>
+          <button className="btn subtle" onClick={() => setDismissed((d) => [...d, suggestion.a.id])}>
+            No
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

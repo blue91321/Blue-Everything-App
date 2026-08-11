@@ -97,7 +97,21 @@ export async function syncFriends(): Promise<{ count: number; online: number }> 
   const friends: Friend[] = relationships
     .filter((r) => r.type === 1)
     .map((r) => {
-      const status = STATUS_MAP[r.presence?.status ?? 'offline'] ?? 'offline';
+      /*
+       * **No presence at all is `unknown`, not `offline`.**
+       *
+       * `GET /users/@me/relationships` returns the list with no `presence` key
+       * on any entry — presence reaches Discord's own client over the gateway,
+       * not over REST. Defaulting the absent case to `offline` reported a
+       * hundred people as away from their computers on no evidence, which is
+       * worse than admitting we cannot see.
+       *
+       * The mapping is kept for the day the payload does carry one, so an entry
+       * that *does* have presence is still read properly.
+       */
+      const status: PresenceState = r.presence?.status
+        ? STATUS_MAP[r.presence.status] ?? 'unknown'
+        : 'unknown';
       const { game, detail } = activityOf(r.presence);
       return {
         provider: 'discord' as const,
@@ -105,12 +119,17 @@ export async function syncFriends(): Promise<{ count: number; online: number }> 
         name: r.user.global_name ?? r.user.username,
         avatarUrl: avatarUrl(r.user),
         // Playing something is more useful than "online", exactly as on Steam.
-        state: game && status !== 'offline' ? ('in-game' as PresenceState) : status,
+        state: game && status !== 'offline' && status !== 'unknown' ? 'in-game' : status,
         game,
         detail,
       };
     });
 
   await replaceFriends('discord', friends);
-  return { count: friends.length, online: friends.filter((f) => f.state !== 'offline').length };
+  // `online` counts only what we can actually vouch for, so a list of a hundred
+  // unknowns does not report itself as a hundred people online.
+  return {
+    count: friends.length,
+    online: friends.filter((f) => f.state !== 'offline' && f.state !== 'unknown').length,
+  };
 }

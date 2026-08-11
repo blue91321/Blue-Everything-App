@@ -183,6 +183,13 @@
             "when": 1786062500000,
             "tag": "0025_optional_scopes_refused",
             "breakpoints": true
+        },
+        {
+            "idx": 26,
+            "version": "6",
+            "when": 1786062600000,
+            "tag": "0026_friend_links",
+            "breakpoints": true
         }
     ]
 }

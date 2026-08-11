@@ -6,7 +6,8 @@
  * boundary is what makes adding a provider a single file, and what stops seven
  * slightly different opinions about how to upsert a track from accumulating.
  */
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   PROVIDERS,
   categoriseGenres,
@@ -514,4 +515,132 @@ export async function followPlaylistCounts(): Promise<Map<string, number>> {
   `);
 
   return new Map(rows.map((r) => [`${r.provider}:${r.account_id}`, Number(r.n)]));
+}
+
+/* ------------------------------------------------------------------ */
+/* Linking one person's accounts together                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Mark two friend rows as the same human.
+ *
+ * Whichever group either one already belongs to wins, and the other joins it —
+ * so linking a third account to an existing pair extends the group rather than
+ * splitting it. Two already-grouped rows merge, taking the first one's id.
+ *
+ * `randomUUID` for a new group rather than reusing a row's id: a person is not
+ * one of their accounts, and using the Discord row's id as the group key would
+ * make deleting that row take the whole grouping with it.
+ */
+export async function linkFriends(idA: string, idB: string): Promise<string> {
+  const rows = await db.select().from(friends).where(inArray(friends.id, [idA, idB]));
+  if (rows.length !== 2) throw Object.assign(new Error('one of those is not in the list'), { statusCode: 404 });
+
+  const [a, b] = rows;
+  if (a.provider === b.provider) {
+    throw Object.assign(new Error('those are both the same service — linking joins two different ones'), {
+      statusCode: 400,
+    });
+  }
+
+  const personId = a.personId ?? b.personId ?? randomUUID();
+  // Everything already grouped with either side comes along, or a merge would
+  // silently strand the third account of a three-way link.
+  const absorbing = [a.personId, b.personId].filter((id): id is string => Boolean(id) && id !== personId);
+
+  await db.update(friends).set({ personId }).where(inArray(friends.id, [idA, idB]));
+  if (absorbing.length > 0) {
+    await db.update(friends).set({ personId }).where(inArray(friends.personId, absorbing));
+  }
+
+  return personId;
+}
+
+/** Take one account back out of its group. The others stay linked to each other. */
+export async function unlinkFriend(id: string): Promise<void> {
+  const [row] = await db.select().from(friends).where(eq(friends.id, id));
+  if (!row?.personId) return;
+
+  await db.update(friends).set({ personId: null }).where(eq(friends.id, id));
+
+  // A group of one is not a group. Left alone it would keep a person id that
+  // nothing else shares, which renders identically to being unlinked and would
+  // quietly accumulate.
+  const remaining = await db.select().from(friends).where(eq(friends.personId, row.personId));
+  if (remaining.length === 1) {
+    await db.update(friends).set({ personId: null }).where(eq(friends.id, remaining[0].id));
+  }
+}
+
+/**
+ * Names reduced to what is worth comparing.
+ *
+ * Handles collect decoration — `xX_Ash_Xx`, `ash | streaming`, a clan tag in
+ * brackets — and none of it identifies anybody. Lowercasing and dropping
+ * everything that is not a letter or digit is crude and is the right amount of
+ * effort for something that only ever *proposes* a link.
+ */
+function comparableName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+export interface LinkSuggestion {
+  a: { id: string; provider: string; name: string };
+  b: { id: string; provider: string; name: string };
+  /** Why it thinks so, shown on the row — a guess has to be inspectable. */
+  because: string;
+}
+
+/**
+ * Accounts on different services whose names look like the same person.
+ *
+ * **Suggestions, never links.** Discord cannot tell us a friend's Steam
+ * profile — `/users/{id}/profile` is a client-only endpoint and answers 401 to
+ * an OAuth app, and even our own connections need a scope that would only ever
+ * describe us. So there is no authoritative mapping to import, and matching on
+ * a name is a guess. It is offered for one click of confirmation rather than
+ * applied, because a wrong link silently attributes somebody's status to
+ * somebody else.
+ *
+ * Deliberately narrow: an exact match after normalising, or one name wholly
+ * containing the other when it is long enough for that to mean something. Short
+ * names match everything and would bury the real suggestions.
+ */
+export async function suggestFriendLinks(): Promise<LinkSuggestion[]> {
+  const rows = await db.select().from(friends);
+  const unlinked = rows.filter((r) => !r.personId);
+
+  const suggestions: LinkSuggestion[] = [];
+  const spoken = new Set<string>();
+
+  for (const a of unlinked) {
+    for (const b of unlinked) {
+      // Each pair once, and never two accounts on the same service.
+      if (a.id >= b.id || a.provider === b.provider) continue;
+
+      const left = comparableName(a.name);
+      const right = comparableName(b.name);
+      if (left.length < 3 || right.length < 3) continue;
+
+      let because = '';
+      if (left === right) because = 'the same name on both';
+      else if (left.length >= 5 && right.includes(left)) because = `"${b.name}" contains "${a.name}"`;
+      else if (right.length >= 5 && left.includes(right)) because = `"${a.name}" contains "${b.name}"`;
+      else continue;
+
+      // One suggestion per account, or a common name proposes a dozen rows and
+      // the list becomes something to dismiss rather than read.
+      if (spoken.has(a.id) || spoken.has(b.id)) continue;
+      spoken.add(a.id);
+      spoken.add(b.id);
+
+      suggestions.push({
+        a: { id: a.id, provider: a.provider, name: a.name },
+        b: { id: b.id, provider: b.provider, name: b.name },
+        because,
+      });
+    }
+  }
+
+  return suggestions;
 }

@@ -2172,6 +2172,39 @@ Three things there are easy to get wrong:
   generic hook it would reload every open browser every thirty seconds, which is
   the polling the SSE stream exists to replace.
 
+### Discord knows who your friends are; Steam knows whether they are about
+
+**Discord's REST API carries no presence.** `GET /users/@me/relationships`
+returns the friends list with no `presence` key on any entry — presence reaches
+Discord's own client over the gateway, not over REST. Everything was therefore
+defaulting to `offline`, which reported a hundred people as away from their
+computers on no evidence at all.
+
+So `unknown` is a presence state, distinct from `offline`, ranked between
+`away` and `offline` because "I cannot tell" deserves more of your attention
+than a confirmed no. The friends list groups it separately and says why.
+
+**Linking is what makes it useful.** `friends.person_id` marks two accounts as
+one human, and a row with nothing to say inherits the best status in its group —
+so a Discord friend linked to a Steam account shows what that account is doing,
+labelled `via steam` so a borrowed status is never mistaken for a reported one.
+Applied on read rather than stored: the two rows refresh on their own schedules,
+and writing it down would give two places to disagree.
+
+A shared id rather than a links table, because the relation is a grouping and
+not a pair — a third service joins by taking the same id, and unlinking is
+setting one back to null. `replaceFriends` never touches the column, so a sync
+cannot undo your work.
+
+**Auto-linking from Discord is not possible, and the suggestions are guesses.**
+A friend's connections live on `GET /users/{id}/profile`, which is a client-only
+endpoint and answers 401 to an OAuth app; even `/users/@me/connections` needs a
+scope that would only ever describe you. There is nothing authoritative to
+import. So names are compared — exact after normalising, or one containing the
+other when it is long enough to mean something — and *proposed*. A wrong link
+silently attributes one person's status to another, which is worth a click to
+avoid.
+
 ### The Following list sorts by what you actually listen to
 
 Four hundred names in alphabetical order is a phone book. The default sort is

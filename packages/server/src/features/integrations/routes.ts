@@ -27,6 +27,7 @@ import {
   credentialsSchema,
   providerOptionsSchema,
   isProviderId,
+  linkFriendsSchema,
   localPresenceSchema,
   presenceRank,
   resolveSetupLinks,
@@ -59,7 +60,10 @@ import {
   forgetAccount,
   getAccount,
   itemsInCollection,
+  linkFriends,
   optionsFor,
+  suggestFriendLinks,
+  unlinkFriend,
   listAccounts,
   saveAccount,
   followPlaylistCounts,
@@ -442,8 +446,46 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     const outcomes = await refreshPresence(force === '1');
     const rows = await allFriends();
 
+    /*
+     * Linked accounts inherit the best status in their group.
+     *
+     * Discord returns no presence at all, so a Discord friend on their own is
+     * `unknown` forever. Linked to a Steam account, the pair knows what that
+     * Steam account is doing — and that is the whole point of linking: one
+     * service knows who your friends are, another knows whether they are about.
+     *
+     * Applied on read rather than stored, because it is derived from two rows
+     * that each refresh on their own schedule; writing it down would give two
+     * places to disagree.
+     */
+    const byPerson = new Map<string, typeof rows>();
+    for (const row of rows) {
+      if (!row.personId) continue;
+      byPerson.set(row.personId, [...(byPerson.get(row.personId) ?? []), row]);
+    }
+
+    const resolved = rows.map((row) => {
+      const group = row.personId ? byPerson.get(row.personId) ?? [] : [];
+      const best = group
+        .filter((r) => r.state !== 'unknown')
+        .sort(
+          (x, y) =>
+            presenceRank[x.state as keyof typeof presenceRank] - presenceRank[y.state as keyof typeof presenceRank]
+        )[0];
+
+      return {
+        ...row,
+        // Only borrowed when this row has nothing of its own to say.
+        ...(row.state === 'unknown' && best
+          ? { state: best.state, game: best.game, detail: best.detail, statusFrom: best.provider }
+          : { statusFrom: null }),
+        /** The other services this person is on, for the row to show. */
+        alsoOn: group.filter((r) => r.id !== row.id).map((r) => ({ provider: r.provider, name: r.name })),
+      };
+    });
+
     return {
-      friends: rows.sort(
+      friends: resolved.sort(
         (a, b) =>
           presenceRank[a.state as keyof typeof presenceRank] - presenceRank[b.state as keyof typeof presenceRank] ||
           a.name.localeCompare(b.name)
@@ -467,6 +509,40 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
       refreshed: outcomes,
     };
   });
+
+  /**
+   * Say that two accounts are the same person.
+   *
+   * Local-only like every other write here. The pairing is a claim about people
+   * you know, and it is the sort of thing that should not be editable from a
+   * phone left on a table.
+   */
+  app.post('/api/integrations/friends/link', async (request) => {
+    localOnly(request);
+    const { a, b } = linkFriendsSchema.parse(request.body);
+    const personId = await linkFriends(a, b);
+    changes.emitChange('integrations');
+    return { personId };
+  });
+
+  app.post('/api/integrations/friends/unlink', async (request) => {
+    localOnly(request);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.body);
+    await unlinkFriend(id);
+    changes.emitChange('integrations');
+    return { ok: true };
+  });
+
+  /**
+   * Accounts whose names look like the same person.
+   *
+   * Suggestions only — Discord will not tell us a friend's Steam profile, so
+   * there is nothing authoritative to import and a name is a guess. Confirmed
+   * one at a time by the person who knows.
+   */
+  app.get('/api/integrations/friends/suggestions', async () => ({
+    suggestions: await suggestFriendLinks(),
+  }));
 
   /**
    * Where the agent posts what only this PC can see.

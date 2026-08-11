@@ -972,3 +972,12 @@ button {
   border-color: var(--danger);
   color: var(--danger);
 }
+
+/* "I cannot tell" — visually between online and offline, because that is where
+   it belongs. Discord returns its friends list with no presence on it, and
+   dimming those rows to look offline would restate the claim the state exists
+   to avoid. */
+.chip.presence-unknown {
+  opacity: 0.8;
+  border-style: dashed;
+}

@@ -548,13 +548,13 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
          * requested scope is invalid, unknown, or malformed`, which is what it
          * returns for an application that has not enabled the Social SDK.
          */
-        status: 'needs-approval',
+        status: 'partial',
         why:
-          'Connecting works and gives you your account; the friends list needs the Social SDK enabled ' +
-          'for your application, which Discord grants on request. Until then the authorize page refuses ' +
-          'the scope, so the app stops asking for it and connects without — you get the connection, and ' +
-          'this row says why the list is empty.',
-        source: 'sdk.social_layer_presence — invalid_scope until the Social SDK is enabled',
+          'Your friends list, with the Social SDK enabled for your application — Discord grants that on ' +
+          'request, and until it does the authorize page refuses the scope and this app stops asking. ' +
+          'Names only: the REST API carries no presence at all, so who is online has to come from Steam. ' +
+          'Link the two on this screen and a Discord friend shows their Steam status.',
+        source: 'GET /users/@me/relationships returns no presence field',
         sourceUrl: 'https://discord.com/developers/docs/discord-social-sdk/core-concepts/oauth2-scopes',
         unlock: [
           {
@@ -686,12 +686,19 @@ export function capabilityIsUsable(spec: CapabilitySpec | undefined): boolean {
  * their own. Steam has six numeric states, Discord has four strings, the League
  * client has its own set plus a free-text away message.
  *
- * Collapsed to four, because the question this answers is "could I say hello",
+ * Collapsed to five, because the question this answers is "could I say hello",
  * and the finer distinctions do not change the answer. `in-game` is kept
  * separate from `online` only because it is the one that carries a *what* —
  * which is the interesting part of a friends list.
+ *
+ * **`unknown` is not a synonym for offline, and adding it fixed a lie.** A
+ * provider that cannot tell us has to say so: Discord's REST API returns the
+ * friends list with no presence on it at all, so every one of them was being
+ * stored as `offline` — a hundred people the screen claimed were away from
+ * their computers, on no evidence whatsoever. Absent data and a negative answer
+ * are different things, and only one of them should look like one.
  */
-export const PRESENCE_STATES = ['offline', 'online', 'away', 'in-game'] as const;
+export const PRESENCE_STATES = ['offline', 'online', 'away', 'in-game', 'unknown'] as const;
 export const presenceStateSchema = z.enum(PRESENCE_STATES);
 export type PresenceState = (typeof PRESENCE_STATES)[number];
 
@@ -700,7 +707,10 @@ export const presenceRank: Record<PresenceState, number> = {
   'in-game': 0,
   online: 1,
   away: 2,
-  offline: 3,
+  // Above offline: "I cannot tell" is worth more of your attention than a
+  // confirmed no, since one of them might actually be around.
+  unknown: 3,
+  offline: 4,
 };
 
 export const friendSchema = z.object({
@@ -1035,6 +1045,12 @@ export const credentialsSchema = z.object({
   clientSecret: z.string().max(400).optional(),
 });
 export type CredentialsInput = z.infer<typeof credentialsSchema>;
+
+/** Two friend rows, on different services, that are one person. */
+export const linkFriendsSchema = z.object({
+  a: z.string().min(1).max(100),
+  b: z.string().min(1).max(100),
+});
 
 export const syncRequestSchema = z.object({
   /** Omitted means everything this provider can do. */
