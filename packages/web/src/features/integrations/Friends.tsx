@@ -75,21 +75,7 @@ export function Friends() {
         <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
       ))}
 
-      {/*
-        Between "around" and "offline", which is where they belong: more
-        interesting than a confirmed no, less than a confirmed yes.
-      */}
-      {unknown.length > 0 && (
-        <>
-          <div className="meta" style={{ margin: '1rem 0 .5rem' }}>
-            Status unknown — Discord does not publish presence, so link these to a Steam account to see
-            whether they are about
-          </div>
-          {unknown.map((friend) => (
-            <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
-          ))}
-        </>
-      )}
+
 
       {/*
         Offline friends stay on screen below a divider rather than being hidden
@@ -102,6 +88,26 @@ export function Friends() {
           <div className="meta" style={{ margin: '1rem 0 .5rem' }}>Offline</div>
           <div className="done-area">
             {offline.map((friend) => (
+              <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {/*
+        Last, below offline. It sat between the two at first, on the reasoning
+        that "I cannot tell" might be hiding somebody who is around — but there
+        are a hundred of these against eighteen of everything else, so putting
+        them in the middle buried the part of the list that answers the question.
+      */}
+      {unknown.length > 0 && (
+        <>
+          <div className="meta" style={{ margin: '1rem 0 .5rem' }}>
+            Status unknown — Discord does not publish presence over its API, so link these to a Steam
+            account to see whether they are about
+          </div>
+          <div className="done-area">
+            {unknown.map((friend) => (
               <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
             ))}
           </div>

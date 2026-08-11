@@ -2180,9 +2180,28 @@ Discord's own client over the gateway, not over REST. Everything was therefore
 defaulting to `offline`, which reported a hundred people as away from their
 computers on no evidence at all.
 
-So `unknown` is a presence state, distinct from `offline`, ranked between
-`away` and `offline` because "I cannot tell" deserves more of your attention
-than a confirmed no. The friends list groups it separately and says why.
+So `unknown` is a presence state distinct from `offline`, and sorts **last** —
+below offline. It was between the two at first, on the reasoning that "I cannot
+tell" might be hiding somebody who is around; with a hundred unknowns against
+eighteen of everything else, that buried the part of the list which answers the
+question under the part that cannot.
+
+**"No presence over REST" is not the same as "no presence".** Presence reaches
+Discord's own client, and the Social SDK, over the **gateway** — a WebSocket —
+and there are two ways to reach it:
+
+- **A bot with the `GUILD_PRESENCES` intent.** Fully documented and stable. A
+  bot in a server sees `PRESENCE_UPDATE` for that server's members, so it covers
+  people who share a guild with it rather than your whole friends list. It needs
+  `GUILD_MEMBERS` as well, and both are ticked on in the portal without review
+  while the bot is unverified and in under a hundred servers. The cost is a
+  persistent WebSocket in the server process and a bot token to keep.
+- **The Social SDK's own gateway session**, which is what the SDK does with the
+  OAuth token. It is a native library and the wire protocol is not documented
+  for third-party clients, so this route is reverse-engineering.
+
+Neither is built. The friends list says "Discord does not publish presence over
+its API", which is the accurate claim.
 
 **Linking is what makes it useful.** `friends.person_id` marks two accounts as
 one human, and a row with nothing to say inherits the best status in its group —

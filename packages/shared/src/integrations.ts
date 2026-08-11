@@ -707,10 +707,12 @@ export const presenceRank: Record<PresenceState, number> = {
   'in-game': 0,
   online: 1,
   away: 2,
-  // Above offline: "I cannot tell" is worth more of your attention than a
-  // confirmed no, since one of them might actually be around.
-  unknown: 3,
-  offline: 4,
+  offline: 3,
+  // Last. It briefly sat above `offline`, on the reasoning that "I cannot tell"
+  // might hide somebody who is around — but there are a hundred of them and
+  // eighteen of everything else, so it buried the list that answers the
+  // question under the list that cannot.
+  unknown: 4,
 };
 
 export const friendSchema = z.object({
