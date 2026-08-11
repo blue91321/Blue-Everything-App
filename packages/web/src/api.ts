@@ -530,6 +530,8 @@ export interface ProviderInfo {
   options: Array<{ key: string; label: string; help?: string; fallback: boolean }>;
   /** Their current values, with fallbacks already applied. */
   optionValues: Record<string, boolean>;
+  /** The provider refused this app's optional scopes, so it stopped asking. */
+  optionalScopesRefused: boolean;
   /** What to paste into the provider's dashboard. Null for non-OAuth providers. */
   redirectUri: string | null;
   capabilities: Partial<Record<string, CapabilityInfo>>;
@@ -881,6 +883,8 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(values),
       }),
+    /** Ask for the optional scopes again, once they have been enabled there. */
+    retryScopes: (provider: string) => post<{ optionalScopesRefused: boolean }>(`/api/integrations/${provider}/retry-scopes`),
     disconnect: (provider: string) => request<void>(`/api/integrations/${provider}`, { method: 'DELETE' }),
     sync: (provider: string, capabilities?: string[]) =>
       post<{ outcomes: SyncOutcome[] }>(`/api/integrations/${provider}/sync`, { capabilities }),

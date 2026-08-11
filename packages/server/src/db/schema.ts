@@ -544,6 +544,19 @@ export const integrationAccounts = sqliteTable('integration_accounts', {
   clientSecret: text('client_secret'),
 
   /**
+   * The provider refused this application's optional scopes, so stop asking.
+   *
+   * Set when the authorize page answers `invalid_scope`. That happens *before*
+   * any token exists, so without remembering it the next Connect asks for the
+   * same refused scope and fails identically — the account is simply
+   * unconnectable, with no way out from inside the app.
+   *
+   * Cleared by the button on the card, for once the gated feature has been
+   * enabled at the provider's end.
+   */
+  optionalScopesRefused: integer('optional_scopes_refused').notNull().default(0),
+
+  /**
    * Per-provider switches that change what a sync does, as JSON.
    *
    * JSON rather than a column each, because these are provider-specific and a

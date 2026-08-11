@@ -1946,7 +1946,7 @@ that shows an empty list — is the expensive way to learn it. So a capability i
 | **Spotify** | yes* | artists you follow | — |
 | **YouTube** | yes | subscriptions | — |
 | **Steam** | — | — | **yes, properly** |
-| **Discord** | — | — | yes |
+| **Discord** | — | — | needs their approval |
 | **Riot** | — | — | local client only |
 
 \* **Spotify needs Premium.** Since February 2026 a Development Mode app stops
@@ -2068,6 +2068,18 @@ The four that hurt, and why they are stated rather than worked around:
   therefore `partial` rather than `unavailable`: it read "not possible" directly
   above the button that imports it, which is a row contradicting the control
   beneath it.
+- **An optional scope must never make an account unconnectable.** Discord
+  answers `invalid_scope` at the *authorize page* for an application without the
+  Social SDK enabled — before any token exists — so asking for the friends scope
+  unconditionally did not cost the friends list, it cost the whole connection.
+  `oauth.optionalScopes` is asked for once, and a refusal is recorded on the
+  account so the next attempt drops them and succeeds. The card says which part
+  is missing and carries the button that starts asking again, for once the
+  feature has been enabled at the provider's end.
+
+  The failure mode this replaces is the worst kind: pressing Connect, being
+  refused, and having no route out from inside the app.
+
 - **Discord's friends list comes through `sdk.social_layer_presence`.**
   `grantedScopes` is checked rather than assumed, and that stays whatever the
   approval position is: a token can come back with a scope silently dropped, and

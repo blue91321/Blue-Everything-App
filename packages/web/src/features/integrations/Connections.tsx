@@ -293,12 +293,33 @@ function ProviderCard({
       )}
 
 
-      {/* ---- the granted-scope warning, which is the Discord case ---- */}
-      {provider.connected && provider.id === 'discord' && !provider.grantedScopes.includes('sdk.social_layer_presence') && (
+      {/*
+        The provider refused an optional scope, so the app stopped asking.
+
+        Stated on the card rather than left to the callback page, which you see
+        once and then close: after that the only visible symptom is a feature
+        that is quietly missing. The button is the way back, for once the gated
+        thing has been enabled at their end.
+      */}
+      {provider.optionalScopesRefused && (
         <div className="banner" style={{ marginTop: '.75rem' }}>
-          Connected, but Discord did not grant the presence scope — so it can confirm who you are and
-          nothing more. Request Social SDK access for your application in the developer portal, then
-          connect again.
+          {provider.label} would not grant everything this asks for, so it is no longer asking — the
+          connection works, and the capability above marked <em>needs approval</em> is the part you do not
+          have. Enable it for your application at {provider.label}, then press below and connect again.
+          <div className="row" style={{ marginTop: '.5rem' }}>
+            <button
+              className="btn subtle"
+              disabled={!local || busy !== ''}
+              onClick={() =>
+                void guard('scopes', async () => {
+                  await api.integrations.retryScopes(provider.id);
+                  reload();
+                })
+              }
+            >
+              Ask for everything again
+            </button>
+          </div>
         </div>
       )}
 

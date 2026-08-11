@@ -42,6 +42,7 @@ import {
   credentialState,
   grantedScopes,
   missingCredentials,
+  optionalScopesRefused,
   redirectUri,
 } from './oauth.js';
 import { localStatusOf, recordLocalPresence } from './providers/local.js';
@@ -88,6 +89,13 @@ async function providerState(id: ProviderId) {
     credentialFields: await credentialState(id),
     /** The provider's switches, with the manifest's fallbacks already applied. */
     optionValues: await optionsFor(id),
+    /**
+     * The provider refused this app's optional scopes, so it has stopped asking.
+     *
+     * Surfaced because the alternative is a connection that quietly requests
+     * less than it was designed to, with an empty list and nothing saying why.
+     */
+    optionalScopesRefused: await optionalScopesRefused(id),
     /**
      * What to paste into the provider's dashboard, character for character.
      *
@@ -255,6 +263,22 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     return next;
   });
 
+  /**
+   * Ask for the optional scopes again.
+   *
+   * The way back after a refusal has been recorded: you enable the feature at
+   * the provider's end, press this, and the next Connect asks for everything
+   * again. Without it the refusal is permanent and the only cure is a database
+   * edit.
+   */
+  app.post('/api/integrations/:provider/retry-scopes', async (request) => {
+    localOnly(request);
+    const provider = parseProvider((request.params as { provider: string }).provider);
+    await saveAccount(provider, { optionalScopesRefused: 0 });
+    changes.emitChange('integrations');
+    return { optionalScopesRefused: false };
+  });
+
   app.get('/oauth/callback/:provider', async (request, reply) => {
     const provider = parseProvider((request.params as { provider: string }).provider);
     const query = request.query as { code?: string; state?: string; error?: string; error_description?: string };
@@ -262,10 +286,33 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     reply.type('text/html');
 
     if (query.error) {
-      // Their words, not ours. `access_denied` when you press Cancel, and the
-      // scope-refusal that an unapproved Discord app gets, arrive here.
+      /*
+       * `invalid_scope` means one of the optional scopes is not available to
+       * this application — Discord answers it for an app without the Social SDK
+       * enabled. It arrives before any token, so the connection fails entirely
+       * rather than merely losing the feature.
+       *
+       * Recorded so the next attempt does not ask for it and therefore
+       * succeeds. Without this the only route out is editing the source, which
+       * is not a route.
+       */
+      const spec = PROVIDERS[provider];
+      if (query.error === 'invalid_scope' && (spec.oauth?.optionalScopes?.length ?? 0) > 0) {
+        await saveAccount(provider, { optionalScopesRefused: 1 });
+        changes.emitChange('integrations');
+
+        return callbackPage(
+          `${spec.label} would not grant everything`,
+          `It refused <code>${(spec.oauth?.optionalScopes ?? []).join(' ')}</code>, which is what it answers ` +
+            'for an application that does not have that feature enabled yet. ' +
+            '<strong>Press Connect again</strong> — it will now ask only for what your application can grant, ' +
+            'and the connection will go through. The card says which part is missing and how to enable it.'
+        );
+      }
+
+      // Their words, not ours. `access_denied` is what pressing Cancel sends.
       return callbackPage(
-        `${PROVIDERS[provider].label} refused`,
+        `${spec.label} refused`,
         `It said: <code>${query.error}</code>${query.error_description ? ` — ${query.error_description}` : ''}`
       );
     }

@@ -127,7 +127,18 @@ export interface ProviderSpec {
   oauth?: {
     authorizeUrl: string;
     tokenUrl: string;
+    /** Asked for every time. A provider refusing one of these is a real failure. */
     scopes: string[];
+    /**
+     * Asked for, and dropped if the provider refuses them.
+     *
+     * **A scope the provider will not grant must not make the account
+     * unconnectable**, which is what happens without this split: an authorize
+     * page that answers `invalid_scope` never issues a token at all, so one
+     * gated extra takes the whole connection with it — including the parts that
+     * would have worked. Discord's friends scope did exactly that.
+     */
+    optionalScopes?: string[];
     pkce: boolean;
     /**
      * Some providers hand back a refresh token only when asked, and asking
@@ -474,11 +485,16 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     oauth: {
       authorizeUrl: 'https://discord.com/oauth2/authorize',
       tokenUrl: 'https://discord.com/api/oauth2/token',
-      // `identify` always works and is what proves the connection. The other two
-      // are the Social SDK scopes that actually carry the friends list, and are
-      // requested optimistically: an unapproved app is refused at the authorize
-      // step, which is a clearer failure than a silent empty list.
-      scopes: ['identify', 'openid', 'sdk.social_layer_presence'],
+      // `identify` is what proves the connection and is always granted.
+      scopes: ['identify'],
+      /*
+       * The Social SDK scopes that carry the friends list. Optional because
+       * Discord answers `invalid_scope` for an application that has not enabled
+       * the Social SDK — and that answer arrives at the authorize page, before
+       * any token, so asking for them unconditionally made Discord impossible
+       * to connect at all rather than merely friendless.
+       */
+      optionalScopes: ['openid', 'sdk.social_layer_presence'],
       pkce: true,
     },
     credentials: [
@@ -487,11 +503,21 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     options: [],
     capabilities: {
       friends: {
-        status: 'works',
+        /*
+         * Back to `needs-approval`, on evidence rather than on documentation.
+         *
+         * This said `works` for a while, on the understanding that the scope was
+         * ungated. Discord's authorize page answered `invalid_scope — The
+         * requested scope is invalid, unknown, or malformed`, which is what it
+         * returns for an application that has not enabled the Social SDK.
+         */
+        status: 'needs-approval',
         why:
-          'Your friends list with their status, through the Social SDK presence scope. Reading your own ' +
-          'account with a user token would be against their terms and is not how this works.',
-        source: 'sdk.social_layer_presence, via GET /users/@me/relationships',
+          'Connecting works and gives you your account; the friends list needs the Social SDK enabled ' +
+          'for your application, which Discord grants on request. Until then the authorize page refuses ' +
+          'the scope, so the app stops asking for it and connects without — you get the connection, and ' +
+          'this row says why the list is empty.',
+        source: 'sdk.social_layer_presence — invalid_scope until the Social SDK is enabled',
         sourceUrl: 'https://discord.com/developers/docs/discord-social-sdk/core-concepts/oauth2-scopes',
       },
     },

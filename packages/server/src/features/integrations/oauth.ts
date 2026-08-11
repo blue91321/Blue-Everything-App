@@ -204,11 +204,20 @@ export async function beginAuthorization(provider: ProviderId): Promise<{ url: s
   const verifier = base64url(randomBytes(64));
   pending.set(state, { provider, verifier, startedAt: Date.now() });
 
+  /*
+   * The optional scopes are dropped once the provider has refused them, and
+   * only then. Asking is right the first time — an application that *does* have
+   * the gated feature should get it without being asked to opt in — and asking
+   * again after a refusal is just the same failure on a loop.
+   */
+  const account = await getAccount(provider);
+  const optional = account?.optionalScopesRefused ? [] : spec.oauth.optionalScopes ?? [];
+
   const params = new URLSearchParams({
     client_id: await clientId(provider),
     response_type: 'code',
     redirect_uri: redirectUri(provider),
-    scope: spec.oauth.scopes.join(' '),
+    scope: [...spec.oauth.scopes, ...optional].join(' '),
     state,
     ...(spec.oauth.authorizeParams ?? {}),
   });
@@ -401,4 +410,15 @@ export function grantedScopes(account: Account | null): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Whether this provider will still be asked for its optional scopes.
+ *
+ * Exposed so the card can say "Discord refused the friends list scope" and
+ * offer to try again, rather than leaving a connection that silently asks for
+ * less than it used to with nothing on screen to explain it.
+ */
+export async function optionalScopesRefused(provider: ProviderId): Promise<boolean> {
+  return Boolean((await getAccount(provider))?.optionalScopesRefused);
 }
