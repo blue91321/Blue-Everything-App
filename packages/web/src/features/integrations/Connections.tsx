@@ -1,10 +1,10 @@
 /**
  * The services, and what each one is actually able to do.
  *
- * Every provider renders its full capability list including the ones that can
- * never work, because "can I see my Battle.net friends?" answered with silence
- * reads as "not built yet" and sends you looking. It is answered with a
- * sentence instead.
+ * Every provider renders its full capability list, each with the sentence
+ * explaining what it does and does not cover — Spotify keeping only fifty plays,
+ * Discord needing approval, Riot working only while the client is open. A
+ * status with no explanation reads as "not built yet" and sends you looking.
  *
  * Connecting is local-only, guarded on the server. On a phone the rows still
  * render — you can see what is hooked up and sync it — and the buttons that
@@ -80,11 +80,11 @@ function ProviderCard({
   /**
    * Whether connecting this would buy anything *today*.
    *
-   * Battle.net is the case: its OAuth details are in the manifest because they
-   * are real and it would be silly to look them up twice, but its only
-   * capability is `unavailable`, so a Connect button would complete a genuine
-   * handshake and leave the app with a token it has no use for. A button that
-   * works and achieves nothing is worse than one that explains itself.
+   * No provider fails this now — Battle.net, the one that did, has been removed
+   * rather than left on the screen apologising. The guard stays because it
+   * encodes the rule that removal followed: a Connect button that completes a
+   * real handshake and leaves the app holding a token it can do nothing with is
+   * worse than one that explains why it is not offered.
    */
   const anythingUsable = Object.values(provider.capabilities).some(
     (spec) => spec && spec.status !== 'unavailable'

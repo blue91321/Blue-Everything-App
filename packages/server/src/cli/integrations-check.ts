@@ -314,18 +314,45 @@ for (const spec of PROVIDER_LIST) {
 }
 
 /*
- * Battle.net is the one confidential client here, so its secret is the one that
- * must be required. Spotify is PKCE and asks for none at all — offering the box
- * would invite pasting a secret this app has no use for and would then store.
+ * Spotify is PKCE and asks for no secret at all — offering the box would invite
+ * pasting one this app has no use for and would then store. Battle.net was the
+ * one provider here that genuinely required a secret, and it has been removed.
  */
-check(
-  'battlenet requires its secret',
-  PROVIDERS.battlenet.credentials.some((f) => f.key === 'clientSecret' && f.required)
-);
 check(
   'spotify asks for no secret at all, being PKCE',
   !PROVIDERS.spotify.credentials.some((f) => f.key === 'clientSecret')
 );
+
+console.log('\nNothing here claims to be impossible');
+
+/*
+ * No shipped capability is `unavailable`, and that is a rule rather than a
+ * coincidence.
+ *
+ * The status still exists and the screen still renders it, because a future
+ * provider may have a genuine dead end worth stating next to things that work.
+ * What is not acceptable is one sitting in the manifest: Battle.net and Epic
+ * were rows whose entire content explained why they could do nothing, and
+ * YouTube's history said "not possible" directly above the button that imports
+ * it.
+ */
+for (const spec of PROVIDER_LIST) {
+  for (const [name, capability] of Object.entries(spec.capabilities)) {
+    check(
+      `${spec.id}/${name}: is something that can actually happen`,
+      capability?.status !== 'unavailable',
+      capability?.why?.slice(0, 60)
+    );
+  }
+}
+
+// And no provider is present purely to apologise for itself.
+for (const spec of PROVIDER_LIST) {
+  check(
+    `${spec.id}: has at least one capability that works`,
+    Object.values(spec.capabilities).some((c) => c && c.status !== 'unavailable')
+  );
+}
 
 console.log('\nFollowing is not friendship');
 
@@ -345,7 +372,7 @@ for (const id of ['spotify', 'youtube'] as const) {
 
 // And the other way round: a presence provider must not claim a follow list it
 // has no way to produce.
-for (const id of ['steam', 'riot', 'battlenet', 'epic'] as const) {
+for (const id of ['steam', 'riot'] as const) {
   check(`${id} declares no follows capability`, PROVIDERS[id].capabilities.follows === undefined);
 }
 

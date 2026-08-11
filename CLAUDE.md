@@ -1923,8 +1923,8 @@ a protection it was not providing.
 
 ## App integrations
 
-Spotify and YouTube for what you listen to and watch; Steam, Discord, Riot,
-Battle.net and Epic for who is around. `npm run integrations-check -w
+Spotify and YouTube for what you listen to and watch; Steam, Discord and Riot
+for who is around. `npm run integrations-check -w
 @everything/server` proves the parts with no network in them — run it before
 trusting a change to the categoriser or the Takeout reader.
 
@@ -1944,12 +1944,24 @@ that shows an empty list — is the expensive way to learn it. So a capability i
 | | playlists | history | following | who's online |
 | --- | --- | --- | --- | --- |
 | **Spotify** | yes | last 50 plays, ever | artists you follow | — |
-| **YouTube** | yes | **not since 2016** — Takeout import | subscriptions | — |
+| **YouTube** | yes | Takeout import — **never the API** | subscriptions | — |
 | **Steam** | — | — | — | **yes, properly** |
 | **Discord** | — | — | — | needs their approval |
 | **Riot** | — | — | — | local client only |
-| **Battle.net** | — | — | — | **no such API exists** |
-| **Epic** | — | — | — | per-friend consent, never the launcher list |
+
+**Battle.net and Epic were here and have been removed.** Blizzard publishes no
+social namespace at any access level, and Epic's Friends interface needs a
+registered EOS product *and* per-friend consent, so it can never return the
+launcher list. Both were rows whose entire content was an explanation of why
+they could do nothing, plus launcher-process detection reporting "the launcher
+is open" — true, and not worth a row on a screen about who is around.
+
+The research was worth doing and the answer is recorded here; the *rows* were
+not worth keeping. `integrations-check` now asserts no shipped capability is
+`unavailable` and no provider exists purely to apologise. The status itself
+stays in the type, because a future provider may have a dead end worth stating
+next to things that work — as YouTube's history did before the Takeout importer
+made it real.
 
 **`follows` and `friends` are separate capabilities, and collapsing them was the
 first mistake here.** A Steam friend is a mutual relationship with somebody who
@@ -2036,21 +2048,20 @@ The four that hurt, and why they are stated rather than worked around:
 - **YouTube's watch history has been an empty placeholder since 12 September
   2016**, and the `activities` endpoint that partly replaced it is deprecated.
   Takeout is not a workaround for a missing endpoint — it is the only complete
-  record, and it goes back further than an API ever would.
+  record, and it goes back further than an API ever would. The capability is
+  therefore `partial` rather than `unavailable`: it read "not possible" directly
+  above the button that imports it, which is a row contradicting the control
+  beneath it.
 - **Discord's friends list needs `sdk.social_layer_presence`**, a Social SDK
   scope granted per-application on request. An unapproved app still gets a
   working token with the scope silently dropped, so `grantedScopes` is checked
   rather than assumed — otherwise the screen shows a healthy connection and an
   empty list. The other route people use is a user token lifted out of the
   desktop client, which is against Discord's terms and is not implemented.
-- **Battle.net has no social namespace at all.** Not gated, not undocumented —
-  absent. `unavailable` is the honest status, and the row says so instead of
-  leaving a blank that reads as "not built yet".
-
 ### Who is online, and which process asks
 
-Steam and Discord are web APIs the server calls. Riot, Epic and Battle.net are
-not reachable that way, so the **agent** gathers them and POSTs to
+Steam and Discord are web APIs the server calls. Riot is not reachable that way,
+so the **agent** gathers it and POSTs to
 `/api/integrations/presence` — the same division the voice feature draws.
 Anything about *data* happens on the server, which owns the database; anything
 about *this machine* happens in the agent, because the server is meant to be
@@ -2062,11 +2073,12 @@ movable and has no business assuming League is installed on the same box.
   because the certificate is Riot's own self-signed one; the connection is to
   `127.0.0.1` on a port named by a file only this user could have written, so
   there is no network path to sit in the middle of.
-- **Epic and Battle.net** are process names, and detecting them costs
-  **nothing**: `attention.ts` now emits the process scan it already takes, and
-  the feature listens. A second `listProcesses()` on a 30-second timer would
-  have been ~5ms every 30s — several times the agent's entire measured CPU
-  budget — for a fact the tick had already established and thrown away.
+
+Epic and Battle.net were also gathered here, by launcher process name, off a
+`processes` event `attention.ts` emitted so the scan it already takes could be
+reused. Both the providers and that event have been removed — an event in core
+existing for one deleted feature is exactly the sort of thing that survives by
+being cheap.
 
 Three things there are easy to get wrong:
 

@@ -233,7 +233,9 @@ async function postToken(spec: ProviderSpec, provider: ProviderId, body: URLSear
   const headers: Record<string, string> = { 'content-type': 'application/x-www-form-urlencoded' };
 
   // Confidential clients want the secret as HTTP Basic rather than in the body.
-  // Battle.net is strict about it; Spotify accepts either and never sees one.
+  // No provider here sets `needsSecret` today — the branch stays because it is
+  // what a confidential client requires, and dropping it would make adding one
+  // a change to the flow rather than a line in the manifest.
   if (spec.oauth?.needsSecret) {
     const secret = await clientSecret(provider);
     const id = await clientId(provider);

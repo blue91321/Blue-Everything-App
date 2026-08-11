@@ -7,12 +7,16 @@
  * for would otherwise be in the middle of the other two. Which tab is open is
  * `useState`, like every other bit of navigation here.
  *
- * The design rule running through all of it: **a capability that cannot work
- * says why, where you would look for it**. Four of the seven services here
- * cannot do the obvious thing — Battle.net has no friends API at all, Epic's is
- * gated behind per-friend consent, Discord's needs their approval, YouTube
- * stopped serving watch history in 2016 — and a row that renders as merely empty
- * sends you hunting for a setting that was never there.
+ * The design rule running through all of it: **a capability that is limited says
+ * how, where you would look for it**. Most of these services cannot quite do the
+ * obvious thing — Spotify keeps only the last fifty plays, Discord's friends
+ * list needs their approval, Riot's works only while the client is open, YouTube
+ * stopped serving watch history in 2016 and has to be imported — and a row that
+ * renders as merely empty sends you hunting for a setting that was never there.
+ *
+ * What is *not* here any more is the pure dead end. Battle.net and Epic were
+ * rows whose entire content explained why they could do nothing, and they have
+ * been removed rather than kept as a monument to the research.
  */
 import { useState } from 'react';
 import { api } from '../../api';

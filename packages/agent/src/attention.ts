@@ -121,21 +121,6 @@ export interface AttentionMonitorEvents {
   'stopping-point': [StoppingPoint];
   /** An unrecognised app held exclusive fullscreen — a candidate for games.ts. */
   'unknown-fullscreen-app': [string];
-  /**
-   * The full process list, each time one is actually taken.
-   *
-   * Emitted rather than discarded so anything else that needs to know whether a
-   * particular executable is running can have the answer **for free**. A full
-   * scan is ~5ms against everything else in a tick costing ~0.1ms combined, so a
-   * second consumer running its own `listProcesses()` on a timer would be, on
-   * its own, several times the agent's entire measured CPU cost.
-   *
-   * The map is the monitor's own and must not be modified by a listener; it is
-   * handed over rather than copied because copying ~300 entries every scan to
-   * guard against a mistake nobody has made is the wrong trade in the one file
-   * whose numbers this project quotes.
-   */
-  processes: [ReadonlyMap<string, number>];
 }
 
 export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
@@ -215,10 +200,6 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
     this.launcherRunning = [...processes.keys()].some(isLauncher);
     this.lastSnapshotAt = now;
     this.lastForegroundExe = foregroundExe;
-
-    // Share the scan that was just paid for. Nothing in core listens; this
-    // exists so an optional feature never has to take a second one.
-    this.emit('processes', processes);
   }
 
   private sample(): AttentionSnapshot {

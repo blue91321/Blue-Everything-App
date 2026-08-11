@@ -112,16 +112,15 @@ const envSchema = z.object({
    * with the install, they are the same on a reinstall, and they have no
    * business being editable from a phone.
    *
-   * Only Battle.net genuinely needs a secret. Spotify, Google and Discord all
-   * support PKCE, so their secrets stay unset and there is nothing to leak.
+   * Every provider left here supports PKCE, so no client secret is required at
+   * all — Google issues one only for a Web-application client, and it is
+   * optional even then. Nothing has to be kept anywhere it could leak.
    */
   SPOTIFY_CLIENT_ID: z.string().default(''),
   GOOGLE_CLIENT_ID: z.string().default(''),
   GOOGLE_CLIENT_SECRET: z.string().default(''),
   DISCORD_CLIENT_ID: z.string().default(''),
   DISCORD_CLIENT_SECRET: z.string().default(''),
-  BATTLENET_CLIENT_ID: z.string().default(''),
-  BATTLENET_CLIENT_SECRET: z.string().default(''),
   STEAM_API_KEY: z.string().default(''),
 
   /**

@@ -3,18 +3,16 @@
  *
  * Three of the seven services in this module publish nothing a server can call
  * for a friends list, so what is available is local: the League client's own
- * loopback API, and — for Epic and Battle.net, where even that does not exist —
- * whether the launcher is running at all.
+ * loopback API.
  *
- * **Reporting "the launcher is running" is not a consolation prize dressed up
- * as a feature.** It is the honest whole of what is obtainable, and the screen
- * says so in those words. The alternative was leaving two rows permanently
- * blank with nothing to explain them.
+ * Epic and Battle.net were here too, reporting whether their launchers were
+ * running — the honest whole of what those two can offer, since neither
+ * publishes a friends API at any access level. They have been removed along
+ * with the providers: "the launcher is open" is true, and is not worth a row on
+ * a screen about who is around.
  *
  * Cost, against the budget in CLAUDE.md:
  *
- *   - launcher detection: **nothing**. It reads the process scan the attention
- *     monitor already takes, via the `processes` event, rather than taking one.
  *   - Riot: one loopback HTTPS request every 30s, and **only while the League
  *     client is running** — no lockfile means no request, and the lockfile check
  *     is a `stat`.
@@ -39,23 +37,6 @@ export interface PresenceHost {
   }): Promise<unknown>;
 }
 
-export interface ProcessSource {
-  on(event: 'processes', listener: (processes: ReadonlyMap<string, number>) => void): unknown;
-  off(event: 'processes', listener: (processes: ReadonlyMap<string, number>) => void): unknown;
-}
-
-/**
- * The launcher executables, per provider.
- *
- * Several names each, because both vendors have renamed theirs and both ship a
- * helper process that outlives the window — matching the helper alone would
- * report Epic as running for hours after it was closed.
- */
-const LAUNCHERS: Record<string, string[]> = {
-  epic: ['epicgameslauncher.exe'],
-  battlenet: ['battle.net.exe', 'battlenet.exe'],
-};
-
 /** How often Riot is asked, while it is running. */
 const RIOT_POLL_MS = 30_000;
 
@@ -75,11 +56,7 @@ interface Sent {
   at: number;
 }
 
-export function startIntegrations(
-  host: PresenceHost,
-  processes: ProcessSource,
-  log: (message: string) => void
-): { stop(): void } {
+export function startIntegrations(host: PresenceHost, log: (message: string) => void): { stop(): void } {
   const lastSent = new Map<string, Sent>();
 
   /** Only post when something changed, or when the heartbeat is due. */
@@ -103,16 +80,6 @@ export function startIntegrations(
       log(`presence for ${provider} could not be sent: ${(cause as Error).message}`);
     }
   };
-
-  /* ---- Epic and Battle.net: free, off the existing scan ----------- */
-
-  const onProcesses = (running: ReadonlyMap<string, number>) => {
-    for (const [provider, names] of Object.entries(LAUNCHERS)) {
-      const up = names.some((name) => running.has(name));
-      void send(provider, up, []);
-    }
-  };
-  processes.on('processes', onProcesses);
 
   /* ---- Riot: the lockfile, then the client's own API -------------- */
 
@@ -155,7 +122,6 @@ export function startIntegrations(
 
   return {
     stop() {
-      processes.off('processes', onProcesses);
       if (riotTimer) clearInterval(riotTimer);
     },
   };

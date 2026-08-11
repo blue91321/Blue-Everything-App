@@ -32,8 +32,6 @@ export const PROVIDER_IDS = [
   'steam',
   'discord',
   'riot',
-  'battlenet',
-  'epic',
 ] as const;
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
@@ -341,12 +339,22 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         status: 'works',
         why: 'Your playlists and Liked Videos, with every video in them.',
       },
+      /*
+       * `partial`, not `unavailable`, and the difference is not a euphemism.
+       *
+       * It read `unavailable` while the Takeout importer sat directly below it,
+       * working — which is a row telling you something is impossible next to
+       * the button that does it. The API genuinely cannot serve watch history
+       * and has not since 2016; the *capability* is available, by upload, and
+       * that is what this line now says. `partial` because it is a file you
+       * fetch by hand rather than something that syncs.
+       */
       history: {
-        status: 'unavailable',
+        status: 'partial',
         why:
-          'The watch-history playlist has returned an empty list for every channel since ' +
-          '12 September 2016, and the activities endpoint that partly replaced it is deprecated. ' +
-          'Import a Google Takeout export instead — it is complete, which the API never was.',
+          'Imported from a Google Takeout export, using the button below — the API has served an empty ' +
+          'watch history for every channel since 12 September 2016. The export is the complete record, ' +
+          'which the API never was, so this is the better source rather than a consolation for a missing one.',
         source: 'developers.google.com/youtube/v3/revision_history (12 September 2016)',
         sourceUrl: 'https://developers.google.com/youtube/v3/revision_history',
       },
@@ -508,80 +516,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     setup: [{ text: 'Nothing to connect. Start the League client and the agent finds it.' }],
   },
 
-  battlenet: {
-    id: 'battlenet',
-    label: 'Battle.net',
-    glyph: '🛡️',
-    blurb: 'Connects, but cannot tell you who is online.',
-    reach: 'web',
-    auth: 'oauth2',
-    oauth: {
-      authorizeUrl: 'https://oauth.battle.net/authorize',
-      tokenUrl: 'https://oauth.battle.net/token',
-      scopes: ['openid'],
-      pkce: false,
-      needsSecret: true,
-    },
-    credentials: [
-      { key: 'clientId', label: 'Client ID', required: true, envVar: 'BATTLENET_CLIENT_ID' },
-      {
-        key: 'clientSecret',
-        label: 'Client secret',
-        // The one provider here that genuinely cannot do without it: Battle.net
-        // is a confidential client and does not offer PKCE.
-        required: true,
-        envVar: 'BATTLENET_CLIENT_SECRET',
-        secret: true,
-      },
-    ],
-    capabilities: {
-      friends: {
-        status: 'unavailable',
-        why:
-          "Blizzard's API covers game and profile data — characters, mounts, match history. There is no " +
-          'friends endpoint and no presence endpoint at any access level, so this cannot be built rather ' +
-          'than merely not being built yet. The agent can tell you whether Battle.net is running on this ' +
-          'PC, which is the whole of what is available.',
-        source: 'develop.battle.net — no social or presence namespace exists',
-        sourceUrl: 'https://develop.battle.net/documentation',
-      },
-    },
-    setup: [
-      {
-        text: 'Create a client in the Blizzard developer portal.',
-        link: { url: 'https://develop.battle.net/access/clients', label: 'develop.battle.net' },
-      },
-      {
-        text: 'Add the redirect URI shown below as a redirect/callback URL, exactly as it appears — a trailing slash is a rejected login.',
-      },
-      {
-        text: 'Paste both the id and the secret into the boxes below — this one is a confidential client and PKCE is not offered, so the secret is required.',
-      },
-    ],
-  },
-
-  epic: {
-    id: 'epic',
-    label: 'Epic Games',
-    glyph: '🕹️',
-    blurb: 'Whether the launcher is running here. The friends list is not reachable.',
-    reach: 'local',
-    auth: 'client',
-    credentials: [],
-    capabilities: {
-      friends: {
-        status: 'unavailable',
-        why:
-          'Epic Online Services does expose friends, but only to a registered EOS product, and only for ' +
-          'friends who have separately consented to that product seeing them — so it returns a subset of ' +
-          'a subset, never the launcher list. The launcher itself uses private endpoints. What is left is ' +
-          'local: the agent can see whether the launcher is running.',
-        source: 'dev.epicgames.com — Friends Interface requires per-friend consent per product',
-        sourceUrl: 'https://dev.epicgames.com/docs/web-api-ref/friends-web-api',
-      },
-    },
-    setup: [{ text: 'Nothing to connect. The agent reports whether the Epic launcher is running.' }],
-  },
 };
 
 export const PROVIDER_LIST: ProviderSpec[] = PROVIDER_IDS.map((id) => PROVIDERS[id]);
