@@ -18,6 +18,26 @@ import { useAsync } from '../../useAsync';
 import { CATEGORY_LABELS, relativeTime } from './Integrations';
 
 type Filter = 'all' | 'channel' | 'artist';
+type Sort = 'inPlaylists' | 'name' | 'followers';
+
+/**
+ * How the list is ordered, and why the default is what it is.
+ *
+ * Four hundred names in alphabetical order is a phone book: correct, and no
+ * help at all in answering the question you opened the tab with. Ordering by
+ * how much of them is actually in your playlists puts the artists you listen to
+ * at the top and the ones you followed once in 2019 at the bottom, which is the
+ * shape of the answer.
+ *
+ * `followers` is Spotify-only — YouTube's subscriber counts are not in the
+ * subscriptions response — so it sorts channels to the end rather than
+ * pretending they are the least popular things you follow.
+ */
+const SORTS: Array<{ id: Sort; label: string }> = [
+  { id: 'inPlaylists', label: 'In my playlists' },
+  { id: 'name', label: 'Name' },
+  { id: 'followers', label: 'Popularity' },
+];
 
 const KIND_LABEL: Record<FollowRow['kind'], string> = {
   channel: 'channel',
@@ -26,6 +46,7 @@ const KIND_LABEL: Record<FollowRow['kind'], string> = {
 
 export function Following() {
   const [filter, setFilter] = useState<Filter>('all');
+  const [sort, setSort] = useState<Sort>('inPlaylists');
   const [search, setSearch] = useState('');
 
   const view = useAsync(() => api.integrations.follows(), [], ['integrations']);
@@ -33,10 +54,22 @@ export function Following() {
   const shown = useMemo(() => {
     const rows = view.data?.follows ?? [];
     const needle = search.trim().toLowerCase();
-    return rows.filter(
+
+    const filtered = rows.filter(
       (row) => (filter === 'all' || row.kind === filter) && (needle === '' || row.name.toLowerCase().includes(needle))
     );
-  }, [view.data, filter, search]);
+
+    // Sorted on a copy: `view.data` is the fetched result and reordering it in
+    // place would mutate what the next render reads from.
+    return [...filtered].sort((a, b) => {
+      if (sort === 'name') return a.name.localeCompare(b.name);
+      if (sort === 'followers') return (b.followerCount ?? -1) - (a.followerCount ?? -1);
+      // Ties on the count are common — most of a long follow list is zero — so
+      // they fall back to name rather than to whatever order the rows arrived
+      // in, which would reshuffle on every refresh.
+      return b.inPlaylists - a.inPlaylists || a.name.localeCompare(b.name);
+    });
+  }, [view.data, filter, sort, search]);
 
   if (view.loading) return <div className="empty">loading…</div>;
   if (view.error) return <div className="empty">Could not load: {view.error.message}</div>;
@@ -76,6 +109,19 @@ export function Following() {
               onClick={() => setFilter(value)}
             >
               {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="row" role="group" aria-label="Sort by">
+          {SORTS.map((option) => (
+            <button
+              key={option.id}
+              className={`btn${sort === option.id ? ' primary' : ' subtle'}`}
+              aria-pressed={sort === option.id}
+              onClick={() => setSort(option.id)}
+            >
+              {option.label}
             </button>
           ))}
         </div>
@@ -126,6 +172,16 @@ function FollowCard({ row }: { row: FollowRow }) {
           )}
         </div>
         <div className="meta">
+          {/*
+            The playlist count leads, because it is what the list is sorted by
+            and a sort you cannot see the key for looks arbitrary. Zero is
+            printed rather than hidden — "none of theirs is in my playlists" is
+            the useful half of this list, not an absence of data.
+          */}
+          {row.inPlaylists === 0
+            ? 'none in my playlists'
+            : `${row.inPlaylists} ${row.kind === 'artist' ? (row.inPlaylists === 1 ? 'track' : 'tracks') : row.inPlaylists === 1 ? 'video' : 'videos'} in my playlists`}
+          {' · '}
           {KIND_LABEL[row.kind]}
           {/* Only artists carry a category, and only when Spotify gave genres.
               `unknown` is left unsaid rather than printed — it is the honest

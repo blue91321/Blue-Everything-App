@@ -6,14 +6,13 @@
  * boundary is what makes adding a provider a single file, and what stops seven
  * slightly different opinions about how to upsert a track from accumulating.
  */
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   categoriseGenres,
   type FollowedAccount,
   type CollectionKind,
   type Friend,
   type MediaKind,
-  type PlaySource,
   type ProviderId,
 } from '@everything/shared/integrations';
 import { db } from '../../db/client.js';
@@ -24,7 +23,6 @@ import {
   mediaCollectionItems,
   mediaCollections,
   mediaItems,
-  mediaPlays,
 } from '../../db/schema.js';
 
 export type Account = typeof integrationAccounts.$inferSelect;
@@ -95,6 +93,8 @@ export interface IncomingItem {
   kind: MediaKind;
   title: string;
   creator?: string | null;
+  /** The provider's ids for those artists, or the one channel. */
+  creatorIds?: string[];
   album?: string | null;
   durationMs?: number | null;
   url?: string | null;
@@ -136,6 +136,7 @@ export async function upsertItems(provider: ProviderId, incoming: IncomingItem[]
       kind: item.kind,
       title: item.title,
       creator: item.creator ?? null,
+      creatorIds: JSON.stringify(item.creatorIds ?? []),
       album: item.album ?? null,
       durationMs: item.durationMs ?? null,
       url: item.url ?? null,
@@ -160,6 +161,7 @@ export async function upsertItems(provider: ProviderId, incoming: IncomingItem[]
         set: {
           title: sql`excluded.title`,
           creator: sql`excluded.creator`,
+          creatorIds: sql`excluded.creator_ids`,
           album: sql`excluded.album`,
           durationMs: sql`excluded.duration_ms`,
           url: sql`excluded.url`,
@@ -261,39 +263,6 @@ export async function markCollectionSynced(collectionId: string, snapshotId: str
     .where(eq(mediaCollections.id, collectionId));
 }
 
-/**
- * Record plays, ignoring ones already known.
- *
- * `onConflictDoNothing` against the (item, time, source) unique index is what
- * makes the two mechanisms that feed this safe to run repeatedly: Spotify hands
- * back its last fifty every time it is asked, and a Takeout file is the whole
- * history every time it is imported. Both are supposed to overlap heavily.
- *
- * Returns how many were genuinely new, which is the only number worth showing
- * after a sync — "50 plays fetched" is meaningless when 48 were already there.
- */
-export async function recordPlays(
-  plays: Array<{ itemId: string; playedAt: number; source: PlaySource }>
-): Promise<number> {
-  if (plays.length === 0) return 0;
-
-  let added = 0;
-  for (let i = 0; i < plays.length; i += 100) {
-    const chunk = plays.slice(i, i + 100);
-    const written = await db
-      .insert(mediaPlays)
-      .values(chunk)
-      .onConflictDoNothing()
-      .returning({ id: mediaPlays.id });
-    added += written.length;
-  }
-  return added;
-}
-
-/* ------------------------------------------------------------------ */
-/* Reading the library back                                            */
-/* ------------------------------------------------------------------ */
-
 export async function collectionsFor(provider?: ProviderId) {
   const query = db.select().from(mediaCollections).orderBy(mediaCollections.provider, mediaCollections.name);
   return provider ? query.where(eq(mediaCollections.provider, provider)) : query;
@@ -333,68 +302,6 @@ export async function categoryBreakdown(provider?: ProviderId) {
     .orderBy(desc(sql`count(*)`));
 
   return provider ? query.where(eq(mediaItems.provider, provider)) : query;
-}
-
-export async function recentPlays(limit = 100) {
-  return db
-    .select({
-      playedAt: mediaPlays.playedAt,
-      source: mediaPlays.source,
-      title: mediaItems.title,
-      creator: mediaItems.creator,
-      category: mediaItems.category,
-      url: mediaItems.url,
-      artUrl: mediaItems.artUrl,
-      provider: mediaItems.provider,
-    })
-    .from(mediaPlays)
-    .innerJoin(mediaItems, eq(mediaItems.id, mediaPlays.itemId))
-    .orderBy(desc(mediaPlays.playedAt))
-    .limit(limit);
-}
-
-/**
- * What you have played most, by family, over a window.
- *
- * This is the closest thing here to a recommendation, and it is deliberately
- * only a count. A real recommender wants a similarity measure between tracks,
- * and the endpoint that supplied one was withdrawn — so what is offered is the
- * honest thing the data can support: "you have played nine hours of metal this
- * month and not opened the jazz playlist since March".
- */
-export async function tasteProfile(sinceMs: number) {
-  return db
-    .select({
-      category: mediaItems.category,
-      plays: sql<number>`count(*)`.as('plays'),
-      distinctItems: sql<number>`count(distinct ${mediaItems.id})`.as('distinctItems'),
-      listenedMs: sql<number>`coalesce(sum(${mediaItems.durationMs}), 0)`.as('listenedMs'),
-    })
-    .from(mediaPlays)
-    .innerJoin(mediaItems, eq(mediaItems.id, mediaPlays.itemId))
-    .where(sql`${mediaPlays.playedAt} >= ${sinceMs}`)
-    .groupBy(mediaItems.category)
-    .orderBy(desc(sql`count(*)`));
-}
-
-/** Find local ids for items already known, so a play can be recorded without a refetch. */
-export async function findItemIds(
-  provider: ProviderId,
-  providerItemIds: string[]
-): Promise<Map<string, string>> {
-  if (providerItemIds.length === 0) return new Map();
-
-  const found = new Map<string, string>();
-  for (let i = 0; i < providerItemIds.length; i += 200) {
-    const rows = await db
-      .select({ id: mediaItems.id, providerItemId: mediaItems.providerItemId })
-      .from(mediaItems)
-      .where(
-        and(eq(mediaItems.provider, provider), inArray(mediaItems.providerItemId, providerItemIds.slice(i, i + 200)))
-      );
-    for (const row of rows) found.set(row.providerItemId, row.id);
-  }
-  return found;
 }
 
 /* ------------------------------------------------------------------ */
@@ -541,4 +448,44 @@ export async function followsFreshness(): Promise<Map<string, number>> {
     .from(follows)
     .groupBy(follows.provider);
   return new Map(rows.map((r) => [r.provider, r.seenAt]));
+}
+
+/**
+ * How many tracks or videos of each followed account are in your collections.
+ *
+ * The default sort on the Following tab, and the reason `media_items` carries
+ * `creator_ids` at all: matching a followed artist to their tracks by *name*
+ * gets both halves wrong. A collaboration's `creator` is "A, B" and equals
+ * neither artist's name, and a short name is a substring of longer ones — "Air"
+ * would collect everything by Airbourne.
+ *
+ * Counted only where the item is actually in a collection. A track can be in
+ * the library because it turned up somewhere and then be removed from every
+ * playlist, and "in my playlists" has to mean what it says.
+ *
+ * One statement for the whole list rather than a query per follow: 408 follows
+ * is 408 round trips otherwise, for a screen that opens in one.
+ */
+export async function followPlaylistCounts(): Promise<Map<string, number>> {
+  const rows = await db.all<{ provider: string; account_id: string; n: number }>(sql`
+    select f.provider as provider,
+           f.provider_account_id as account_id,
+           (
+             select count(distinct mi.id)
+             from media_items mi
+             where mi.provider = f.provider
+               and exists (select 1 from media_collection_items ci where ci.item_id = mi.id)
+               and (
+                 -- The exact join, once a sync has stored the ids.
+                 instr(mi.creator_ids, '"' || f.provider_account_id || '"') > 0
+                 -- Fallback for rows synced before the column existed. Exact on
+                 -- the whole name, so it catches a solo track and declines to
+                 -- guess at a collaboration rather than matching a substring.
+                 or mi.creator = f.name
+               )
+           ) as n
+    from follows f
+  `);
+
+  return new Map(rows.map((r) => [`${r.provider}:${r.account_id}`, Number(r.n)]));
 }

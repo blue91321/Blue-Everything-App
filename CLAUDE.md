@@ -1941,13 +1941,21 @@ that shows an empty list — is the expensive way to learn it. So a capability i
 `shared/src/integrations.ts` is not a boolean. It carries a `status` and a
 `why`, and the screen renders the `why` next to the thing it explains.
 
-| | playlists | history | following | who's online |
-| --- | --- | --- | --- | --- |
-| **Spotify** | yes | last 50 plays, ever | artists you follow | — |
-| **YouTube** | yes | Takeout import — **never the API** | subscriptions | — |
-| **Steam** | — | — | — | **yes, properly** |
-| **Discord** | — | — | — | needs their approval |
-| **Riot** | — | — | — | local client only |
+| | playlists | following | who's online |
+| --- | --- | --- | --- |
+| **Spotify** | yes | artists you follow | — |
+| **YouTube** | yes | subscriptions | — |
+| **Steam** | — | — | **yes, properly** |
+| **Discord** | — | — | yes |
+| **Riot** | — | — | local client only |
+
+**Play history was here and has been removed.** Spotify would only ever return
+the last fifty plays, so a local history had to be accumulated by polling; a
+Google Takeout import covered YouTube, whose API has served an empty watch
+history since 2016. Both worked. Neither is here, because the thing they fed —
+a taste profile inferred from counts — was never going to be worth the machinery
+once `audio-features` was withdrawn. `media_plays` is dropped in migration 0023,
+which cost nothing: it held zero rows.
 
 **Battle.net and Epic were here and have been removed.** Blizzard publishes no
 social namespace at any access level, and Epic's Friends interface needs a
@@ -2052,12 +2060,13 @@ The four that hurt, and why they are stated rather than worked around:
   therefore `partial` rather than `unavailable`: it read "not possible" directly
   above the button that imports it, which is a row contradicting the control
   beneath it.
-- **Discord's friends list needs `sdk.social_layer_presence`**, a Social SDK
-  scope granted per-application on request. An unapproved app still gets a
-  working token with the scope silently dropped, so `grantedScopes` is checked
-  rather than assumed — otherwise the screen shows a healthy connection and an
-  empty list. The other route people use is a user token lifted out of the
-  desktop client, which is against Discord's terms and is not implemented.
+- **Discord's friends list comes through `sdk.social_layer_presence`.**
+  `grantedScopes` is checked rather than assumed, and that stays whatever the
+  approval position is: a token can come back with a scope silently dropped, and
+  the difference between "no friends online" and "we were not given permission
+  to look" has to be visible. The other route people use is a user token lifted
+  out of the desktop client, which is against Discord's terms and is not
+  implemented.
 ### Who is online, and which process asks
 
 Steam and Discord are web APIs the server calls. Riot is not reachable that way,
@@ -2095,6 +2104,26 @@ Three things there are easy to get wrong:
   fingerprints the snapshot and announces only a genuine difference. Left to the
   generic hook it would reload every open browser every thirty seconds, which is
   the polling the SSE stream exists to replace.
+
+### The Following list sorts by what you actually listen to
+
+Four hundred names in alphabetical order is a phone book. The default sort is
+how many of that account's tracks or videos are in your collections, which puts
+the artists you play at the top and the ones you followed once in 2019 at the
+bottom.
+
+**That count is why `media_items` carries `creator_ids`.** Matching a followed
+artist to their tracks by *name* gets both halves wrong: a collaboration's
+`creator` is "A, B" and equals neither artist's name, and a short name is a
+substring of longer ones — "Air" would collect everything by Airbourne. The ids
+are the same ones `follows.provider_account_id` holds, so the join is exact.
+Rows synced before the column existed fall back to an exact whole-name match,
+which is right for a solo track and declines to guess at a collaboration.
+
+Counted only where the item is in a collection: a track can be in the library
+because it turned up somewhere and since been removed from every playlist, and
+"in my playlists" has to mean what it says. One statement for the whole list,
+because 408 follows is otherwise 408 round trips for a screen that opens once.
 
 ### Refresh-on-read, not a poller
 

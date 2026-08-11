@@ -56,14 +56,12 @@ import {
   getAccount,
   itemsInCollection,
   listAccounts,
-  recentPlays,
   saveAccount,
+  followPlaylistCounts,
   followsFreshness,
   syncedAtOf,
-  tasteProfile,
 } from './store.js';
 import { refreshPresence, runnableCapabilities, syncProvider } from './sync.js';
-import { importTakeout, parseTakeout } from './takeout.js';
 
 /** Everything the connections screen needs about one provider, in one object. */
 async function providerState(id: ProviderId) {
@@ -395,9 +393,20 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    */
   app.get('/api/integrations/follows', async () => {
     const freshness = await followsFreshness();
+    const counts = await followPlaylistCounts();
+    const rows = await allFollows();
 
     return {
-      follows: await allFollows(),
+      /*
+       * Each one carries how many of its tracks or videos are in your
+       * collections, because that is what the tab sorts by out of the box —
+       * "who am I following that I actually listen to" is a more useful first
+       * screen than an alphabetical list of four hundred names.
+       */
+      follows: rows.map((row) => ({
+        ...row,
+        inPlaylists: counts.get(`${row.provider}:${row.providerAccountId}`) ?? 0,
+      })),
       sources: FOLLOW_PROVIDERS.map((id) => ({
         provider: id,
         label: PROVIDERS[id].label,
@@ -428,43 +437,11 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
-   * The Music tab's summary: what the library is made of, and what has actually
-   * been played lately.
+   * The Music tab's summary: what the library is made of.
    *
-   * `days` bounds the taste window. Thirty is the default because a month is
-   * long enough to be a habit and short enough to notice a change — a
-   * whole-history figure would be dominated by whatever you liked two years ago.
+   * It carried a play history too — what you listened to, by family, over a
+   * window. That went with history itself. What is left is the library, which
+   * is the part that was ever a fact rather than an inference.
    */
-  app.get('/api/integrations/music', async (request) => {
-    const { days } = request.query as { days?: string };
-    const window = Math.min(Math.max(Number(days) || 30, 1), 365);
-
-    return {
-      breakdown: await categoryBreakdown(),
-      taste: await tasteProfile(Date.now() - window * 86_400_000),
-      recent: await recentPlays(60),
-      windowDays: window,
-    };
-  });
-
-  /* ---- YouTube watch history, from a file ------------------------ */
-
-  const takeoutSchema = z.object({
-    /** The file's contents. Sent as a string because it is JSON either way. */
-    json: z.string().min(2).max(200 * 1024 * 1024),
-    /** Nothing is written until this is true. See `takeout.ts` on why. */
-    commit: z.boolean().default(false),
-  });
-
-  app.post('/api/integrations/youtube/takeout', async (request) => {
-    localOnly(request);
-    const { json, commit } = takeoutSchema.parse(request.body);
-
-    const { plays, summary } = parseTakeout(json);
-    if (!commit) return { summary, committed: false };
-
-    const { added, videos } = await importTakeout(plays);
-    changes.emitChange('integrations');
-    return { summary, committed: true, added, videos };
-  });
+  app.get('/api/integrations/music', async () => ({ breakdown: await categoryBreakdown() }));
 }

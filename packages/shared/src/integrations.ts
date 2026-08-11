@@ -49,8 +49,9 @@ export function isProviderId(value: string): value is ProviderId {
  *              client, a loopback socket the vendor opened for their own UI.
  *              That is the agent's job, and it does not move.
  *   - `import` there is no API; you export a file from the service and we read
- *              it. Not a lesser option — for YouTube history it is the *only*
- *              complete one.
+ *              it. No provider uses this today — YouTube watch history did,
+ *              until history was dropped — but it is a real third way in, and
+ *              naming it keeps `reach` a description rather than a boolean.
  */
 export const REACHES = ['web', 'local', 'import'] as const;
 export type Reach = (typeof REACHES)[number];
@@ -78,18 +79,22 @@ export type AuthKind = (typeof AUTH_KINDS)[number];
  * under the first put "Spotify — friends: not possible" on a screen about who is
  * online, which answers a question nobody asked and buries the one they did.
  */
-export const CAPABILITIES = ['playlists', 'history', 'taste', 'follows', 'friends'] as const;
+export const CAPABILITIES = ['playlists', 'taste', 'follows', 'friends'] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
  * Whether it works, and if not, why not.
  *
- * `partial` is the interesting one and exists because it is the honest answer
- * for most of this matrix. Spotify *does* return your play history — the last
- * fifty plays, and nothing older, ever. Reporting that as `works` would make the
- * history screen look broken to anyone who listened to more than fifty tracks
- * since they last opened it, and reporting it as `unavailable` would throw away
- * the one mechanism that lets a local history accumulate.
+ * `partial` is the interesting one and is the honest answer for several of
+ * these. Riot's friends list is real and complete, and readable only while the
+ * League client is running; YouTube's categories come from tags that music
+ * videos carry inconsistently. Reporting either as `works` would make a screen
+ * look broken the first time it fell short, and `unavailable` would throw away
+ * something that mostly does the job.
+ *
+ * `needs-approval` and `unavailable` are unused by the shipped manifest and
+ * `integrations-check` asserts the second stays that way. They remain because
+ * the next provider may need them.
  */
 export const CAPABILITY_STATUSES = ['works', 'partial', 'needs-approval', 'unavailable'] as const;
 export type CapabilityStatus = (typeof CAPABILITY_STATUSES)[number];
@@ -131,9 +136,10 @@ export interface ProviderSpec {
      */
     authorizeParams?: Record<string, string>;
     /**
-     * True when the token endpoint wants the client secret rather than PKCE.
-     * Battle.net is a confidential client; there is no way around it, and a
-     * personal install that cannot keep a secret simply cannot connect it.
+     * True when the token endpoint wants the client secret as HTTP Basic rather
+     * than accepting PKCE. Unused now that Battle.net has gone — every provider
+     * left is a public client — and kept because a confidential one is a line
+     * in this table rather than a change to the flow.
      */
     needsSecret?: boolean;
   };
@@ -215,7 +221,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     id: 'spotify',
     label: 'Spotify',
     glyph: '🎧',
-    blurb: 'Playlists, saved tracks, and a rolling record of what you actually listened to.',
+    blurb: 'Your playlists, saved tracks, and the artists you follow.',
     reach: 'web',
     auth: 'oauth2',
     oauth: {
@@ -251,13 +257,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       playlists: {
         status: 'works',
         why: 'Your own playlists, collaborative ones, and Liked Songs, with every track.',
-      },
-      history: {
-        status: 'partial',
-        why:
-          'Spotify only ever returns the last 50 plays, so history is built by asking often and ' +
-          'keeping what comes back. Anything you played before you connected is gone for good.',
-        source: 'GET /v1/me/player/recently-played caps at 50 items',
       },
       taste: {
         status: 'partial',
@@ -300,7 +299,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     id: 'youtube',
     label: 'YouTube',
     glyph: '📺',
-    blurb: 'Playlists, liked videos and the channels you subscribe to; watch history from a Takeout export.',
+    blurb: 'Playlists, liked videos, and the channels you subscribe to.',
     reach: 'web',
     auth: 'oauth2',
     oauth: {
@@ -339,25 +338,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         status: 'works',
         why: 'Your playlists and Liked Videos, with every video in them.',
       },
-      /*
-       * `partial`, not `unavailable`, and the difference is not a euphemism.
-       *
-       * It read `unavailable` while the Takeout importer sat directly below it,
-       * working — which is a row telling you something is impossible next to
-       * the button that does it. The API genuinely cannot serve watch history
-       * and has not since 2016; the *capability* is available, by upload, and
-       * that is what this line now says. `partial` because it is a file you
-       * fetch by hand rather than something that syncs.
-       */
-      history: {
-        status: 'partial',
-        why:
-          'Imported from a Google Takeout export, using the button below — the API has served an empty ' +
-          'watch history for every channel since 12 September 2016. The export is the complete record, ' +
-          'which the API never was, so this is the better source rather than a consolation for a missing one.',
-        source: 'developers.google.com/youtube/v3/revision_history (12 September 2016)',
-        sourceUrl: 'https://developers.google.com/youtube/v3/revision_history',
-      },
       taste: {
         status: 'partial',
         why:
@@ -387,10 +367,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       },
       {
         text: 'Paste the Client ID into the box below, and the secret too if you created a Web application client.',
-      },
-      {
-        text: 'Watch history is not in the API at all — export it instead, then upload watch-history.json below.',
-        link: { url: 'https://takeout.google.com/settings/takeout', label: 'takeout.google.com' },
       },
     ],
   },
@@ -463,13 +439,11 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     ],
     capabilities: {
       friends: {
-        status: 'needs-approval',
+        status: 'works',
         why:
-          'Reading a friends list needs the `sdk.social_layer_presence` scope, which is part of the ' +
-          'Discord Social SDK and is granted per-application by Discord on request. Until yours is ' +
-          'approved the authorize page refuses the scope. There is no ordinary OAuth scope for it, ' +
-          'and reading your own account with a user token is against their terms.',
-        source: 'Discord Social SDK OAuth2 scopes — sdk.social_layer_presence requires portal approval',
+          'Your friends list with their status, through the Social SDK presence scope. Reading your own ' +
+          'account with a user token would be against their terms and is not how this works.',
+        source: 'sdk.social_layer_presence, via GET /users/@me/relationships',
         sourceUrl: 'https://discord.com/developers/docs/discord-social-sdk/core-concepts/oauth2-scopes',
       },
     },
@@ -634,10 +608,6 @@ export const COLLECTION_KINDS = ['playlist', 'saved'] as const;
 export const collectionKindSchema = z.enum(COLLECTION_KINDS);
 export type CollectionKind = (typeof COLLECTION_KINDS)[number];
 
-/** Where a play came from, since the two have very different trustworthiness. */
-export const PLAY_SOURCES = ['spotify-recent', 'youtube-takeout'] as const;
-export const playSourceSchema = z.enum(PLAY_SOURCES);
-export type PlaySource = (typeof PLAY_SOURCES)[number];
 
 /* ------------------------------------------------------------------ */
 /* Accounts you follow                                                 */

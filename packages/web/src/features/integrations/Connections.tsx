@@ -15,11 +15,9 @@ import { api, type ProviderInfo, type SyncOutcome } from '../../api';
 import { useAsync } from '../../useAsync';
 import { Credentials } from './Credentials';
 import { StatusChip, relativeTime } from './Integrations';
-import { TakeoutImport } from './Takeout';
 
 const CAPABILITY_LABEL: Record<string, string> = {
   playlists: 'Playlists',
-  history: 'History',
   taste: 'Categories',
   follows: 'Following',
   friends: 'Friends',
@@ -411,10 +409,6 @@ function ProviderCard({
           ))}
         </div>
       )}
-
-      {/* YouTube's watch history has no API at all, so the import lives here —
-          on the provider whose capability list just explained why. */}
-      {provider.id === 'youtube' && local && <TakeoutImport onDone={reload} />}
     </div>
   );
 }

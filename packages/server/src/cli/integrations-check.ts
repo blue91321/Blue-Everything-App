@@ -4,8 +4,8 @@
  * `npm run integrations-check -w @everything/server`
  *
  * Deliberately covers only what can be checked without an account: the
- * categoriser, the Takeout reader, the duration parser, and the manifest's own
- * consistency. Everything else in this feature is a conversation with somebody
+ * categoriser, the duration parser, the Steam profile parser, and the
+ * manifest's own consistency. Everything else in this feature is a conversation with somebody
  * else's server, and a test that mocks Spotify would only prove that the mock
  * matches the code — which is exactly the assumption that was wrong when the
  * `audio-features` endpoint started returning 403.
@@ -25,7 +25,6 @@ import {
   type MusicCategory,
 } from '@everything/shared/integrations';
 import { parseIsoDuration } from '../features/integrations/providers/youtube.js';
-import { parseTakeout } from '../features/integrations/takeout.js';
 
 let failures = 0;
 
@@ -129,69 +128,6 @@ check('undefined is null, not zero', parseIsoDuration(undefined) === null);
 // Zero and null are genuinely different here: a zero-length video is a broken
 // row, an unknown length is a fact about the export.
 check('nonsense is null', parseIsoDuration('four minutes') === null);
-
-/* ------------------------------------------------------------------ */
-
-console.log('\nReading a Takeout watch history');
-
-const takeout = JSON.stringify([
-  {
-    header: 'YouTube',
-    title: 'Watched Rick Astley - Never Gonna Give You Up',
-    titleUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    subtitles: [{ name: 'Rick Astley' }],
-    time: '2026-01-15T12:34:56.789Z',
-  },
-  // Removed video: the entry survives, the link does not.
-  { header: 'YouTube', title: 'Watched a video that has been removed', time: '2026-01-15T13:00:00Z' },
-  // An advert, which is not something you chose to watch.
-  {
-    header: 'YouTube',
-    title: 'Watched an advert',
-    titleUrl: 'https://www.youtube.com/watch?v=AAAAAAAAAAA',
-    details: [{ name: 'From Google Ads' }],
-    time: '2026-01-15T13:05:00Z',
-  },
-  // A different product sharing the export shape.
-  {
-    header: 'YouTube Music',
-    title: 'Watched Some Song',
-    titleUrl: 'https://www.youtube.com/watch?v=BBBBBBBBBBB',
-    time: '2026-01-15T14:00:00Z',
-  },
-  // No timestamp at all.
-  { header: 'YouTube', title: 'Watched Something', titleUrl: 'https://www.youtube.com/watch?v=CCCCCCCCCCC' },
-  {
-    header: 'YouTube',
-    title: 'Watched Blender Open Movie',
-    titleUrl: 'https://www.youtube.com/watch?v=eRsGyueVLvQ&t=90s',
-    subtitles: [{ name: 'Blender' }],
-    time: '2026-02-01T09:00:00Z',
-  },
-]);
-
-const { plays, summary } = parseTakeout(takeout);
-
-check('two usable plays out of six entries', summary.usable === 2, `got ${summary.usable}`);
-check('the removed video is counted, not silently dropped', summary.skipped.noVideo === 1);
-check('the advert is skipped', summary.skipped.ads === 1);
-check('YouTube Music is skipped as another product', summary.skipped.otherProduct === 1);
-check('the entry with no time is skipped', summary.skipped.noTime === 1);
-check('the "Watched " prefix is stripped', plays[0].title.startsWith('Rick Astley'), plays[0].title);
-check('the channel comes from subtitles', plays[0].channel === 'Rick Astley');
-check('a video id survives extra query parameters', plays[1].videoId === 'eRsGyueVLvQ', plays[1].videoId);
-check(
-  'the window covers the file',
-  summary.earliest === Date.parse('2026-01-15T12:34:56.789Z') && summary.latest === Date.parse('2026-02-01T09:00:00Z')
-);
-
-// The mistake everybody makes, and the one the error message has to name.
-try {
-  parseTakeout('<html><body>Watched something</body></html>');
-  check('an HTML export is refused', false, 'it was accepted');
-} catch (error) {
-  check('an HTML export is refused, mentioning JSON', (error as Error).message.includes('JSON'));
-}
 
 /* ------------------------------------------------------------------ */
 
@@ -333,8 +269,8 @@ console.log('\nNothing here claims to be impossible');
  * provider may have a genuine dead end worth stating next to things that work.
  * What is not acceptable is one sitting in the manifest: Battle.net and Epic
  * were rows whose entire content explained why they could do nothing, and
- * YouTube's history said "not possible" directly above the button that imports
- * it.
+ * YouTube's history said "not possible" directly above the button that imported
+ * it — history has since been removed altogether.
  */
 for (const spec of PROVIDER_LIST) {
   for (const [name, capability] of Object.entries(spec.capabilities)) {

@@ -34,16 +34,14 @@ export interface SyncOutcome {
  * Which capabilities each provider can actually be asked to do *here*.
  *
  * Distinct from the manifest's capability list, which describes what the service
- * offers. This is the subset with code behind it — YouTube declares `history`
- * as unavailable and there is correspondingly no entry for it, because the way
- * to get YouTube history is to upload a file, not to press Sync.
+ * offers. This is the subset with code behind it, which is not always the whole
+ * of what a provider declares.
  */
 type Runner = () => Promise<{ notes: string[] }>;
 
 const RUNNERS: Partial<Record<ProviderId, Partial<Record<Capability, Runner>>>> = {
   spotify: {
     playlists: spotify.syncPlaylists,
-    history: spotify.syncHistory,
     follows: spotify.syncFollows,
   },
   youtube: {

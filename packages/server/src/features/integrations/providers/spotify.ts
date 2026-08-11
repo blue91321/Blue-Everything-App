@@ -1,5 +1,5 @@
 /**
- * Spotify: playlists, saved tracks, and a history built one fetch at a time.
+ * Spotify: playlists, saved tracks, and the artists you follow.
  *
  * The shape of this file is dictated by one fact worth stating up front:
  * **Spotify no longer tells you anything about how a song sounds.** The
@@ -16,9 +16,7 @@
 import { apiGet } from '../oauth.js';
 import type { FollowedAccount } from '@everything/shared/integrations';
 import {
-  findItemIds,
   markCollectionSynced,
-  recordPlays,
   replaceCollectionItems,
   replaceFollows,
   upsertCollection,
@@ -138,6 +136,9 @@ function toItem(track: SpotifyTrack, genres: string[]): IncomingItem | null {
     kind: 'track',
     title: track.name,
     creator: track.artists.map((a) => a.name).join(', ') || null,
+    // Every artist on the track, so a followed artist counts the collaborations
+    // they appear on and not only what they released alone.
+    creatorIds: track.artists.map((a) => a.id).filter((id): id is string => !!id),
     album: track.album?.name ?? null,
     durationMs: track.duration_ms,
     url: track.external_urls?.spotify ?? `https://open.spotify.com/track/${track.id}`,
@@ -248,76 +249,16 @@ export async function syncPlaylists(): Promise<SyncResult> {
 }
 
 /**
- * Fetch the last fifty plays and keep the ones we did not already have.
- *
- * Fifty is the whole of what Spotify will ever return — there is no cursor into
- * older history, and `before`/`after` only move within what it still holds. So
- * the local history is built by asking repeatedly and keeping the overlap out,
- * which is what the unique index on `media_plays` is for.
- *
- * The practical consequence is worth being blunt about on the screen: play
- * fifty-one tracks between two syncs and the first one is gone permanently. It
- * is not a bug to be fixed later; it is the endpoint.
- */
-export async function syncHistory(): Promise<SyncResult> {
-  const response = await apiGet<{ items: Array<{ track: SpotifyTrack; played_at: string }> }>(
-    'spotify',
-    `${API}/me/player/recently-played?limit=50`
-  );
-
-  if (response.items.length === 0) return { notes: ['no recent plays'] };
-
-  /*
-   * Tracks already in the library are the common case — you mostly play things
-   * from your own playlists — so they are looked up first and only the genuinely
-   * new ones cost an artist-genre fetch.
-   */
-  const known = await findItemIds(
-    'spotify',
-    response.items.map((i) => i.track.id).filter((id): id is string => !!id)
-  );
-
-  const unknown = response.items.map((i) => i.track).filter((t) => t.id && !known.has(t.id));
-  if (unknown.length > 0) {
-    const artists = new ArtistGenres();
-    const ids = await storeTracks(unknown, artists);
-    unknown.forEach((track, index) => {
-      if (track.id && ids[index]) known.set(track.id, ids[index]);
-    });
-  }
-
-  const plays = response.items
-    .map((entry) => {
-      const itemId = entry.track.id ? known.get(entry.track.id) : undefined;
-      const playedAt = Date.parse(entry.played_at);
-      return itemId && !Number.isNaN(playedAt)
-        ? { itemId, playedAt, source: 'spotify-recent' as const }
-        : null;
-    })
-    .filter((p): p is { itemId: string; playedAt: number; source: 'spotify-recent' } => p !== null);
-
-  const added = await recordPlays(plays);
-  return {
-    notes: [
-      added === 0
-        ? 'nothing new — all 50 recent plays were already recorded'
-        : `${added} new ${added === 1 ? 'play' : 'plays'} (of the 50 Spotify keeps)`,
-    ],
-  };
-}
-
-/**
  * The artists you follow.
  *
  * Paged differently from everything else here, and that is Spotify's doing
- * rather than a choice: `/me/following` returns its cursor nested under an
- * `artists` key and pages by `after` rather than by offset, so the generic
- * walker above cannot be pointed at it. Following a few hundred artists is
- * normal, so the loop is bounded for the same reason the others are.
+ * rather than a choice: `/me/following` nests its cursor under an `artists` key
+ * and pages by `after` rather than by offset, so the walker above cannot be
+ * pointed at it. Bounded for the same reason the others are.
  *
- * Needs `user-follow-read`, which was added to the scope list when this arrived.
- * A connection made before that carries a token without it and gets a 403 —
- * which is why the screen reports granted scopes rather than assuming.
+ * Needs `user-follow-read`. A connection made before that scope was added
+ * carries a token without it and gets a 403 — which is why the screen reports
+ * granted scopes rather than assuming.
  */
 export async function syncFollows(): Promise<SyncResult> {
   const accounts: FollowedAccount[] = [];
@@ -357,8 +298,8 @@ export async function syncFollows(): Promise<SyncResult> {
       });
     }
 
-    // `next` going null is the end; the cursor is only meaningful while it does
-    // not. Checking both means a malformed page ends the loop rather than
+    // `next` going null is the end; the cursor only means anything while it
+    // does not. Checking both means a malformed page ends the loop rather than
     // spinning on the same `after` forever.
     after = page.artists.next ? page.artists.cursors?.after ?? undefined : undefined;
   } while (after && accounts.length < 5000);

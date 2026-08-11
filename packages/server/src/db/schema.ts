@@ -543,7 +543,7 @@ export const integrationAccounts = sqliteTable('integration_accounts', {
   clientId: text('client_id'),
   clientSecret: text('client_secret'),
 
-  /** Per-capability sync clock, as JSON: { playlists: 1786…, history: 1786… }. */
+  /** Per-capability sync clock, as JSON: { playlists: 1786…, follows: 1786… }. */
   syncedAt: text('synced_at').notNull().default('{}'),
   /** Last failure, kept until the next success. A connection that stopped
    *  working must say why on the screen, not just stop producing rows. */
@@ -573,6 +573,21 @@ export const mediaItems = sqliteTable(
     title: text('title').notNull(),
     /** Artist, or channel. One field because it answers one question. */
     creator: text('creator'),
+    /**
+     * The provider's ids for those artists or that channel, as a JSON array.
+     *
+     * `creator` is a display name — "Bicep", or "A$AP Rocky, Skepta" for a
+     * collaboration — and matching a followed artist to their tracks by name
+     * gets both halves wrong: a joint track does not equal either artist's
+     * name, and a short name is a substring of longer ones. These are the same
+     * ids `follows.provider_account_id` holds, so the join is exact.
+     *
+     * An array because a track genuinely has several artists and each of them
+     * should count it. JSON rather than a join table because it is only ever
+     * read whole, and a two-row side table per track is a lot of rows to carry
+     * for a number on one screen.
+     */
+    creatorIds: text('creator_ids').notNull().default('[]'),
     album: text('album'),
     durationMs: integer('duration_ms'),
     url: text('url'),
@@ -648,36 +663,6 @@ export const mediaCollectionItems = sqliteTable(
     addedAt: integer('added_at'),
   },
   (t) => [index('media_collection_items_collection_idx').on(t.collectionId, t.position)]
-);
-
-/**
- * One row per time something was played.
- *
- * The append-only half of this feature, and the only part that grows without
- * bound — so it is worth knowing what "without bound" means here. Spotify hands
- * back at most 50 plays per fetch and a heavy day is a few hundred tracks, which
- * is two orders of magnitude below the attention sampler this app already
- * tolerates. It is not pruned, because unlike attention samples the whole point
- * of a play is that it is still interesting in a year.
- */
-export const mediaPlays = sqliteTable(
-  'media_plays',
-  {
-    id: id(),
-    itemId: text('item_id')
-      .notNull()
-      .references(() => mediaItems.id, { onDelete: 'cascade' }),
-    playedAt: integer('played_at').notNull(),
-    /** spotify-recent | youtube-takeout. Kept because they are not equally
-     *  trustworthy: one is a timestamp from the service, the other is parsed
-     *  out of an HTML-ish export and can be a day out. */
-    source: text('source').notNull(),
-    createdAt: now(),
-  },
-  // Not merely an index: the uniqueness is what makes re-importing the same
-  // Takeout file, or polling Spotify twice inside its 50-play window, a no-op
-  // instead of a duplicate. Both of those happen constantly by design.
-  (t) => [uniqueIndex('media_plays_item_at_idx').on(t.itemId, t.playedAt, t.source)]
 );
 
 /**
@@ -767,7 +752,6 @@ export const schema = {
   mediaItems,
   mediaCollections,
   mediaCollectionItems,
-  mediaPlays,
   friends,
   follows,
 };

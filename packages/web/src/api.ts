@@ -638,6 +638,8 @@ export interface FollowRow {
   categoryBecause: string | null;
   followerCount: number | null;
   seenAt: number;
+  /** How many of their tracks or videos are in your collections. */
+  inPlaylists: number;
 }
 
 export interface FollowsView {
@@ -653,32 +655,6 @@ export interface FollowsView {
 
 export interface MusicView {
   breakdown: Array<{ category: string; count: number }>;
-  taste: Array<{ category: string; plays: number; distinctItems: number; listenedMs: number }>;
-  recent: Array<{
-    playedAt: number;
-    source: string;
-    title: string;
-    creator: string | null;
-    category: string;
-    url: string | null;
-    artUrl: string | null;
-    provider: string;
-  }>;
-  windowDays: number;
-}
-
-export interface TakeoutResult {
-  summary: {
-    total: number;
-    usable: number;
-    skipped: { noVideo: number; ads: number; noTime: number; otherProduct: number };
-    earliest: number | null;
-    latest: number | null;
-    sample: string[];
-  };
-  committed: boolean;
-  added?: number;
-  videos?: number;
 }
 
 export const api = {
@@ -904,10 +880,7 @@ export const api = {
     /** Channels and artists you follow. Synced on demand, not refreshed on read. */
     follows: () => request<FollowsView>('/api/integrations/follows'),
     collectionItems: (id: string) => request<MediaItem[]>(`/api/integrations/collections/${id}`),
-    music: (days = 30) => request<MusicView>(`/api/integrations/music?days=${days}`),
-    /** Two-phase: nothing is written unless `commit` is true. */
-    takeout: (json: string, commit: boolean) =>
-      post<TakeoutResult>('/api/integrations/youtube/takeout', { json, commit }),
+    music: () => request<MusicView>('/api/integrations/music'),
   },
 
   time: {

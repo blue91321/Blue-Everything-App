@@ -1,15 +1,11 @@
 /**
  * YouTube: playlists, liked videos and subscriptions.
  *
- * Watch history is deliberately absent from this file, and not because it was
- * left for later. `contentDetails.relatedPlaylists.watchHistory` has returned
- * the literal string `HL` and an empty list for every channel since 12 September
- * 2016, and the `activities` endpoint that partly replaced it is deprecated.
- * There is no API path to your watch history at any quota level.
- *
- * The complete history *is* available — from Google Takeout, as a file. That
- * lives in `takeout.ts`, and it is the better source anyway: it goes back to
- * whenever you started rather than to whenever you connected.
+ * Watch history is not here, and there is no API path to it at any quota level:
+ * `contentDetails.relatedPlaylists.watchHistory` has returned the literal string
+ * `HL` and an empty list for every channel since 12 September 2016, and the
+ * `activities` endpoint that partly replaced it is deprecated. A Takeout import
+ * covered it for a while and has been removed along with play history entirely.
  */
 import { apiGet } from '../oauth.js';
 import { categoriseVideo, type FollowedAccount } from '@everything/shared/integrations';
@@ -42,7 +38,14 @@ interface PlaylistItem {
 
 interface VideoDetail {
   id: string;
-  snippet: { title: string; channelTitle: string; publishedAt: string; categoryId?: string; thumbnails?: { medium?: { url: string } } };
+  snippet: {
+    title: string;
+    channelId?: string;
+    channelTitle: string;
+    publishedAt: string;
+    categoryId?: string;
+    thumbnails?: { medium?: { url: string } };
+  };
   contentDetails?: { duration?: string };
   topicDetails?: { topicCategories?: string[] };
 }
@@ -126,6 +129,9 @@ function toItem(videoId: string, detail: VideoDetail | undefined, fallbackTitle:
     // playlist that has holes in it.
     title: detail?.snippet.title ?? fallbackTitle,
     creator: detail?.snippet.channelTitle ?? null,
+    // One id, but the same array shape as Spotify's — the count query joins on
+    // it identically and does not want to know which provider it came from.
+    creatorIds: detail?.snippet.channelId ? [detail.snippet.channelId] : [],
     durationMs: parseIsoDuration(detail?.contentDetails?.duration),
     url: `https://www.youtube.com/watch?v=${videoId}`,
     artUrl: detail?.snippet.thumbnails?.medium?.url ?? null,
