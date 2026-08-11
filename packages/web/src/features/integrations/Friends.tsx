@@ -210,9 +210,19 @@ function LinkPicker({ friend, onDone }: { friend: FriendRow; onDone: () => void 
     .filter((other) => other.name.toLowerCase().includes(search.trim().toLowerCase()))
     .slice(0, 8);
 
-  const link = async (otherId: string) => {
+  /*
+   * Takes the whole entry, never a bare id.
+   *
+   * A row's `id` is a *person* key — `solo:<rowId>` when unlinked, the person id
+   * when not — and linking works on *account* ids. They are both strings called
+   * `id` on objects a few lines apart, so passing the wrong one typechecks
+   * perfectly and fails at the server with "one of those is not in the list".
+   * That is exactly what happened. Reading `.accounts[0].id` in one place is
+   * what stops the two being confusable at the call sites.
+   */
+  const link = async (other: FriendRow) => {
     try {
-      await api.integrations.linkFriends(friend.accounts[0].id, otherId);
+      await api.integrations.linkFriends(friend.accounts[0].id, other.accounts[0].id);
       onDone();
     } catch (error) {
       setProblem((error as Error).message);
@@ -233,7 +243,7 @@ function LinkPicker({ friend, onDone }: { friend: FriendRow; onDone: () => void 
         <span className="meta">Nothing unlinked matches on another service.</span>
       ) : (
         options.map((other) => (
-          <button key={other.id} className="btn subtle" style={{ justifyContent: 'flex-start' }} onClick={() => void link(other.id)}>
+          <button key={other.id} className="btn subtle" style={{ justifyContent: 'flex-start' }} onClick={() => void link(other)}>
             {other.provider}: {other.name}
           </button>
         ))

@@ -534,7 +534,27 @@ export async function followPlaylistCounts(): Promise<Map<string, number>> {
  */
 export async function linkFriends(idA: string, idB: string): Promise<string> {
   const rows = await db.select().from(friends).where(inArray(friends.id, [idA, idB]));
-  if (rows.length !== 2) throw Object.assign(new Error('one of those is not in the list'), { statusCode: 404 });
+
+  if (rows.length !== 2) {
+    /*
+     * Say *which* one, and what was received.
+     *
+     * The message was "one of those is not in the list", which is true, useless,
+     * and was reported by somebody who could see both names on their screen. The
+     * caller had sent a row's person key rather than an account id — a mistake
+     * this message should have made obvious in one reading rather than sending
+     * anybody to the database.
+     */
+    const found = new Set(rows.map((r) => r.id));
+    const missing = [idA, idB].filter((id) => !found.has(id));
+    throw Object.assign(
+      new Error(
+        `no friend account has ${missing.length === 1 ? 'the id' : 'the ids'} ${missing.join(', ')} — ` +
+          'linking takes account ids, and a row on the screen is a person, which may be several'
+      ),
+      { statusCode: 404 }
+    );
+  }
 
   const [a, b] = rows;
   if (a.provider === b.provider) {
