@@ -526,6 +526,10 @@ export interface ProviderInfo {
   setup: SetupStep[];
   /** The fields to fill in, whether each is set, and where its value came from. */
   credentialFields: CredentialFieldInfo[];
+  /** Switches that change what a sync does, declared by the provider. */
+  options: Array<{ key: string; label: string; help?: string; fallback: boolean }>;
+  /** Their current values, with fallbacks already applied. */
+  optionValues: Record<string, boolean>;
   /** What to paste into the provider's dashboard. Null for non-OAuth providers. */
   redirectUri: string | null;
   capabilities: Partial<Record<string, CapabilityInfo>>;
@@ -868,6 +872,12 @@ export const api = {
      */
     saveCredentials: (provider: string, values: { clientId?: string; clientSecret?: string }) =>
       request<{ saved: string[]; missingConfig: string[] }>(`/api/integrations/${provider}/credentials`, {
+        method: 'PUT',
+        body: JSON.stringify(values),
+      }),
+    /** Merged with what is stored, so an unknown option is never cleared. */
+    setOptions: (provider: string, values: Record<string, boolean>) =>
+      request<Record<string, boolean>>(`/api/integrations/${provider}/options`, {
         method: 'PUT',
         body: JSON.stringify(values),
       }),

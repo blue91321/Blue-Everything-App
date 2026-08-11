@@ -543,6 +543,16 @@ export const integrationAccounts = sqliteTable('integration_accounts', {
   clientId: text('client_id'),
   clientSecret: text('client_secret'),
 
+  /**
+   * Per-provider switches that change what a sync does, as JSON.
+   *
+   * JSON rather than a column each, because these are provider-specific and a
+   * `youtube_skip_liked` column on a table shared by five services describes the
+   * wrong thing. Read whole, written whole, and validated by
+   * `providerOptionsSchema` on the way in.
+   */
+  options: text('options').notNull().default('{}'),
+
   /** Per-capability sync clock, as JSON: { playlists: 1786…, follows: 1786… }. */
   syncedAt: text('synced_at').notNull().default('{}'),
   /** Last failure, kept until the next success. A connection that stopped

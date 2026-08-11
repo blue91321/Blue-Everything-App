@@ -169,6 +169,13 @@
             "when": 1786062300000,
             "tag": "0023_creator_ids_drop_plays",
             "breakpoints": true
+        },
+        {
+            "idx": 24,
+            "version": "6",
+            "when": 1786062400000,
+            "tag": "0024_integration_options",
+            "breakpoints": true
         }
     ]
 }

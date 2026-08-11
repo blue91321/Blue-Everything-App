@@ -953,3 +953,50 @@ button {
 .chip.presence-offline {
   opacity: 0.6;
 }
+
+/* A provider row on the Services tab, collapsed until you open it.
+
+   `list-style: none` plus the ::marker rule removes the browser's default
+   triangle, which sits at the far left of a flex row and pushes the glyph out
+   of line. The chevron is drawn on the right instead, where the eye already is
+   after reading the name. */
+.card.provider > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.card.provider > summary::-webkit-details-marker {
+  display: none;
+}
+
+.card.provider > summary::marker {
+  content: '';
+}
+
+.card.provider > summary::after {
+  content: '⌄';
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  transition: transform 120ms ease;
+}
+
+.card.provider[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.card.provider > summary:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Something went wrong with a connection — distinct from a capability that can
+   never work. `status-unavailable` reads "not possible", which is a claim about
+   the service; this is a claim about the last attempt, and it clears itself on
+   the next success. */
+.chip.problem {
+  border-color: var(--danger);
+  color: var(--danger);
+}

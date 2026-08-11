@@ -133,22 +133,48 @@ function ProviderCard({
       reload();
     });
 
+  /**
+   * A one-line answer for the collapsed row.
+   *
+   * The summary has to be worth reading without opening anything, or collapsing
+   * by default just hides the screen. Whether it is connected is the question
+   * this card exists to answer, so it goes here and the detail goes inside.
+   */
+  const headline = provider.connected
+    ? provider.accountName ?? 'connected'
+    : provider.missingConfig.length > 0
+      ? 'not set up'
+      : 'not connected';
+
   return (
-    <div className="card">
-      <div className="row" style={{ alignItems: 'center', gap: '.6rem' }}>
+    <details className="card provider">
+      {/*
+        Collapsed by default. Five providers with their full capability list,
+        citations, credential form and setup steps is several screens of text to
+        scroll past on the way to the one you came to change — and this is a
+        screen you visit twice a year. The summary carries the name and the
+        state, which is the whole of what you need when you are not changing
+        anything.
+      */}
+      <summary className="row" style={{ alignItems: 'center', gap: '.6rem' }}>
         <span className="glyph" aria-hidden="true">
           {provider.glyph}
         </span>
         <div className="grow">
           <div className="title">
             {provider.label}
-            {provider.connected && provider.accountName ? (
-              <span className="meta"> — {provider.accountName}</span>
-            ) : null}
+            <span className="meta"> — {headline}</span>
           </div>
           <div className="meta">{provider.blurb}</div>
         </div>
-      </div>
+        {/*
+          Its own chip rather than a capability status. The first version reused
+          `unavailable`, which renders as "not possible" — a phrase reserved for
+          something that can never work, and exactly the wrong thing to say
+          about a connection that failed once and will retry.
+        */}
+        {provider.lastError && <span className="chip problem">problem</span>}
+      </summary>
 
       {/* ---- what it can do ---- */}
       <div style={{ marginTop: '.75rem' }}>
@@ -364,6 +390,35 @@ function ProviderCard({
         </div>
       )}
 
+      {/* ---- what a sync does ---- */}
+      {provider.options.length > 0 && local && (
+        <div style={{ marginTop: '.75rem', display: 'grid', gap: '.4rem' }}>
+          {provider.options.map((option) => (
+            <label key={option.key} style={{ display: 'grid', gap: '.15rem' }}>
+              <span className="row" style={{ alignItems: 'center', gap: '.45rem' }}>
+                <input
+                  type="checkbox"
+                  checked={provider.optionValues[option.key] ?? option.fallback}
+                  disabled={busy !== ''}
+                  onChange={(e) =>
+                    void guard('option', async () => {
+                      await api.integrations.setOptions(provider.id, { [option.key]: e.target.checked });
+                      reload();
+                    })
+                  }
+                />
+                {option.label}
+              </span>
+              {option.help && (
+                <span className="meta" style={{ paddingLeft: '1.6rem' }}>
+                  {option.help}
+                </span>
+              )}
+            </label>
+          ))}
+        </div>
+      )}
+
       {/* ---- actions ---- */}
       <div className="row wrap row-actions" style={{ marginTop: '.75rem' }}>
         {provider.auth === 'oauth2' && !provider.connected && anythingUsable && (
@@ -409,6 +464,6 @@ function ProviderCard({
           ))}
         </div>
       )}
-    </div>
+    </details>
   );
 }

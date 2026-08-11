@@ -11,6 +11,7 @@ import { apiGet } from '../oauth.js';
 import { categoriseVideo, type FollowedAccount } from '@everything/shared/integrations';
 import {
   markCollectionSynced,
+  optionsFor,
   replaceCollectionItems,
   replaceFollows,
   upsertCollection,
@@ -196,7 +197,20 @@ export async function syncPlaylists(): Promise<SyncResult> {
   }>('youtube', `${API}/channels?part=contentDetails&mine=true`);
 
   const likes = channel.items?.[0]?.contentDetails.relatedPlaylists.likes;
-  if (likes) {
+
+  /*
+   * Liked Videos is optional, and off by default.
+   *
+   * It is frequently thousands of items going back years, which swamps both the
+   * category breakdown and the "in my playlists" counts the Following tab sorts
+   * by — a channel you liked one video from a decade ago outranks one you have
+   * a playlist of. Skipping it is a tick on the provider's card.
+   */
+  const options = await optionsFor('youtube');
+
+  if (likes && options.skipLikedVideos) {
+    notes.push('Liked Videos skipped');
+  } else if (likes) {
     try {
       const count = await syncOnePlaylist(likes, 'Liked Videos', 'saved');
       notes.push(`Liked Videos: ${count}`);

@@ -1943,11 +1943,19 @@ that shows an empty list — is the expensive way to learn it. So a capability i
 
 | | playlists | following | who's online |
 | --- | --- | --- | --- |
-| **Spotify** | yes | artists you follow | — |
+| **Spotify** | yes* | artists you follow | — |
 | **YouTube** | yes | subscriptions | — |
 | **Steam** | — | — | **yes, properly** |
 | **Discord** | — | — | yes |
 | **Riot** | — | — | local client only |
+
+\* **Spotify needs Premium.** Since February 2026 a Development Mode app stops
+working the moment the owner's subscription lapses — it answers
+`403 Active premium subscription required for the owner of the app`. The same
+change stopped returning *contents* for playlists you merely follow: you get the
+name and nothing else unless you own or collaborate on it. Both are in the
+capability text, because a 403 on a playlist read otherwise looks like a broken
+token.
 
 **Play history was here and has been removed.** Spotify would only ever return
 the last fifty plays, so a local history had to be accumulated by polling; a
@@ -2124,6 +2132,28 @@ Counted only where the item is in a collection: a track can be in the library
 because it turned up somewhere and since been removed from every playlist, and
 "in my playlists" has to mean what it says. One statement for the whole list,
 because 408 follows is otherwise 408 round trips for a screen that opens once.
+
+### Provider options, and collapsed cards
+
+`ProviderSpec.options` declares per-provider switches the same way `credentials`
+declares fields, stored as JSON in `integration_accounts.options`. JSON rather
+than a column each, because these are provider-specific and a
+`youtube_skip_liked` column on a table shared by five services describes the
+wrong thing. Booleans only — a setting needing a number would want validation, a
+keyboard and an error state, and there is no such setting.
+
+One exists: **YouTube can skip Liked Videos.** It is frequently thousands of
+items going back years, which swamps both the category breakdown and the "in my
+playlists" counts the Following tab sorts by — a channel you liked one video
+from a decade ago otherwise outranks one you have a playlist of.
+
+**Every provider card is a `<details>`, collapsed.** Five providers with their
+capability lists, citations, credential forms and setup steps is several screens
+to scroll past on the way to the one you came to change, on a screen visited
+twice a year. The summary carries the name, the state, and a `problem` chip when
+the last attempt failed — its own chip rather than the `unavailable` capability
+status, which renders "not possible" and is a claim about the *service* rather
+than about one failed attempt that will retry.
 
 ### Refresh-on-read, not a poller
 

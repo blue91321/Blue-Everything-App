@@ -25,6 +25,7 @@ import {
   FOLLOW_PROVIDERS,
   connectSteamSchema,
   credentialsSchema,
+  providerOptionsSchema,
   isProviderId,
   localPresenceSchema,
   presenceRank,
@@ -55,6 +56,7 @@ import {
   forgetAccount,
   getAccount,
   itemsInCollection,
+  optionsFor,
   listAccounts,
   saveAccount,
   followPlaylistCounts,
@@ -84,6 +86,8 @@ async function providerState(id: ProviderId) {
     accountName: account?.accountName ?? null,
     /** The fields to fill in, whether each is set, and where it came from. */
     credentialFields: await credentialState(id),
+    /** The provider's switches, with the manifest's fallbacks already applied. */
+    optionValues: await optionsFor(id),
     /**
      * What to paste into the provider's dashboard, character for character.
      *
@@ -222,6 +226,35 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * random bytes, used once, expiring in ten minutes, and only ever issued by
    * the authorize route — which *is* local-only.
    */
+  /**
+   * A provider's own switches — today, whether YouTube skips Liked Videos.
+   *
+   * Merged with what is stored rather than replacing it, so a screen that only
+   * knows about one option cannot silently clear another. Local-only, like
+   * every other write on this feature.
+   */
+  app.put('/api/integrations/:provider/options', async (request) => {
+    localOnly(request);
+    const provider = parseProvider((request.params as { provider: string }).provider);
+    const body = providerOptionsSchema.parse(request.body);
+
+    const spec = PROVIDERS[provider];
+    if (spec.options.length === 0) {
+      throw Object.assign(new Error(`${spec.label} has no options`), { statusCode: 400 });
+    }
+
+    const current = await optionsFor(provider);
+    const next: Record<string, boolean> = { ...current };
+    for (const option of spec.options) {
+      const given = body[option.key];
+      if (given !== undefined) next[option.key] = given;
+    }
+
+    await saveAccount(provider, { options: JSON.stringify(next) });
+    changes.emitChange('integrations');
+    return next;
+  });
+
   app.get('/oauth/callback/:provider', async (request, reply) => {
     const provider = parseProvider((request.params as { provider: string }).provider);
     const query = request.query as { code?: string; state?: string; error?: string; error_description?: string };

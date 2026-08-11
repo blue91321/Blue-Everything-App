@@ -8,6 +8,7 @@
  */
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
+  PROVIDERS,
   categoriseGenres,
   type FollowedAccount,
   type CollectionKind,
@@ -70,6 +71,31 @@ export function syncedAtOf(account: Account | null): Record<string, number> {
   } catch {
     return {};
   }
+}
+
+/**
+ * A provider's switches, with the manifest's fallbacks filled in.
+ *
+ * Merged rather than returned raw so a caller never has to ask "is undefined
+ * false here, or is it the default?" — the declared fallback is applied once,
+ * in the one place that knows about it.
+ */
+export async function optionsFor(provider: ProviderId): Promise<Record<string, boolean>> {
+  const account = await getAccount(provider);
+
+  let stored: Record<string, unknown> = {};
+  try {
+    stored = account ? (JSON.parse(account.options) as Record<string, unknown>) : {};
+  } catch {
+    // A malformed blob means the defaults, not a failed sync.
+  }
+
+  const merged: Record<string, boolean> = {};
+  for (const option of PROVIDERS[provider].options) {
+    const value = stored[option.key];
+    merged[option.key] = typeof value === 'boolean' ? value : option.fallback;
+  }
+  return merged;
 }
 
 export async function markSynced(provider: ProviderId, capability: string): Promise<void> {
