@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import { api, type ProviderInfo, type SyncOutcome } from '../../api';
 import { useAsync } from '../../useAsync';
+import { Credentials } from './Credentials';
 import { StatusChip, relativeTime } from './Integrations';
 import { TakeoutImport } from './Takeout';
 
@@ -194,16 +195,32 @@ function ProviderCard({
         </div>
       )}
 
-      {anythingUsable && provider.missingConfig.length > 0 && (
+      {/*
+        The credentials, as text boxes.
+
+        This used to be a line reading "not configured yet — set SPOTIFY_CLIENT_ID
+        and restart", which is an instruction to go and edit a file. The values
+        are yours rather than the application's, they change without a release,
+        and there is no reason they should live anywhere you need a terminal to
+        reach. The env var still works and the field says when it is in use.
+      */}
+      {anythingUsable && local && provider.credentialFields.length > 0 && !provider.connected && (
+        <Credentials provider={provider} reload={reload} />
+      )}
+
+      {/* Once connected the form is out of the way, but reachable — a client
+          secret gets rotated, and hiding the box would mean editing a file
+          after all. */}
+      {anythingUsable && local && provider.credentialFields.length > 0 && provider.connected && (
+        <details style={{ marginTop: '.75rem' }}>
+          <summary className="meta">Change its client ID or secret</summary>
+          <Credentials provider={provider} reload={reload} />
+        </details>
+      )}
+
+      {anythingUsable && !local && provider.missingConfig.length > 0 && (
         <div className="meta" style={{ marginTop: '.75rem' }}>
-          Not configured yet — set{' '}
-          {provider.missingConfig.map((name, i) => (
-            <span key={name}>
-              {i > 0 && ', '}
-              <code>{name}</code>
-            </span>
-          ))}{' '}
-          and restart.
+          Not configured yet. Its credentials are filled in on the PC running the server.
         </div>
       )}
 

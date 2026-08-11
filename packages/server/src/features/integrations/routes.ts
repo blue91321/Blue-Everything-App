@@ -24,6 +24,7 @@ import {
   PROVIDER_LIST,
   FOLLOW_PROVIDERS,
   connectSteamSchema,
+  credentialsSchema,
   isProviderId,
   localPresenceSchema,
   presenceRank,
@@ -34,7 +35,14 @@ import {
 import { z } from 'zod';
 import { config } from '../../config.js';
 import { changes } from '../../events.js';
-import { beginAuthorization, completeAuthorization, grantedScopes, missingCredentials } from './oauth.js';
+import {
+  beginAuthorization,
+  completeAuthorization,
+  credentialState,
+  grantedScopes,
+  missingCredentials,
+  redirectUri,
+} from './oauth.js';
 import { localStatusOf, recordLocalPresence } from './providers/local.js';
 import * as spotify from './providers/spotify.js';
 import * as steam from './providers/steam.js';
@@ -64,15 +72,36 @@ async function providerState(id: ProviderId) {
 
   return {
     ...spec,
-    connected: account !== null,
+    /**
+     * Connected means there is a *credential to act with*, not that a row
+     * exists.
+     *
+     * The row is created the moment you save a client id, which is "configured
+     * but not connected" — a state that did not exist before the fields moved
+     * into the app. Reading `account !== null` here would have shown Spotify as
+     * connected the instant you pasted its id, hidden the Connect button, and
+     * left no way to finish.
+     */
+    connected: Boolean(account?.accessToken || account?.externalId),
     accountName: account?.accountName ?? null,
+    /** The fields to fill in, whether each is set, and where it came from. */
+    credentialFields: await credentialState(id),
+    /**
+     * What to paste into the provider's dashboard, character for character.
+     *
+     * Sent rather than written into the setup text because it depends on
+     * OAUTH_REDIRECT_BASE and on the port — a hard-coded one in the
+     * instructions would be wrong for anybody who changed either, and wrong in
+     * a way whose only symptom is a rejected login.
+     */
+    redirectUri: spec.auth === 'oauth2' ? redirectUri(id) : null,
     /**
      * What was actually granted, not what was asked for. Discord hands back a
      * working token having silently dropped the presence scope, and without
      * this the screen would show a healthy connection and an empty friends list.
      */
     grantedScopes: grantedScopes(account),
-    missingConfig: missingCredentials(id),
+    missingConfig: await missingCredentials(id),
     syncedAt: syncedAtOf(account),
     lastError: account?.lastError ?? null,
     /** Which capabilities have code behind them, as opposed to being described. */
@@ -138,7 +167,47 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
   app.post('/api/integrations/:provider/authorize', async (request) => {
     localOnly(request);
     const provider = parseProvider((request.params as { provider: string }).provider);
-    return { url: beginAuthorization(provider).url };
+    return { url: (await beginAuthorization(provider)).url };
+  });
+
+  /**
+   * Save a provider's client id and secret, typed into the app.
+   *
+   * The whole reason this exists: setting one up used to mean opening a file,
+   * pasting an environment variable and restarting the app — which is precisely
+   * the friction the three double-clickable files in the repo root exist to
+   * remove. Nobody should need a terminal to use their own app.
+   *
+   * Local-only, like every other write that touches credentials.
+   *
+   * **An empty string clears the field**, and that is distinct from omitting it.
+   * Omitted means "leave what is there", which is what the form sends for a
+   * secret box left blank because it is already set — the value is never sent
+   * back to the browser, so a blank box cannot be allowed to mean "erase it".
+   */
+  app.put('/api/integrations/:provider/credentials', async (request) => {
+    localOnly(request);
+    const provider = parseProvider((request.params as { provider: string }).provider);
+    const body = credentialsSchema.parse(request.body);
+
+    const spec = PROVIDERS[provider];
+    if (spec.credentials.length === 0) {
+      throw Object.assign(new Error(`${spec.label} has nothing to configure`), { statusCode: 400 });
+    }
+
+    const values: Record<string, string | null> = {};
+    for (const field of spec.credentials) {
+      const given = body[field.key];
+      if (given === undefined) continue;
+      // Trimmed, because a trailing space pasted from a dashboard is invisible
+      // and produces an authentication failure that names nothing.
+      values[field.key] = given.trim() === '' ? null : given.trim();
+    }
+
+    await saveAccount(provider, values);
+    changes.emitChange('integrations');
+
+    return { saved: Object.keys(values), missingConfig: await missingCredentials(provider) };
   });
 
   app.get('/api/integrations/callback/:provider', async (request, reply) => {

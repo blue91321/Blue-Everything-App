@@ -240,7 +240,13 @@ for (const spec of PROVIDER_LIST) {
   // An OAuth provider with no client id configured can never connect, and the
   // screen's whole job is naming the variable — so it has to exist.
   if (spec.auth === 'oauth2') {
-    check(`${spec.id}: names the env var it needs`, spec.needs.length > 0);
+    check(`${spec.id}: declares a client id field`, spec.credentials.some((f) => f.key === 'clientId'));
+    // Every field must still name an env var: that is the other way to supply
+    // one, and the message shown when a field is empty says which.
+    check(
+      `${spec.id}: every field names its env var`,
+      spec.credentials.every((f) => /^[A-Z][A-Z0-9_]+$/.test(f.envVar))
+    );
     check(`${spec.id}: has an authorize and a token URL`, !!spec.oauth?.authorizeUrl && !!spec.oauth?.tokenUrl);
   }
 
@@ -274,12 +280,52 @@ for (const spec of PROVIDER_LIST) {
   // `client` providers have nothing to configure by definition, and a `needs`
   // entry on one would put an un-fixable "not configured" on the screen.
   if (spec.auth === 'client') {
-    check(`${spec.id}: asks for no configuration`, spec.needs.length === 0);
+    check(`${spec.id}: asks for no configuration`, spec.credentials.length === 0);
     check(`${spec.id}: is reached locally`, spec.reach === 'local');
   }
 }
 
 /* ------------------------------------------------------------------ */
+
+console.log('\nCredentials can be typed in rather than exported');
+
+/*
+ * Every provider that needs configuring offers a box for it.
+ *
+ * The regression this guards against is a provider added later whose id lives
+ * only in an environment variable — which is a provider you cannot set up
+ * without a terminal, on a screen whose whole point is that you never need one.
+ */
+for (const spec of PROVIDER_LIST) {
+  if (spec.auth !== 'oauth2') continue;
+  check(`${spec.id}: has at least one field to fill in`, spec.credentials.length > 0);
+  check(
+    `${spec.id}: exactly one required client id`,
+    spec.credentials.filter((f) => f.key === 'clientId' && f.required).length === 1
+  );
+}
+
+// A secret field must be marked secret, or the box renders it in plain text.
+for (const spec of PROVIDER_LIST) {
+  for (const field of spec.credentials) {
+    if (field.key !== 'clientSecret') continue;
+    check(`${spec.id}: the secret field is masked`, field.secret === true);
+  }
+}
+
+/*
+ * Battle.net is the one confidential client here, so its secret is the one that
+ * must be required. Spotify is PKCE and asks for none at all — offering the box
+ * would invite pasting a secret this app has no use for and would then store.
+ */
+check(
+  'battlenet requires its secret',
+  PROVIDERS.battlenet.credentials.some((f) => f.key === 'clientSecret' && f.required)
+);
+check(
+  'spotify asks for no secret at all, being PKCE',
+  !PROVIDERS.spotify.credentials.some((f) => f.key === 'clientSecret')
+);
 
 console.log('\nFollowing is not friendship');
 

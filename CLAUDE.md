@@ -1966,6 +1966,45 @@ kind `video`, so every subscription arrived in the music library with no
 duration and no plays, and was counted in the category breakdown as though it
 were a track.
 
+### Nothing here needs a text editor
+
+Every credential is a text box on the Services tab. They were environment
+variables and nothing else, which made setting a provider up read "open a
+terminal, edit a file, restart the app" — the exact friction the three
+double-clickable files in the repo root exist to remove.
+
+`ProviderSpec.credentials` declares the fields; the form, the "is this
+configured" check and the env-var fallback all read that one list, because three
+places listing which fields exist is how they stop agreeing. The value typed in
+**wins over the environment variable**, or pasting one would appear to work and
+change nothing — the same shape of bug as `features.json` being read from a
+directory nobody was writing to.
+
+Three things there are easy to get wrong:
+
+- **A stored value is never sent back to the browser.** The box for a field that
+  is set renders empty with a placeholder saying so. Round-tripping a secret
+  would put it in the DOM, the response cache and any devtools left open, to
+  save one paste.
+- **Blank therefore means "leave it", not "clear it".** Following directly from
+  the above: a blank box is the normal state for a field that is already set, so
+  clearing is an explicit button that sends `''`. Omitting the key means leave.
+- **`connected` is decided by having a token, not by the row existing.** The row
+  is created the moment you save a client id, which is *configured but not
+  connected* — a state that did not exist while these were env vars. Reading
+  `account !== null` showed Spotify as connected the instant its id was pasted,
+  hid the Connect button, and left no way to finish.
+
+The redirect URI is **sent by the server with a copy button**, not written into
+the setup text: it depends on the port and on `OAUTH_REDIRECT_BASE`, so a
+hard-coded one would be wrong for anybody who changed either — and wrong in a
+way whose only symptom is a rejected login.
+
+Steam went first, for a reason worth keeping: its Web API key is issued to *your
+account*, so it is personal data of the same kind as the Steam ID beside it. A
+Spotify or Discord client id identifies the *application*. Both now live in the
+app, but only the second has any business being an env var at all.
+
 ### Every site you have to visit is a link
 
 `setup` is a list of `SetupStep`, not of strings: each step carries an optional

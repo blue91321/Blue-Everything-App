@@ -14,7 +14,12 @@
  * starting a handshake it cannot finish.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { PROVIDERS, type ProviderId, type ProviderSpec } from '@everything/shared/integrations';
+import {
+  PROVIDERS,
+  type CredentialField,
+  type ProviderId,
+  type ProviderSpec,
+} from '@everything/shared/integrations';
 import { config } from '../../config.js';
 import { getAccount, saveAccount, type Account } from './store.js';
 
@@ -23,60 +28,90 @@ import { getAccount, saveAccount, type Account } from './store.js';
 /* ------------------------------------------------------------------ */
 
 /**
- * Which env var holds what, per provider. **Names, never values.**
+ * Reading a named environment variable off the validated config.
  *
- * A table rather than `config[`${id.toUpperCase()}_CLIENT_ID`]`, because that
- * form is invisible to the type checker and to anyone grepping for where a
- * variable is used — and it would have quietly produced `RIOT_CLIENT_ID` for a
- * provider that has no such thing.
+ * Which variable belongs to which provider is declared in the manifest, on the
+ * field that needs it, rather than in a second table here — the form, the
+ * "is this configured" check and the fallback all have to agree about the name,
+ * and three places listing it is how they stop agreeing.
  *
- * The fields are `idEnv`/`secretEnv` rather than `id`/`secret`, and that is not
- * cosmetic. `publish-check` refuses to pass on a key called `secret` assigned a
- * long string literal, which is precisely the shape the old field names
- * produced — and it was right to refuse: nothing in such a line distinguishes a
- * variable's *name* from its *value*. The fix belongs here rather than in the
- * allowlist, because the old name genuinely misdescribed the field. Loosening
- * the pattern would have stopped it catching the real thing everywhere else.
- *
- * (Quoting the offending form in a comment trips it too, which is why this
- * paragraph describes the shape instead of showing it.)
+ * `config` is still the only thing in the codebase that touches `process.env`;
+ * this looks a value up in the parsed result.
  */
-const CREDENTIALS: Partial<Record<ProviderId, { idEnv: string; secretEnv?: string }>> = {
-  spotify: { idEnv: 'SPOTIFY_CLIENT_ID' },
-  youtube: { idEnv: 'GOOGLE_CLIENT_ID', secretEnv: 'GOOGLE_CLIENT_SECRET' },
-  discord: { idEnv: 'DISCORD_CLIENT_ID', secretEnv: 'DISCORD_CLIENT_SECRET' },
-  battlenet: { idEnv: 'BATTLENET_CLIENT_ID', secretEnv: 'BATTLENET_CLIENT_SECRET' },
-  // Steam has no OAuth client. Its key is personal and is typed into the app;
-  // the env var remains only as a fallback, read directly in the provider.
-};
-
 type ConfigKey = keyof typeof config;
 
-function envValue(name: string): string {
+export function envValue(name: string): string {
   const value = config[name as ConfigKey];
   return typeof value === 'string' ? value : '';
 }
 
 /**
- * Which of a provider's required env vars are still unset.
+ * The value for one credential field: what was typed in, else the env var.
  *
- * Reported to the screen so it can say "SPOTIFY_CLIENT_ID is not set" instead of
- * offering a Connect button that redirects to an error page at Spotify. Same
- * reasoning as the disabled "Check for updates" button on the Packages screen: a
- * control that explains why it cannot work beats one that fails when pressed.
+ * **That order is load-bearing.** An env var that won the tie would make pasting
+ * a client id into the app appear to work and change nothing at all — the same
+ * class of bug as `features.json` being read from a directory nobody was writing
+ * to: self-consistent, convincing, and wrong.
  */
-export function missingCredentials(provider: ProviderId): string[] {
-  return PROVIDERS[provider].needs.filter((name) => !envValue(name));
+export async function credentialValue(
+  provider: ProviderId,
+  key: CredentialField['key']
+): Promise<string> {
+  const field = PROVIDERS[provider].credentials.find((f) => f.key === key);
+  if (!field) return '';
+
+  const account = await getAccount(provider);
+  const stored = key === 'clientId' ? account?.clientId : account?.clientSecret;
+  return stored?.trim() || envValue(field.envVar);
 }
 
-export function clientId(provider: ProviderId): string {
-  const names = CREDENTIALS[provider];
-  return names ? envValue(names.idEnv) : '';
+/**
+ * Which required fields are still empty, by env var name.
+ *
+ * Named by env var because that is what the message has always said, and it is
+ * still the other way to supply one. The screen now leads with the text box and
+ * mentions the variable second, which is the right order for somebody who is
+ * never going to open a file.
+ */
+export async function missingCredentials(provider: ProviderId): Promise<string[]> {
+  const missing: string[] = [];
+  for (const field of PROVIDERS[provider].credentials) {
+    if (!field.required) continue;
+    if (!(await credentialValue(provider, field.key))) missing.push(field.envVar);
+  }
+  return missing;
 }
 
-export function clientSecret(provider: ProviderId): string {
-  const names = CREDENTIALS[provider];
-  return names?.secretEnv ? envValue(names.secretEnv) : '';
+/** Which fields have a value at all, and where it came from. For the form. */
+export async function credentialState(provider: ProviderId) {
+  const account = await getAccount(provider);
+
+  return PROVIDERS[provider].credentials.map((field) => {
+    const stored = field.key === 'clientId' ? account?.clientId : account?.clientSecret;
+    const fromEnv = envValue(field.envVar);
+    return {
+      ...field,
+      /**
+       * Whether anything is set, without saying what.
+       *
+       * The value itself is never sent back to the browser once stored — a
+       * secret that round-trips through a page is a secret in the DOM, in the
+       * response cache and in any devtools that were open. The box renders
+       * empty with a placeholder saying it is already set, and typing replaces
+       * it.
+       */
+      set: Boolean(stored?.trim() || fromEnv),
+      source: stored?.trim() ? ('app' as const) : fromEnv ? ('env' as const) : ('none' as const),
+    };
+  });
+}
+
+export async function clientId(provider: ProviderId): Promise<string> {
+  return credentialValue(provider, 'clientId');
+}
+
+export async function clientSecret(provider: ProviderId): Promise<string> {
+  return credentialValue(provider, 'clientSecret');
 }
 
 export function redirectUri(provider: ProviderId): string {
@@ -124,12 +159,23 @@ const base64url = (buffer: Buffer): string => buffer.toString('base64url');
  * redirect that is not a theoretical concern: the callback URL is guessable, and
  * `isTrustedLocal` deliberately trusts anything arriving from this machine.
  */
-export function beginAuthorization(provider: ProviderId): { url: string; state: string } {
+export async function beginAuthorization(provider: ProviderId): Promise<{ url: string; state: string }> {
   const spec = PROVIDERS[provider];
   if (!spec.oauth) throw new Error(`${spec.label} does not use OAuth`);
 
-  const missing = missingCredentials(provider);
-  if (missing.length > 0) throw new Error(`not configured: ${missing.join(', ')} is not set`);
+  // Async now that a credential can live in the database rather than only in
+  // the environment. The alternative was a synchronous cache of the row, which
+  // is a cache to invalidate for a call made twice a year.
+  const missing = await missingCredentials(provider);
+  if (missing.length > 0) {
+    throw Object.assign(
+      new Error(
+        `${spec.label} is not configured yet — fill in its ${missing.length === 1 ? 'field' : 'fields'} above ` +
+          `(or set ${missing.join(' and ')}).`
+      ),
+      { statusCode: 400 }
+    );
+  }
 
   sweepPending();
 
@@ -138,7 +184,7 @@ export function beginAuthorization(provider: ProviderId): { url: string; state: 
   pending.set(state, { provider, verifier, startedAt: Date.now() });
 
   const params = new URLSearchParams({
-    client_id: clientId(provider),
+    client_id: await clientId(provider),
     response_type: 'code',
     redirect_uri: redirectUri(provider),
     scope: spec.oauth.scopes.join(' '),
@@ -168,14 +214,15 @@ async function postToken(spec: ProviderSpec, provider: ProviderId, body: URLSear
   // Confidential clients want the secret as HTTP Basic rather than in the body.
   // Battle.net is strict about it; Spotify accepts either and never sees one.
   if (spec.oauth?.needsSecret) {
-    const secret = clientSecret(provider);
-    headers.authorization = `Basic ${Buffer.from(`${clientId(provider)}:${secret}`).toString('base64')}`;
+    const secret = await clientSecret(provider);
+    const id = await clientId(provider);
+    headers.authorization = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
   } else {
-    body.set('client_id', clientId(provider));
+    body.set('client_id', await clientId(provider));
     // Google issues a "Web application" client that demands a secret even with
     // PKCE. Sent only when one is actually configured, so the PKCE-only path
     // stays secretless.
-    const secret = clientSecret(provider);
+    const secret = await clientSecret(provider);
     if (secret) body.set('client_secret', secret);
   }
 

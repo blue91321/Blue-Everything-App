@@ -527,6 +527,22 @@ export const integrationAccounts = sqliteTable('integration_accounts', {
   apiKey: text('api_key'),
   externalId: text('external_id'),
 
+  /**
+   * The OAuth application's own id and secret, when they were typed into the
+   * app rather than left in the environment.
+   *
+   * On this row, next to the token, because they belong to the same connection
+   * and go away with it. The env var is read only when the column is null, so
+   * pasting a value here always wins — an env var that silently took precedence
+   * would make re-pasting a client id appear to work and change nothing.
+   *
+   * A row can exist with these set and no token at all: that is "configured but
+   * not connected", which is why `connected` is decided by the presence of a
+   * token rather than by the row existing.
+   */
+  clientId: text('client_id'),
+  clientSecret: text('client_secret'),
+
   /** Per-capability sync clock, as JSON: { playlists: 1786…, history: 1786… }. */
   syncedAt: text('synced_at').notNull().default('{}'),
   /** Last failure, kept until the next success. A connection that stopped

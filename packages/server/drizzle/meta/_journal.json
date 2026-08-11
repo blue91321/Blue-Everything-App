@@ -148,6 +148,13 @@
             "when": 1786062000000,
             "tag": "0020_follows",
             "breakpoints": true
+        },
+        {
+            "idx": 21,
+            "version": "6",
+            "when": 1786062100000,
+            "tag": "0021_integration_client_credentials",
+            "breakpoints": true
         }
     ]
 }

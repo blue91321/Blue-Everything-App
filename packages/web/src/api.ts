@@ -498,6 +498,24 @@ export interface SetupStep {
   link?: { url: string; label: string };
 }
 
+/**
+ * One credential box on the Services tab.
+ *
+ * `set` and `source` rather than the value: a stored secret is never sent back
+ * to the browser, so the box renders empty and says it is already set. Sending
+ * it would put it in the DOM, the response cache, and any devtools left open.
+ */
+export interface CredentialFieldInfo {
+  key: 'clientId' | 'clientSecret';
+  label: string;
+  required: boolean;
+  envVar: string;
+  help?: string;
+  secret?: boolean;
+  set: boolean;
+  source: 'app' | 'env' | 'none';
+}
+
 export interface ProviderInfo {
   id: string;
   label: string;
@@ -505,8 +523,11 @@ export interface ProviderInfo {
   blurb: string;
   reach: 'web' | 'local' | 'import';
   auth: 'oauth2' | 'api-key' | 'client' | 'file';
-  needs: string[];
   setup: SetupStep[];
+  /** The fields to fill in, whether each is set, and where its value came from. */
+  credentialFields: CredentialFieldInfo[];
+  /** What to paste into the provider's dashboard. Null for non-OAuth providers. */
+  redirectUri: string | null;
   capabilities: Partial<Record<string, CapabilityInfo>>;
 
   connected: boolean;
@@ -864,6 +885,15 @@ export const api = {
       post<{ connected: boolean; accountName: string; steamId: string }>('/api/integrations/steam/connect', {
         profile,
         apiKey,
+      }),
+    /**
+     * Save a provider's own client id/secret from the app rather than a file.
+     * Omit a key to leave it as it is; send '' to clear it.
+     */
+    saveCredentials: (provider: string, values: { clientId?: string; clientSecret?: string }) =>
+      request<{ saved: string[]; missingConfig: string[] }>(`/api/integrations/${provider}/credentials`, {
+        method: 'PUT',
+        body: JSON.stringify(values),
       }),
     disconnect: (provider: string) => request<void>(`/api/integrations/${provider}`, { method: 'DELETE' }),
     sync: (provider: string, capabilities?: string[]) =>

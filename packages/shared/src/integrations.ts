@@ -139,8 +139,20 @@ export interface ProviderSpec {
      */
     needsSecret?: boolean;
   };
-  /** Env vars this provider needs before it can be connected at all. */
-  needs: string[];
+  /**
+   * What this provider needs before it can be connected, as fields to fill in.
+   *
+   * These were env vars, and only env vars, which meant setting one up read
+   * "open a terminal, edit a file, restart the app" — the exact friction the
+   * three double-clickable files in the repo root exist to remove. They are now
+   * text boxes on the Services tab, stored with the account, and the env var
+   * remains a fallback for anyone who prefers it.
+   *
+   * A declared list rather than a hand-written form per provider, because the
+   * form and the "is this configured yet" check have to agree, and two places
+   * saying which fields exist is how they stop agreeing.
+   */
+  credentials: CredentialField[];
   capabilities: Partial<Record<Capability, CapabilitySpec>>;
   /** What you have to go and do at their end. Shown before you connect. */
   setup: SetupStep[];
@@ -163,6 +175,39 @@ export interface ProviderSpec {
 export interface SetupStep {
   text: string;
   link?: { url: string; label: string };
+}
+
+/**
+ * One thing you have to paste in before a provider can be connected.
+ *
+ * `key` is the column it lands in on `integration_accounts`. Only two exist and
+ * that is deliberate — a free-form bag of named settings would need its own
+ * table, its own validation and its own screen, to hold at most two strings per
+ * provider that every OAuth provider on earth calls the same two things.
+ */
+export interface CredentialField {
+  key: 'clientId' | 'clientSecret';
+  label: string;
+  /**
+   * Whether the provider genuinely refuses to work without it.
+   *
+   * Google is the reason this is not just "clientSecret means required": a
+   * Desktop-type client uses PKCE and has no secret, while a Web-type client is
+   * issued one and demands it back. Both are legitimate, so the field is
+   * offered and not insisted upon.
+   */
+  required: boolean;
+  /** The environment variable that can supply this instead. */
+  envVar: string;
+  /** Shown under the box. Where to find the value, in their words. */
+  help?: string;
+  /** Masked in the UI, and never sent back to the browser once stored. */
+  secret?: boolean;
+}
+
+/** The env vars a provider will read if its fields are left blank. */
+export function envVarsFor(provider: ProviderId): string[] {
+  return PROVIDERS[provider].credentials.map((field) => field.envVar);
 }
 
 /* ------------------------------------------------------------------ */
@@ -192,7 +237,18 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       ],
       pkce: true,
     },
-    needs: ['SPOTIFY_CLIENT_ID'],
+    credentials: [
+      {
+        key: 'clientId',
+        label: 'Client ID',
+        required: true,
+        envVar: 'SPOTIFY_CLIENT_ID',
+        help: 'On your app’s page in the Spotify dashboard, under the name.',
+      },
+      // No secret field at all: Spotify supports PKCE, so there is nothing to
+      // store and nothing to leak. Offering the box anyway would invite you to
+      // paste a secret this app has no use for.
+    ],
     capabilities: {
       playlists: {
         status: 'works',
@@ -259,7 +315,27 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       // after an hour and looks like a bug in the token store.
       authorizeParams: { access_type: 'offline', prompt: 'consent' },
     },
-    needs: ['GOOGLE_CLIENT_ID'],
+    credentials: [
+      {
+        key: 'clientId',
+        label: 'Client ID',
+        required: true,
+        envVar: 'GOOGLE_CLIENT_ID',
+        help: 'Ends in .apps.googleusercontent.com',
+      },
+      {
+        key: 'clientSecret',
+        label: 'Client secret',
+        // Optional on purpose. A Desktop-type client uses PKCE and has none; a
+        // Web-type client is issued one and refuses the token exchange without
+        // it. Both are legitimate ways to set this up, so the box is offered
+        // rather than demanded.
+        required: false,
+        envVar: 'GOOGLE_CLIENT_SECRET',
+        help: 'Only if you created a Web application client. Desktop clients have none.',
+        secret: true,
+      },
+    ],
     capabilities: {
       playlists: {
         status: 'works',
@@ -334,7 +410,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
      * STEAM_API_KEY is still read as a fallback for anyone who would rather
      * keep it there, but nothing requires it.
      */
-    needs: [],
+    credentials: [],
     capabilities: {
       friends: {
         status: 'works',
@@ -374,7 +450,9 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       scopes: ['identify', 'openid', 'sdk.social_layer_presence'],
       pkce: true,
     },
-    needs: ['DISCORD_CLIENT_ID'],
+    credentials: [
+      { key: 'clientId', label: 'Client ID', required: true, envVar: 'DISCORD_CLIENT_ID' },
+    ],
     capabilities: {
       friends: {
         status: 'needs-approval',
@@ -416,7 +494,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     blurb: 'League friends and their status, read from the client running on this PC.',
     reach: 'local',
     auth: 'client',
-    needs: [],
+    credentials: [],
     capabilities: {
       friends: {
         status: 'partial',
@@ -444,7 +522,18 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       pkce: false,
       needsSecret: true,
     },
-    needs: ['BATTLENET_CLIENT_ID', 'BATTLENET_CLIENT_SECRET'],
+    credentials: [
+      { key: 'clientId', label: 'Client ID', required: true, envVar: 'BATTLENET_CLIENT_ID' },
+      {
+        key: 'clientSecret',
+        label: 'Client secret',
+        // The one provider here that genuinely cannot do without it: Battle.net
+        // is a confidential client and does not offer PKCE.
+        required: true,
+        envVar: 'BATTLENET_CLIENT_SECRET',
+        secret: true,
+      },
+    ],
     capabilities: {
       friends: {
         status: 'unavailable',
@@ -478,7 +567,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     blurb: 'Whether the launcher is running here. The friends list is not reachable.',
     reach: 'local',
     auth: 'client',
-    needs: [],
+    credentials: [],
     capabilities: {
       friends: {
         status: 'unavailable',
@@ -867,6 +956,22 @@ export function steamProfileInput(raw: string): { steamId: string } | { vanity: 
   // right message for a mistyped name as well as for a mistyped URL.
   return { vanity: input };
 }
+
+/**
+ * Saving an OAuth application's own credentials from the app.
+ *
+ * Both optional, and the distinction between *absent* and *empty* is the whole
+ * shape of it: absent means "leave whatever is stored", empty means "clear it".
+ * The form has to be able to send the first, because a secret is never sent back
+ * to the browser and so a blank box is the normal state for a field that is
+ * already set — treating that as "erase it" would wipe the secret every time
+ * somebody corrected the id next to it.
+ */
+export const credentialsSchema = z.object({
+  clientId: z.string().max(400).optional(),
+  clientSecret: z.string().max(400).optional(),
+});
+export type CredentialsInput = z.infer<typeof credentialsSchema>;
 
 export const syncRequestSchema = z.object({
   /** Omitted means everything this provider can do. */

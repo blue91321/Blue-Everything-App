@@ -88,14 +88,14 @@ export async function syncProvider(provider: ProviderId, capabilities?: Capabili
   const runners = RUNNERS[provider];
   if (!runners) return [];
 
-  const missing = missingCredentials(provider);
+  const missing = await missingCredentials(provider);
   if (missing.length > 0) {
     return [
       {
         provider,
         capability: 'playlists',
         ok: false,
-        note: `not configured — ${missing.join(' and ')} is not set`,
+        note: `not configured — fill in its fields on the Services tab, or set ${missing.join(' and ')}`,
       },
     ];
   }
