@@ -114,8 +114,29 @@ export async function clientSecret(provider: ProviderId): Promise<string> {
   return credentialValue(provider, 'clientSecret');
 }
 
+/**
+ * Where the provider sends the browser back to.
+ *
+ * **Outside `/api/`, and that is load-bearing** — the same reason the icons and
+ * the generated manifest had to move out. `auth.ts` protects exactly that
+ * prefix, and this request is a browser navigation started by Google or Spotify,
+ * which will never carry a bearer token.
+ *
+ * It was under `/api/` first, on the reasoning that it arrives on a loopback
+ * socket with a loopback Host so `isTrustedLocal` would allow it. That reasoning
+ * was incomplete and the callback failed with `missing bearer token` on the
+ * first real attempt: `isTrustedLocal` *also* refuses a cross-site
+ * `Sec-Fetch-Site`, and an OAuth redirect from accounts.google.com is precisely
+ * a cross-site navigation. That check is correct and must stay — it is what
+ * stops a page you are reading from POSTing to 127.0.0.1 in the background — so
+ * the route is what had to move.
+ *
+ * Nothing is lost by being unauthenticated. The `state` parameter is what
+ * protects this endpoint and always was: 32 random bytes, single-use, ten-minute
+ * window, and worthless to anybody who did not start the handshake here.
+ */
 export function redirectUri(provider: ProviderId): string {
-  return `${config.OAUTH_REDIRECT_BASE}/api/integrations/callback/${provider}`;
+  return `${config.OAUTH_REDIRECT_BASE}/oauth/callback/${provider}`;
 }
 
 /* ------------------------------------------------------------------ */

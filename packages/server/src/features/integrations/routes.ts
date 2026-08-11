@@ -210,7 +210,21 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     return { saved: Object.keys(values), missingConfig: await missingCredentials(provider) };
   });
 
-  app.get('/api/integrations/callback/:provider', async (request, reply) => {
+  /**
+   * Where the provider redirects back to. **Deliberately outside `/api/`.**
+   *
+   * See `redirectUri` for the full reasoning. In short: `auth.ts` protects the
+   * `/api/` prefix, and this is a navigation started by Google or Spotify that
+   * will never carry a token — the same category as the icons and the manifest,
+   * which had to move out for the same reason. `isTrustedLocal` refuses it too,
+   * because an OAuth redirect is by definition cross-site and that check exists
+   * to stop a page you are reading from talking to 127.0.0.1 behind your back.
+   *
+   * The `state` parameter is the protection here, and is sufficient: it is 32
+   * random bytes, used once, expiring in ten minutes, and only ever issued by
+   * the authorize route — which *is* local-only.
+   */
+  app.get('/oauth/callback/:provider', async (request, reply) => {
     const provider = parseProvider((request.params as { provider: string }).provider);
     const query = request.query as { code?: string; state?: string; error?: string; error_description?: string };
 

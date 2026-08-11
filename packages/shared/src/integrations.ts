@@ -292,9 +292,9 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         link: { url: 'https://developer.spotify.com/dashboard', label: 'developer.spotify.com/dashboard' },
       },
       {
-        text: 'Add this exact redirect URI (a trailing slash is a rejected login): http://127.0.0.1:8787/api/integrations/callback/spotify',
+        text: 'Add the redirect URI shown below as a redirect/callback URL, exactly as it appears — a trailing slash is a rejected login.',
       },
-      { text: 'Put its Client ID in SPOTIFY_CLIENT_ID. There is no secret to store — this uses PKCE.' },
+      { text: 'Paste the Client ID into the box below. There is no secret to store — this uses PKCE.' },
     ],
   },
 
@@ -375,10 +375,10 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         },
       },
       {
-        text: 'Add this exact redirect URI (a trailing slash is a rejected login): http://127.0.0.1:8787/api/integrations/callback/youtube',
+        text: 'Add the redirect URI shown below as a redirect/callback URL, exactly as it appears — a trailing slash is a rejected login.',
       },
       {
-        text: 'Put the Client ID in GOOGLE_CLIENT_ID, and the secret in GOOGLE_CLIENT_SECRET if the client type demands one.',
+        text: 'Paste the Client ID into the box below, and the secret too if you created a Web application client.',
       },
       {
         text: 'Watch history is not in the API at all — export it instead, then upload watch-history.json below.',
@@ -474,9 +474,9 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         },
       },
       {
-        text: 'Add this exact redirect URI (a trailing slash is a rejected login): http://127.0.0.1:8787/api/integrations/callback/discord',
+        text: 'Add the redirect URI shown below as a redirect/callback URL, exactly as it appears — a trailing slash is a rejected login.',
       },
-      { text: 'Put the Client ID in DISCORD_CLIENT_ID.' },
+      { text: 'Paste the Client ID into the box below.' },
       {
         text: 'Request Social SDK access for that application. Without it, connecting proves who you are and nothing more.',
         link: {
@@ -552,10 +552,10 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         link: { url: 'https://develop.battle.net/access/clients', label: 'develop.battle.net' },
       },
       {
-        text: 'Add this exact redirect URI (a trailing slash is a rejected login): http://127.0.0.1:8787/api/integrations/callback/battlenet',
+        text: 'Add the redirect URI shown below as a redirect/callback URL, exactly as it appears — a trailing slash is a rejected login.',
       },
       {
-        text: 'Put the id and secret in BATTLENET_CLIENT_ID and BATTLENET_CLIENT_SECRET — this one is a confidential client and PKCE is not offered.',
+        text: 'Paste both the id and the secret into the boxes below — this one is a confidential client and PKCE is not offered, so the secret is required.',
       },
     ],
   },

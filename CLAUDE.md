@@ -2114,11 +2114,35 @@ The OAuth redirect comes back to a browser on this PC, so a phone over Tailscale
 could not finish a handshake it started. Reading is not restricted — seeing who
 is online from the sofa is the point of the phone.
 
-**The callback lives under `/api/` and that is safe**, unlike the icons and the
-manifest which had to move out. Those are fetched by the browser's own machinery
-and will never send a token; this is a redirect arriving on a loopback socket
-with a loopback Host, which `isTrustedLocal` allows. The `state` parameter is
-what protects it, precisely because everything on this PC is equally trusted.
+**The callback lives at `/oauth/callback/:provider`, outside `/api/`** — the same
+move the icons and the manifest had to make, for the same reason: `auth.ts`
+protects exactly that prefix, and these are requests the browser's own machinery
+makes, which will never carry a bearer token.
+
+It was under `/api/` first, and this document confidently explained why that was
+safe: the redirect arrives on a loopback socket with a loopback Host, so
+`isTrustedLocal` allows it. **That was wrong**, and it failed on the first real
+connection with `{"error":"missing bearer token"}`. `isTrustedLocal` also refuses
+a cross-site `Sec-Fetch-Site` — and a redirect from `accounts.google.com` is
+precisely a cross-site navigation. That check is correct and stays; it is what
+stops a page you are reading from POSTing to 127.0.0.1 in the background. The
+route is what had to move.
+
+Nothing is lost by being unauthenticated, because the `state` parameter is what
+protected this endpoint all along: 32 random bytes, single-use, ten-minute
+window, issued only by the authorize route — which *is* local-only.
+
+**Neither `app.inject()` nor curl sends `Sec-Fetch-Site`**, which is exactly why
+this survived being tested. `npm run smoke` now drives the callback with the
+header a browser would actually send, and asserts both halves: that the check
+still refuses a cross-site request, and that the callback no longer depends on
+it.
+
+The redirect URI is **shown on the Services tab with a copy button, read live
+from the server**, and is deliberately not written into the setup text. It
+depends on the port and on `OAUTH_REDIRECT_BASE`, so a hard-coded copy goes
+stale silently — and when it moved out of `/api/`, four hard-coded copies in the
+instructions were each one rejected login waiting to happen.
 
 `OAUTH_REDIRECT_BASE` defaults to the **loopback IP literal**, not `localhost`:
 Spotify and Google both stopped accepting `http://localhost` while continuing to
