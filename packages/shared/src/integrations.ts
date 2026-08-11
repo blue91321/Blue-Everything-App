@@ -207,7 +207,34 @@ export interface ProviderSpec {
  */
 export interface SetupStep {
   text: string;
-  link?: { url: string; label: string };
+  /**
+   * `url` may contain `{appId}`, which the server replaces with the client id
+   * you have already pasted — so the link opens *your* application rather than
+   * a list you then have to find it in. Steps carrying it fall back to the
+   * generic page when nothing is stored yet, which `resolveSetupLinks` handles.
+   */
+  link?: { url: string; label: string; whenNoAppId?: string };
+}
+
+/**
+ * Point a step's link at the connected application, when we know which one.
+ *
+ * The client id and the portal's application id are the same value, so the
+ * moment you have pasted one the app can deep-link to your own settings page.
+ * Without it the link goes to the applications list, which is correct and one
+ * click worse.
+ */
+export function resolveSetupLinks(steps: SetupStep[], appId: string | null): SetupStep[] {
+  return steps.map((step) => {
+    if (!step.link?.url.includes('{appId}')) return step;
+
+    return {
+      ...step,
+      link: appId
+        ? { ...step.link, url: step.link.url.replace('{appId}', appId) }
+        : { ...step.link, url: step.link.whenNoAppId ?? 'https://discord.com/developers/applications' },
+    };
+  });
 }
 
 /**
@@ -531,18 +558,20 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         sourceUrl: 'https://discord.com/developers/docs/discord-social-sdk/core-concepts/oauth2-scopes',
         unlock: [
           {
-            text:
-              'Open your application in the developer portal and look for "Social SDK" in the left menu, ' +
-              'then "Getting Started" underneath it.',
+            // The path is Games → Social SDK. It is not a top-level entry, and
+            // saying "look for Social SDK in the left menu" sent somebody
+            // looking at a menu that does not have one.
+            text: 'Open your application, then in the left menu expand "Games" and choose "Social SDK".',
             link: {
-              url: 'https://discord.com/developers/applications',
-              label: 'your applications',
+              url: 'https://discord.com/developers/applications/{appId}',
+              label: 'open your Discord application',
+              whenNoAppId: 'https://discord.com/developers/applications',
             },
           },
           {
             text:
-              'Fill in what it asks about your project and press Submit. This is a request to Discord rather ' +
-              'than a switch you flip — the Social SDK is aimed at games, and access is theirs to grant.',
+              'Follow what that page asks for and submit it. This is a request to Discord rather than a ' +
+              'switch you flip — the Social SDK is aimed at games, and access is theirs to grant.',
             link: {
               url: 'https://discord.com/developers/docs/discord-social-sdk/getting-started',
               label: 'Social SDK docs',
@@ -578,6 +607,11 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         text:
           'In the left menu, click OAuth2. Your Client ID is at the top of that page, under "Client information" — ' +
           'copy it into the Client ID box below.',
+        link: {
+          url: 'https://discord.com/developers/applications/{appId}',
+          label: 'open your application',
+          whenNoAppId: 'https://discord.com/developers/applications',
+        },
       },
       {
         text:

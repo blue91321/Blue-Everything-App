@@ -29,6 +29,7 @@ import {
   isProviderId,
   localPresenceSchema,
   presenceRank,
+  resolveSetupLinks,
   syncRequestSchema,
   type Capability,
   type ProviderId,
@@ -40,6 +41,7 @@ import {
   beginAuthorization,
   completeAuthorization,
   credentialState,
+  credentialValue,
   grantedScopes,
   missingCredentials,
   optionalScopesRefused,
@@ -71,8 +73,23 @@ async function providerState(id: ProviderId) {
   const account = await getAccount(id);
   const spec = PROVIDERS[id];
 
+  /*
+   * The portal's application id and the OAuth client id are the same value, so
+   * the moment one has been pasted every "open your application" link can go
+   * straight there instead of to a list you then search. Resolved here rather
+   * than in the browser: the client id is not sent to it, deliberately.
+   */
+  const appId = (await credentialValue(id, 'clientId')) || null;
+
   return {
     ...spec,
+    setup: resolveSetupLinks(spec.setup, appId),
+    capabilities: Object.fromEntries(
+      Object.entries(spec.capabilities).map(([name, capability]) => [
+        name,
+        capability?.unlock ? { ...capability, unlock: resolveSetupLinks(capability.unlock, appId) } : capability,
+      ])
+    ),
     /**
      * Connected means there is a *credential to act with*, not that a row
      * exists.

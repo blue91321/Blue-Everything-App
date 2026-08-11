@@ -2088,6 +2088,15 @@ The four that hurt, and why they are stated rather than worked around:
   only one copy shows at a time. `needs-approval` without steps is the same dead
   end `unavailable` was, so `integrations-check` refuses it.
 
+  **Name the menu path, and deep-link to the account's own application.** The
+  first version said "look for Social SDK in the left menu", and it is not there
+  — it is under *Games*. A step naming a menu entry that does not exist is worse
+  than no step. The portal's application id and the OAuth client id are the same
+  value, so a `{appId}` placeholder in a link is substituted server-side once one
+  has been pasted: the link opens your application rather than a list you then
+  search. `resolveSetupLinks` falls back to the generic page when nothing is
+  stored, and the check covers both directions plus "no placeholder survives".
+
 - **Discord's friends list comes through `sdk.social_layer_presence`.**
   `grantedScopes` is checked rather than assumed, and that stays whatever the
   approval position is: a token can come back with a scope silently dropped, and

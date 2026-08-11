@@ -21,6 +21,7 @@ import {
   PROVIDER_LIST,
   categoriseGenres,
   categoriseVideo,
+  resolveSetupLinks,
   steamProfileInput,
   type MusicCategory,
 } from '@everything/shared/integrations';
@@ -281,6 +282,37 @@ check(
   'spotify asks for no secret at all, being PKCE',
   !PROVIDERS.spotify.credentials.some((f) => f.key === 'clientSecret')
 );
+
+console.log('\nSetup links point at your own application when they can');
+
+{
+  // The manifest ships a `{appId}` placeholder and the server fills it in. A
+  // link reaching the screen still holding it would be a 404 in a new tab.
+  const steps = PROVIDERS.discord.capabilities.friends!.unlock!;
+  const withId = resolveSetupLinks(steps, '123456789');
+  const withoutId = resolveSetupLinks(steps, null);
+
+  check(
+    'a known client id deep-links to that application',
+    withId[0].link!.url === 'https://discord.com/developers/applications/123456789',
+    withId[0].link!.url
+  );
+  check(
+    'and without one it falls back to the applications list',
+    withoutId[0].link!.url === 'https://discord.com/developers/applications',
+    withoutId[0].link!.url
+  );
+  check(
+    'no placeholder survives either way',
+    ![...withId, ...withoutId].some((step) => step.link?.url.includes('{appId}'))
+  );
+  // A step with no placeholder must come back untouched, or resolving would
+  // quietly rewrite the documentation links as well.
+  check(
+    'a plain link is left alone',
+    withId[1].link!.url === 'https://discord.com/developers/docs/discord-social-sdk/getting-started'
+  );
+}
 
 console.log('\nNothing here claims to be impossible');
 

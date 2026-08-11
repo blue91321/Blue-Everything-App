@@ -497,6 +497,7 @@ export interface CapabilityInfo {
  */
 export interface SetupStep {
   text: string;
+  /** Already resolved by the server — `{appId}` is substituted before it is sent. */
   link?: { url: string; label: string };
 }
 
