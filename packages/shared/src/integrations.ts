@@ -113,6 +113,16 @@ export interface CapabilitySpec {
    * names two endpoints, and turning that into a link would invent a page.
    */
   sourceUrl?: string;
+  /**
+   * How to turn this on, for a capability the provider gates.
+   *
+   * Attached to the capability rather than to the provider's `setup`, because
+   * it is not part of connecting: you can have a working connection and still
+   * not have this. Rendered next to the thing it unlocks and again in the
+   * banner you get when the provider refuses the scope, which is the moment you
+   * actually want it.
+   */
+  unlock?: SetupStep[];
 }
 
 export interface ProviderSpec {
@@ -519,6 +529,31 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
           'this row says why the list is empty.',
         source: 'sdk.social_layer_presence — invalid_scope until the Social SDK is enabled',
         sourceUrl: 'https://discord.com/developers/docs/discord-social-sdk/core-concepts/oauth2-scopes',
+        unlock: [
+          {
+            text:
+              'Open your application in the developer portal and look for "Social SDK" in the left menu, ' +
+              'then "Getting Started" underneath it.',
+            link: {
+              url: 'https://discord.com/developers/applications',
+              label: 'your applications',
+            },
+          },
+          {
+            text:
+              'Fill in what it asks about your project and press Submit. This is a request to Discord rather ' +
+              'than a switch you flip — the Social SDK is aimed at games, and access is theirs to grant.',
+            link: {
+              url: 'https://discord.com/developers/docs/discord-social-sdk/getting-started',
+              label: 'Social SDK docs',
+            },
+          },
+          {
+            text:
+              'Once it is granted, press "Ask for everything again" on this card and connect once more. ' +
+              'Nothing else changes — the client ID and redirect URI you already set up stay as they are.',
+          },
+        ],
       },
     },
     /*

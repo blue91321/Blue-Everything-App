@@ -203,14 +203,37 @@ for (const spec of PROVIDER_LIST) {
     check(`${spec.id}: "${step.link.label}" has something to click`, step.link.label.trim().length > 0);
   }
 
-  // Same for a citation that claims to be a page rather than an endpoint name.
+  // Same for a citation that claims to be a page rather than an endpoint name,
+  // and for the steps that unlock a gated capability.
   for (const [name, capability] of Object.entries(spec.capabilities)) {
-    if (!capability?.sourceUrl) continue;
-    check(
-      `${spec.id}/${name}: sourceUrl is an absolute https link`,
-      /^https:\/\/\S+$/.test(capability.sourceUrl),
-      capability.sourceUrl
-    );
+    if (capability?.sourceUrl) {
+      check(
+        `${spec.id}/${name}: sourceUrl is an absolute https link`,
+        /^https:\/\/\S+$/.test(capability.sourceUrl),
+        capability.sourceUrl
+      );
+    }
+
+    for (const step of capability?.unlock ?? []) {
+      if (!step.link) continue;
+      check(
+        `${spec.id}/${name}: unlock link "${step.link.label}" is absolute https`,
+        /^https:\/\/\S+$/.test(step.link.url),
+        step.link.url
+      );
+    }
+  }
+
+  /*
+   * A gated capability has to say how to ungate it.
+   *
+   * `needs-approval` without steps is the same dead end `unavailable` was: a
+   * row telling you something is off and leaving you to find the switch. It is
+   * the exact complaint Discord's row drew.
+   */
+  for (const [name, capability] of Object.entries(spec.capabilities)) {
+    if (capability?.status !== 'needs-approval') continue;
+    check(`${spec.id}/${name}: says how to get the approval`, (capability.unlock?.length ?? 0) > 0);
   }
 
   // `client` providers have nothing to configure by definition, and a `needs`

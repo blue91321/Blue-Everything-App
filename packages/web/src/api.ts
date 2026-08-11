@@ -485,6 +485,8 @@ export interface CapabilityInfo {
   source?: string;
   /** Present only when `source` names a page that can actually be opened. */
   sourceUrl?: string;
+  /** Steps to turn on a capability the provider gates. */
+  unlock?: SetupStep[];
 }
 
 /**

@@ -11,10 +11,42 @@
  * would change a connection are replaced with a line saying where to do it.
  */
 import { useState } from 'react';
-import { api, type ProviderInfo, type SyncOutcome } from '../../api';
+import { api, type ProviderInfo, type SetupStep, type SyncOutcome } from '../../api';
 import { useAsync } from '../../useAsync';
 import { Credentials } from './Credentials';
 import { StatusChip, relativeTime } from './Integrations';
+
+/**
+ * A numbered list of steps with their links.
+ *
+ * Extracted because it is now used twice — the setup list, and the steps that
+ * unlock a gated capability — and a second copy would be the one that stopped
+ * opening links in a new tab.
+ */
+function SetupSteps({ steps }: { steps: SetupStep[] }) {
+  return (
+    <ol style={{ marginTop: '.5rem', paddingLeft: '1.3rem' }}>
+      {steps.map((step) => (
+        <li key={step.text} className="meta" style={{ marginBottom: '.5rem' }}>
+          {step.text}
+          {/*
+            A real anchor, not a domain rendered as text you have to retype into
+            the address bar. `noreferrer noopener` because these open in a new
+            tab and the target has no business with a handle on this window.
+          */}
+          {step.link && (
+            <>
+              {' '}
+              <a href={step.link.url} target="_blank" rel="noreferrer noopener">
+                {step.link.label} ↗
+              </a>
+            </>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 const CAPABILITY_LABEL: Record<string, string> = {
   playlists: 'Playlists',
@@ -84,6 +116,9 @@ function ProviderCard({
    * real handshake and leaves the app holding a token it can do nothing with is
    * worse than one that explains why it is not offered.
    */
+  /** Steps to unlock whichever capability the provider is gating, if any. */
+  const unlockSteps = Object.values(provider.capabilities).flatMap((spec) => spec?.unlock ?? []);
+
   const anythingUsable = Object.values(provider.capabilities).some(
     (spec) => spec && spec.status !== 'unavailable'
   );
@@ -192,6 +227,21 @@ function ProviderCard({
               {/* The citation, for when the sentence above is not believed —
                   which is the correct reaction to being told an API cannot do
                   something its documentation appears to describe. */}
+              {/*
+                How to turn it on, right under the row saying it is off. A
+                `needs-approval` status that does not say how to get the
+                approval is the same dead end as an `unavailable` one.
+
+                Suppressed while the refusal banner is up, because that carries
+                the same steps expanded — two copies of one list on one card is
+                how a screen starts looking like it is repeating itself.
+              */}
+              {spec.unlock && spec.status === 'needs-approval' && !provider.optionalScopesRefused && (
+                <details style={{ marginTop: '.35rem' }}>
+                  <summary className="meta">How to enable it</summary>
+                  <SetupSteps steps={spec.unlock} />
+                </details>
+              )}
               {spec.source && (
                 <div className="meta" style={{ marginTop: 2, opacity: 0.7 }}>
                   {/* Linked only where the citation is a page. Half of them name
@@ -239,27 +289,7 @@ function ProviderCard({
           <summary className="meta">
             {provider.connected ? 'Setup and troubleshooting' : `Setting up ${provider.label}`}
           </summary>
-          <ol style={{ marginTop: '.5rem', paddingLeft: '1.3rem' }}>
-            {provider.setup.map((step) => (
-              <li key={step.text} className="meta" style={{ marginBottom: '.5rem' }}>
-                {step.text}
-                {/*
-                  A real anchor, not a domain rendered as text you have to retype
-                  into the address bar. `noreferrer noopener` because these open
-                  in a new tab and the target has no business with a handle on
-                  this window.
-                */}
-                {step.link && (
-                  <>
-                    {' '}
-                    <a href={step.link.url} target="_blank" rel="noreferrer noopener">
-                      {step.link.label} ↗
-                    </a>
-                  </>
-                )}
-              </li>
-            ))}
-          </ol>
+          <SetupSteps steps={provider.setup} />
         </details>
       )}
 
@@ -305,7 +335,18 @@ function ProviderCard({
         <div className="banner" style={{ marginTop: '.75rem' }}>
           {provider.label} would not grant everything this asks for, so it is no longer asking — the
           connection works, and the capability above marked <em>needs approval</em> is the part you do not
-          have. Enable it for your application at {provider.label}, then press below and connect again.
+          have.
+          {/*
+            The steps repeated here rather than pointed at. This banner is the
+            moment you want them, and "see the list above" is one more thing to
+            go and find on a screen you are already lost on.
+          */}
+          {unlockSteps.length > 0 && (
+            <details open style={{ marginTop: '.4rem' }}>
+              <summary className="meta">How to enable it</summary>
+              <SetupSteps steps={unlockSteps} />
+            </details>
+          )}
           <div className="row" style={{ marginTop: '.5rem' }}>
             <button
               className="btn subtle"

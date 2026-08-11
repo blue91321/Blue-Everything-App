@@ -2080,6 +2080,14 @@ The four that hurt, and why they are stated rather than worked around:
   The failure mode this replaces is the worst kind: pressing Connect, being
   refused, and having no route out from inside the app.
 
+- **A gated capability has to say how to ungate it.** `CapabilitySpec.unlock`
+  carries the steps, attached to the capability rather than to the provider's
+  `setup`, because it is not part of connecting — you can have a working
+  connection and still not have this. They render under the capability, and
+  again inside the refusal banner, which is the moment you actually want them;
+  only one copy shows at a time. `needs-approval` without steps is the same dead
+  end `unavailable` was, so `integrations-check` refuses it.
+
 - **Discord's friends list comes through `sdk.social_layer_presence`.**
   `grantedScopes` is checked rather than assumed, and that stays whatever the
   approval position is: a token can come back with a scope silently dropped, and
