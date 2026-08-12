@@ -39,9 +39,33 @@ const STATE_LABEL: Record<FriendRow['state'], string> = {
  */
 type Filter = 'all' | string;
 
+/**
+ * Does this person answer to what was typed?
+ *
+ * **Every handle they have, not only the name on the row.** A merged person is
+ * shown under whichever account `IDENTITY_PREFERENCE` picked — Discord, almost
+ * always — so searching the Steam persona you actually know them by would find
+ * nothing while the row sat there in plain sight. That is the exact failure the
+ * merge introduced, and the one a search box has to undo.
+ *
+ * The game is included too, which makes "who is in Arena" a search rather than a
+ * scroll. It cannot be confused with a name match: both put the row on screen,
+ * and the row says which it was.
+ */
+function matchesSearch(friend: FriendRow, needle: string): boolean {
+  if (needle === '') return true;
+
+  return (
+    friend.name.toLowerCase().includes(needle) ||
+    (friend.game ?? '').toLowerCase().includes(needle) ||
+    friend.accounts.some((account) => account.name.toLowerCase().includes(needle))
+  );
+}
+
 export function Friends() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
+  const [search, setSearch] = useState('');
 
   /*
    * The read refreshes stale providers server-side — see `refreshPresence` for
@@ -71,10 +95,13 @@ export function Friends() {
    * are right for what they do: picking Steam should include the friend you
    * also know from Discord, while hiding Riot should not remove them.
    */
-  const shown =
+  const needle = search.trim().toLowerCase();
+
+  const shown = (
     filter === 'all'
       ? view.data.friends
-      : view.data.friends.filter((f) => f.accounts.some((a) => a.provider === filter));
+      : view.data.friends.filter((f) => f.accounts.some((a) => a.provider === filter))
+  ).filter((f) => matchesSearch(f, needle));
 
   const around = shown.filter((f) => f.state !== 'offline' && f.state !== 'unknown');
   const unknown = shown.filter((f) => f.state === 'unknown');
@@ -82,6 +109,23 @@ export function Friends() {
 
   return (
     <>
+      {/*
+        First, and on its own row.
+
+        This list is 270 people; searching it is the main thing you do here, and
+        it should not be the control you find last. The Following tab had its
+        box wrapped below two rows of buttons for the same reason it was easy to
+        miss there — both are now in the same place.
+      */}
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search friends"
+        aria-label="Search friends by name, handle, or what they are playing"
+        type="search"
+        style={{ marginBottom: '.75rem' }}
+      />
+
       <PlatformFilter
         sources={view.data.sources}
         friends={view.data.friends}
@@ -91,6 +135,13 @@ export function Friends() {
 
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="meta">
+          {/*
+            While searching, the counts describe the *matches* — so they lead
+            with how many there are. Without that, "1 online" over a filtered
+            list reads as one person online out of everybody, which is a
+            different and much more alarming statement.
+          */}
+          {needle ? `${shown.length} matching · ` : ''}
           {around.length === 0 ? 'Nobody online' : `${around.length} online`}
           {offline.length ? ` · ${offline.length} offline` : ''}
           {/* Counted separately and named, so a hundred rows nobody can vouch
@@ -114,7 +165,23 @@ export function Friends() {
         onChanged={view.reload}
       />
 
-      <Suggestions onLinked={view.reload} />
+      {/* Hidden while searching: proposals about two other people are noise
+          when you are looking for a third. */}
+      {!needle && <Suggestions onLinked={view.reload} />}
+
+      {/*
+        A search that finds nobody says so, rather than leaving three empty
+        sections and the sources panel to imply the integration broke.
+      */}
+      {needle && shown.length === 0 && (
+        <div className="empty">
+          Nobody matches "{search.trim()}"
+          {filter === 'all' ? '' : ` on ${filter}`}.
+          {view.data.hiddenCount
+            ? ` ${view.data.hiddenCount} people are hidden by the service filter below.`
+            : ''}
+        </div>
+      )}
 
       {around.map((friend) => (
         <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />

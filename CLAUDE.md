@@ -2374,6 +2374,27 @@ the last attempt failed — its own chip rather than the `unavailable` capabilit
 status, which renders "not possible" and is a claim about the *service* rather
 than about one failed attempt that will retry.
 
+### Searching, and the handle you actually know them by
+
+Both long lists lead with a search box, on its own full-width row above the
+filters. On Following it had been the last item of a row containing two groups
+of buttons, which at any real width put it on a wrapped third line — present,
+and the last thing anybody would find.
+
+**Friends matches every handle a person has, not just the name on the row.** A
+merged person is displayed under whichever account `IDENTITY_PREFERENCE` picked,
+which is Discord almost always — so searching the Steam persona you know them by
+found nothing while the row sat there in plain sight. That failure is something
+the merge introduced and the search box has to undo. Verified: typing a Steam
+handle finds the person shown under their Discord name.
+
+The game is matched too, so "who is in Arena" is a search rather than a scroll.
+
+While a search is running the counts lead with **how many matched**. "1 online"
+above a filtered list is true of the list and alarming as a statement about your
+friends. The link suggestions are hidden as well — proposals about two other
+people are noise when you are looking for a third.
+
 ### Two filters, and they are not the same filter
 
 **A selector** across the top — All, then one chip per service with a count.

@@ -93,6 +93,24 @@ export function Following() {
 
   return (
     <>
+      {/*
+        First, and on its own row.
+
+        It used to sit at the end of the row below, which on any real width put
+        it on a wrapped third line under two groups of buttons — present, and
+        the last thing you would find. A list of four hundred channels is one
+        you search rather than scroll, so it leads. Same position as the box on
+        the Friends tab, since they do the same job.
+      */}
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search channels and artists"
+        aria-label="Search followed accounts"
+        type="search"
+        style={{ marginBottom: '.75rem' }}
+      />
+
       <div className="row wrap" style={{ justifyContent: 'space-between', alignItems: 'center', gap: '.5rem' }}>
         <div className="row" role="group" aria-label="Show">
           {(
@@ -126,15 +144,6 @@ export function Following() {
           ))}
         </div>
 
-        {/* A list of three hundred channels is a list you search rather than
-            scroll. Client-side because it is already all here. */}
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search"
-          aria-label="Search followed accounts"
-          type="search"
-        />
       </div>
 
       {shown.length === 0 ? (
