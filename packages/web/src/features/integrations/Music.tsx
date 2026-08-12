@@ -106,7 +106,8 @@ export function Music({ local }: { local: boolean }) {
                   {collection.name}
                 </div>
                 <div className="meta">
-                  {collection.provider} · {collection.itemCount.toLocaleString()} items
+                  {collection.provider} · {collection.itemCount.toLocaleString()}{' '}
+                  {collection.itemCount === 1 ? 'item' : 'items'}
                   {collection.kind !== 'playlist' ? ` · ${collection.kind}` : ''}
                   {collection.ignored ? ' · ignored' : ''}
                 </div>

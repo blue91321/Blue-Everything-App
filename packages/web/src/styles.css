@@ -561,6 +561,34 @@ textarea {
   min-height: 88px;
 }
 
+/* A tick box is not a text field.
+
+   The rule above styles every `input` as one — full width, 12px of padding —
+   which is right for the text boxes this app is mostly made of and catastrophic
+   for a checkbox: it stretched to fill its flex row and squeezed the label
+   beside it until the text wrapped one character per line. Nothing caught it
+   sooner because the playlist boxes are the first native checkboxes in the app;
+   everything else uses the `.toggle` switch.
+
+   `flex: none` matters as much as the width: inside a `.row` the box would
+   otherwise be a flex item free to grow again. */
+input[type='checkbox'],
+input[type='radio'] {
+  width: auto;
+  flex: none;
+  padding: 0;
+  margin: 0;
+  /* Draws the tick in the theme's accent rather than the browser's blue. */
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type='checkbox']:disabled,
+input[type='radio']:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 input:focus,
 textarea:focus,
 select:focus {
