@@ -679,6 +679,42 @@ lets `--import tsx` resolve the loader, but only the *command line* is visible t
 `Get-CimInstance`, and that's how `stop.ps1` distinguishes these from every
 other node process on the machine.
 
+### When the server is not running, the window is still there
+
+The service worker caches the shell, so stopping the server leaves the app
+window open and looking fine while every request fails. That failure used to be
+indistinguishable from a 401 — it dropped you on the **pairing screen**, asking
+for a device token, which is the one thing that was not broken. `api.ts` now
+throws `ServerUnreachable` for a network failure specifically, and `App.tsx`
+renders `Offline.tsx` instead.
+
+That screen offers to start it, through an `everything:` URL registered in HKCU
+by `scripts/register-protocol.ps1` (run by `Create Desktop Icon.cmd`, alongside
+the shortcut — both answer "set this machine up to run the app"). A web page has
+no other way to launch a process.
+
+**The command takes no `%1`.** Nothing from the link reaches PowerShell, so the
+whole of what any page on the internet achieves by invoking `everything://` is
+starting your own app — the same thing the desktop shortcut does. Verified:
+`Start-Process "everything://start"` with the server down brought it back up.
+
+**The click itself is a real `<a href>`, not `location.href` in a handler.**
+Chromium gates handing a URL to an external program on a user gesture and treats
+an anchor navigation as one far more readily than a scripted assignment, which
+it drops silently. Expect a one-time "Open Blue Everything?" prompt; that is the
+browser asking the right question in the right place.
+
+**This is the one part not verified end to end here.** The automation browser
+refuses external-protocol launches outright, so a real click produced no launch
+and no console error — which is what that policy looks like, and also what a
+broken button looks like. The handler and the screen are each verified
+independently; the handoff between them needs one press in a real window.
+
+The fallback is therefore always on screen rather than behind the failure — the
+file to double-click, named — because a protocol that was never registered does
+nothing visible at all. The button is hidden entirely off loopback: from the
+phone over Tailscale it could only ever appear to do nothing.
+
 ## Running the parts individually
 
 ```bash

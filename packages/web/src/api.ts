@@ -20,6 +20,20 @@ export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
 export class Unauthorized extends Error {}
 
 /**
+ * Thrown when the request never reached a server.
+ *
+ * Distinct from `Unauthorized`, and the distinction is the point: a `fetch`
+ * that rejects and a 401 both ended with no session, so both used to blank the
+ * app back to the pairing screen — and "Blue Everything is not running" was
+ * therefore reported as "this device is not paired", which sends you off to
+ * find a token you already have.
+ *
+ * The shell survives the server dying because the service worker caches it, so
+ * this state is genuinely reachable and worth telling apart.
+ */
+export class ServerUnreachable extends Error {}
+
+/**
  * GETs for the same URL that are already in flight, so they become one.
  *
  * A single change announcement reaches every `useAsync` on screen at once, and
@@ -56,15 +70,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 async function send<T>(path: string, init: RequestInit, method: string): Promise<T> {
   const body = init.body ?? (method === 'GET' ? undefined : '{}');
 
-  const response = await fetch(path, {
-    ...init,
-    body,
-    headers: {
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      authorization: `Bearer ${getToken()}`,
-      ...init.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      body,
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        authorization: `Bearer ${getToken()}`,
+        ...init.headers,
+      },
+    });
+  } catch (cause) {
+    // `fetch` rejects only when the request never got a reply — the process is
+    // down, the machine is asleep, the network is gone. Anything the server
+    // answered, however badly, comes back as a response.
+    throw new ServerUnreachable(cause instanceof Error ? cause.message : 'could not reach the server');
+  }
 
   if (response.status === 401) throw new Unauthorized('this device is not paired');
   if (!response.ok) throw new Error(await errorMessage(response, method, path));
@@ -686,6 +708,22 @@ export interface MusicView {
 
 export const api = {
   health: () => request<{ ok: boolean }>('/health'),
+  /**
+   * Is the server answering *right now*?
+   *
+   * Deliberately not `api.health()`: that goes through the coalescer, which
+   * would hand every poll the same in-flight promise, and it carries the bearer
+   * token for no reason. This is a bare liveness ping used while waiting for a
+   * server that is starting up.
+   */
+  isUp: async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`/health?t=${Date.now()}`, { cache: 'no-store' });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  },
   session: () => request<Session>('/api/session'),
 
   devices: {

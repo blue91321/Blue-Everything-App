@@ -72,5 +72,16 @@ foreach ($path in $targets) {
   Write-Host "Created $path" -ForegroundColor Green
 }
 
+# Same action, one level down: "set this machine up to run the app". Registering
+# the URL scheme is what lets the app's own offline screen start the server after
+# it has been stopped — see scriptsegister-protocol.ps1 for why that is narrow.
+# A failure here must not cost the shortcuts, which are the point of this script.
+try {
+  & (Join-Path $PSScriptRoot 'register-protocol.ps1')
+} catch {
+  Write-Host "Could not register the everything: link — $($_.Exception.Message)" -ForegroundColor Yellow
+  Write-Host 'The shortcuts still work; only the in-app "Start it" button needs this.' -ForegroundColor Yellow
+}
+
 Write-Host ''
 Write-Host 'You can drag the Desktop icon onto your taskbar to pin it.' -ForegroundColor Cyan

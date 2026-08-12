@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { api, clearToken, setToken, type Session } from './api';
+import { ServerUnreachable, api, clearToken, setToken, type Session } from './api';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
 import { setEnabledFeatures, webFeatures } from './features';
 import {
@@ -12,6 +12,7 @@ import {
   type AppTheme,
 } from './theme';
 import { Logo, type LogoShape } from './Logo';
+import { Offline } from './Offline';
 import { onDataChange } from './live';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
@@ -57,6 +58,8 @@ const DESKTOP_QUERY = '(min-width: 900px)';
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [checking, setChecking] = useState(true);
+  /** The last session check failed because nothing answered, not because of a 401. */
+  const [unreachable, setUnreachable] = useState(false);
   /**
    * The same value, readable without making `checkSession` depend on it.
    *
@@ -97,9 +100,20 @@ export function App() {
       const next = await api.session();
       sessionRef.current = next;
       setSession(next);
-    } catch {
+      setUnreachable(false);
+    } catch (error) {
       sessionRef.current = null;
       setSession(null);
+      /*
+       * Which kind of failure this was decides which screen you get.
+       *
+       * Both end with no session, and both used to show the pairing form — so
+       * "the server is not running" was reported as "this device is not
+       * paired", which sends you looking for a token that was never the
+       * problem. The shell is cached by the service worker, so being here with
+       * nothing listening is an ordinary situation rather than an odd one.
+       */
+      setUnreachable(error instanceof ServerUnreachable);
     } finally {
       setChecking(false);
     }
@@ -171,6 +185,7 @@ export function App() {
       </div>
     );
   }
+  if (!session && unreachable) return <Offline onBack={() => setUnreachable(false)} />;
   if (!session) return <Pairing onPaired={checkSession} />;
 
   /*
