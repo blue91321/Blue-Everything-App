@@ -326,16 +326,35 @@ export async function itemsInCollection(collectionId: string) {
 
 /** How the library breaks down by family — the summary the Music tab opens on. */
 export async function categoryBreakdown(provider?: ProviderId) {
-  const query = db
+  /*
+   * Only what is in a playlist you have not ticked off.
+   *
+   * The same condition `followPlaylistCounts` uses, for the same reason: a
+   * ticked playlist is one you have said should not count, and counting it
+   * anywhere else makes the tick a half-measure. On this install the difference
+   * is 1,879 items against 86 — the Music tab was describing a library that was
+   * ninety-five per cent the one playlist you had excluded.
+   *
+   * Items in *no* collection are excluded too. There are none today, but a
+   * playlist deleted at the provider would leave some, and "my library" means
+   * what is in my playlists rather than everything ever seen.
+   */
+  const inAKeptPlaylist = sql`exists (
+    select 1
+    from media_collection_items ci
+    join media_collections mc on mc.id = ci.collection_id
+    where ci.item_id = ${mediaItems.id} and mc.ignored = 0
+  )`;
+
+  return db
     .select({
       category: mediaItems.category,
       count: sql<number>`count(*)`.as('count'),
     })
     .from(mediaItems)
+    .where(provider ? and(eq(mediaItems.provider, provider), inAKeptPlaylist) : inAKeptPlaylist)
     .groupBy(mediaItems.category)
     .orderBy(desc(sql`count(*)`));
-
-  return provider ? query.where(eq(mediaItems.provider, provider)) : query;
 }
 
 /* ------------------------------------------------------------------ */

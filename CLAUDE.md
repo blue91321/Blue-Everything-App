@@ -2280,6 +2280,17 @@ against 1–16 for every other playlist, and excluding it took the Following
 counts from 195 accounts to 12 — which is the difference between "everyone I
 ever liked a video from" and "people whose music I actually keep".
 
+**Ticked means ticked everywhere**: out of syncs, out of the Following tab's
+counts, and out of the Music tab's own breakdown. That last one was missed at
+first, so the library header read 1,879 tracks while ninety-five per cent of
+them came from the one playlist that had been excluded — a tick that only half
+applies is worse than no tick, because the number looks authoritative either
+way. One `exists` condition now serves both counts.
+
+Items in *no* collection are excluded by the same condition. There are none
+today, but a playlist deleted at the provider would leave some, and "my library"
+means what is in my playlists rather than everything ever seen.
+
 Nothing already synced is deleted when you tick a box; it simply stops being
 refreshed and stops counting.
 
