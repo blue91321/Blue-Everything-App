@@ -424,6 +424,21 @@ export const settings = sqliteTable('settings', {
    */
   overlayAvatar: text('overlay_avatar').notNull().default(''),
 
+  /**
+   * Services whose friends you do not want in the list, as a JSON array of
+   * provider ids.
+   *
+   * Here rather than in the integrations feature's own tables because there is
+   * nowhere better: Riot has no account row at all — the agent finds the client
+   * or it does not — so a `hidden` flag on `integration_accounts` could not
+   * express the one people most want to hide. Voice keeps its settings here for
+   * the same reason, and this column is a list of opaque slugs, so core still
+   * knows nothing about what a provider *is*.
+   *
+   * Empty is the default and means the list is whole.
+   */
+  hiddenFriendProviders: text('hidden_friend_providers').notNull().default('[]'),
+
   updatedAt: touched(),
 });
 

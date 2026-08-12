@@ -1371,6 +1371,16 @@ export const updateSettingsSchema = z.object({
   overlayScreen: z.string().max(200).nullish(),
   /** An emoji, `file` for the uploaded one, or empty for no avatar. */
   overlayAvatar: z.string().max(80).optional(),
+  /**
+   * Services to leave out of the friends list.
+   *
+   * **Plain slugs, deliberately not validated against the provider ids.** Those
+   * live in the integrations feature, which is deletable, and core validating
+   * against them would be core depending on a feature. An id that no longer
+   * exists simply matches nobody — which is also the right behaviour when a
+   * provider is dropped: the setting goes quiet rather than failing to save.
+   */
+  hiddenFriendProviders: z.array(z.string().max(40)).max(20).optional(),
 });
 
 /**

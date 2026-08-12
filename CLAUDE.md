@@ -2374,6 +2374,51 @@ the last attempt failed — its own chip rather than the `unavailable` capabilit
 status, which renders "not possible" and is a claim about the *service* rather
 than about one failed attempt that will retry.
 
+### Two filters, and they are not the same filter
+
+**A selector** across the top — All, then one chip per service with a count.
+Transient, `useState` like every other bit of navigation here. It is built from
+the `sources` the server already returns rather than a list written in the
+component, so adding a presence provider gives it a chip with a count attached
+and nothing to edit in a second place. A service contributing nobody is left
+out: a chip reading "Discord 0" invites a click that leads to an empty screen,
+and the sources panel explains that case properly.
+
+**A collapsible panel** below it — services to leave out for good. Stored
+server-side in `settings.hiddenFriendProviders`, like the theme, because a
+filter set on the PC that left the phone showing everybody would read as not
+having saved.
+
+**The two tests are deliberately opposite, and that is the whole design.** The
+selector shows a person if *any* account matches; the hidden list drops them
+only when *every* account matches. Picking Steam should include the friend you
+also know from Discord, and hiding Riot must not remove them — someone you know
+from two places is someone you wanted to see, and a filter that quietly takes
+them away is one you stop trusting. `isHiddenByProviders()` in `shared` is the
+one place that rule lives, and `integrations-check` asserts both directions
+along with the empty-accounts case, since `every` on an empty array is true and
+would have made a stray row vanish for a reason nothing on screen could explain.
+
+The hiding happens **server-side**, not in the PWA, because the PWA cannot
+import `shared` — filtering there would mean a second copy of the condition,
+and the phone would need its own. The response carries `hiddenProviders` and
+`hiddenCount`, and the header shows "· 159 hidden" beside the online count: this
+screen's principle is that a short list explains itself, and "nobody is online"
+reads as a broken integration when the real answer is a filter set weeks ago.
+
+The **link picker is not filtered**. Hiding Riot and then being unable to find a
+Riot account to link a Discord friend to would make the visible-because-linked
+case unreachable — the one thing that rescues a person from a hidden service.
+
+`hiddenFriendProviders` is a core `settings` column holding **opaque slugs**,
+not validated against `PROVIDER_IDS`: those live in the deletable integrations
+feature, and core validating against them would be core depending on a feature.
+An id that no longer exists matches nobody, which is also the right behaviour
+when a provider is dropped — the setting goes quiet rather than failing to save.
+Riot is why it could not live on `integration_accounts` instead: it has no
+account row at all, so a `hidden` flag there could not express the one service
+most worth hiding.
+
 ### Refresh-on-read, not a poller
 
 `GET /api/integrations/friends` refreshes anything staler than 60s and returns.

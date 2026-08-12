@@ -8,6 +8,26 @@ import { phones } from '../push-port.js';
 import { clearIconCache, hasStoredLogo } from './icon.js';
 import { currentWindowsDnd } from './attention.js';
 
+/**
+ * The hidden-services list, out of the JSON text it is stored as.
+ *
+ * Exported because the integrations feature does the actual filtering and must
+ * read the same column — one place knows that this is JSON, so a hand-rolled
+ * second parse cannot disagree about what an empty value means.
+ *
+ * Anything unparseable reads as "nothing hidden". A corrupt setting must not be
+ * able to empty the friends list, which is the failure that would look most
+ * like the integration itself having broken.
+ */
+export function parseHiddenProviders(stored: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(stored || '[]');
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
   const windowsDnd = currentWindowsDnd();
   // Generated on first read so the phone always has a key to subscribe with.
@@ -39,6 +59,7 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     hasVoiceprint: Boolean(voiceprint),
     // Stored as whole percent; the shared threshold constants are fractions.
     speakerThreshold: row.speakerThreshold / 100,
+    hiddenFriendProviders: parseHiddenProviders(row.hiddenFriendProviders),
   };
 }
 
@@ -96,6 +117,10 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         theme: body.theme,
         accentColor: body.accentColor,
         logoShape: body.logoShape,
+        // Stored as JSON text, since SQLite has no array type. `describe` reads
+        // it back out, so an array is the only shape the API ever speaks.
+        hiddenFriendProviders:
+          body.hiddenFriendProviders === undefined ? undefined : JSON.stringify(body.hiddenFriendProviders),
       })
       .where(eq(settings.id, current.id))
       .returning();

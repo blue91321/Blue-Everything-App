@@ -670,6 +670,32 @@ export type PresenceState = (typeof PRESENCE_STATES)[number];
  */
 export const IDENTITY_PREFERENCE: ProviderId[] = ['discord', 'steam', 'riot'];
 
+/**
+ * Should this person be left out, given the services you have hidden?
+ *
+ * **Only when every account they have is on a hidden service.** The asymmetry
+ * is the entire point and is easy to get backwards: hiding Riot should drop the
+ * hundred people you know only from League, and must *not* drop the friend you
+ * play League with and also talk to on Discord. Someone you know from two
+ * places is someone you wanted to see, and a filter that silently takes them
+ * away is one you stop trusting.
+ *
+ * Note this is the opposite test to the on-screen selector, which shows a
+ * person if *any* account matches. Both readings are correct for what they do:
+ * picking Steam should include the friend you also know from Discord.
+ *
+ * Nothing hidden hides nobody, and a person with no accounts cannot vacuously
+ * satisfy "all of them are hidden" — `every` on an empty array is true, which
+ * would have made a stray row disappear for a reason nobody could work out.
+ */
+export function isHiddenByProviders(
+  accounts: readonly { provider: string }[],
+  hidden: readonly string[]
+): boolean {
+  if (hidden.length === 0 || accounts.length === 0) return false;
+  return accounts.every((account) => hidden.includes(account.provider));
+}
+
 /** Sort order for the friends list: something to do about, first. */
 export const presenceRank: Record<PresenceState, number> = {
   'in-game': 0,

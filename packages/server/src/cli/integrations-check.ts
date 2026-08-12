@@ -21,6 +21,7 @@ import {
   PROVIDER_LIST,
   categoriseGenres,
   categoriseVideo,
+  isHiddenByProviders,
   localPresenceSchema,
   resolveSetupLinks,
   steamProfileInput,
@@ -367,6 +368,25 @@ for (const id of ['spotify', 'youtube'] as const) {
 for (const id of ['steam', 'riot'] as const) {
   check(`${id} declares no follows capability`, PROVIDERS[id].capabilities.follows === undefined);
 }
+
+console.log('\nHiding a service');
+
+/*
+ * The asymmetry that makes the filter trustworthy, asserted because it is one
+ * `some`/`every` away from being exactly wrong — and wrong in the direction
+ * that silently removes people you know from two places.
+ */
+const riotOnly = [{ provider: 'riot' }];
+const both = [{ provider: 'riot' }, { provider: 'discord' }];
+
+check('hiding riot drops someone only on riot', isHiddenByProviders(riotOnly, ['riot']));
+check('hiding riot keeps someone also on discord', !isHiddenByProviders(both, ['riot']));
+check('hiding both drops them', isHiddenByProviders(both, ['riot', 'discord']));
+check('hiding nothing drops nobody', !isHiddenByProviders(riotOnly, []));
+// `every` on an empty array is true, which would have made an accountless row
+// vanish for a reason nobody could have worked out from the screen.
+check('a row with no accounts is not hidden', !isHiddenByProviders([], ['riot']));
+check('an unknown slug hides nobody', !isHiddenByProviders(riotOnly, ['nintendo']));
 
 console.log('\nWhat the agent is allowed to post');
 

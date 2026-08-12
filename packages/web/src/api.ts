@@ -237,6 +237,8 @@ export interface AppSettings {
   overlayScreen?: string | null;
   /** An emoji, `file` for an uploaded picture, or empty for none. */
   overlayAvatar?: string;
+  /** Services left out of the friends list. Absent on an older server. */
+  hiddenFriendProviders?: string[];
   updatedAt?: number;
 }
 
@@ -643,6 +645,17 @@ export interface FriendsView {
   friends: FriendRow[];
   /** Per-provider health, so an empty list can explain itself. */
   sources: FriendSource[];
+  /**
+   * Services being left out, and how many people that costs.
+   *
+   * Optional because the server and the PWA update independently — a browser
+   * holding a newer bundle than the process serving it is the ordinary case
+   * right after an edit, and a filter that reads `undefined` as "everything is
+   * hidden" would empty the screen. Absent means an older server that does no
+   * filtering, so the honest reading is "nothing hidden".
+   */
+  hiddenProviders?: string[];
+  hiddenCount?: number;
   refreshed: SyncOutcome[];
 }
 
@@ -804,6 +817,7 @@ export const api = {
       overlayPlacement?: string;
       overlayScreen?: string | null;
       overlayAvatar?: string;
+      hiddenFriendProviders?: string[];
     }) => patch<AppSettings>('/api/settings', payload),
   },
 

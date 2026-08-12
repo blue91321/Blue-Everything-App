@@ -26,6 +26,7 @@ import {
   connectSteamSchema,
   credentialsSchema,
   IDENTITY_PREFERENCE,
+  isHiddenByProviders,
   isProviderId,
   linkFriendsSchema,
   localPresenceSchema,
@@ -38,6 +39,8 @@ import {
 import { z } from 'zod';
 import { config } from '../../config.js';
 import { changes } from '../../events.js';
+import { getSettings } from '../../nudge-engine.js';
+import { parseHiddenProviders } from '../../routes/settings.js';
 import {
   beginAuthorization,
   completeAuthorization,
@@ -462,12 +465,37 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
       };
     });
 
+    /*
+     * Services you have chosen to leave out.
+     *
+     * **Only when *every* account a person has is on a hidden service.** That is
+     * the whole distinction: hiding Riot should drop the hundred people you know
+     * only from League, and must not drop the friend you play League *and* talk
+     * to on Discord with — that person is still someone you wanted to see, and
+     * quietly losing them is exactly what makes a filter untrustworthy.
+     *
+     * Filtered here rather than in the PWA because the rule has to live once,
+     * and the PWA cannot import `shared` to share it. This way the phone gets
+     * the same list without a second copy of the condition.
+     */
+    const hidden = parseHiddenProviders((await getSettings()).hiddenFriendProviders);
+    const visible = resolved.filter((entry) => !isHiddenByProviders(entry.accounts, hidden));
+
     return {
-      friends: resolved.sort(
+      friends: visible.sort(
         (a, b) =>
           presenceRank[a.state as keyof typeof presenceRank] - presenceRank[b.state as keyof typeof presenceRank] ||
           a.name.localeCompare(b.name)
       ),
+      /**
+       * What is being left out, and how many.
+       *
+       * Reported rather than merely applied: this screen's whole principle is
+       * that a short list explains itself, and "nobody is online" reads as a
+       * broken integration when the real answer is a filter you set weeks ago.
+       */
+      hiddenProviders: hidden,
+      hiddenCount: resolved.length - visible.length,
       /** Per-provider health, so an empty list can explain itself. */
       sources: await Promise.all(
         PROVIDER_LIST.filter((p) => p.capabilities.friends).map(async (p) => {

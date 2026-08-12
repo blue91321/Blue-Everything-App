@@ -31,8 +31,17 @@ const STATE_LABEL: Record<FriendRow['state'], string> = {
   unknown: 'discord',
 };
 
+/**
+ * Which service's people to show right now.
+ *
+ * `all` is a real value rather than an empty selection, so "showing everyone"
+ * and "you have deselected everything" can never look the same.
+ */
+type Filter = 'all' | string;
+
 export function Friends() {
   const [refreshing, setRefreshing] = useState(false);
+  const [filter, setFilter] = useState<Filter>('all');
 
   /*
    * The read refreshes stale providers server-side — see `refreshPresence` for
@@ -56,12 +65,30 @@ export function Friends() {
   if (view.error) return <div className="empty">Could not load: {view.error.message}</div>;
   if (!view.data) return null;
 
-  const around = view.data.friends.filter((f) => f.state !== 'offline' && f.state !== 'unknown');
-  const unknown = view.data.friends.filter((f) => f.state === 'unknown');
-  const offline = view.data.friends.filter((f) => f.state === 'offline');
+  /*
+   * The selector shows a person if *any* of their accounts is on that service,
+   * which is the opposite test to the hidden-services one below. Both readings
+   * are right for what they do: picking Steam should include the friend you
+   * also know from Discord, while hiding Riot should not remove them.
+   */
+  const shown =
+    filter === 'all'
+      ? view.data.friends
+      : view.data.friends.filter((f) => f.accounts.some((a) => a.provider === filter));
+
+  const around = shown.filter((f) => f.state !== 'offline' && f.state !== 'unknown');
+  const unknown = shown.filter((f) => f.state === 'unknown');
+  const offline = shown.filter((f) => f.state === 'offline');
 
   return (
     <>
+      <PlatformFilter
+        sources={view.data.sources}
+        friends={view.data.friends}
+        value={filter}
+        onChange={setFilter}
+      />
+
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="meta">
           {around.length === 0 ? 'Nobody online' : `${around.length} online`}
@@ -69,11 +96,23 @@ export function Friends() {
           {/* Counted separately and named, so a hundred rows nobody can vouch
               for never read as a hundred people who are definitely out. */}
           {unknown.length ? ` · ${unknown.length} unknown` : ''}
+          {/*
+            What the persistent filter is costing, always visible rather than
+            only inside the panel that set it. A screen whose principle is that
+            a short list explains itself cannot hide the reason it is short.
+          */}
+          {view.data.hiddenCount ? ` · ${view.data.hiddenCount} hidden` : ''}
         </div>
         <button className="btn subtle" onClick={forceRefresh} disabled={refreshing}>
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
+
+      <HiddenPlatforms
+        sources={view.data.sources}
+        hidden={view.data.hiddenProviders ?? []}
+        onChanged={view.reload}
+      />
 
       <Suggestions onLinked={view.reload} />
 
@@ -122,6 +161,143 @@ export function Friends() {
 
       <Sources sources={view.data.sources} anyFriends={view.data.friends.length > 0} />
     </>
+  );
+}
+
+/**
+ * Show one service, or all of them.
+ *
+ * **Built from `sources`, never from a list written here.** That is what makes
+ * adding a platform free: a new presence provider appears in the manifest, the
+ * server returns it, and a chip for it shows up with a count already attached.
+ * A hard-coded `['steam','discord','riot']` would need editing in a second
+ * place every time, and the one that gets forgotten is the new one.
+ *
+ * Chips rather than a `<select>` because there are three or four of these and
+ * the counts are worth showing — a dropdown hides both the options and how many
+ * people are behind each until you open it.
+ */
+function PlatformFilter({
+  sources,
+  friends,
+  value,
+  onChange,
+}: {
+  sources: FriendSource[];
+  friends: FriendRow[];
+  value: Filter;
+  onChange: (next: Filter) => void;
+}) {
+  const countFor = (provider: string) =>
+    friends.filter((f) => f.accounts.some((a) => a.provider === provider)).length;
+
+  /*
+   * Only services that actually contribute somebody.
+   *
+   * A provider you have not connected has no rows, and a chip reading
+   * "Discord 0" invites you to click it and find an empty screen — the sources
+   * panel below already explains that case properly. `all` is always offered so
+   * there is a way back even if everything else vanishes.
+   */
+  const offered = sources.filter((source) => countFor(source.provider) > 0);
+  if (offered.length < 2) return null;
+
+  return (
+    <div className="row" style={{ gap: '.4rem', flexWrap: 'wrap', marginBottom: '.75rem' }}>
+      <button
+        className={value === 'all' ? 'btn primary' : 'btn subtle'}
+        onClick={() => onChange('all')}
+        aria-pressed={value === 'all'}
+      >
+        All {friends.length}
+      </button>
+      {offered.map((source) => (
+        <button
+          key={source.provider}
+          className={value === source.provider ? 'btn primary' : 'btn subtle'}
+          onClick={() => onChange(source.provider)}
+          aria-pressed={value === source.provider}
+        >
+          {source.label} {countFor(source.provider)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Services to leave out of the list for good.
+ *
+ * Separate from the selector above and deliberately not merged with it: one is
+ * "show me Steam for a moment" and the other is "I never want to see the
+ * hundred people I only know from League". Folding them together would mean
+ * every glance at one service quietly rewrote a stored preference.
+ *
+ * Collapsed by default, and stored on the server like the theme — a filter set
+ * on the PC that left the phone showing everybody would read as not having
+ * saved. The filtering itself happens server-side, so this only has to send the
+ * list and reload.
+ */
+function HiddenPlatforms({
+  sources,
+  hidden,
+  onChanged,
+}: {
+  sources: FriendSource[];
+  hidden: string[];
+  onChanged: () => void;
+}) {
+  const [saving, setSaving] = useState('');
+  const [problem, setProblem] = useState('');
+
+  const toggle = async (provider: string, hide: boolean) => {
+    setSaving(provider);
+    setProblem('');
+    const next = hide ? [...hidden, provider] : hidden.filter((p) => p !== provider);
+
+    try {
+      await api.settings.update({ hiddenFriendProviders: next });
+      onChanged();
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setSaving('');
+    }
+  };
+
+  return (
+    <details className="card" style={{ marginBottom: '.75rem' }}>
+      <summary>
+        Services to leave out
+        {/* On the summary, so a collapsed panel still says it is doing
+            something. A silent filter is the kind you forget you set. */}
+        {hidden.length > 0 ? <span className="meta"> — {hidden.length} hidden</span> : null}
+      </summary>
+
+      <div className="meta" style={{ marginTop: '.5rem' }}>
+        Someone is only dropped when <em>every</em> account they have is on a service you have ticked here.
+        A friend you know from both League and Discord stays, so hiding Riot never costs you somebody you
+        talk to.
+      </div>
+
+      {sources.map((source) => (
+        <label
+          key={source.provider}
+          className="row"
+          style={{ alignItems: 'center', gap: '.5rem', marginTop: '.5rem' }}
+        >
+          <input
+            type="checkbox"
+            checked={hidden.includes(source.provider)}
+            disabled={saving === source.provider}
+            onChange={(e) => void toggle(source.provider, e.target.checked)}
+          />
+          <span>{source.label}</span>
+        </label>
+      ))}
+
+      {problem && <div className="banner">{problem}</div>}
+    </details>
   );
 }
 
