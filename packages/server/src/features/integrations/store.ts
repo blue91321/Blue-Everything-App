@@ -9,7 +9,6 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
-  PROVIDERS,
   categoriseGenres,
   type FollowedAccount,
   type CollectionKind,
@@ -72,31 +71,6 @@ export function syncedAtOf(account: Account | null): Record<string, number> {
   } catch {
     return {};
   }
-}
-
-/**
- * A provider's switches, with the manifest's fallbacks filled in.
- *
- * Merged rather than returned raw so a caller never has to ask "is undefined
- * false here, or is it the default?" — the declared fallback is applied once,
- * in the one place that knows about it.
- */
-export async function optionsFor(provider: ProviderId): Promise<Record<string, boolean>> {
-  const account = await getAccount(provider);
-
-  let stored: Record<string, unknown> = {};
-  try {
-    stored = account ? (JSON.parse(account.options) as Record<string, unknown>) : {};
-  } catch {
-    // A malformed blob means the defaults, not a failed sync.
-  }
-
-  const merged: Record<string, boolean> = {};
-  for (const option of PROVIDERS[provider].options) {
-    const value = stored[option.key];
-    merged[option.key] = typeof value === 'boolean' ? value : option.fallback;
-  }
-  return merged;
 }
 
 export async function markSynced(provider: ProviderId, capability: string): Promise<void> {
@@ -222,6 +196,11 @@ export interface IncomingCollection {
   artUrl?: string | null;
   itemCount?: number;
   snapshotId?: string | null;
+  /**
+   * Ignore this one unless told otherwise — applied on insert and never on
+   * update, so unticking the box is not undone by the next sync.
+   */
+  ignoredByDefault?: boolean;
 }
 
 export async function upsertCollection(
@@ -239,6 +218,7 @@ export async function upsertCollection(
       artUrl: incoming.artUrl ?? null,
       itemCount: incoming.itemCount ?? 0,
       snapshotId: incoming.snapshotId ?? null,
+      ignored: incoming.ignoredByDefault ? 1 : 0,
     })
     .onConflictDoUpdate({
       target: [mediaCollections.provider, mediaCollections.providerCollectionId],
@@ -250,7 +230,11 @@ export async function upsertCollection(
         updatedAt: Date.now(),
       },
     })
-    .returning({ id: mediaCollections.id, snapshotId: mediaCollections.snapshotId });
+    .returning({
+      id: mediaCollections.id,
+      snapshotId: mediaCollections.snapshotId,
+      ignored: mediaCollections.ignored,
+    });
 
   return row;
 }
@@ -281,6 +265,29 @@ export async function replaceCollectionItems(
   for (let i = 0; i < rows.length; i += 100) {
     await db.insert(mediaCollectionItems).values(rows.slice(i, i + 100));
   }
+}
+
+/** Tick or untick one playlist. */
+export async function setCollectionIgnored(id: string, ignored: boolean): Promise<void> {
+  await db
+    .update(mediaCollections)
+    .set({ ignored: ignored ? 1 : 0, updatedAt: Date.now() })
+    .where(eq(mediaCollections.id, id));
+}
+
+/**
+ * The provider's collection ids that are ticked to be left alone.
+ *
+ * Keyed by the *provider's* id rather than ours, because that is what a sync
+ * has in hand while walking the provider's list — it decides whether to fetch a
+ * playlist before it has looked ours up.
+ */
+export async function ignoredCollectionKeys(provider: ProviderId): Promise<Set<string>> {
+  const rows = await db
+    .select({ key: mediaCollections.providerCollectionId })
+    .from(mediaCollections)
+    .where(and(eq(mediaCollections.provider, provider), eq(mediaCollections.ignored, 1)));
+  return new Set(rows.map((r) => r.key));
 }
 
 export async function markCollectionSynced(collectionId: string, snapshotId: string | null): Promise<void> {
@@ -501,7 +508,15 @@ export async function followPlaylistCounts(): Promise<Map<string, number>> {
              select count(distinct mi.id)
              from media_items mi
              where mi.provider = f.provider
-               and exists (select 1 from media_collection_items ci where ci.item_id = mi.id)
+               and exists (
+                 select 1
+                 from media_collection_items ci
+                 join media_collections mc on mc.id = ci.collection_id
+                 -- An ignored playlist does not count. Leaving it in would keep
+                 -- Liked Videos dominating the ordering it was ticked off to
+                 -- stop dominating.
+                 where ci.item_id = mi.id and mc.ignored = 0
+               )
                and (
                  -- The exact join, once a sync has stored the ids.
                  instr(mi.creator_ids, '"' || f.provider_account_id || '"') > 0

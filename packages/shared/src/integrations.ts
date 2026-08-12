@@ -178,14 +178,6 @@ export interface ProviderSpec {
    * saying which fields exist is how they stop agreeing.
    */
   credentials: CredentialField[];
-  /**
-   * Switches that change what a sync does, declared rather than hand-written.
-   *
-   * Same arrangement as `credentials` and for the same reason: the form, the
-   * stored value and the code that reads it all have to agree about what
-   * exists, and three places listing them is how they stop agreeing.
-   */
-  options: ProviderOption[];
   capabilities: Partial<Record<Capability, CapabilitySpec>>;
   /** What you have to go and do at their end. Shown before you connect. */
   setup: SetupStep[];
@@ -265,26 +257,6 @@ export interface CredentialField {
   secret?: boolean;
 }
 
-/**
- * One checkbox on a provider's card.
- *
- * Booleans only. A setting that needed a number or a string would want
- * validation, a keyboard and an error state, and there is no such setting —
- * whereas "do not sync that one enormous playlist" is a tick.
- */
-export interface ProviderOption {
-  key: 'skipLikedVideos';
-  label: string;
-  help?: string;
-  /** What it does when nothing has been chosen. */
-  fallback: boolean;
-}
-
-export const providerOptionsSchema = z.object({
-  skipLikedVideos: z.boolean().optional(),
-});
-export type ProviderOptions = z.infer<typeof providerOptionsSchema>;
-
 /** The env vars a provider will read if its fields are left blank. */
 export function envVarsFor(provider: ProviderId): string[] {
   return PROVIDERS[provider].credentials.map((field) => field.envVar);
@@ -331,7 +303,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       // store and nothing to leak. Offering the box anyway would invite you to
       // paste a secret this app has no use for.
     ],
-    options: [],
     capabilities: {
       playlists: {
         status: 'partial',
@@ -417,16 +388,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         secret: true,
       },
     ],
-    options: [
-      {
-        key: 'skipLikedVideos',
-        label: 'Skip Liked Videos',
-        help:
-          'Liked Videos is often thousands of items and years old, which swamps the library and the ' +
-          '"in my playlists" counts on the Following tab. Your own playlists still sync.',
-        fallback: false,
-      },
-    ],
     capabilities: {
       playlists: {
         status: 'works',
@@ -489,7 +450,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
      * keep it there, but nothing requires it.
      */
     credentials: [],
-    options: [],
     capabilities: {
       friends: {
         status: 'works',
@@ -537,7 +497,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     credentials: [
       { key: 'clientId', label: 'Client ID', required: true, envVar: 'DISCORD_CLIENT_ID' },
     ],
-    options: [],
     capabilities: {
       friends: {
         /*
@@ -635,7 +594,6 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     reach: 'local',
     auth: 'client',
     credentials: [],
-    options: [],
     capabilities: {
       friends: {
         status: 'partial',

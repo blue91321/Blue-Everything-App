@@ -2260,29 +2260,28 @@ because it turned up somewhere and since been removed from every playlist, and
 "in my playlists" has to mean what it says. One statement for the whole list,
 because 408 follows is otherwise 408 round trips for a screen that opens once.
 
-### Provider options, and collapsed cards
+### A box per playlist, on the Music tab
 
-`ProviderSpec.options` declares per-provider switches the same way `credentials`
-declares fields, stored as JSON in `integration_accounts.options`. JSON rather
-than a column each, because these are provider-specific and a
-`youtube_skip_liked` column on a table shared by five services describes the
-wrong thing. Booleans only — a setting needing a number would want validation, a
-keyboard and an error state, and there is no such setting.
+`media_collections.ignored` leaves one playlist out of syncs *and* out of the
+"in my playlists" counts the Following tab sorts by. The boxes live in the
+collapsible playlist list on the Music tab, next to the playlists they are
+about.
 
-One exists: **YouTube can skip Liked Videos.** It is frequently thousands of
-items going back years, which swamps both the category breakdown and the "in my
-playlists" counts the Following tab sorts by — a channel you liked one video
-from a decade ago otherwise outranks one you have a playlist of.
+This replaced a provider-wide "skip Liked Videos" switch on the Services tab,
+and the move is the point: the reason to skip a playlist is that it is enormous
+and drowns out everything else, which is a property of the *playlist* and not of
+the service it came from. The `ProviderOption` mechanism that switch needed went
+with it — `integration_accounts.options` is left behind and unused, because
+migrations are a linear journal.
 
-**The setup steps come before the form, and stay open until it is connected.**
-They were below it, inside a collapsed disclosure, and said "paste it into the
-box below" while sitting underneath the box they meant — so the default view of
-an unconnected provider was a form with no instructions and a backwards
-reference. Reported, accurately, as not being able to see what to do.
+**Liked Videos is ticked by default**, set on insert only so unticking it is not
+undone by the next sync. The numbers say why: on this install it is 1,803 items
+against 1–16 for every other playlist, and excluding it took the Following
+counts from 195 accounts to 12 — which is the difference between "everyone I
+ever liked a video from" and "people whose music I actually keep".
 
-Each step also names the tab and the button. "Add the redirect URI" is not an
-instruction if you are looking at a portal with eleven sections; "on the OAuth2
-page, under Redirects, press Add Redirect, then Save Changes at the bottom" is.
+Nothing already synced is deleted when you tick a box; it simply stops being
+refreshed and stops counting.
 
 **Every provider card is a `<details>`, collapsed.** Five providers with their
 capability lists, citations, credential forms and setup steps is several screens

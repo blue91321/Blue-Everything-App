@@ -18,6 +18,7 @@
  * The categories are stored on each row rather than computed here, so this is a
  * `group by` on the server rather than several thousand rows over the wire.
  */
+import { useState } from 'react';
 import { api } from '../../api';
 import { useAsync } from '../../useAsync';
 import { CATEGORY_LABELS } from './Integrations';
@@ -25,6 +26,8 @@ import { CATEGORY_LABELS } from './Integrations';
 const label = (category: string) => CATEGORY_LABELS[category] ?? category;
 
 export function Music({ local }: { local: boolean }) {
+  // Which box is mid-flight, so a double click cannot race itself.
+  const [busy, setBusy] = useState('');
   const music = useAsync(() => api.integrations.music(), [], ['integrations']);
   const collections = useAsync(() => api.integrations.collections(), [], ['integrations']);
 
@@ -61,20 +64,64 @@ export function Music({ local }: { local: boolean }) {
 
       {collections.data && collections.data.length > 0 && (
         <details className="card">
-          <summary>Playlists ({collections.data.length})</summary>
+          <summary>
+            Playlists ({collections.data.length})
+            {collections.data.filter((c) => c.ignored).length > 0
+              ? ` · ${collections.data.filter((c) => c.ignored).length} ignored`
+              : ''}
+          </summary>
+
+          {/*
+            A box per playlist, which replaced a provider-wide "skip Liked
+            Videos" switch on the Services tab. The reason to skip one is that it
+            is enormous and drowns out everything else — a property of the
+            playlist, not of the service — so the control belongs in the list of
+            playlists rather than on the page about connections.
+          */}
+          <div className="meta" style={{ marginTop: '.4rem' }}>
+            Ticked ones are left out of syncs, and out of the "in my playlists" counts on the Following
+            tab. Nothing already synced is deleted — it simply stops being refreshed.
+          </div>
+
           {collections.data.map((collection) => (
-            <div key={collection.id} className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: '.4rem' }}>
+            <label
+              key={collection.id}
+              className="row"
+              style={{ alignItems: 'center', gap: '.5rem', marginTop: '.5rem' }}
+            >
+              <input
+                type="checkbox"
+                checked={collection.ignored === 1}
+                disabled={!local || busy === collection.id}
+                onChange={(e) => {
+                  setBusy(collection.id);
+                  void api.integrations
+                    .setCollectionIgnored(collection.id, e.target.checked)
+                    .then(() => collections.reload())
+                    .finally(() => setBusy(''));
+                }}
+              />
               <div className="grow">
-                <div className="title">{collection.name}</div>
+                <div className="title" style={{ opacity: collection.ignored ? 0.6 : 1 }}>
+                  {collection.name}
+                </div>
                 <div className="meta">
                   {collection.provider} · {collection.itemCount.toLocaleString()} items
                   {collection.kind !== 'playlist' ? ` · ${collection.kind}` : ''}
+                  {collection.ignored ? ' · ignored' : ''}
                 </div>
               </div>
-            </div>
+            </label>
           ))}
+
+          {!local && (
+            <div className="meta" style={{ marginTop: '.5rem' }}>
+              Ticking these is done on the PC running the server.
+            </div>
+          )}
         </details>
       )}
+
     </>
   );
 }

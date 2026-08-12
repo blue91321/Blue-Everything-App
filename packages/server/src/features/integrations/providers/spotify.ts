@@ -16,6 +16,7 @@
 import { apiGet } from '../oauth.js';
 import type { FollowedAccount } from '@everything/shared/integrations';
 import {
+  ignoredCollectionKeys,
   markCollectionSynced,
   replaceCollectionItems,
   replaceFollows,
@@ -182,30 +183,43 @@ export async function syncPlaylists(): Promise<SyncResult> {
   const artists = new ArtistGenres();
   const notes: string[] = [];
 
+  // Ticked off on the Music tab, same as YouTube's.
+  const ignored = await ignoredCollectionKeys('spotify');
+
   /* Liked Songs first — it is the one everybody actually has. */
-  const saved = await pageThrough<{ added_at: string; track: SpotifyTrack }>(`${API}/me/tracks?limit=50`);
-  const savedCollection = await upsertCollection('spotify', {
-    providerCollectionId: 'saved',
-    kind: 'saved',
-    name: 'Liked Songs',
-    itemCount: saved.length,
-  });
-  const savedIds = await storeTracks(
-    saved.map((s) => s.track),
-    artists
-  );
-  await replaceCollectionItems(
-    savedCollection.id,
-    savedIds,
-    saved.map((s) => Date.parse(s.added_at) || null)
-  );
-  await markCollectionSynced(savedCollection.id, null);
-  notes.push(`Liked Songs: ${savedIds.length} tracks`);
+  if (ignored.has('saved')) {
+    notes.push('Liked Songs ignored');
+  } else {
+    const saved = await pageThrough<{ added_at: string; track: SpotifyTrack }>(`${API}/me/tracks?limit=50`);
+    const savedCollection = await upsertCollection('spotify', {
+      providerCollectionId: 'saved',
+      kind: 'saved',
+      name: 'Liked Songs',
+      itemCount: saved.length,
+    });
+    const savedIds = await storeTracks(
+      saved.map((s) => s.track),
+      artists
+    );
+    await replaceCollectionItems(
+      savedCollection.id,
+      savedIds,
+      saved.map((s) => Date.parse(s.added_at) || null)
+    );
+    await markCollectionSynced(savedCollection.id, null);
+    notes.push(`Liked Songs: ${savedIds.length} tracks`);
+  }
 
   /* Then the playlists proper. */
   const playlists = await pageThrough<SpotifyPlaylist>(`${API}/me/playlists?limit=50`);
 
+  let skipped = 0;
   for (const playlist of playlists) {
+    if (ignored.has(playlist.id)) {
+      skipped += 1;
+      continue;
+    }
+
     const collection = await upsertCollection('spotify', {
       providerCollectionId: playlist.id,
       kind: 'playlist',
@@ -244,7 +258,7 @@ export async function syncPlaylists(): Promise<SyncResult> {
     await markCollectionSynced(collection.id, playlist.snapshot_id);
   }
 
-  notes.push(`${playlists.length} playlists`);
+  notes.push(`${playlists.length - skipped} playlists${skipped > 0 ? `, ${skipped} ignored` : ''}`);
   return { notes };
 }
 

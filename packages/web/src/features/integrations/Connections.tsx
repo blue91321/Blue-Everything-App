@@ -463,35 +463,6 @@ function ProviderCard({
         </div>
       )}
 
-      {/* ---- what a sync does ---- */}
-      {provider.options.length > 0 && local && (
-        <div style={{ marginTop: '.75rem', display: 'grid', gap: '.4rem' }}>
-          {provider.options.map((option) => (
-            <label key={option.key} style={{ display: 'grid', gap: '.15rem' }}>
-              <span className="row" style={{ alignItems: 'center', gap: '.45rem' }}>
-                <input
-                  type="checkbox"
-                  checked={provider.optionValues[option.key] ?? option.fallback}
-                  disabled={busy !== ''}
-                  onChange={(e) =>
-                    void guard('option', async () => {
-                      await api.integrations.setOptions(provider.id, { [option.key]: e.target.checked });
-                      reload();
-                    })
-                  }
-                />
-                {option.label}
-              </span>
-              {option.help && (
-                <span className="meta" style={{ paddingLeft: '1.6rem' }}>
-                  {option.help}
-                </span>
-              )}
-            </label>
-          ))}
-        </div>
-      )}
-
       {/* ---- actions ---- */}
       <div className="row wrap row-actions" style={{ marginTop: '.75rem' }}>
         {provider.auth === 'oauth2' && !provider.connected && anythingUsable && (

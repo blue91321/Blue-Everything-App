@@ -529,10 +529,6 @@ export interface ProviderInfo {
   setup: SetupStep[];
   /** The fields to fill in, whether each is set, and where its value came from. */
   credentialFields: CredentialFieldInfo[];
-  /** Switches that change what a sync does, declared by the provider. */
-  options: Array<{ key: string; label: string; help?: string; fallback: boolean }>;
-  /** Their current values, with fallbacks already applied. */
-  optionValues: Record<string, boolean>;
   /** The provider refused this app's optional scopes, so it stopped asking. */
   optionalScopesRefused: boolean;
   /** What to paste into the provider's dashboard. Null for non-OAuth providers. */
@@ -637,6 +633,8 @@ export interface MediaCollection {
   artUrl: string | null;
   itemCount: number;
   syncedAt: number | null;
+  /** Ticked to be left out of syncs, and out of the "in my playlists" counts. */
+  ignored: number;
 }
 
 export interface MediaItem {
@@ -900,12 +898,6 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(values),
       }),
-    /** Merged with what is stored, so an unknown option is never cleared. */
-    setOptions: (provider: string, values: Record<string, boolean>) =>
-      request<Record<string, boolean>>(`/api/integrations/${provider}/options`, {
-        method: 'PUT',
-        body: JSON.stringify(values),
-      }),
     /** Ask for the optional scopes again, once they have been enabled there. */
     retryScopes: (provider: string) => post<{ optionalScopesRefused: boolean }>(`/api/integrations/${provider}/retry-scopes`),
     disconnect: (provider: string) => request<void>(`/api/integrations/${provider}`, { method: 'DELETE' }),
@@ -920,6 +912,9 @@ export const api = {
     /** Dissolve a whole group, which is what a merged row comes apart into. */
     unlinkPerson: (personId: string) => post<{ ok: boolean }>('/api/integrations/friends/unlink', { personId }),
     collections: () => request<MediaCollection[]>('/api/integrations/collections'),
+    /** Tick or untick one playlist. */
+    setCollectionIgnored: (id: string, ignored: boolean) =>
+      patch<{ id: string; ignored: boolean }>(`/api/integrations/collections/${id}`, { ignored }),
     /** Channels and artists you follow. Synced on demand, not refreshed on read. */
     follows: () => request<FollowsView>('/api/integrations/follows'),
     collectionItems: (id: string) => request<MediaItem[]>(`/api/integrations/collections/${id}`),

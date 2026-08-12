@@ -665,6 +665,18 @@ export const mediaCollections = sqliteTable(
     itemCount: integer('item_count').notNull().default(0),
     /** The provider's own version marker, so an unchanged playlist is skipped. */
     snapshotId: text('snapshot_id'),
+    /**
+     * Leave this one out of syncs, and out of the "in my playlists" counts.
+     *
+     * Per playlist rather than a provider-wide switch, which is what this
+     * started as ("skip Liked Videos"): the reason to skip one is that it is
+     * enormous and drowns everything else, and that is a property of the
+     * playlist and not of YouTube.
+     *
+     * Set on *insert* only for the ones ignored by default, so unticking a box
+     * is not quietly undone by the next sync.
+     */
+    ignored: integer('ignored').notNull().default(0),
     syncedAt: integer('synced_at'),
     createdAt: now(),
     updatedAt: touched(),

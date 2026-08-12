@@ -25,7 +25,6 @@ import {
   FOLLOW_PROVIDERS,
   connectSteamSchema,
   credentialsSchema,
-  providerOptionsSchema,
   IDENTITY_PREFERENCE,
   isProviderId,
   linkFriendsSchema,
@@ -62,7 +61,7 @@ import {
   getAccount,
   itemsInCollection,
   linkFriends,
-  optionsFor,
+  setCollectionIgnored,
   suggestFriendLinks,
   unlinkFriend,
   unlinkPerson,
@@ -110,8 +109,6 @@ async function providerState(id: ProviderId) {
     accountName: account?.accountName ?? null,
     /** The fields to fill in, whether each is set, and where it came from. */
     credentialFields: await credentialState(id),
-    /** The provider's switches, with the manifest's fallbacks already applied. */
-    optionValues: await optionsFor(id),
     /**
      * The provider refused this app's optional scopes, so it has stopped asking.
      *
@@ -257,51 +254,6 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * random bytes, used once, expiring in ten minutes, and only ever issued by
    * the authorize route — which *is* local-only.
    */
-  /**
-   * A provider's own switches — today, whether YouTube skips Liked Videos.
-   *
-   * Merged with what is stored rather than replacing it, so a screen that only
-   * knows about one option cannot silently clear another. Local-only, like
-   * every other write on this feature.
-   */
-  app.put('/api/integrations/:provider/options', async (request) => {
-    localOnly(request);
-    const provider = parseProvider((request.params as { provider: string }).provider);
-    const body = providerOptionsSchema.parse(request.body);
-
-    const spec = PROVIDERS[provider];
-    if (spec.options.length === 0) {
-      throw Object.assign(new Error(`${spec.label} has no options`), { statusCode: 400 });
-    }
-
-    const current = await optionsFor(provider);
-    const next: Record<string, boolean> = { ...current };
-    for (const option of spec.options) {
-      const given = body[option.key];
-      if (given !== undefined) next[option.key] = given;
-    }
-
-    await saveAccount(provider, { options: JSON.stringify(next) });
-    changes.emitChange('integrations');
-    return next;
-  });
-
-  /**
-   * Ask for the optional scopes again.
-   *
-   * The way back after a refusal has been recorded: you enable the feature at
-   * the provider's end, press this, and the next Connect asks for everything
-   * again. Without it the refusal is permanent and the only cure is a database
-   * edit.
-   */
-  app.post('/api/integrations/:provider/retry-scopes', async (request) => {
-    localOnly(request);
-    const provider = parseProvider((request.params as { provider: string }).provider);
-    await saveAccount(provider, { optionalScopesRefused: 0 });
-    changes.emitChange('integrations');
-    return { optionalScopesRefused: false };
-  });
-
   app.get('/oauth/callback/:provider', async (request, reply) => {
     const provider = parseProvider((request.params as { provider: string }).provider);
     const query = request.query as { code?: string; state?: string; error?: string; error_description?: string };
@@ -635,6 +587,29 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/integrations/collections', async (request) => {
     const { provider } = request.query as { provider?: string };
     return collectionsFor(provider && isProviderId(provider) ? provider : undefined);
+  });
+
+  /**
+   * Tick or untick one playlist.
+   *
+   * Replaces a provider-wide "skip Liked Videos" switch. The reason to skip a
+   * playlist is that it is enormous and drowns out the rest, and that is a
+   * property of the playlist rather than of the service it came from — so the
+   * box belongs next to the playlist, in the list of them.
+   */
+  app.patch('/api/integrations/collections/:id', async (request) => {
+    localOnly(request);
+    const { id } = request.params as { id: string };
+    const { ignored } = z.object({ ignored: z.boolean() }).parse(request.body);
+
+    const all = await collectionsFor();
+    if (!all.some((c) => c.id === id)) {
+      throw Object.assign(new Error('no such playlist'), { statusCode: 404 });
+    }
+
+    await setCollectionIgnored(id, ignored);
+    changes.emitChange('integrations');
+    return { id, ignored };
   });
 
   app.get('/api/integrations/collections/:id', async (request, reply) => {

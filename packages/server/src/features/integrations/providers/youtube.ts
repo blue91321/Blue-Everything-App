@@ -10,8 +10,8 @@
 import { apiGet } from '../oauth.js';
 import { categoriseVideo, type FollowedAccount } from '@everything/shared/integrations';
 import {
+  ignoredCollectionKeys,
   markCollectionSynced,
-  optionsFor,
   replaceCollectionItems,
   replaceFollows,
   upsertCollection,
@@ -149,7 +149,12 @@ async function syncOnePlaylist(
   providerCollectionId: string,
   name: string,
   kind: 'playlist' | 'saved',
-  extra: { description?: string | null; artUrl?: string | null; itemCount?: number } = {}
+  extra: {
+    description?: string | null;
+    artUrl?: string | null;
+    itemCount?: number;
+    ignoredByDefault?: boolean;
+  } = {}
 ): Promise<number> {
   const entries = await pageThrough<PlaylistItem>(
     `${API}/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId=${providerCollectionId}`
@@ -167,6 +172,7 @@ async function syncOnePlaylist(
     description: extra.description ?? null,
     artUrl: extra.artUrl ?? null,
     itemCount: extra.itemCount ?? items.length,
+    ignoredByDefault: extra.ignoredByDefault,
   });
 
   const ids = await upsertItems('youtube', items);
@@ -199,20 +205,22 @@ export async function syncPlaylists(): Promise<SyncResult> {
   const likes = channel.items?.[0]?.contentDetails.relatedPlaylists.likes;
 
   /*
-   * Liked Videos is optional, and off by default.
+   * Which playlists have been ticked to be left alone.
    *
-   * It is frequently thousands of items going back years, which swamps both the
-   * category breakdown and the "in my playlists" counts the Following tab sorts
-   * by — a channel you liked one video from a decade ago outranks one you have
-   * a playlist of. Skipping it is a tick on the provider's card.
+   * Per playlist rather than the provider-wide "skip Liked Videos" switch this
+   * replaced: the reason to skip one is that it is enormous and drowns the rest,
+   * which is a property of the playlist and not of YouTube.
    */
-  const options = await optionsFor('youtube');
+  const ignored = await ignoredCollectionKeys('youtube');
 
-  if (likes && options.skipLikedVideos) {
-    notes.push('Liked Videos skipped');
+  if (likes && ignored.has(likes)) {
+    notes.push('Liked Videos ignored');
   } else if (likes) {
     try {
-      const count = await syncOnePlaylist(likes, 'Liked Videos', 'saved');
+      // Ignored by default on first sync: it is routinely thousands of items
+      // going back years, and it swamps both the breakdown and the counts the
+      // Following tab sorts by.
+      const count = await syncOnePlaylist(likes, 'Liked Videos', 'saved', { ignoredByDefault: true });
       notes.push(`Liked Videos: ${count}`);
     } catch (error) {
       // Liked Videos can be set to private in a way that refuses even your own
@@ -225,14 +233,20 @@ export async function syncPlaylists(): Promise<SyncResult> {
     `${API}/playlists?part=snippet,contentDetails&mine=true&maxResults=50`
   );
 
+  let skipped = 0;
   for (const playlist of playlists) {
+    if (ignored.has(playlist.id)) {
+      skipped += 1;
+      continue;
+    }
+
     await syncOnePlaylist(playlist.id, playlist.snippet.title, 'playlist', {
       description: playlist.snippet.description,
       artUrl: playlist.snippet.thumbnails?.medium?.url ?? null,
       itemCount: playlist.contentDetails.itemCount,
     });
   }
-  notes.push(`${playlists.length} playlists`);
+  notes.push(`${playlists.length - skipped} playlists${skipped > 0 ? `, ${skipped} ignored` : ''}`);
 
   return { notes };
 }
