@@ -12,9 +12,9 @@ import {
   categoriseGenres,
   type FollowedAccount,
   type CollectionKind,
-  type Friend,
   type MediaKind,
   type ProviderId,
+  type ReportedFriend,
 } from '@everything/shared/integrations';
 import { db } from '../../db/client.js';
 import {
@@ -377,7 +377,7 @@ export async function categoryBreakdown(provider?: ProviderId) {
  * per day, and a guarantee that nothing downstream can ever hold a reference to
  * a person.
  */
-export async function replaceFriends(provider: ProviderId, incoming: Friend[]): Promise<void> {
+export async function replaceFriends(provider: ProviderId, incoming: ReportedFriend[]): Promise<void> {
   const now = Date.now();
 
   const rows = incoming.map((f) => ({

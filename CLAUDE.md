@@ -2186,6 +2186,42 @@ movable and has no business assuming League is installed on the same box.
   `127.0.0.1` on a port named by a file only this user could have written, so
   there is no network path to sit in the middle of.
 
+  **What it plays is asked of the client, not looked up in a table here.** The
+  friends payload names the mode as an internal enum — `RANKED_SOLO_5x5`,
+  `CHERRY`, `KIWI` — which reached the screen verbatim. A hand-written table
+  fixed the obvious ones and got two of seven live friends wrong:
+  `/lol-game-queues/v1/queues` calls `KIWI` **ARAM: Mayhem** and queue 1740
+  **Bravery Arena**, not simply Arena. So the queue list is fetched once per
+  client session — keyed on the lockfile port, since a new port is the only way
+  it can have changed — and the table survives only as the fallback for a client
+  that will not answer. It is ~150KB, which is nothing once and absurd every 30
+  seconds.
+
+  Both `gameQueueType` and `gameMode` arrive as **empty strings rather than
+  absent** when the client has no answer, so `??` kept the empty one and put
+  friends on screen playing nothing at all.
+
+  Avatars come from Community Dragon, the public mirror of the client's own
+  assets: Riot reports an icon id and no URL. Same arrangement as the Steam and
+  Discord avatars — a URL the browser fetches, nothing this app stores.
+
+**A local report names its provider once, on the envelope.** `localPresenceSchema`
+used `friendSchema`, which requires `provider` on every row; the agent sent it
+at the top level, correctly, since a snapshot cannot span two providers. So
+**every report carrying actual friends was rejected 400 and only the empty ones
+landed** — and both paths that send an empty list are failure paths, so the
+screen showed a stale "connection refused" from whenever the client last
+restarted while 164 live friends never arrived. The only evidence was a wall of
+identical zod issues in `logs\agent.log` that nothing surfaced.
+
+The schema now `omit`s the field, so sending it is impossible rather than
+merely redundant, and `replaceFriends` takes the narrower `ReportedFriend[]` —
+it always took the provider as its own argument and never read it off the row.
+Unknown keys are still *stripped rather than refused*, because rejecting them
+would recreate the same failure with the sides swapped: a newer agent sending
+one extra field would have its whole report thrown out. `integrations-check`
+asserts both halves.
+
 Epic and Battle.net were also gathered here, by launcher process name, off a
 `processes` event `attention.ts` emitted so the scan it already takes could be
 reused. Both the providers and that event have been removed — an event in core

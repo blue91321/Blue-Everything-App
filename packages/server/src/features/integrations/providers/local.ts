@@ -18,7 +18,12 @@
  * offline" both draw zero rows, and only one of them is worth doing something
  * about.
  */
-import { LOCAL_PRESENCE_STALE_MS, type Friend, type LocalPresence, type ProviderId } from '@everything/shared/integrations';
+import {
+  LOCAL_PRESENCE_STALE_MS,
+  type LocalPresence,
+  type ProviderId,
+  type ReportedFriend,
+} from '@everything/shared/integrations';
 import { changes } from '../../../events.js';
 import { replaceFriends } from '../store.js';
 
@@ -39,7 +44,7 @@ interface LocalStatus {
  * a friend's avatar URL changing behind the scenes is not a reason to reload
  * the page.
  */
-function fingerprintOf(clientRunning: boolean, friends: Friend[]): string {
+function fingerprintOf(clientRunning: boolean, friends: ReportedFriend[]): string {
   return [
     clientRunning ? '1' : '0',
     ...friends

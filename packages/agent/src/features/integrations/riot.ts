@@ -26,6 +26,7 @@ import { join } from 'node:path';
 export interface RiotFriend {
   providerUserId: string;
   name: string;
+  avatarUrl?: string;
   state: 'offline' | 'online' | 'away' | 'in-game';
   game?: string;
   detail?: string;
@@ -164,14 +165,144 @@ interface LcuFriend {
   availability?: string;
   note?: string;
   productName?: string;
-  lol?: { gameStatus?: string; gameQueueType?: string; championId?: string };
+  icon?: number;
+  lol?: {
+    gameStatus?: string;
+    gameQueueType?: string;
+    gameMode?: string;
+    /** Arrives as a string, like everything else in this block. */
+    queueId?: string;
+    championId?: string;
+  };
 }
 
 /** `outOfGame` is the idle state; everything else is something happening. */
 const IN_GAME_STATUSES = new Set(['inGame', 'championSelect', 'inQueue', 'hosting_GAME']);
 
+/**
+ * Readable names for what the client reports as enums.
+ *
+ * `gameQueueType` and `gameMode` are internal identifiers and reach the screen
+ * verbatim without this — a friend showed as playing **RANKED_SOLO_5x5**, and
+ * another as **CHERRY**, which is Riot's internal name for Arena and means
+ * nothing to anybody.
+ *
+ * **This is the fallback, not the answer.** The client publishes the real names
+ * itself and they are better than any table kept here: of seven friends in a
+ * game while this was written, a hand-written table got two wrong — `KIWI` is
+ * "ARAM: Mayhem" and queue 1740 is "Bravery Arena" specifically, not Arena. So
+ * `loadQueues` asks, and this is only reached when it could not. Anything
+ * unlisted falls through to the game's name rather than being guessed at, since
+ * a wrong label is worse than a general one.
+ */
+const QUEUE_NAMES: Record<string, string> = {
+  RANKED_SOLO_5x5: 'Ranked Solo/Duo',
+  RANKED_FLEX_SR: 'Ranked Flex',
+  RANKED_TFT: 'Ranked TFT',
+  RANKED_TFT_DOUBLE_UP: 'TFT Double Up',
+  RANKED_TFT_TURBO: 'TFT Hyper Roll',
+  NORMAL: 'Normal',
+  NORMAL_5V5_BLIND_PICK: 'Normal Blind',
+  NORMAL_5V5_DRAFT_PICK: 'Normal Draft',
+  ARAM_UNRANKED_5x5: 'ARAM',
+  BOT: 'Co-op vs AI',
+  BOT_5x5: 'Co-op vs AI',
+};
+
+const MODE_NAMES: Record<string, string> = {
+  CLASSIC: "Summoner's Rift",
+  ARAM: 'ARAM',
+  CHERRY: 'Arena',
+  STRAWBERRY: 'Swarm',
+  TFT: 'Teamfight Tactics',
+  URF: 'URF',
+  NEXUSBLITZ: 'Nexus Blitz',
+  ONEFORALL: 'One for All',
+  PRACTICETOOL: 'Practice Tool',
+  TUTORIAL: 'Tutorial',
+};
+
+interface LcuQueue {
+  id?: number;
+  name?: string;
+  shortName?: string;
+}
+
+/**
+ * The client's own queue table, fetched once per client session.
+ *
+ * Keyed on the port because a new port means the client restarted, which is the
+ * only moment this could have changed — a patch adds modes, and the list is
+ * otherwise fixed for as long as League is open. It is ~150KB, so fetching it
+ * on every 30s poll would be absurd for something that cannot move.
+ *
+ * Best-effort throughout: a client that will not answer this still has a
+ * perfectly good friends list, and `QUEUE_NAMES` covers the common modes
+ * meanwhile. Losing the whole list over a nicer label would be a poor trade.
+ */
+const queueCache = new Map<number, Map<number, string>>();
+
+async function loadQueues(lock: Lock): Promise<Map<number, string>> {
+  const cached = queueCache.get(lock.port);
+  if (cached) return cached;
+
+  const names = new Map<number, string>();
+  try {
+    for (const queue of await lcuGet<LcuQueue[]>(lock, '/lol-game-queues/v1/queues', 5000)) {
+      const label = queue.shortName || queue.name;
+      if (queue.id !== undefined && label) names.set(queue.id, label);
+    }
+  } catch {
+    // Starting up, or the endpoint has moved. The fallback table applies, and
+    // the next client session tries again.
+  }
+
+  // Cached even when empty, so a client that has no such endpoint is not asked
+  // every thirty seconds forever.
+  queueCache.set(lock.port, names);
+  return names;
+}
+
+/**
+ * What to call what they are playing.
+ *
+ * The queue is more specific than the mode ("Ranked Solo/Duo" beats "Summoner's
+ * Rift"), so it is preferred where it is named. **These arrive as empty strings
+ * rather than absent** when the client has no answer, which is why this tests
+ * for truthiness — `??` treats `''` as a perfectly good value and let an empty
+ * label win over the fallback, putting friends on screen playing nothing at all.
+ */
+function gameLabel(friend: LcuFriend, queues: Map<number, string>): string {
+  const queueId = Number(friend.lol?.queueId);
+  const live = Number.isInteger(queueId) ? queues.get(queueId) : undefined;
+  if (live) return live;
+
+  const queue = friend.lol?.gameQueueType;
+  if (queue && QUEUE_NAMES[queue]) return QUEUE_NAMES[queue];
+
+  const mode = friend.lol?.gameMode;
+  if (mode && MODE_NAMES[mode]) return MODE_NAMES[mode];
+
+  return friend.productName || 'League of Legends';
+}
+
+/**
+ * The summoner icon, from Community Dragon.
+ *
+ * Riot serves no avatar URL — the client ships the images and reports only an
+ * icon id. Community Dragon is the long-standing public mirror of exactly those
+ * assets, and it is the same arrangement Steam and Discord avatars already
+ * arrive under: a URL the browser fetches, never anything this app stores.
+ * A missing or zero id yields nothing rather than a broken image.
+ */
+function iconUrl(icon: number | undefined): string | undefined {
+  if (!icon || icon < 0) return undefined;
+  return `https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1/profile-icons/${icon}.jpg`;
+}
+
 export async function readFriends(lock: Lock): Promise<RiotFriend[]> {
   const raw = await lcuGet<LcuFriend[]>(lock, '/lol-chat/v1/friends');
+  const queues = await loadQueues(lock);
 
   return raw.map((friend) => {
     const state = AVAILABILITY[friend.availability ?? 'offline'] ?? 'offline';
@@ -183,8 +314,9 @@ export async function readFriends(lock: Lock): Promise<RiotFriend[]> {
       // changeable, so either would eventually re-key somebody as a new person.
       providerUserId: friend.puuid ?? friend.id ?? String(friend.summonerId ?? friend.name ?? 'unknown'),
       name: friend.gameName ? `${friend.gameName}${friend.gameTag ? `#${friend.gameTag}` : ''}` : friend.name ?? 'Unknown',
+      avatarUrl: iconUrl(friend.icon),
       state: playing ? 'in-game' : state,
-      game: playing ? friend.lol?.gameQueueType ?? friend.productName ?? 'League of Legends' : undefined,
+      game: playing ? gameLabel(friend, queues) : undefined,
       // The personal note people set on themselves. Shown as detail, never as
       // the game — it is free text and frequently a joke.
       detail: friend.note || undefined,

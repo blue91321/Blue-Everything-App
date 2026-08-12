@@ -21,6 +21,7 @@ import {
   PROVIDER_LIST,
   categoriseGenres,
   categoriseVideo,
+  localPresenceSchema,
   resolveSetupLinks,
   steamProfileInput,
   type MusicCategory,
@@ -366,6 +367,64 @@ for (const id of ['spotify', 'youtube'] as const) {
 for (const id of ['steam', 'riot'] as const) {
   check(`${id} declares no follows capability`, PROVIDERS[id].capabilities.follows === undefined);
 }
+
+console.log('\nWhat the agent is allowed to post');
+
+/*
+ * The shape of a local presence report, asserted because getting it wrong is
+ * silent in the worst way.
+ *
+ * `friends` was `friendSchema`, which requires a `provider` on every row. The
+ * agent sends it once on the envelope — correctly, since a snapshot cannot span
+ * two providers — so every report carrying actual friends was rejected 400 and
+ * only the empty ones got through. Both paths that send an empty list are
+ * failure paths, so the screen showed a stale connection error while a live
+ * list of 164 people never landed, and the only evidence was a wall of
+ * identical zod issues in the agent log that nothing surfaced.
+ *
+ * A round trip through the real schema is the cheapest possible guard against
+ * that, and it fails loudly the moment the two sides disagree again.
+ */
+const report = {
+  provider: 'riot',
+  clientRunning: true,
+  friends: [
+    {
+      providerUserId: 'puuid-1',
+      name: 'Someone#NA1',
+      avatarUrl: 'https://raw.communitydragon.org/latest/x/1.jpg',
+      state: 'in-game',
+      game: 'Ranked Solo/Duo',
+    },
+  ],
+};
+
+const parsed = localPresenceSchema.safeParse(report);
+check(
+  'a friend without a provider is accepted',
+  parsed.success,
+  parsed.success ? '' : JSON.stringify(parsed.error.issues[0])
+);
+check('the envelope still names the provider', parsed.success && parsed.data.provider === 'riot');
+/*
+ * And an agent that sends it anyway is *tolerated*, not refused.
+ *
+ * Rejecting the extra key would recreate the original failure with the sides
+ * swapped — a newer agent sending one more field would have its whole report
+ * thrown out, and this feature's failure mode is that the screen looks fine
+ * while nothing lands. Zod strips unknown keys by default, which is the right
+ * behaviour here; this asserts it rather than leaving it to the default's
+ * continued good manners.
+ */
+const tolerant = localPresenceSchema.safeParse({
+  ...report,
+  friends: [{ ...report.friends[0], provider: 'riot', somethingNewer: true }],
+});
+check('an unexpected field on a friend is ignored, not fatal', tolerant.success);
+check(
+  'and it does not survive into the stored row',
+  tolerant.success && !('provider' in tolerant.data.friends[0])
+);
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

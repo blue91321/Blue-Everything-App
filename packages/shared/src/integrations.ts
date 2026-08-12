@@ -716,10 +716,29 @@ export const localPresenceSchema = z.object({
    * in a list of zero people and mean completely different things.
    */
   clientRunning: z.boolean(),
-  friends: z.array(friendSchema).max(1000),
+  /**
+   * **Without a `provider` each**, unlike `friendSchema` — the envelope above
+   * already says which one, and a snapshot cannot contain two.
+   *
+   * It was `friendSchema` outright, which made the field required on all 164
+   * rows. The agent naturally sent it once, so **every successful read was
+   * rejected 400 and only the empty ones got through** — and an empty list is
+   * exactly what the two paths that carry no friends send. So the screen showed
+   * a stale connection error from whenever the client last refused, with the
+   * live list nowhere, and the agent logged a wall of identical zod issues that
+   * nothing surfaced. `omit` makes sending it impossible rather than optional.
+   */
+  friends: z.array(friendSchema.omit({ provider: true })).max(1000),
   error: z.string().max(300).optional(),
 });
 export type LocalPresence = z.infer<typeof localPresenceSchema>;
+
+/**
+ * A friend as the agent reports one: everything except which provider it came
+ * from. `replaceFriends` takes the provider as its own argument and never read
+ * it off the row, so this is also the honest type for what that function needs.
+ */
+export type ReportedFriend = LocalPresence['friends'][number];
 
 /* ------------------------------------------------------------------ */
 /* Media                                                               */
