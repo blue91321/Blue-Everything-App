@@ -2405,10 +2405,32 @@ and nothing to edit in a second place. A service contributing nobody is left
 out: a chip reading "Discord 0" invites a click that leads to an empty screen,
 and the sources panel explains that case properly.
 
-**A collapsible panel** below it — services to leave out for good. Stored
-server-side in `settings.hiddenFriendProviders`, like the theme, because a
-filter set on the PC that left the phone showing everybody would read as not
-having saved.
+**A collapsible panel at the top of the Services tab** — services to leave out
+for good. Stored server-side in `settings.hidden_providers`, like the theme,
+because a filter set on the PC that left the phone showing everybody would read
+as not having saved.
+
+It began on Friends and does not belong there. Being left out is a fact about a
+*service*, the same kind of thing as whether it is connected — and it governs
+Following too, so a home on Friends made it both hard to find and wrong about
+its own scope.
+
+**One switch, two effects, because no service contributes both kinds of thing.**
+Steam, Discord and Riot bring people; YouTube brings channels and Spotify brings
+artists. Separate friend and follow settings would have been two lists with no
+provider ever appearing in both. Each row says which it costs you — read off the
+provider's own capabilities, so a new service says the right thing without that
+file being edited.
+
+A follow belongs to exactly one service, so `isHiddenByProviders` covers it
+unchanged: with a single account, the every-account test *is* the
+single-provider test.
+
+Both lists report what they are leaving out and **name the tab that did it** —
+"159 hidden by Services". The panel opens itself whenever anything is ticked.
+A count you cannot trace, or a filter you cannot see, is the failure this whole
+screen is against; Following's empty state distinguishes the two causes rather
+than telling somebody who has hidden both services to go and connect them.
 
 **The two tests are deliberately opposite, and that is the whole design.** The
 selector shows a person if *any* account matches; the hidden list drops them
@@ -2431,7 +2453,7 @@ The **link picker is not filtered**. Hiding Riot and then being unable to find a
 Riot account to link a Discord friend to would make the visible-because-linked
 case unreachable — the one thing that rescues a person from a hidden service.
 
-`hiddenFriendProviders` is a core `settings` column holding **opaque slugs**,
+`hidden_providers` is a core `settings` column holding **opaque slugs**,
 not validated against `PROVIDER_IDS`: those live in the deletable integrations
 feature, and core validating against them would be core depending on a feature.
 An id that no longer exists matches nobody, which is also the right behaviour

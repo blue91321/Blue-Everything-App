@@ -148,22 +148,17 @@ export function Friends() {
               for never read as a hundred people who are definitely out. */}
           {unknown.length ? ` · ${unknown.length} unknown` : ''}
           {/*
-            What the persistent filter is costing, always visible rather than
-            only inside the panel that set it. A screen whose principle is that
-            a short list explains itself cannot hide the reason it is short.
+            What the persistent filter is costing, and *where the switch is*.
+            The panel moved to the Services tab, so a bare count would be the
+            one thing on this screen you could not trace back — which is the
+            opposite of what this screen is for.
           */}
-          {view.data.hiddenCount ? ` · ${view.data.hiddenCount} hidden` : ''}
+          {view.data.hiddenCount ? ` · ${view.data.hiddenCount} hidden by Services` : ''}
         </div>
         <button className="btn subtle" onClick={forceRefresh} disabled={refreshing}>
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
-
-      <HiddenPlatforms
-        sources={view.data.sources}
-        hidden={view.data.hiddenProviders ?? []}
-        onChanged={view.reload}
-      />
 
       {/* Hidden while searching: proposals about two other people are noise
           when you are looking for a third. */}
@@ -178,7 +173,7 @@ export function Friends() {
           Nobody matches "{search.trim()}"
           {filter === 'all' ? '' : ` on ${filter}`}.
           {view.data.hiddenCount
-            ? ` ${view.data.hiddenCount} people are hidden by the service filter below.`
+            ? ` ${view.data.hiddenCount} people are left out by the service filter on the Services tab.`
             : ''}
         </div>
       )}
@@ -289,82 +284,6 @@ function PlatformFilter({
         </button>
       ))}
     </div>
-  );
-}
-
-/**
- * Services to leave out of the list for good.
- *
- * Separate from the selector above and deliberately not merged with it: one is
- * "show me Steam for a moment" and the other is "I never want to see the
- * hundred people I only know from League". Folding them together would mean
- * every glance at one service quietly rewrote a stored preference.
- *
- * Collapsed by default, and stored on the server like the theme — a filter set
- * on the PC that left the phone showing everybody would read as not having
- * saved. The filtering itself happens server-side, so this only has to send the
- * list and reload.
- */
-function HiddenPlatforms({
-  sources,
-  hidden,
-  onChanged,
-}: {
-  sources: FriendSource[];
-  hidden: string[];
-  onChanged: () => void;
-}) {
-  const [saving, setSaving] = useState('');
-  const [problem, setProblem] = useState('');
-
-  const toggle = async (provider: string, hide: boolean) => {
-    setSaving(provider);
-    setProblem('');
-    const next = hide ? [...hidden, provider] : hidden.filter((p) => p !== provider);
-
-    try {
-      await api.settings.update({ hiddenFriendProviders: next });
-      onChanged();
-    } catch (error) {
-      setProblem((error as Error).message);
-    } finally {
-      setSaving('');
-    }
-  };
-
-  return (
-    <details className="card" style={{ marginBottom: '.75rem' }}>
-      <summary>
-        Services to leave out
-        {/* On the summary, so a collapsed panel still says it is doing
-            something. A silent filter is the kind you forget you set. */}
-        {hidden.length > 0 ? <span className="meta"> — {hidden.length} hidden</span> : null}
-      </summary>
-
-      <div className="meta" style={{ marginTop: '.5rem' }}>
-        Someone is only dropped when <em>every</em> account they have is on a service you have ticked here.
-        A friend you know from both League and Discord stays, so hiding Riot never costs you somebody you
-        talk to.
-      </div>
-
-      {sources.map((source) => (
-        <label
-          key={source.provider}
-          className="row"
-          style={{ alignItems: 'center', gap: '.5rem', marginTop: '.5rem' }}
-        >
-          <input
-            type="checkbox"
-            checked={hidden.includes(source.provider)}
-            disabled={saving === source.provider}
-            onChange={(e) => void toggle(source.provider, e.target.checked)}
-          />
-          <span>{source.label}</span>
-        </label>
-      ))}
-
-      {problem && <div className="banner">{problem}</div>}
-    </details>
   );
 }
 

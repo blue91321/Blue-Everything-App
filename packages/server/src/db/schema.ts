@@ -425,8 +425,13 @@ export const settings = sqliteTable('settings', {
   overlayAvatar: text('overlay_avatar').notNull().default(''),
 
   /**
-   * Services whose friends you do not want in the list, as a JSON array of
-   * provider ids.
+   * Services to leave out of the lists, as a JSON array of provider ids.
+   *
+   * **One switch, two effects, because each service only contributes one kind
+   * of thing.** Hiding Steam, Discord or Riot drops people from Friends; hiding
+   * YouTube drops its channels from Following and Spotify drops its artists.
+   * Splitting it into separate friend and follow settings would have meant two
+   * lists where no provider ever appeared in both.
    *
    * Here rather than in the integrations feature's own tables because there is
    * nowhere better: Riot has no account row at all — the agent finds the client
@@ -435,9 +440,9 @@ export const settings = sqliteTable('settings', {
    * the same reason, and this column is a list of opaque slugs, so core still
    * knows nothing about what a provider *is*.
    *
-   * Empty is the default and means the list is whole.
+   * Empty is the default and means the lists are whole.
    */
-  hiddenFriendProviders: text('hidden_friend_providers').notNull().default('[]'),
+  hiddenProviders: text('hidden_providers').notNull().default('[]'),
 
   updatedAt: touched(),
 });

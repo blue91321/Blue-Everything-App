@@ -59,7 +59,7 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     hasVoiceprint: Boolean(voiceprint),
     // Stored as whole percent; the shared threshold constants are fractions.
     speakerThreshold: row.speakerThreshold / 100,
-    hiddenFriendProviders: parseHiddenProviders(row.hiddenFriendProviders),
+    hiddenProviders: parseHiddenProviders(row.hiddenProviders),
   };
 }
 
@@ -119,8 +119,8 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         logoShape: body.logoShape,
         // Stored as JSON text, since SQLite has no array type. `describe` reads
         // it back out, so an array is the only shape the API ever speaks.
-        hiddenFriendProviders:
-          body.hiddenFriendProviders === undefined ? undefined : JSON.stringify(body.hiddenFriendProviders),
+        hiddenProviders:
+          body.hiddenProviders === undefined ? undefined : JSON.stringify(body.hiddenProviders),
       })
       .where(eq(settings.id, current.id))
       .returning();

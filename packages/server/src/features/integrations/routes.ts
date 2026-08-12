@@ -184,7 +184,11 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/api/integrations', async () => {
     const providers = await Promise.all(PROVIDER_LIST.map((spec) => providerState(spec.id)));
-    return { providers, capabilities: CAPABILITIES };
+    // Carried here so the Services tab can render the leave-out panel from the
+    // one call it already makes, rather than fetching settings a second time
+    // for a list of five strings.
+    const hiddenProviders = parseHiddenProviders((await getSettings()).hiddenProviders);
+    return { providers, capabilities: CAPABILITIES, hiddenProviders };
   });
 
   /* ---- connecting ------------------------------------------------ */
@@ -478,7 +482,7 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
      * and the PWA cannot import `shared` to share it. This way the phone gets
      * the same list without a second copy of the condition.
      */
-    const hidden = parseHiddenProviders((await getSettings()).hiddenFriendProviders);
+    const hidden = parseHiddenProviders((await getSettings()).hiddenProviders);
     const visible = resolved.filter((entry) => !isHiddenByProviders(entry.accounts, hidden));
 
     return {
@@ -589,6 +593,20 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     const counts = await followPlaylistCounts();
     const rows = await allFollows();
 
+    /*
+     * The same setting as the friends list, applied the only way that makes
+     * sense here.
+     *
+     * A follow belongs to exactly one service — a YouTube channel is not also a
+     * Spotify artist — so there is no equivalent of "they are on two of these
+     * and one is hidden". Hiding YouTube leaves out its channels and hiding
+     * Spotify leaves out its artists, which is the plain reading of the switch,
+     * and `isHiddenByProviders` gives it for free: with one account the
+     * every-account test *is* the single-provider test.
+     */
+    const hidden = parseHiddenProviders((await getSettings()).hiddenProviders);
+    const visible = rows.filter((row) => !isHiddenByProviders([{ provider: row.provider }], hidden));
+
     return {
       /*
        * Each one carries how many of its tracks or videos are in your
@@ -596,10 +614,13 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
        * "who am I following that I actually listen to" is a more useful first
        * screen than an alphabetical list of four hundred names.
        */
-      follows: rows.map((row) => ({
+      follows: visible.map((row) => ({
         ...row,
         inPlaylists: counts.get(`${row.provider}:${row.providerAccountId}`) ?? 0,
       })),
+      /** What is being left out, so a short list can explain itself. */
+      hiddenProviders: hidden,
+      hiddenCount: rows.length - visible.length,
       sources: FOLLOW_PROVIDERS.map((id) => ({
         provider: id,
         label: PROVIDERS[id].label,

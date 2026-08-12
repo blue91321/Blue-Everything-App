@@ -1380,7 +1380,7 @@ export const updateSettingsSchema = z.object({
    * exists simply matches nobody — which is also the right behaviour when a
    * provider is dropped: the setting goes quiet rather than failing to save.
    */
-  hiddenFriendProviders: z.array(z.string().max(40)).max(20).optional(),
+  hiddenProviders: z.array(z.string().max(40)).max(20).optional(),
 });
 
 /**

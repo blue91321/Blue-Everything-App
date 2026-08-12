@@ -71,10 +71,124 @@ export function Connections({ local }: { local: boolean }) {
         </div>
       )}
 
+      <LeaveOut
+        providers={state.data.providers}
+        hidden={state.data.hiddenProviders ?? []}
+        local={local}
+        onChanged={state.reload}
+      />
+
       {state.data.providers.map((provider) => (
         <ProviderCard key={provider.id} provider={provider} local={local} reload={state.reload} />
       ))}
     </>
+  );
+}
+
+/**
+ * What a service stops contributing when you leave it out.
+ *
+ * Read off the provider's own capabilities rather than a table of ids here, so
+ * a new service says the right thing without this file being edited — and one
+ * that contributes to neither list is described honestly rather than given a
+ * label promising something it cannot do.
+ */
+function leavingOut(provider: ProviderInfo): string {
+  if (provider.capabilities.friends) return 'friends you know only from here';
+  // Both follow providers would otherwise read "accounts you follow", which is
+  // accurate and useless — the entire job of this line is naming what vanishes.
+  if (provider.capabilities.follows) {
+    return provider.id === 'youtube' ? 'channels you subscribe to' : 'artists you follow';
+  }
+  return 'nothing on these lists';
+}
+
+/**
+ * Services to leave out of the lists.
+ *
+ * **At the top of Services, not on Friends where it started.** It is a fact
+ * about a *service* — the same sort of thing as whether it is connected — and
+ * it governs the Following tab as well, so living on Friends made it both hard
+ * to find and wrong about its own scope.
+ *
+ * One switch with two effects, because no service contributes both kinds of
+ * thing: Steam, Discord and Riot bring people, YouTube and Spotify bring
+ * accounts you follow. Separate friend and follow settings would have been two
+ * lists with no provider ever appearing in both.
+ *
+ * Stored on the server like the theme, so a filter set on the PC does not leave
+ * the phone showing everything. The filtering happens server-side too, so this
+ * only sends the list and reloads.
+ */
+function LeaveOut({
+  providers,
+  hidden,
+  local,
+  onChanged,
+}: {
+  providers: ProviderInfo[];
+  hidden: string[];
+  local: boolean;
+  onChanged: () => void;
+}) {
+  const [saving, setSaving] = useState('');
+  const [problem, setProblem] = useState('');
+
+  const toggle = async (id: string, hide: boolean) => {
+    setSaving(id);
+    setProblem('');
+    const next = hide ? [...hidden, id] : hidden.filter((p) => p !== id);
+
+    try {
+      await api.settings.update({ hiddenProviders: next });
+      onChanged();
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setSaving('');
+    }
+  };
+
+  return (
+    <details className="card" open={hidden.length > 0}>
+      <summary>
+        Services to leave out
+        {/* On the summary, so a collapsed panel still admits it is doing
+            something — and it opens itself when anything is ticked, because a
+            filter you cannot see is one you forget you set. */}
+        {hidden.length > 0 ? <span className="meta"> — {hidden.length} left out</span> : null}
+      </summary>
+
+      <div className="meta" style={{ marginTop: '.5rem' }}>
+        These stay connected and keep syncing — they only stop appearing in the Friends and Following
+        lists. A person is dropped only when <em>every</em> account they have is on a service ticked here,
+        so someone you know from both League and Discord stays.
+      </div>
+
+      {providers.map((provider) => (
+        <label
+          key={provider.id}
+          className="row"
+          style={{ alignItems: 'center', gap: '.5rem', marginTop: '.5rem' }}
+        >
+          <input
+            type="checkbox"
+            checked={hidden.includes(provider.id)}
+            // Read-only from the phone, like every other write on this screen.
+            // The server refuses it regardless; a box that silently fails is
+            // worse than one that is visibly not yours to press.
+            disabled={!local || saving === provider.id}
+            onChange={(e) => void toggle(provider.id, e.target.checked)}
+          />
+          <span aria-hidden="true">{provider.glyph}</span>
+          <span className="grow">
+            {provider.label} <span className="meta">— {leavingOut(provider)}</span>
+          </span>
+        </label>
+      ))}
+
+      {problem && <div className="banner">{problem}</div>}
+    </details>
   );
 }
 

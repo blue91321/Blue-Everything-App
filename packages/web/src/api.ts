@@ -238,7 +238,7 @@ export interface AppSettings {
   /** An emoji, `file` for an uploaded picture, or empty for none. */
   overlayAvatar?: string;
   /** Services left out of the friends list. Absent on an older server. */
-  hiddenFriendProviders?: string[];
+  hiddenProviders?: string[];
   updatedAt?: number;
 }
 
@@ -588,6 +588,14 @@ export interface LocalStatus {
 export interface IntegrationsState {
   providers: ProviderInfo[];
   capabilities: string[];
+  /**
+   * Services left out of the Friends and Following lists.
+   *
+   * Optional for the usual reason — the PWA and the server update
+   * independently, and an absent list must read as "nothing hidden" rather than
+   * leaving the panel unable to render.
+   */
+  hiddenProviders?: string[];
 }
 
 export interface SyncOutcome {
@@ -713,6 +721,9 @@ export interface FollowsView {
     why: string;
     syncedAt: number | null;
   }>;
+  /** Services left out, and what that costs. Absent on an older server. */
+  hiddenProviders?: string[];
+  hiddenCount?: number;
 }
 
 export interface MusicView {
@@ -817,7 +828,7 @@ export const api = {
       overlayPlacement?: string;
       overlayScreen?: string | null;
       overlayAvatar?: string;
-      hiddenFriendProviders?: string[];
+      hiddenProviders?: string[];
     }) => patch<AppSettings>('/api/settings', payload),
   },
 

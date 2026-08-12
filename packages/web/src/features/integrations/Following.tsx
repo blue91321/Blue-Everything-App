@@ -78,13 +78,21 @@ export function Following() {
   const all = view.data.follows;
   const channels = all.filter((f) => f.kind === 'channel').length;
   const artists = all.filter((f) => f.kind === 'artist').length;
+  const hiddenCount = view.data.hiddenCount ?? 0;
 
   if (all.length === 0) {
     return (
       <>
         <div className="empty">
-          Nothing here yet. Connect YouTube or Spotify on the Services tab and press Sync — subscriptions
-          and followed artists come across together with everything else.
+          {/*
+            An empty list has two causes now, and they need opposite things
+            done. Saying "connect YouTube and sync" to somebody who has ticked
+            both services on the Services tab would send them to set up what is
+            already set up.
+          */}
+          {hiddenCount > 0
+            ? `Everything here is left out — ${hiddenCount} accounts are hidden by the service filter at the top of the Services tab.`
+            : 'Nothing here yet. Connect YouTube or Spotify on the Services tab and press Sync — subscriptions and followed artists come across together with everything else.'}
         </div>
         <Sources sources={view.data.sources} />
       </>
@@ -145,6 +153,14 @@ export function Following() {
         </div>
 
       </div>
+
+      {/* Same reasoning as the Friends list: a shorter list than you expected
+          must say why, and the switch that shortened it is on another tab. */}
+      {hiddenCount > 0 && (
+        <div className="meta" style={{ marginBottom: '.5rem' }}>
+          {hiddenCount} left out by the service filter on the Services tab.
+        </div>
+      )}
 
       {shown.length === 0 ? (
         <div className="empty">Nothing matches "{search}".</div>
