@@ -494,6 +494,119 @@ export async function allFollows() {
   return db.select().from(follows).orderBy(follows.provider, follows.name);
 }
 
+/* ---- grouping accounts that are the same creator ------------------ */
+
+/**
+ * Join two follows into one row on the screen.
+ *
+ * Mirrors `linkFriends`, with **one deliberate difference: both may be on the
+ * same service.** A creator with a main channel and a clips channel is the
+ * commonest reason to want this, and the friends rule — one person, one Discord
+ * — simply is not true of channels.
+ *
+ * Groups absorb rather than nest, so linking a third account to a pair gives a
+ * group of three rather than stranding anybody, and linking two existing groups
+ * merges them whole.
+ */
+export async function linkFollows(idA: string, idB: string): Promise<string> {
+  const rows = await db.select().from(follows).where(inArray(follows.id, [idA, idB]));
+
+  if (rows.length !== 2) {
+    const found = new Set(rows.map((r) => r.id));
+    const missing = [idA, idB].filter((id) => !found.has(id));
+    throw Object.assign(
+      new Error(`no followed account has ${missing.length === 1 ? 'the id' : 'the ids'} ${missing.join(', ')}`),
+      { statusCode: 404 }
+    );
+  }
+
+  if (idA === idB) {
+    throw Object.assign(new Error('that is the same account twice'), { statusCode: 400 });
+  }
+
+  const [a, b] = rows;
+  const groupId = a.groupId ?? b.groupId ?? randomUUID();
+  const absorbing = [a.groupId, b.groupId].filter((id): id is string => Boolean(id) && id !== groupId);
+
+  await db.update(follows).set({ groupId }).where(inArray(follows.id, [idA, idB]));
+  if (absorbing.length > 0) {
+    await db.update(follows).set({ groupId }).where(inArray(follows.groupId, absorbing));
+  }
+
+  /*
+   * A brand-new group has no main yet, and a group with none would render with
+   * no name at all. The account that was already grouped keeps its main if it
+   * had one; otherwise the one that was dragged onto the other wins, which for
+   * a fresh pair is whichever you started from.
+   */
+  await ensurePrimary(groupId);
+  return groupId;
+}
+
+/**
+ * Exactly one member carries `isPrimary`.
+ *
+ * Called after every operation that can change a group's membership, because
+ * "which of these is the main one" is the single piece of state a merged row
+ * cannot render without — and both unlinking the main and merging two groups
+ * that each had one can break it.
+ */
+async function ensurePrimary(groupId: string): Promise<void> {
+  const members = await db.select().from(follows).where(eq(follows.groupId, groupId));
+  if (members.length === 0) return;
+
+  const primaries = members.filter((m) => m.isPrimary === 1);
+  if (primaries.length === 1) return;
+
+  // None, or several after a merge. The first by name is arbitrary but stable,
+  // and it is immediately changeable — the point is never to render headless.
+  const keep = primaries[0] ?? [...members].sort((x, y) => x.name.localeCompare(y.name))[0];
+  await db.update(follows).set({ isPrimary: 0 }).where(eq(follows.groupId, groupId));
+  await db.update(follows).set({ isPrimary: 1 }).where(eq(follows.id, keep.id));
+}
+
+/** Which of a group's accounts the merged row wears. */
+export async function setPrimaryFollow(id: string): Promise<void> {
+  const [row] = await db.select().from(follows).where(eq(follows.id, id));
+  if (!row) throw Object.assign(new Error('no followed account has that id'), { statusCode: 404 });
+
+  if (!row.groupId) {
+    throw Object.assign(new Error('that account is not linked to anything, so it is already the only one'), {
+      statusCode: 400,
+    });
+  }
+
+  await db.update(follows).set({ isPrimary: 0 }).where(eq(follows.groupId, row.groupId));
+  await db.update(follows).set({ isPrimary: 1 }).where(eq(follows.id, id));
+}
+
+/**
+ * Take one account out of its group.
+ *
+ * Per account rather than per group, unlike friends' "Unlink". A group here can
+ * hold several channels and dissolving all of them to separate one wrong link
+ * would be a poor trade — whereas a friends row is nearly always a pair.
+ *
+ * A group of one is not a group, so the last remaining member is released too.
+ * Otherwise a lone row would keep a `group_id` and quietly re-absorb whatever
+ * was linked to that id next.
+ */
+export async function unlinkFollow(id: string): Promise<void> {
+  const [row] = await db.select().from(follows).where(eq(follows.id, id));
+  if (!row?.groupId) return;
+
+  const groupId = row.groupId;
+  await db.update(follows).set({ groupId: null, isPrimary: 0 }).where(eq(follows.id, id));
+
+  const left = await db.select().from(follows).where(eq(follows.groupId, groupId));
+  if (left.length <= 1) {
+    await db.update(follows).set({ groupId: null, isPrimary: 0 }).where(eq(follows.groupId, groupId));
+    return;
+  }
+
+  await ensurePrimary(groupId);
+}
+
 /** When each provider's follow list was last written, for the staleness note. */
 export async function followsFreshness(): Promise<Map<string, number>> {
   const rows = await db
@@ -591,10 +704,47 @@ export async function linkFriends(idA: string, idB: string): Promise<string> {
   }
 
   const [a, b] = rows;
-  if (a.provider === b.provider) {
-    throw Object.assign(new Error('those are both the same service — linking joins two different ones'), {
-      statusCode: 400,
-    });
+
+  /*
+   * One person has one account per service, checked across the **whole merged
+   * group** rather than just the two rows named.
+   *
+   * Comparing only `a` and `b` was right while a group was always a pair, and
+   * became wrong the moment a third could be added: the screen passes the
+   * group's first account, so adding a second Steam friend to a Discord+Steam
+   * person compared Discord against Steam, passed, and produced a person with
+   * two Steam accounts whose status came from whichever sorted first.
+   */
+  const members = await db
+    .select()
+    .from(friends)
+    .where(
+      inArray(
+        friends.personId,
+        [a.personId, b.personId].filter((id): id is string => Boolean(id))
+      )
+    );
+
+  /*
+   * Deduplicated by row id before counting services.
+   *
+   * `a` and `b` are already inside `members` whenever they carry a personId, so
+   * concatenating the three lists counted the named accounts twice and refused
+   * every legitimate third — adding a Riot friend to a Steam+Discord person
+   * failed with "that would give one person two steam accounts", naming a
+   * service that had exactly one.
+   */
+  const union = new Map([...members, a, b].map((row) => [row.id, row]));
+  const providers = [...union.values()].map((row) => row.provider);
+  const duplicate = providers.find((provider, i) => providers.indexOf(provider) !== i);
+  if (duplicate) {
+    throw Object.assign(
+      new Error(
+        `that would give one person two ${duplicate} accounts — a link joins different services, ` +
+          'so unlink the one already there first'
+      ),
+      { statusCode: 400 }
+    );
   }
 
   const personId = a.personId ?? b.personId ?? randomUUID();

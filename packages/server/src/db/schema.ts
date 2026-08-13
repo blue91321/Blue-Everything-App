@@ -803,11 +803,37 @@ export const follows = sqliteTable(
     category: text('category').notNull().default('unknown'),
     categoryBecause: text('category_because'),
     followerCount: integer('follower_count'),
+    /**
+     * Accounts that are the same creator, the way `friends.person_id` groups
+     * accounts that are the same person. Null means it stands alone.
+     *
+     * **Unlike friends, two of these may be on the same service.** A creator
+     * routinely runs a main channel and a clips channel, and refusing to join
+     * them would rule out the commonest reason to want this at all. Friends
+     * keeps the opposite rule because one person has one Discord.
+     */
+    groupId: text('group_id'),
+    /**
+     * The one whose name, picture and link the merged row wears.
+     *
+     * Chosen by hand rather than by a preference order like
+     * `IDENTITY_PREFERENCE` does for friends. There is no honest ranking here:
+     * which of two YouTube channels is "the main one" is a fact about the
+     * creator that no rule can derive, and picking the bigger or the older one
+     * would be wrong often enough to be annoying.
+     *
+     * Exactly one row per group carries it. Meaningless without a `group_id`,
+     * and the unlink path promotes another rather than leaving a group headless.
+     */
+    isPrimary: integer('is_primary').notNull().default(0),
     seenAt: integer('seen_at').notNull().$defaultFn(() => Date.now()),
     createdAt: now(),
     updatedAt: touched(),
   },
-  (t) => [uniqueIndex('follows_provider_account_idx').on(t.provider, t.providerAccountId)]
+  (t) => [
+    uniqueIndex('follows_provider_account_idx').on(t.provider, t.providerAccountId),
+    index('follows_group_idx').on(t.groupId),
+  ]
 );
 
 export const schema = {

@@ -63,9 +63,12 @@ import {
   forgetAccount,
   getAccount,
   itemsInCollection,
+  linkFollows,
   linkFriends,
   setCollectionIgnored,
+  setPrimaryFollow,
   suggestFriendLinks,
+  unlinkFollow,
   unlinkFriend,
   unlinkPerson,
   listAccounts,
@@ -557,6 +560,49 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true };
   });
 
+  /* ---- the same, for accounts you follow -------------------------- */
+
+  /**
+   * Say that two followed accounts are the same creator.
+   *
+   * Deliberately **not** `linkFriendsSchema`, which would be the obvious reuse:
+   * that one exists next to a rule that the two must be different services, and
+   * here they very often are not — a main channel and a clips channel is the
+   * commonest case. Sharing the schema would have invited sharing the rule.
+   */
+  app.post('/api/integrations/follows/link', async (request) => {
+    localOnly(request);
+    const { a, b } = z.object({ a: z.string().min(1), b: z.string().min(1) }).parse(request.body);
+    const groupId = await linkFollows(a, b);
+    changes.emitChange('integrations');
+    return { groupId };
+  });
+
+  /** Which of a group's accounts the merged row wears. */
+  app.post('/api/integrations/follows/primary', async (request) => {
+    localOnly(request);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.body);
+    await setPrimaryFollow(id);
+    changes.emitChange('integrations');
+    return { ok: true };
+  });
+
+  /**
+   * Take one account out of its group.
+   *
+   * By account rather than by group, unlike the friends version. A creator's
+   * group can hold several channels, and dissolving all of them to correct one
+   * wrong link would be a poor trade — whereas a friends row is nearly always a
+   * pair, where the two are the same action.
+   */
+  app.post('/api/integrations/follows/unlink', async (request) => {
+    localOnly(request);
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.body);
+    await unlinkFollow(id);
+    changes.emitChange('integrations');
+    return { ok: true };
+  });
+
   /**
    * Accounts whose names look like the same person.
    *
@@ -607,6 +653,49 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     const hidden = parseHiddenProviders((await getSettings()).hiddenProviders);
     const visible = rows.filter((row) => !isHiddenByProviders([{ provider: row.provider }], hidden));
 
+    /*
+     * One row per creator, not per account — the same merge the friends list
+     * does, for the same reason: a main channel and its clips channel linked
+     * together should stop being two entries.
+     *
+     * Two things differ from friends. The identity is the member you *chose*
+     * rather than one a preference order picked, because no rule can say which
+     * of two YouTube channels is the main one. And `inPlaylists` is **summed**
+     * across the group rather than taken from the identity: the number is what
+     * the list sorts by, and showing only the main channel's share would rank a
+     * creator below people you listen to far less.
+     */
+    const groups = new Map<string, typeof visible>();
+    for (const row of visible) {
+      const key = row.groupId ?? `solo:${row.id}`;
+      groups.set(key, [...(groups.get(key) ?? []), row]);
+    }
+
+    const merged = [...groups.entries()].map(([key, group]) => {
+      // `ensurePrimary` guarantees one, but a row read mid-write should still
+      // render rather than throw — so fall back rather than assume.
+      const identity = group.find((row) => row.isPrimary === 1) ?? group[0];
+
+      return {
+        ...identity,
+        id: key,
+        /** Null when this stands alone, so the UI can tell a group from a row. */
+        groupId: identity.groupId,
+        inPlaylists: group.reduce(
+          (total, row) => total + (counts.get(`${row.provider}:${row.providerAccountId}`) ?? 0),
+          0
+        ),
+        /** Every account behind this row, for the chips and for unlinking. */
+        accounts: group.map((row) => ({
+          id: row.id,
+          provider: row.provider,
+          name: row.name,
+          kind: row.kind,
+          isPrimary: row.isPrimary === 1,
+        })),
+      };
+    });
+
     return {
       /*
        * Each one carries how many of its tracks or videos are in your
@@ -614,10 +703,7 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
        * "who am I following that I actually listen to" is a more useful first
        * screen than an alphabetical list of four hundred names.
        */
-      follows: visible.map((row) => ({
-        ...row,
-        inPlaylists: counts.get(`${row.provider}:${row.providerAccountId}`) ?? 0,
-      })),
+      follows: merged,
       /** What is being left out, so a short list can explain itself. */
       hiddenProviders: hidden,
       hiddenCount: rows.length - visible.length,

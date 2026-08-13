@@ -165,7 +165,7 @@ export function Following() {
       {shown.length === 0 ? (
         <div className="empty">Nothing matches "{search}".</div>
       ) : (
-        shown.map((row) => <FollowCard key={row.id} row={row} />)
+        shown.map((row) => <FollowCard key={row.id} row={row} all={all} onChanged={view.reload} />)
       )}
 
       <Sources sources={view.data.sources} />
@@ -173,9 +173,20 @@ export function Following() {
   );
 }
 
-function FollowCard({ row }: { row: FollowRow }) {
+function FollowCard({ row, all, onChanged }: { row: FollowRow; all: FollowRow[]; onChanged: () => void }) {
+  const [linking, setLinking] = useState(false);
+
+  /*
+   * A merged row is several accounts and should look it, the way a merged
+   * friend does. Rendered from `accounts` rather than from the row's own
+   * provider, since the whole point is that they may differ — a YouTube channel
+   * and the same act's Spotify artist page, or two channels from one creator.
+   */
+  const linked = row.accounts.length > 1;
+
   return (
-    <div className="card row" style={{ alignItems: 'center', gap: '.75rem' }}>
+    <div className="card">
+    <div className="row" style={{ alignItems: 'center', gap: '.75rem' }}>
       {row.avatarUrl ? (
         <img src={row.avatarUrl} alt="" width={32} height={32} style={{ borderRadius: '50%' }} loading="lazy" />
       ) : (
@@ -213,10 +224,147 @@ function FollowCard({ row }: { row: FollowRow }) {
               value in the database and noise on a row. */}
           {row.category !== 'unknown' ? ` · ${CATEGORY_LABELS[row.category] ?? row.category}` : ''}
           {row.followerCount ? ` · ${row.followerCount.toLocaleString()} followers` : ''}
+          {/* The other accounts this was merged from, so a name you do not
+              recognise on one service can still be placed by the other. */}
+          {linked
+            ? ` · also ${row.accounts
+                .filter((account) => !account.isPrimary)
+                .map((account) => `${account.provider}: ${account.name}`)
+                .join(', ')}`
+            : ''}
         </div>
       </div>
 
-      <span className="chip">{row.provider}</span>
+      {/* Every service behind the row, not just the main one's. */}
+      <span className="chip">{[...new Set(row.accounts.map((a) => a.provider))].join(' + ')}</span>
+
+      <button className="btn subtle" onClick={() => setLinking((open) => !open)}>
+        {linking ? 'Done' : linked ? 'Linked' : 'Link'}
+      </button>
+    </div>
+
+      {linking && <LinkPanel row={row} all={all} onChanged={onChanged} />}
+    </div>
+  );
+}
+
+/**
+ * Join this account to another, choose which is the main one, and take them
+ * apart again.
+ *
+ * All three live in one panel because they are one job — "these are the same
+ * creator, and *this* is the name I want to see" — and splitting them across
+ * the row would put three controls on four hundred rows for something you do a
+ * handful of times.
+ */
+function LinkPanel({ row, all, onChanged }: { row: FollowRow; all: FollowRow[]; onChanged: () => void }) {
+  const [search, setSearch] = useState('');
+  const [problem, setProblem] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setProblem('');
+    try {
+      await action();
+      onChanged();
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const needle = search.trim().toLowerCase();
+  /*
+   * Anything not already in this group, on any service.
+   *
+   * **Not filtered by provider**, unlike the friends picker, which allows only
+   * a different service. Two YouTube channels from one creator is the case this
+   * was asked for, and a YouTube channel joined to the same act's Spotify
+   * artist page is the other — so both same-service and cross-service have to
+   * be reachable here.
+   *
+   * Rows already in a group of their own are still offered: linking merges the
+   * two groups whole rather than refusing.
+   */
+  const options = all
+    .filter((other) => other.id !== row.id)
+    .filter((other) => !other.groupId || other.groupId !== row.groupId)
+    .filter((other) => needle !== '' && other.name.toLowerCase().includes(needle))
+    .slice(0, 8);
+
+  return (
+    <div style={{ marginTop: '.6rem', display: 'grid', gap: '.4rem' }}>
+      {/*
+        Shown only when there is a group, because "which is the main one" is not
+        a question a single account has an answer to.
+      */}
+      {row.accounts.length > 1 && (
+        <>
+          <div className="meta">Linked accounts — the main one supplies the name, picture and link.</div>
+          {row.accounts.map((account) => (
+            <div key={account.id} className="row" style={{ alignItems: 'center', gap: '.5rem' }}>
+              <span className="grow">
+                {account.name} <span className="meta">({account.provider})</span>
+                {account.isPrimary ? <span className="meta"> — main</span> : null}
+              </span>
+              {!account.isPrimary && (
+                <button
+                  className="btn subtle"
+                  disabled={busy}
+                  onClick={() => void run(() => api.integrations.setPrimaryFollow(account.id))}
+                >
+                  Make main
+                </button>
+              )}
+              <button
+                className="btn subtle"
+                disabled={busy}
+                title="Take this one out, leaving the rest joined"
+                onClick={() => void run(() => api.integrations.unlinkFollow(account.id))}
+              >
+                Unlink
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={`Search for another account that is also ${row.name}`}
+        aria-label="Search for the matching account"
+        type="search"
+        autoFocus
+      />
+
+      {needle === '' ? (
+        <span className="meta">Type a name to find the other channel or artist page.</span>
+      ) : options.length === 0 ? (
+        <span className="meta">Nothing else matches "{search.trim()}".</span>
+      ) : (
+        options.map((other) => (
+          <button
+            key={other.id}
+            className="btn subtle"
+            style={{ justifyContent: 'flex-start' }}
+            disabled={busy}
+            /*
+             * Linking takes *account* ids, and a row is a group. `accounts[0]`
+             * is read here in one place for the same reason the friends picker
+             * does it: a row's `id` is a group key, the two are strings called
+             * `id` a few lines apart, and passing the wrong one typechecks.
+             */
+            onClick={() => void run(() => api.integrations.linkFollows(row.accounts[0].id, other.accounts[0].id))}
+          >
+            {other.provider}: {other.name}
+          </button>
+        ))
+      )}
+
+      {problem && <div className="banner">{problem}</div>}
     </div>
   );
 }

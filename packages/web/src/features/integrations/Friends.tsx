@@ -331,7 +331,20 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
           {friend.accounts.map((account) => account.provider).join(' + ')}
         </span>
 
-        {friend.personId ? (
+        {/*
+          Both, on a merged row.
+
+          "Link" used to be replaced by "Unlink" the moment two accounts were
+          joined, which made a pair the most anybody could ever have — the only
+          way to add a third was to take the pair apart and start again, and
+          nothing on screen said so. The server always supported it:
+          `linkFriends` absorbs whole groups.
+        */}
+        <button className="btn subtle" onClick={() => setLinking((open) => !open)}>
+          {linking ? 'Cancel' : friend.personId ? 'Add' : 'Link'}
+        </button>
+
+        {friend.personId && (
           <button
             className="btn subtle"
             title="Stop treating these as the same person"
@@ -340,10 +353,6 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
             onClick={() => void api.integrations.unlinkPerson(friend.personId!).then(onChanged)}
           >
             Unlink
-          </button>
-        ) : (
-          <button className="btn subtle" onClick={() => setLinking((open) => !open)}>
-            {linking ? 'Cancel' : 'Link'}
           </button>
         )}
       </div>
@@ -366,9 +375,25 @@ function LinkPicker({ friend, onDone }: { friend: FriendRow; onDone: () => void 
   const [problem, setProblem] = useState('');
   const all = useAsync(() => api.integrations.friends(), [], ['integrations']);
 
+  /*
+   * Filtered on the *group's* services, not the identity's one.
+   *
+   * `other.provider !== friend.provider` was right while a row was one account
+   * and wrong once it could be three: it compared against whichever account
+   * supplied the name — Discord, nearly always — so a second Steam account was
+   * offered for a person who already had one, and the server rejected it after
+   * the click. Excluding every service already in the group asks the same
+   * question the server asks.
+   *
+   * Rows that are themselves groups are offered now rather than filtered out:
+   * `linkFriends` absorbs both sides, so merging two pairs works, and refusing
+   * it here only hid something that already functioned.
+   */
+  const taken = new Set(friend.accounts.map((account) => account.provider));
+
   const options = (all.data?.friends ?? [])
-    // Other services only, and nothing already spoken for.
-    .filter((other) => other.provider !== friend.provider && !other.personId)
+    .filter((other) => other.id !== friend.id)
+    .filter((other) => other.accounts.every((account) => !taken.has(account.provider)))
     .filter((other) => other.name.toLowerCase().includes(search.trim().toLowerCase()))
     .slice(0, 8);
 

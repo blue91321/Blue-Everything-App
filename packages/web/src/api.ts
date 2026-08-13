@@ -708,8 +708,22 @@ export interface FollowRow {
   categoryBecause: string | null;
   followerCount: number | null;
   seenAt: number;
-  /** How many of their tracks or videos are in your collections. */
+  /**
+   * How many of their tracks or videos are in your collections, **summed over
+   * every linked account** — the list sorts by this, and counting only the main
+   * channel's share would rank a creator below people you listen to less.
+   */
   inPlaylists: number;
+  /** Set when this row is several accounts merged; null when it stands alone. */
+  groupId: string | null;
+  /** Every account behind the row, the chosen main one flagged. */
+  accounts: Array<{
+    id: string;
+    provider: string;
+    name: string;
+    kind: 'channel' | 'artist';
+    isPrimary: boolean;
+  }>;
 }
 
 export interface FollowsView {
@@ -980,6 +994,13 @@ export const api = {
       patch<{ id: string; ignored: boolean }>(`/api/integrations/collections/${id}`, { ignored }),
     /** Channels and artists you follow. Synced on demand, not refreshed on read. */
     follows: () => request<FollowsView>('/api/integrations/follows'),
+    /** Two accounts that are the same creator. May be on the same service. */
+    linkFollows: (a: string, b: string) =>
+      post<{ groupId: string }>('/api/integrations/follows/link', { a, b }),
+    /** Which of a group's accounts the merged row wears. */
+    setPrimaryFollow: (id: string) => post<{ ok: boolean }>('/api/integrations/follows/primary', { id }),
+    /** Take one account out of its group, leaving the rest joined. */
+    unlinkFollow: (id: string) => post<{ ok: boolean }>('/api/integrations/follows/unlink', { id }),
     collectionItems: (id: string) => request<MediaItem[]>(`/api/integrations/collections/${id}`),
     music: () => request<MusicView>('/api/integrations/music'),
   },

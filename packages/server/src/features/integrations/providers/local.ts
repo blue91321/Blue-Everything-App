@@ -84,8 +84,21 @@ export async function recordLocalPresence(report: LocalPresence): Promise<void> 
    * Writing that through would delete the whole list every time you quit
    * League, so the last real snapshot is kept and marked stale instead — the
    * screen says "last seen twenty minutes ago" rather than showing nobody.
+   *
+   * **`error` has to be checked too, and leaving it out cost real data.** The
+   * agent's other empty-list path is "the client is up but would not answer" —
+   * starting, patching, mid-restart — and that reports `clientRunning: true`
+   * with an error and no friends. `replaceFriends` prunes anything absent from
+   * the snapshot, so every Riot friend was deleted and re-inserted with fresh
+   * ids on the next good poll, **taking every link to a Discord account with
+   * them**. Five pairs were found unpicked this way, each leaving a stranded
+   * group of one, and nothing about it was visible: the names came straight
+   * back, just no longer joined to anybody.
+   *
+   * The two cases were always the same claim — "I cannot see the list right
+   * now" — and only one of them said so.
    */
-  if (report.clientRunning) await replaceFriends(report.provider, report.friends);
+  if (report.clientRunning && !report.error) await replaceFriends(report.provider, report.friends);
 
   // Announced here rather than by the generic hook, which is excluded for this
   // route: the report arrives on a timer and nearly always says the same thing,

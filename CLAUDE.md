@@ -2374,6 +2374,74 @@ the last attempt failed — its own chip rather than the `unavailable` capabilit
 status, which renders "not possible" and is a claim about the *service* rather
 than about one failed attempt that will retry.
 
+### Linking accounts that are the same person, or the same creator
+
+`friends.person_id` groups accounts that are one person; `follows.group_id` does
+the same for one creator. `linkFriends` and `linkFollows` both **absorb whole
+groups**, so a third account joins a pair and two pairs merge into a four.
+
+**Friends could only ever be a pair, and only the screen said so.** "Link" was
+replaced by "Unlink" the moment two accounts joined, so the only way to add a
+third was to take the pair apart and start again — the server had supported it
+all along. A merged row now offers **Add** and **Unlink** side by side.
+
+Two things had to be fixed to make that real:
+
+- **The picker filtered on the identity's service, not the group's.** It
+  compared against whichever account supplied the name, which is Discord nearly
+  always, so a second Steam account was offered to a person who already had one
+  and the server rejected it after the click.
+- **The server's same-service guard compared only the two named rows.** Right
+  while a group was always a pair; wrong once a third could be added, since the
+  screen passes the group's *first* account. It now checks the whole merged set
+  — and must **deduplicate by row id first**, because `a` and `b` are already
+  inside the members query whenever they carry a person id. Without that, every
+  legitimate third was refused with "that would give one person two steam
+  accounts", naming a service that had exactly one.
+
+**Follows differ deliberately, in two ways.**
+
+*Two accounts on the same service are allowed.* A main channel and a clips
+channel is the commonest reason to want this, and "one person, one Discord" is
+simply not true of channels. The link route therefore does **not** reuse
+`linkFriendsSchema` — sharing the schema would have invited sharing the rule.
+
+*The main one is chosen by hand*, not by a preference order like
+`IDENTITY_PREFERENCE`. No rule can say which of two YouTube channels is the main
+one; it is a fact about the creator, and picking the bigger or older one would be
+wrong often enough to be irritating. `ensurePrimary` runs after every membership
+change so a group never renders headless, and unlinking the main promotes
+another rather than leaving nobody.
+
+`inPlaylists` is **summed across the group**, not taken from the main account.
+It is what the list sorts by, so counting only the main channel's share would
+rank a creator below people you listen to far less.
+
+Unlinking is per *account* here and per *person* on friends. A friends row is
+nearly always a pair, where the two are the same action; a creator's group can
+hold several channels, and dissolving all of them to correct one wrong link
+would be a poor trade. A group of one is dissolved either way — left alone it
+renders identically to an unlinked row while still quietly absorbing whatever
+was linked to that id next.
+
+### An errored report must not be written through as an empty list
+
+`recordLocalPresence` refused to write when `clientRunning` was false, and that
+was only half of it. The agent's *other* empty-list path is "the client is up
+but would not answer" — starting, patching, mid-restart — which reports
+`clientRunning: true` with an error and no friends. `replaceFriends` prunes
+anything absent from the snapshot, so **every Riot friend was deleted and
+re-inserted with fresh ids on the next good poll, taking every link to a Discord
+account with it**.
+
+Nothing about that was visible. The names came straight back; they were just no
+longer joined to anybody, and the Discord side kept a `person_id` nothing else
+shared — a group of one, which renders exactly like an unlinked row while
+offering "Unlink" for a link that no longer existed. Five pairs were found
+unpicked this way. Migration `0031` nulls those, and the guard is now
+`clientRunning && !error`: both cases were always the same claim — "I cannot see
+the list right now" — and only one of them said so.
+
 ### Searching, and the handle you actually know them by
 
 Both long lists lead with a search box, on its own full-width row above the
