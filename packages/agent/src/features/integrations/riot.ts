@@ -155,6 +155,29 @@ const AVAILABILITY: Record<string, RiotFriend['state']> = {
   offline: 'offline',
 };
 
+/**
+ * Is the League client actually vouching for this person?
+ *
+ * **`availability` alone says far more than it knows.** It answers "is this
+ * account signed in to Riot somewhere", which is true of a launcher sitting on
+ * the desktop and of the phone companion app, and it reports both as `chat` —
+ * the same value somebody sitting in champion select gets. Measured against a
+ * live list: six friends were `chat` with `productName: "Riot Client"` and no
+ * League data at all, and were being shown as online.
+ *
+ * The `lol` block is the honest signal. The client fills it in for anybody it
+ * can see a League session for and leaves it empty otherwise, so an empty one
+ * means "signed in, but not here" — which covers the launcher and the phone
+ * with one rule rather than a list of product names to keep up with.
+ *
+ * Those people are still *around*, so they are `away` rather than dropped:
+ * "reachable, but not about to join a game" is exactly what `away` means here
+ * and is what the phone companion app has always been mapped to.
+ */
+function inLeagueClient(friend: LcuFriend): boolean {
+  return Object.keys(friend.lol ?? {}).length > 0;
+}
+
 interface LcuFriend {
   puuid?: string;
   id?: string;
@@ -305,9 +328,20 @@ export async function readFriends(lock: Lock): Promise<RiotFriend[]> {
   const queues = await loadQueues(lock);
 
   return raw.map((friend) => {
-    const state = AVAILABILITY[friend.availability ?? 'offline'] ?? 'offline';
+    const said = AVAILABILITY[friend.availability ?? 'offline'] ?? 'offline';
     const status = friend.lol?.gameStatus;
-    const playing = state !== 'offline' && status !== undefined && IN_GAME_STATUSES.has(status);
+    const playing = said !== 'offline' && status !== undefined && IN_GAME_STATUSES.has(status);
+
+    /*
+     * `online` has to be earned; `offline` and `away` are taken as given.
+     *
+     * Demoting rather than overriding, so this can only ever make a claim
+     * weaker. Somebody the client reports as away is away whatever else is
+     * true, and somebody it cannot see in League is at most away — which is the
+     * whole fix. Only the strongest state, "online right now", requires the
+     * client to actually have League data for them.
+     */
+    const state = said === 'online' && !inLeagueClient(friend) ? 'away' : said;
 
     return {
       // `puuid` is the stable one. `summonerId` is per-region and `name` is

@@ -2201,6 +2201,36 @@ movable and has no business assuming League is installed on the same box.
   absent** when the client has no answer, so `??` kept the empty one and put
   friends on screen playing nothing at all.
 
+  **`availability` says far more than it knows, so `online` has to be earned.**
+  It answers "is this account signed in to Riot somewhere" — true of a launcher
+  left open on the desktop and of the phone companion app, and reported as
+  `chat`, the same value somebody in champion select gets. Measured against a
+  live list: six friends were `chat` with `productName: "Riot Client"` and no
+  League data at all, and were on screen as online.
+
+  The `lol` block is the honest signal. The client fills it in for anybody it
+  can see a League session for and leaves it empty otherwise, so an empty one
+  means "signed in, but not here" — which covers the launcher and the phone with
+  one rule rather than a list of product names to keep up with. The demotion
+  only ever *weakens* a claim: `offline` and `away` are taken as given, and only
+  `online` needs the evidence.
+
+  They become `away` rather than being dropped — "reachable, but not about to
+  join a game" is what `away` already meant for the companion app.
+
+  Note that a lobby reads as `online`, not `in-game`: the real statuses are
+  `hosting_JADE_RANKED_SOLO_5x5` and the like, and `IN_GAME_STATUSES` lists a
+  literal `hosting_GAME` that never appears. That is the right answer anyway —
+  somebody sitting in a lobby is at the keyboard and not in a match — so the
+  near-miss is left alone rather than turned into a prefix test.
+
+**The friends list counted `away` as online, which was the same lie one level
+up.** "N online" meant "not offline", so a Riot list — which is mostly launchers
+and phones — reported 39 people online when 9 were. `away` is now its own count
+and its own section, headed *"Away — signed in, but not in a game"*, sitting
+between online and offline. Being signed in somewhere is worth showing; it is
+not the same claim as being here.
+
   Avatars come from Community Dragon, the public mirror of the client's own
   assets: Riot reports an icon id and no URL. Same arrangement as the Steam and
   Discord avatars — a URL the browser fetches, nothing this app stores.

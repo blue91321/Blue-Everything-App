@@ -103,7 +103,18 @@ export function Friends() {
       : view.data.friends.filter((f) => f.accounts.some((a) => a.provider === filter))
   ).filter((f) => matchesSearch(f, needle));
 
-  const around = shown.filter((f) => f.state !== 'offline' && f.state !== 'unknown');
+  /*
+   * `away` is its own group, and lumping it in with online was a lie the count
+   * told out loud.
+   *
+   * "N online" counted everybody who was not offline, so a launcher left open
+   * and a phone signed in were reported as people who are around — and on a
+   * Riot list, which is mostly those, the number was wrong by a factor of
+   * several. Being signed in somewhere is worth showing; it is not the same
+   * claim as being here.
+   */
+  const around = shown.filter((f) => f.state === 'in-game' || f.state === 'online');
+  const away = shown.filter((f) => f.state === 'away');
   const unknown = shown.filter((f) => f.state === 'unknown');
   const offline = shown.filter((f) => f.state === 'offline');
 
@@ -143,6 +154,9 @@ export function Friends() {
           */}
           {needle ? `${shown.length} matching · ` : ''}
           {around.length === 0 ? 'Nobody online' : `${around.length} online`}
+          {/* Named separately, because "signed in somewhere" is a weaker claim
+              than "here", and most of a Riot list is the weaker one. */}
+          {away.length ? ` · ${away.length} away` : ''}
           {offline.length ? ` · ${offline.length} offline` : ''}
           {/* Counted separately and named, so a hundred rows nobody can vouch
               for never read as a hundred people who are definitely out. */}
@@ -182,7 +196,23 @@ export function Friends() {
         <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
       ))}
 
-
+      {/*
+        Between online and offline, where it belongs — these are people who are
+        signed in but not here: a launcher left open, the phone companion app,
+        or somebody idle in the League client. Under its own heading rather than
+        mixed into the list above, so the top of the screen answers "who could I
+        actually play with" without qualification.
+      */}
+      {away.length > 0 && (
+        <>
+          <div className="meta" style={{ margin: '1rem 0 .5rem' }}>
+            Away — signed in, but not in a game
+          </div>
+          {away.map((friend) => (
+            <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
+          ))}
+        </>
+      )}
 
       {/*
         Offline friends stay on screen below a divider rather than being hidden
