@@ -238,8 +238,10 @@ function FollowCard({ row, all, onChanged }: { row: FollowRow; all: FollowRow[];
       {/* Every service behind the row, not just the main one's. */}
       <span className="chip">{[...new Set(row.accounts.map((a) => a.provider))].join(' + ')}</span>
 
+      {/* Same three labels as the Friends row. "Linked" described a state and
+          did not say it was a button you could press to change it. */}
       <button className="btn subtle" onClick={() => setLinking((open) => !open)}>
-        {linking ? 'Done' : linked ? 'Linked' : 'Link'}
+        {linking ? 'Done' : linked ? 'Manage links' : 'Link'}
       </button>
     </div>
 

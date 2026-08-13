@@ -2383,7 +2383,19 @@ groups**, so a third account joins a pair and two pairs merge into a four.
 **Friends could only ever be a pair, and only the screen said so.** "Link" was
 replaced by "Unlink" the moment two accounts joined, so the only way to add a
 third was to take the pair apart and start again — the server had supported it
-all along. A merged row now offers **Add** and **Unlink** side by side.
+all along.
+
+**One button per row, `Link` / `Manage links` / `Done`, on both tabs.** Adding
+and removing are the same job, and splitting them across two controls put the
+two halves in different places while spending a second slot on every row of a
+270-row list for something done a handful of times. The panel lists what is
+joined *before* the box that joins more, because you cannot decide what to add
+without seeing what is there — a list that previously existed nowhere.
+
+Unlinking is per account inside that panel. The row's old button dissolved the
+whole group, which is the same thing for a pair and wrong for three: there was
+no way to correct one bad link without losing the good one. A pair still comes
+apart in one click, because the server dissolves a group left with one member.
 
 Two things had to be fixed to make that real:
 
@@ -2417,12 +2429,11 @@ another rather than leaving nobody.
 It is what the list sorts by, so counting only the main channel's share would
 rank a creator below people you listen to far less.
 
-Unlinking is per *account* here and per *person* on friends. A friends row is
-nearly always a pair, where the two are the same action; a creator's group can
-hold several channels, and dissolving all of them to correct one wrong link
-would be a poor trade. A group of one is dissolved either way — left alone it
-renders identically to an unlinked row while still quietly absorbing whatever
-was linked to that id next.
+Unlinking is per account on both tabs, and a group of one is dissolved rather
+than kept — left alone it renders identically to an unlinked row while still
+quietly absorbing whatever was linked to that id next. `unlinkPerson` remains
+on the server for dissolving a whole group in one call; nothing on screen needs
+it now that the panel lists the accounts.
 
 ### An errored report must not be written through as an empty list
 

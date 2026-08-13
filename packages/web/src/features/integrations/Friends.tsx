@@ -332,48 +332,62 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
         </span>
 
         {/*
-          Both, on a merged row.
+          One button, opening one panel.
 
-          "Link" used to be replaced by "Unlink" the moment two accounts were
-          joined, which made a pair the most anybody could ever have — the only
-          way to add a third was to take the pair apart and start again, and
-          nothing on screen said so. The server always supported it:
-          `linkFriends` absorbs whole groups.
+          It was two — "Link"/"Add" beside "Unlink" — which put the two halves
+          of one job in different places and spent a second slot on every row of
+          a 270-row list for something done a handful of times. Adding and
+          removing are both *managing the links*, so they live together behind a
+          single control, the same shape the Following tab uses.
         */}
         <button className="btn subtle" onClick={() => setLinking((open) => !open)}>
-          {linking ? 'Cancel' : friend.personId ? 'Add' : 'Link'}
+          {linking ? 'Done' : friend.accounts.length > 1 ? 'Manage links' : 'Link'}
         </button>
-
-        {friend.personId && (
-          <button
-            className="btn subtle"
-            title="Stop treating these as the same person"
-            // By person, because the row is the person: unlinking one account
-            // of a pair would leave the other looking unchanged.
-            onClick={() => void api.integrations.unlinkPerson(friend.personId!).then(onChanged)}
-          >
-            Unlink
-          </button>
-        )}
       </div>
 
-      {linking && <LinkPicker friend={friend} onDone={() => { setLinking(false); onChanged(); }} />}
+      {/*
+        Kept open across a change, unlike before.
+
+        The panel used to close itself on every successful link, which was fine
+        while linking was one action and wrong now that it is a session — you
+        add a second account, look at what you have, and take one back out.
+      */}
+      {linking && <LinkPicker friend={friend} onChanged={onChanged} />}
     </div>
   );
 }
 
 /**
- * Pick the account on another service that is the same person.
+ * Everything about who this person's accounts are: what is joined, and what to
+ * join next.
  *
- * Searchable, because the list it picks from is everybody on every *other*
- * service — a hundred names is not something to scroll through in a dropdown.
- * Restricted to other providers because linking two Discord accounts to each
- * other says nothing, and the server refuses it anyway.
+ * Both halves in one place because they are one job. It began as a picker
+ * alone, with unlinking as a separate button on the row — which meant the list
+ * of what you had linked existed nowhere, and taking one account out of a group
+ * of three was not reachable at all.
+ *
+ * Searchable, because the list it picks from is everybody on every other
+ * service, and a hundred names is not something to scroll through in a
+ * dropdown.
  */
-function LinkPicker({ friend, onDone }: { friend: FriendRow; onDone: () => void }) {
+function LinkPicker({ friend, onChanged }: { friend: FriendRow; onChanged: () => void }) {
   const [search, setSearch] = useState('');
   const [problem, setProblem] = useState('');
+  const [busy, setBusy] = useState(false);
   const all = useAsync(() => api.integrations.friends(), [], ['integrations']);
+
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setProblem('');
+    try {
+      await action();
+      onChanged();
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   /*
    * Filtered on the *group's* services, not the identity's one.
@@ -407,17 +421,45 @@ function LinkPicker({ friend, onDone }: { friend: FriendRow; onDone: () => void 
    * That is exactly what happened. Reading `.accounts[0].id` in one place is
    * what stops the two being confusable at the call sites.
    */
-  const link = async (other: FriendRow) => {
-    try {
-      await api.integrations.linkFriends(friend.accounts[0].id, other.accounts[0].id);
-      onDone();
-    } catch (error) {
-      setProblem((error as Error).message);
-    }
-  };
+  const needle = search.trim().toLowerCase();
 
   return (
     <div style={{ marginTop: '.6rem', display: 'grid', gap: '.4rem' }}>
+      {/*
+        What is joined, listed before the box that joins more — you cannot
+        sensibly decide what to add without seeing what is there. Shown only
+        when there is a group, since one account is not a list.
+      */}
+      {friend.accounts.length > 1 && (
+        <>
+          <div className="meta">Linked accounts</div>
+          {friend.accounts.map((account) => (
+            <div key={account.id} className="row" style={{ alignItems: 'center', gap: '.5rem' }}>
+              <span className="grow">
+                {account.name} <span className="meta">({account.provider})</span>
+              </span>
+              <button
+                className="btn subtle"
+                disabled={busy}
+                title="Take this one out, leaving the rest joined"
+                /*
+                 * Per account, not per person.
+                 *
+                 * The row's old button dissolved the whole group, which is the
+                 * same thing for a pair and wrong for three — there was no way
+                 * to correct one bad link without losing the good one. A group
+                 * left with a single member is dissolved by the server, so a
+                 * pair still comes apart in one click.
+                 */
+                onClick={() => void run(() => api.integrations.unlinkFriend(account.id))}
+              >
+                Unlink
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
@@ -426,11 +468,30 @@ function LinkPicker({ friend, onDone }: { friend: FriendRow; onDone: () => void 
         type="search"
         autoFocus
       />
-      {options.length === 0 ? (
-        <span className="meta">Nothing unlinked matches on another service.</span>
+      {needle === '' ? (
+        <span className="meta">Type a name to find them on another service.</span>
+      ) : options.length === 0 ? (
+        <span className="meta">Nothing on another service matches "{search.trim()}".</span>
       ) : (
         options.map((other) => (
-          <button key={other.id} className="btn subtle" style={{ justifyContent: 'flex-start' }} onClick={() => void link(other)}>
+          <button
+            key={other.id}
+            className="btn subtle"
+            style={{ justifyContent: 'flex-start' }}
+            disabled={busy}
+            /*
+             * Takes the whole entry, never a bare id.
+             *
+             * A row's `id` is a *person* key — `solo:<rowId>` when unlinked, the
+             * person id when not — and linking works on *account* ids. Both are
+             * strings called `id` on objects a few lines apart, so passing the
+             * wrong one typechecks perfectly and fails at the server with "one
+             * of those is not in the list". That is exactly what happened.
+             */
+            onClick={() =>
+              void run(() => api.integrations.linkFriends(friend.accounts[0].id, other.accounts[0].id))
+            }
+          >
             {other.provider}: {other.name}
           </button>
         ))
