@@ -2218,11 +2218,37 @@ movable and has no business assuming League is installed on the same box.
   They become `away` rather than being dropped — "reachable, but not about to
   join a game" is what `away` already meant for the companion app.
 
-  Note that a lobby reads as `online`, not `in-game`: the real statuses are
-  `hosting_JADE_RANKED_SOLO_5x5` and the like, and `IN_GAME_STATUSES` lists a
-  literal `hosting_GAME` that never appears. That is the right answer anyway —
-  somebody sitting in a lobby is at the keyboard and not in a match — so the
-  near-miss is left alone rather than turned into a prefix test.
+  **`hosting_` is a prefix, not a value.** `IN_GAME_STATUSES` listed a literal
+  `hosting_GAME` that never appears — the real ones name the queue, so
+  `hosting_JADE_RANKED_SOLO_5x5` and `hosting_PVE_PUZZLE_TFT` both fell through
+  to merely `online`. A lobby counts as in-game here: a queue has been picked
+  and they are waiting on players. Fourteen people read as in-game where seven
+  did.
+
+### Presence has a colour, and it is not the accent
+
+A dot on the corner of each avatar: **blue in-game, green online, yellow away,
+red busy, grey offline**, with "I cannot tell" drawn as a hollow ring.
+
+**`dnd` had to become a real state to draw it.** Riot and Steam both publish it
+and both were folded into `away`, which loses the only thing it says — the
+person is *there* and has asked not to be disturbed, where away is the opposite
+claim. It ranks above `away` and sits in the top group, because busy is a choice
+somebody made and idle is what happens when they walk off.
+
+**The colours deliberately do not follow the accent.** Everything else on screen
+does, and these must not: green means online in every chat client on this
+machine, and re-teaching that per accent would make the one row of colour
+carrying meaning the one you cannot read at a glance — with the accent applied,
+choosing red would have made every online friend look busy. They are declared
+twice, once per theme, for the same reason the accents are: the pale dark-theme
+green and yellow vanish against white.
+
+`unknown` is a hollow ring rather than a sixth colour, because any filled dot
+would be a claim about somebody nobody can vouch for, and grey would say offline
+— the specific thing that state exists to avoid saying. Each dot carries a
+`title` and an `aria-label`, since a colour is nothing to a screen reader and
+nothing to anybody who cannot tell the green from the red.
 
 **The friends list counted `away` as online, which was the same lie one level
 up.** "N online" meant "not offline", so a Riot list — which is mostly launchers

@@ -27,7 +27,7 @@ export interface RiotFriend {
   providerUserId: string;
   name: string;
   avatarUrl?: string;
-  state: 'offline' | 'online' | 'away' | 'in-game';
+  state: 'offline' | 'online' | 'away' | 'in-game' | 'dnd';
   game?: string;
   detail?: string;
 }
@@ -151,7 +151,11 @@ const AVAILABILITY: Record<string, RiotFriend['state']> = {
   online: 'online',
   away: 'away',
   mobile: 'away',
-  dnd: 'away',
+  // Its own state rather than folded into `away`. In League it nearly always
+  // means a match or champion select, and the `lol` block below upgrades those
+  // to `in-game` anyway — what is left is somebody at the keyboard who has
+  // asked not to be bothered, which is not the same as somebody idle.
+  dnd: 'dnd',
   offline: 'offline',
 };
 
@@ -199,8 +203,21 @@ interface LcuFriend {
   };
 }
 
-/** `outOfGame` is the idle state; everything else is something happening. */
-const IN_GAME_STATUSES = new Set(['inGame', 'championSelect', 'inQueue', 'hosting_GAME']);
+/**
+ * `outOfGame` is the idle state; everything else is something happening.
+ *
+ * **`hosting_` is a prefix, not a value.** The set listed a literal
+ * `hosting_GAME` that never appears — the real ones name the queue, so a live
+ * list had `hosting_JADE_RANKED_SOLO_5x5` and `hosting_PVE_PUZZLE_TFT` and both
+ * fell through to merely `online`. Hosting a lobby is being in a game as far as
+ * this list is concerned: they have picked a queue and are waiting on players.
+ */
+const IN_GAME_STATUSES = new Set(['inGame', 'championSelect', 'inQueue']);
+
+function isPlaying(status: string | undefined): boolean {
+  if (status === undefined) return false;
+  return IN_GAME_STATUSES.has(status) || status.startsWith('hosting_');
+}
 
 /**
  * Readable names for what the client reports as enums.
@@ -329,8 +346,7 @@ export async function readFriends(lock: Lock): Promise<RiotFriend[]> {
 
   return raw.map((friend) => {
     const said = AVAILABILITY[friend.availability ?? 'offline'] ?? 'offline';
-    const status = friend.lol?.gameStatus;
-    const playing = said !== 'offline' && status !== undefined && IN_GAME_STATUSES.has(status);
+    const playing = said !== 'offline' && isPlaying(friend.lol?.gameStatus);
 
     /*
      * `online` has to be earned; `offline` and `away` are taken as given.

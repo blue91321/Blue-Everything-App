@@ -18,17 +18,22 @@ import { getAccount, replaceFriends } from '../store.js';
 const API = 'https://api.steampowered.com';
 
 /**
- * Steam's `personastate`, which has six values that mean four things to us.
+ * Steam's `personastate`, which has seven values that mean four things to us.
  *
- * `snooze` and `looking to trade/play` all collapse to away or online: the
- * question a friends list answers is "could I say hello", and none of the finer
- * states change it. Playing something outranks all of them, which is why the
- * game is checked first — a friend in-game shows as `online` in this field.
+ * `snooze` and `looking to trade/play` collapse to away or online: the question
+ * a friends list answers is "could I say hello", and none of the finer states
+ * change it. Playing something outranks all of them, which is why the game is
+ * checked first — a friend in-game shows as `online` in this field.
+ *
+ * **Busy is the exception, and it kept its own state.** It is a do-not-disturb
+ * somebody set deliberately; folding it into `away` lost the only thing it
+ * says, which is that they are there and would rather be left alone. Away is
+ * the opposite claim.
  */
 const PERSONA_STATES: Record<number, PresenceState> = {
   0: 'offline',
   1: 'online',
-  2: 'away', // busy
+  2: 'dnd', // busy
   3: 'away',
   4: 'away', // snooze
   5: 'online', // looking to trade

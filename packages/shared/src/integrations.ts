@@ -656,7 +656,15 @@ export function capabilityIsUsable(spec: CapabilitySpec | undefined): boolean {
  * their computers, on no evidence whatsoever. Absent data and a negative answer
  * are different things, and only one of them should look like one.
  */
-export const PRESENCE_STATES = ['offline', 'online', 'away', 'in-game', 'unknown'] as const;
+/**
+ * `dnd` is a state of its own, not a flavour of `away`.
+ *
+ * Both Riot and Steam publish it and both were being folded into `away`, which
+ * loses the one thing it says: the person is *there*, at the keyboard, and has
+ * asked not to be disturbed. Away is the opposite claim — present but not
+ * paying attention — and they want opposite things done about them.
+ */
+export const PRESENCE_STATES = ['offline', 'online', 'away', 'in-game', 'dnd', 'unknown'] as const;
 export const presenceStateSchema = z.enum(PRESENCE_STATES);
 export type PresenceState = (typeof PRESENCE_STATES)[number];
 
@@ -700,13 +708,16 @@ export function isHiddenByProviders(
 export const presenceRank: Record<PresenceState, number> = {
   'in-game': 0,
   online: 1,
-  away: 2,
-  offline: 3,
+  // Above `away`, because they are at the keyboard — busy is a choice somebody
+  // made, idle is what happens when they walk off.
+  dnd: 2,
+  away: 3,
+  offline: 4,
   // Last. It briefly sat above `offline`, on the reasoning that "I cannot tell"
   // might hide somebody who is around — but there are a hundred of them and
   // eighteen of everything else, so it buried the list that answers the
   // question under the list that cannot.
-  unknown: 4,
+  unknown: 5,
 };
 
 export const friendSchema = z.object({

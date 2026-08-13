@@ -47,6 +47,25 @@
   --danger: #ff6b6b;
   --ok: #5fd18c;
 
+  /*
+   * Presence, deliberately **not** the accent.
+   *
+   * Everything else on screen follows the accent, and these must not: green
+   * means online in every chat client on this machine, and re-teaching that per
+   * accent would make the one row of colour that carries meaning the one you
+   * cannot read at a glance. With the accent applied, choosing red would have
+   * made every online friend look busy.
+   *
+   * Declared twice like the accents, and for the same reason — these are read
+   * against `#14161c` here and against white below, and no single hex is legible
+   * on both.
+   */
+  --presence-in-game: #4d9bff;
+  --presence-online: #43b581;
+  --presence-away: #e5b04a;
+  --presence-dnd: #f04747;
+  --presence-offline: #6a7080;
+
   color-scheme: dark;
 }
 
@@ -59,6 +78,15 @@
   --muted: #666c7a;
   --danger: #c92a2a;
   --ok: #2b8a3e;
+
+  /* Darkened until each reads on white — the pale dark-theme greens and yellows
+     disappear against it, which is exactly the case a single shared value gets
+     wrong on precisely one screen. */
+  --presence-in-game: #1a73e8;
+  --presence-online: #1f9254;
+  --presence-away: #b07d10;
+  --presence-dnd: #d13438;
+  --presence-offline: #8b90a0;
 
   color-scheme: light;
 }
@@ -950,6 +978,52 @@ button {
 
 .chip.presence-offline {
   opacity: 0.6;
+}
+
+/* ---- the presence dot --------------------------------------------- */
+
+/*
+ * A coloured dot on the corner of the avatar, the way every chat client does
+ * it. On the avatar rather than beside the name because that is where the eye
+ * already is when scanning a list of faces, and it costs no width in a row that
+ * already carries a name, a game, a chip and a button.
+ */
+.avatar-wrap {
+  position: relative;
+  flex: none;
+  line-height: 0;
+}
+
+.presence-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--presence-offline);
+  /* Against the card, not the avatar — a dot sitting directly on a busy
+     profile picture loses its edge and stops reading as a status light. */
+  border: 2px solid var(--surface);
+  box-sizing: border-box;
+}
+
+.presence-dot.presence-in-game { background: var(--presence-in-game); }
+.presence-dot.presence-online { background: var(--presence-online); }
+.presence-dot.presence-away { background: var(--presence-away); }
+.presence-dot.presence-dnd { background: var(--presence-dnd); }
+.presence-dot.presence-offline { background: var(--presence-offline); }
+
+/*
+ * "I cannot tell" is drawn hollow rather than in a sixth colour.
+ *
+ * Discord returns its friends list with no presence on it at all, and any
+ * filled dot would be a claim about somebody nobody can vouch for — grey would
+ * say offline, which is the specific thing that state exists to avoid saying.
+ */
+.presence-dot.presence-unknown {
+  background: transparent;
+  border-color: var(--muted);
 }
 
 /* A provider row on the Services tab, collapsed until you open it.

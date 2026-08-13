@@ -18,6 +18,7 @@ const STATE_LABEL: Record<FriendRow['state'], string> = {
   'in-game': 'playing',
   online: 'online',
   away: 'away',
+  dnd: 'busy',
   offline: 'offline',
   /*
    * Named after the service rather than the absence.
@@ -113,7 +114,9 @@ export function Friends() {
    * several. Being signed in somewhere is worth showing; it is not the same
    * claim as being here.
    */
-  const around = shown.filter((f) => f.state === 'in-game' || f.state === 'online');
+  // `dnd` belongs up here: they are at the keyboard, and "busy" is a choice
+  // somebody made rather than the absence idle time reports.
+  const around = shown.filter((f) => f.state === 'in-game' || f.state === 'online' || f.state === 'dnd');
   const away = shown.filter((f) => f.state === 'away');
   const unknown = shown.filter((f) => f.state === 'unknown');
   const offline = shown.filter((f) => f.state === 'offline');
@@ -323,13 +326,29 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
   return (
     <div className="card">
       <div className="row" style={{ alignItems: 'center', gap: '.75rem' }}>
-        {friend.avatarUrl ? (
-          <img src={friend.avatarUrl} alt="" width={32} height={32} style={{ borderRadius: 6 }} />
-        ) : (
-          <span className="glyph" aria-hidden="true">
-            👤
-          </span>
-        )}
+        {/*
+          The dot rides on the avatar, so it needs a positioned wrapper that
+          exists whether or not there is a picture — the fallback glyph gets one
+          too, or half the list would have no status light.
+        */}
+        <span className="avatar-wrap">
+          {friend.avatarUrl ? (
+            <img src={friend.avatarUrl} alt="" width={32} height={32} style={{ borderRadius: 6 }} />
+          ) : (
+            <span className="glyph" aria-hidden="true">
+              👤
+            </span>
+          )}
+          {/* The colour is the whole message, so it carries a text one too —
+              a dot is invisible to a screen reader and to anybody who cannot
+              tell the green from the red. */}
+          <span
+            className={`presence-dot presence-${friend.state}`}
+            title={STATE_LABEL[friend.state]}
+            aria-label={STATE_LABEL[friend.state]}
+            role="img"
+          />
+        </span>
 
         <div className="grow">
           <div className="title">{friend.name}</div>

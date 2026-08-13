@@ -622,7 +622,8 @@ export interface FriendRow {
   /** Whose name and picture this row is wearing. */
   provider: string;
   /** `unknown` means nobody could say — not that they are away. */
-  state: 'offline' | 'online' | 'away' | 'in-game' | 'unknown';
+  /** Mirrors `PRESENCE_STATES` in shared, which this package cannot import. */
+  state: 'offline' | 'online' | 'away' | 'in-game' | 'dnd' | 'unknown';
   game: string | null;
   detail: string | null;
   lastOnlineAt: number | null;
