@@ -1026,6 +1026,53 @@ button {
   border-color: var(--muted);
 }
 
+/*
+ * The same dot, inline in a filter button.
+ *
+ * Its own class rather than a modifier on `.presence-dot`, because that one is
+ * absolutely positioned and unsetting `position`, `inset`, `border` and the
+ * ring on top of it is more rules than simply saying what this is. Both share
+ * the `presence-*` colour classes, which is the part that must not drift.
+ */
+.status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--presence-offline);
+  vertical-align: baseline;
+}
+
+.status-dot.presence-in-game { background: var(--presence-in-game); }
+.status-dot.presence-online { background: var(--presence-online); }
+.status-dot.presence-away { background: var(--presence-away); }
+.status-dot.presence-dnd { background: var(--presence-dnd); }
+.status-dot.presence-offline { background: var(--presence-offline); }
+
+.status-dot.presence-unknown {
+  background: transparent;
+  border: 1.5px solid var(--muted);
+  box-sizing: border-box;
+}
+
+/*
+ * A status that is switched off.
+ *
+ * Dimmed and struck through rather than hidden or recoloured: the count has to
+ * stay readable, because "offline 133" is the number that tells you what
+ * switching it back on would cost. Opacity alone was not enough to read as
+ * *off* at a glance on a row of six.
+ */
+.btn.status-off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.btn.status-off .status-dot {
+  text-decoration: none;
+}
+
 /* A provider row on the Services tab, collapsed until you open it.
 
    `list-style: none` plus the ::marker rule removes the browser's default

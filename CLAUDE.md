@@ -2225,6 +2225,37 @@ movable and has no business assuming League is installed on the same box.
   and they are waiting on players. Fourteen people read as in-game where seven
   did.
 
+### Switching whole statuses off
+
+A second row of chips under the services one, one per status with its count and
+its own coloured dot. The two things it is for pull in opposite directions and
+are the same control: everything but *in-game* off answers "who could I join",
+and *offline* off answers "stop showing me the other hundred and thirty".
+Toggles rather than a one-of-these picker, since both are several clicks of the
+same kind and a picker could only do the first.
+
+**The state is a list of what is hidden, not of what to show.** That makes
+"everything" the empty case, so a new presence state appears on screen the day
+it is added rather than being invisible until somebody remembers to add it to an
+include list.
+
+Two things there are easy to get wrong and were checked on the real list:
+
+- **The counts are taken before this filter applies.** Counting what survives it
+  would send every count to zero the moment you switched that status off.
+- **A status that is switched off keeps its button**, even with nobody in it.
+  Hiding `offline` on a list that is mostly offline is exactly when you want to
+  undo it, and the button is the only way back. There is a **Show all** too,
+  because undoing four toggles one at a time is how a filter gets left on.
+
+Switched-off chips are dimmed *and* struck through — opacity alone did not read
+as off across a row of six — while the count stays legible, since "offline 136"
+is the number that says what switching it back on would cost.
+
+An empty list names **which** filter emptied it. Three stack here — service,
+search, status — and "nobody matches" while a status toggle is off sends
+somebody looking for a problem that is a button they pressed.
+
 ### Presence has a colour, and it is not the accent
 
 A dot on the corner of each avatar: **blue in-game, green online, yellow away,

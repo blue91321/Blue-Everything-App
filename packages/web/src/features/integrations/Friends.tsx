@@ -67,6 +67,21 @@ export function Friends() {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
+  /**
+   * Statuses switched off, rather than the one status to show.
+   *
+   * A list of what is *hidden* makes "everything" the empty case, so a new
+   * presence state appears on screen the day it is added instead of being
+   * invisible until somebody remembers to add it to a list of what to include.
+   * It also matches how the question gets asked — "hide the offline ones" — and
+   * lets several be off at once, which picking one never could.
+   */
+  const [hiddenStates, setHiddenStates] = useState<FriendRow['state'][]>([]);
+
+  const toggleState = (state: FriendRow['state']) =>
+    setHiddenStates((current) =>
+      current.includes(state) ? current.filter((s) => s !== state) : [...current, state]
+    );
 
   /*
    * The read refreshes stale providers server-side — see `refreshPresence` for
@@ -98,11 +113,21 @@ export function Friends() {
    */
   const needle = search.trim().toLowerCase();
 
-  const shown = (
+  /*
+   * Three filters in a row, and the status one is applied last on purpose.
+   *
+   * Its own chips count over `candidates` — everything the service and the
+   * search left — rather than over what survives the status filter, or every
+   * count would drop to zero the moment you switched that status off and there
+   * would be nothing left to switch back on.
+   */
+  const candidates = (
     filter === 'all'
       ? view.data.friends
       : view.data.friends.filter((f) => f.accounts.some((a) => a.provider === filter))
   ).filter((f) => matchesSearch(f, needle));
+
+  const shown = candidates.filter((f) => !hiddenStates.includes(f.state));
 
   /*
    * `away` is its own group, and lumping it in with online was a lie the count
@@ -147,6 +172,13 @@ export function Friends() {
         onChange={setFilter}
       />
 
+      <StatusFilter
+        friends={candidates}
+        hidden={hiddenStates}
+        onToggle={toggleState}
+        onReset={() => setHiddenStates([])}
+      />
+
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="meta">
           {/*
@@ -185,12 +217,21 @@ export function Friends() {
         A search that finds nobody says so, rather than leaving three empty
         sections and the sources panel to imply the integration broke.
       */}
-      {needle && shown.length === 0 && (
+      {shown.length === 0 && (candidates.length > 0 || needle) && (
         <div className="empty">
-          Nobody matches "{search.trim()}"
-          {filter === 'all' ? '' : ` on ${filter}`}.
+          {/*
+            Which filter emptied it, named. Three of them stack here — service,
+            search, status — and "nobody matches" while a status toggle is off
+            is the one that sends somebody looking for a problem that is a
+            button they pressed.
+          */}
+          {candidates.length > 0
+            ? `Everybody here is filtered out by status — ${candidates.length} ${
+                candidates.length === 1 ? 'person is' : 'people are'
+              } hidden by the buttons above.`
+            : `Nobody matches "${search.trim()}"${filter === 'all' ? '' : ` on ${filter}`}.`}
           {view.data.hiddenCount
-            ? ` ${view.data.hiddenCount} people are left out by the service filter on the Services tab.`
+            ? ` ${view.data.hiddenCount} more are left out by the service filter on the Services tab.`
             : ''}
         </div>
       )}
@@ -316,6 +357,82 @@ function PlatformFilter({
           {source.label} {countFor(source.provider)}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The order statuses are offered in, which is the order they matter in.
+ *
+ * Fixed rather than derived from what is present, so the row does not reshuffle
+ * as people come and go — a filter whose buttons move under the cursor is worse
+ * than one with a gap in it.
+ */
+const STATUS_ORDER: Array<FriendRow['state']> = ['in-game', 'online', 'dnd', 'away', 'offline', 'unknown'];
+
+/**
+ * Switch whole statuses off.
+ *
+ * The two things this is for pull in opposite directions and are the same
+ * control: switching everything but *in-game* off answers "who could I join
+ * right now", and switching *offline* off answers "stop showing me the other
+ * hundred and thirty". Toggles rather than a single choice, because both are
+ * several clicks of the same kind and a one-of-these picker could only do the
+ * first.
+ *
+ * Each carries its own presence colour, so the row doubles as the legend for
+ * the dots on the avatars — there is nowhere else that says what blue means.
+ */
+function StatusFilter({
+  friends,
+  hidden,
+  onToggle,
+  onReset,
+}: {
+  friends: FriendRow[];
+  hidden: Array<FriendRow['state']>;
+  onToggle: (state: FriendRow['state']) => void;
+  onReset: () => void;
+}) {
+  const countFor = (state: FriendRow['state']) => friends.filter((f) => f.state === state).length;
+
+  /*
+   * Statuses somebody is actually in — **plus any switched off**, which have to
+   * keep their button or there is no way back. That is not hypothetical: the
+   * counts are taken before this filter applies, but a status with nobody in it
+   * would still vanish, and hiding `offline` on a list that is mostly offline is
+   * exactly when you want to undo it.
+   */
+  const offered = STATUS_ORDER.filter((state) => countFor(state) > 0 || hidden.includes(state));
+  if (offered.length < 2) return null;
+
+  return (
+    <div className="row" style={{ gap: '.4rem', flexWrap: 'wrap', marginBottom: '.75rem' }}>
+      {offered.map((state) => {
+        const off = hidden.includes(state);
+        return (
+          <button
+            key={state}
+            className={off ? 'btn subtle status-off' : 'btn subtle'}
+            // Pressed means *showing* — the state of the thing the button
+            // controls, rather than of the button itself.
+            aria-pressed={!off}
+            title={off ? `Show ${STATE_LABEL[state]}` : `Hide ${STATE_LABEL[state]}`}
+            onClick={() => onToggle(state)}
+          >
+            <span className={`status-dot presence-${state}`} aria-hidden="true" />
+            {STATE_LABEL[state]} {countFor(state)}
+          </button>
+        );
+      })}
+
+      {/* One click back to everything. Undoing four toggles one at a time is
+          how a filter gets left on and forgotten about. */}
+      {hidden.length > 0 && (
+        <button className="btn subtle" onClick={onReset}>
+          Show all
+        </button>
+      )}
     </div>
   );
 }
