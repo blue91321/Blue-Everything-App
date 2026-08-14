@@ -80,10 +80,14 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
     const existing = await db.select({ sortOrder: habits.sortOrder }).from(habits);
     const nextOrder = existing.reduce((max, h) => Math.max(max, h.sortOrder), 0) + 1;
 
+    // `pushToPhone` out of the spread — `normalisePush` contributes nothing on
+    // one branch, which leaves the schema's boolean where the column wants an
+    // integer. `active` is overridden unconditionally below, so it is fine.
+    const { pushToPhone, ...rest } = body;
     const [created] = await db
       .insert(habits)
       .values({
-        ...body,
+        ...rest,
         ...normalisePush(body),
         active: body.active ? 1 : 0,
         sortOrder: body.sortOrder ?? nextOrder,
@@ -98,13 +102,13 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
     // Pulled out of the spread rather than overridden after it: the column is
     // JSON text but the schema is an array, and leaving both in scope makes the
     // written type `string | string[]`.
-    const { voicePhrases, ...body } = updateHabitSchema.parse(request.body);
+    const { voicePhrases, active, pushToPhone, ...body } = updateHabitSchema.parse(request.body);
     const [updated] = await db
       .update(habits)
       .set({
         ...body,
-        ...normalisePush(body),
-        ...(body.active === undefined ? {} : { active: body.active ? 1 : 0 }),
+        ...normalisePush({ pushToPhone }),
+        ...(active === undefined ? {} : { active: active ? 1 : 0 }),
         ...(voicePhrases === undefined ? {} : { voicePhrases: JSON.stringify(voicePhrases) }),
       })
       .where(eq(habits.id, id))

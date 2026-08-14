@@ -117,7 +117,6 @@ function SetUpVault({
             type="checkbox"
             checked={withRecovery}
             onChange={(e) => setWithRecovery(e.target.checked)}
-            style={{ width: 'auto' }}
           />
           <span className="grow">
             <span className="title">Create a recovery kit</span>
@@ -177,7 +176,7 @@ function RecoveryShares({ shares, onDone }: { shares: { a: string; b: string }; 
         </div>
 
         <label className="row" style={{ marginTop: 14, cursor: 'pointer' }}>
-          <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} style={{ width: 'auto' }} />
+          <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
           <span className="grow title">
             I have stored both in two different places, and checked I can see them there
           </span>
@@ -841,7 +840,6 @@ function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported:
                 type="checkbox"
                 checked={includeDuplicates}
                 onChange={(e) => setIncludeDuplicates(e.target.checked)}
-                style={{ width: 'auto' }}
               />
               <span className="meta grow">Add the {preview.duplicates} duplicates as well</span>
             </label>

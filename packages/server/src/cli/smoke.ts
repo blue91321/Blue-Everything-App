@@ -29,7 +29,9 @@ function check(label: string, ok: boolean, detail = ''): void {
   if (!ok) failures++;
 }
 
-const post = async (url: string, payload: unknown) =>
+// Several of these endpoints take no body; Fastify still wants one, so the
+// default stands in rather than every call site writing `{}`.
+const post = async (url: string, payload: unknown = {}) =>
   app.inject({ method: 'POST', url, payload: payload as object });
 
 const report = (over: Partial<AttentionReport>): AttentionReport => ({
@@ -37,6 +39,10 @@ const report = (over: Partial<AttentionReport>): AttentionReport => ({
   reason: 'smoke test',
   idleMs: 0,
   liveGames: [],
+  // Both are required on the report and were being left out, so the base object
+  // was not actually an AttentionReport. Silent until the server was typechecked.
+  audioPlaying: false,
+  windowsDnd: false,
   ...over,
 });
 
@@ -205,6 +211,44 @@ console.log('\nlocal trust cannot be reached through a proxy');
   check(
     'nor one from a real remote socket',
     !isTrustedLocal(fake({ socket: { remoteAddress: '192.168.0.5' }, headers: { host: '192.168.0.19:8787' } }))
+  );
+
+  /*
+   * The one that caught a real bug, which is why it is pinned here.
+   *
+   * A browser arriving from accounts.google.com sends `Sec-Fetch-Site:
+   * cross-site`, and `isTrustedLocal` refuses it — correctly, since that check
+   * is what stops a page you are reading from talking to 127.0.0.1 behind your
+   * back. The OAuth callback was put under `/api/` on the reasoning that a
+   * loopback socket and a loopback Host would be enough, and it answered
+   * `missing bearer token` on the first real connection attempt.
+   *
+   * Neither `app.inject()` nor curl sends that header, which is exactly why it
+   * survived testing.
+   */
+  check(
+    'a cross-site navigation is not trusted, even from loopback',
+    !isTrustedLocal(fake({ headers: { host: '127.0.0.1:8787', 'sec-fetch-site': 'cross-site' } }))
+  );
+}
+
+console.log('\nthe OAuth callback survives being a cross-site redirect');
+{
+  // It has to answer without a token: a redirect from Google carries none and
+  // never will. A 401 here is the bug that shipped. A 4xx *from the route* is
+  // correct — the code and state below are invented.
+  const response = await app.inject({
+    method: 'GET',
+    url: '/oauth/callback/youtube?code=made-up&state=made-up',
+    headers: { host: '127.0.0.1:8787', 'sec-fetch-site': 'cross-site', 'sec-fetch-mode': 'navigate' },
+  });
+
+  check('it is not refused for want of a bearer token', response.statusCode !== 401, `got ${response.statusCode}`);
+  check('it renders a page rather than JSON', (response.headers['content-type'] ?? '').toString().includes('text/html'));
+  check(
+    'and an unknown state is still rejected',
+    /expired|not started/.test(response.body),
+    response.body.slice(0, 140)
   );
 }
 

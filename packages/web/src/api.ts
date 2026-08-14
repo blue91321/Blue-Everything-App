@@ -20,6 +20,20 @@ export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
 export class Unauthorized extends Error {}
 
 /**
+ * Thrown when the request never reached a server.
+ *
+ * Distinct from `Unauthorized`, and the distinction is the point: a `fetch`
+ * that rejects and a 401 both ended with no session, so both used to blank the
+ * app back to the pairing screen — and "Blue Everything is not running" was
+ * therefore reported as "this device is not paired", which sends you off to
+ * find a token you already have.
+ *
+ * The shell survives the server dying because the service worker caches it, so
+ * this state is genuinely reachable and worth telling apart.
+ */
+export class ServerUnreachable extends Error {}
+
+/**
  * GETs for the same URL that are already in flight, so they become one.
  *
  * A single change announcement reaches every `useAsync` on screen at once, and
@@ -56,20 +70,53 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 async function send<T>(path: string, init: RequestInit, method: string): Promise<T> {
   const body = init.body ?? (method === 'GET' ? undefined : '{}');
 
-  const response = await fetch(path, {
-    ...init,
-    body,
-    headers: {
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      authorization: `Bearer ${getToken()}`,
-      ...init.headers,
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      body,
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        authorization: `Bearer ${getToken()}`,
+        ...init.headers,
+      },
+    });
+  } catch (cause) {
+    // `fetch` rejects only when the request never got a reply — the process is
+    // down, the machine is asleep, the network is gone. Anything the server
+    // answered, however badly, comes back as a response.
+    throw new ServerUnreachable(cause instanceof Error ? cause.message : 'could not reach the server');
+  }
 
   if (response.status === 401) throw new Unauthorized('this device is not paired');
-  if (!response.ok) throw new Error(`${method} ${path} failed (${response.status})`);
+  if (!response.ok) throw new Error(await errorMessage(response, method, path));
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/**
+ * The server's own words, when it sent any.
+ *
+ * Every route in this app answers a failure with `{ error }`, and this used to
+ * throw that away and show `POST /api/… failed (500)` instead. The effect was
+ * invisible for a long time because most failures here are "the server is not
+ * running", where a status code is as much as anyone can say — but the moment a
+ * route had something useful to report, the screen could not show it. Steam
+ * answering "that API key was rejected, keys are revoked when you change your
+ * password" arrived as a 500 and a path.
+ *
+ * The status is kept as a fallback rather than dropped: a proxy error page or a
+ * crash before the handler produces no JSON at all, and "failed (502)" is still
+ * better than an empty string.
+ */
+async function errorMessage(response: Response, method: string, path: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error.trim() !== '') return body.error;
+  } catch {
+    // Not JSON, or no body. Fall through to the status.
+  }
+  return `${method} ${path} failed (${response.status})`;
 }
 
 const post = <T>(path: string, payload?: unknown) =>
@@ -190,6 +237,8 @@ export interface AppSettings {
   overlayScreen?: string | null;
   /** An emoji, `file` for an uploaded picture, or empty for none. */
   overlayAvatar?: string;
+  /** Services left out of the friends list. Absent on an older server. */
+  hiddenProviders?: string[];
   updatedAt?: number;
 }
 
@@ -441,8 +490,279 @@ export interface Device {
   revokedAt: number | null;
 }
 
+/* ------------------------------------------------------------------ */
+/* App integrations                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A capability, and — the point of the whole module — whether it works.
+ *
+ * `status` is never collapsed to a boolean on this side either. Four of the
+ * seven providers cannot do what you would assume they can, for four different
+ * reasons, and a screen that renders "off" for all of them sends you looking for
+ * a setting that does not exist. So `why` is rendered next to the thing it is
+ * about, always.
+ */
+export interface CapabilityInfo {
+  status: 'works' | 'partial' | 'needs-approval' | 'unavailable';
+  why: string;
+  source?: string;
+  /** Present only when `source` names a page that can actually be opened. */
+  sourceUrl?: string;
+  /** Steps to turn on a capability the provider gates. */
+  unlock?: SetupStep[];
+}
+
+/**
+ * One setup instruction, with the site it sends you to.
+ *
+ * `link` is structured rather than a URL buried in `text`, so the screen can
+ * render a real anchor instead of a domain you have to retype.
+ */
+export interface SetupStep {
+  text: string;
+  /** Already resolved by the server — `{appId}` is substituted before it is sent. */
+  link?: { url: string; label: string };
+}
+
+/**
+ * One credential box on the Services tab.
+ *
+ * `set` and `source` rather than the value: a stored secret is never sent back
+ * to the browser, so the box renders empty and says it is already set. Sending
+ * it would put it in the DOM, the response cache, and any devtools left open.
+ */
+export interface CredentialFieldInfo {
+  key: 'clientId' | 'clientSecret';
+  label: string;
+  required: boolean;
+  envVar: string;
+  help?: string;
+  secret?: boolean;
+  set: boolean;
+  source: 'app' | 'env' | 'none';
+}
+
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  glyph: string;
+  blurb: string;
+  reach: 'web' | 'local' | 'import';
+  auth: 'oauth2' | 'api-key' | 'client' | 'file';
+  setup: SetupStep[];
+  /** The fields to fill in, whether each is set, and where its value came from. */
+  credentialFields: CredentialFieldInfo[];
+  /** The provider refused this app's optional scopes, so it stopped asking. */
+  optionalScopesRefused: boolean;
+  /** What to paste into the provider's dashboard. Null for non-OAuth providers. */
+  redirectUri: string | null;
+  capabilities: Partial<Record<string, CapabilityInfo>>;
+
+  connected: boolean;
+  accountName: string | null;
+  /** What the provider actually granted, which is not what was asked for. */
+  grantedScopes: string[];
+  /** Env vars still unset. Non-empty means Connect cannot work yet. */
+  missingConfig: string[];
+  syncedAt: Record<string, number>;
+  lastError: string | null;
+  /** Capabilities with code behind them, as opposed to merely described. */
+  runnable: string[];
+  /**
+   * An env var already supplies this provider's key, so the field asking for one
+   * is optional. Without this the form cannot say whether it needs filling in.
+   */
+  envFallback: boolean;
+  local: LocalStatus | null;
+}
+
+export interface LocalStatus {
+  clientRunning: boolean;
+  reportedAt: number | null;
+  /** The agent has gone quiet — a different problem from a closed game client. */
+  stale: boolean;
+  error?: string;
+}
+
+export interface IntegrationsState {
+  providers: ProviderInfo[];
+  capabilities: string[];
+  /**
+   * Services left out of the Friends and Following lists.
+   *
+   * Optional for the usual reason — the PWA and the server update
+   * independently, and an absent list must read as "nothing hidden" rather than
+   * leaving the panel unable to render.
+   */
+  hiddenProviders?: string[];
+}
+
+export interface SyncOutcome {
+  provider: string;
+  capability: string;
+  ok: boolean;
+  note: string;
+}
+
+/**
+ * One *person*, not one account.
+ *
+ * Linked accounts are merged by the server: the name and picture come from
+ * whichever service is highest in its identity preference (Discord first), and
+ * the status from whichever one actually knows. `accounts` is what it was
+ * merged from, and is what the row unlinks.
+ */
+export interface FriendRow {
+  /** The person id when linked, otherwise a per-row key. Stable across a refresh. */
+  id: string;
+  personId: string | null;
+  name: string;
+  avatarUrl: string | null;
+  /** Whose name and picture this row is wearing. */
+  provider: string;
+  /** `unknown` means nobody could say — not that they are away. */
+  /** Mirrors `PRESENCE_STATES` in shared, which this package cannot import. */
+  state: 'offline' | 'online' | 'away' | 'in-game' | 'dnd' | 'unknown';
+  game: string | null;
+  detail: string | null;
+  lastOnlineAt: number | null;
+  seenAt: number;
+  /** Set when the status came from a different account than the name. */
+  statusFrom: string | null;
+  accounts: Array<{ id: string; provider: string; name: string }>;
+}
+
+export interface LinkSuggestion {
+  a: { id: string; provider: string; name: string };
+  b: { id: string; provider: string; name: string };
+  because: string;
+}
+
+export interface FriendSource {
+  provider: string;
+  label: string;
+  status: CapabilityInfo['status'];
+  why: string;
+  connected: boolean;
+  missingConfig: string[];
+  lastError: string | null;
+  local: LocalStatus | null;
+}
+
+export interface FriendsView {
+  friends: FriendRow[];
+  /** Per-provider health, so an empty list can explain itself. */
+  sources: FriendSource[];
+  /**
+   * Services being left out, and how many people that costs.
+   *
+   * Optional because the server and the PWA update independently — a browser
+   * holding a newer bundle than the process serving it is the ordinary case
+   * right after an edit, and a filter that reads `undefined` as "everything is
+   * hidden" would empty the screen. Absent means an older server that does no
+   * filtering, so the honest reading is "nothing hidden".
+   */
+  hiddenProviders?: string[];
+  hiddenCount?: number;
+  refreshed: SyncOutcome[];
+}
+
+export interface MediaCollection {
+  id: string;
+  provider: string;
+  kind: 'playlist' | 'saved' | 'subscriptions';
+  name: string;
+  description: string | null;
+  artUrl: string | null;
+  itemCount: number;
+  syncedAt: number | null;
+  /** Ticked to be left out of syncs, and out of the "in my playlists" counts. */
+  ignored: number;
+}
+
+export interface MediaItem {
+  id: string;
+  title: string;
+  creator: string | null;
+  album: string | null;
+  durationMs: number | null;
+  url: string | null;
+  artUrl: string | null;
+  category: string;
+  /** Which genre string decided the category. Null means it was a guess. */
+  categoryBecause: string | null;
+  genres: string;
+  position: number;
+}
+
+export interface FollowRow {
+  id: string;
+  provider: string;
+  providerAccountId: string;
+  kind: 'channel' | 'artist';
+  name: string;
+  url: string | null;
+  avatarUrl: string | null;
+  genres: string;
+  category: string;
+  categoryBecause: string | null;
+  followerCount: number | null;
+  seenAt: number;
+  /**
+   * How many of their tracks or videos are in your collections, **summed over
+   * every linked account** — the list sorts by this, and counting only the main
+   * channel's share would rank a creator below people you listen to less.
+   */
+  inPlaylists: number;
+  /** Set when this row is several accounts merged; null when it stands alone. */
+  groupId: string | null;
+  /** Every account behind the row, the chosen main one flagged. */
+  accounts: Array<{
+    id: string;
+    provider: string;
+    name: string;
+    kind: 'channel' | 'artist';
+    isPrimary: boolean;
+  }>;
+}
+
+export interface FollowsView {
+  follows: FollowRow[];
+  sources: Array<{
+    provider: string;
+    label: string;
+    status: CapabilityInfo['status'];
+    why: string;
+    syncedAt: number | null;
+  }>;
+  /** Services left out, and what that costs. Absent on an older server. */
+  hiddenProviders?: string[];
+  hiddenCount?: number;
+}
+
+export interface MusicView {
+  breakdown: Array<{ category: string; count: number }>;
+}
+
 export const api = {
   health: () => request<{ ok: boolean }>('/health'),
+  /**
+   * Is the server answering *right now*?
+   *
+   * Deliberately not `api.health()`: that goes through the coalescer, which
+   * would hand every poll the same in-flight promise, and it carries the bearer
+   * token for no reason. This is a bare liveness ping used while waiting for a
+   * server that is starting up.
+   */
+  isUp: async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`/health?t=${Date.now()}`, { cache: 'no-store' });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  },
   session: () => request<Session>('/api/session'),
 
   devices: {
@@ -523,6 +843,7 @@ export const api = {
       overlayPlacement?: string;
       overlayScreen?: string | null;
       overlayAvatar?: string;
+      hiddenProviders?: string[];
     }) => patch<AppSettings>('/api/settings', payload),
   },
 
@@ -617,6 +938,72 @@ export const api = {
       post<Nudge>('/api/nudges', payload),
     snooze: (id: string, minutes: number) => post(`/api/nudges/${id}/snooze`, { minutes }),
     dismiss: (id: string) => post(`/api/nudges/${id}/dismiss`),
+  },
+
+  /**
+   * App integrations.
+   *
+   * The provider manifest arrives from the server rather than being imported
+   * from `@everything/shared`, for the reason `api.ts` opens with: this bundle
+   * does not pull in that package. It is the same arrangement `/api/session`
+   * uses for the feature list — the server owns the table of facts, and hands
+   * the PWA plain JSON.
+   */
+  integrations: {
+    list: () => request<IntegrationsState>('/api/integrations'),
+    /**
+     * Returns a URL to open rather than redirecting, because a 302 to
+     * accounts.spotify.com would be followed by `fetch` and land as an opaque
+     * CORS failure instead of as a page.
+     */
+    authorize: (provider: string) => post<{ url: string }>(`/api/integrations/${provider}/authorize`),
+    /**
+     * `profile` takes a URL, a custom name or the 17-digit id — the server
+     * resolves it, so the first step is no longer "go and look up a number".
+     * `apiKey` is optional only because STEAM_API_KEY remains a fallback.
+     */
+    connectSteam: (profile: string, apiKey?: string) =>
+      post<{ connected: boolean; accountName: string; steamId: string }>('/api/integrations/steam/connect', {
+        profile,
+        apiKey,
+      }),
+    /**
+     * Save a provider's own client id/secret from the app rather than a file.
+     * Omit a key to leave it as it is; send '' to clear it.
+     */
+    saveCredentials: (provider: string, values: { clientId?: string; clientSecret?: string }) =>
+      request<{ saved: string[]; missingConfig: string[] }>(`/api/integrations/${provider}/credentials`, {
+        method: 'PUT',
+        body: JSON.stringify(values),
+      }),
+    /** Ask for the optional scopes again, once they have been enabled there. */
+    retryScopes: (provider: string) => post<{ optionalScopesRefused: boolean }>(`/api/integrations/${provider}/retry-scopes`),
+    disconnect: (provider: string) => request<void>(`/api/integrations/${provider}`, { method: 'DELETE' }),
+    sync: (provider: string, capabilities?: string[]) =>
+      post<{ outcomes: SyncOutcome[] }>(`/api/integrations/${provider}/sync`, { capabilities }),
+    /** `force` is the refresh button; without it the read only refetches if stale. */
+    friends: (force = false) => request<FriendsView>(`/api/integrations/friends${force ? '?force=1' : ''}`),
+    /** Accounts that look like the same person. Proposals, not links. */
+    linkSuggestions: () => request<{ suggestions: LinkSuggestion[] }>('/api/integrations/friends/suggestions'),
+    linkFriends: (a: string, b: string) => post<{ personId: string }>('/api/integrations/friends/link', { a, b }),
+    unlinkFriend: (id: string) => post<{ ok: boolean }>('/api/integrations/friends/unlink', { id }),
+    /** Dissolve a whole group, which is what a merged row comes apart into. */
+    unlinkPerson: (personId: string) => post<{ ok: boolean }>('/api/integrations/friends/unlink', { personId }),
+    collections: () => request<MediaCollection[]>('/api/integrations/collections'),
+    /** Tick or untick one playlist. */
+    setCollectionIgnored: (id: string, ignored: boolean) =>
+      patch<{ id: string; ignored: boolean }>(`/api/integrations/collections/${id}`, { ignored }),
+    /** Channels and artists you follow. Synced on demand, not refreshed on read. */
+    follows: () => request<FollowsView>('/api/integrations/follows'),
+    /** Two accounts that are the same creator. May be on the same service. */
+    linkFollows: (a: string, b: string) =>
+      post<{ groupId: string }>('/api/integrations/follows/link', { a, b }),
+    /** Which of a group's accounts the merged row wears. */
+    setPrimaryFollow: (id: string) => post<{ ok: boolean }>('/api/integrations/follows/primary', { id }),
+    /** Take one account out of its group, leaving the rest joined. */
+    unlinkFollow: (id: string) => post<{ ok: boolean }>('/api/integrations/follows/unlink', { id }),
+    collectionItems: (id: string) => request<MediaItem[]>(`/api/integrations/collections/${id}`),
+    music: () => request<MusicView>('/api/integrations/music'),
   },
 
   time: {

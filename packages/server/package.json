@@ -1,7 +1,7 @@
 {
   "name": "@everything/server",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.1",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "vault-api": "tsx src/cli/vault-api-check.ts",
     "import-check": "tsx src/cli/import-check.ts",
     "voice-check": "tsx src/cli/voice-check.ts",
+    "integrations-check": "tsx src/cli/integrations-check.ts",
     "features": "tsx src/cli/features.ts",
     "features-check": "tsx src/cli/features-check.ts"
   },

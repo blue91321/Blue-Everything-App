@@ -12,7 +12,7 @@
  * facts rather than untrusted input needing validation.
  */
 
-export const FEATURE_IDS = ['vault', 'voice', 'push', 'habits', 'notes', 'time'] as const;
+export const FEATURE_IDS = ['vault', 'voice', 'push', 'integrations', 'habits', 'notes', 'time'] as const;
 
 export type FeatureId = (typeof FEATURE_IDS)[number];
 
@@ -97,6 +97,24 @@ export const FEATURES: Record<FeatureId, FeatureSpec> = {
     removable: true,
     owns: ['packages/server/src/features/push'],
     cost: 'needs VAPID_SUBJECT set to a real domain — Apple rejects localhost',
+  },
+
+  integrations: {
+    id: 'integrations',
+    label: 'App integrations',
+    blurb: 'Spotify and YouTube libraries, and which of your friends are online on Steam, Discord and Riot.',
+    // Off until somebody asks for it. Every other feature here works the moment
+    // it is switched on; this one does nothing at all until you have registered
+    // an app with a third party and pasted an id into the environment, so
+    // defaulting it on would put a tab in the drawer that can only apologise.
+    defaultEnabled: false,
+    removable: true,
+    owns: [
+      'packages/server/src/features/integrations',
+      'packages/web/src/features/integrations',
+      'packages/agent/src/features/integrations',
+    ],
+    cost: 'one HTTP request per provider when the friends list is on screen; nothing at all when it is not',
   },
 
   habits: {

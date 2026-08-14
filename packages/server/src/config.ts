@@ -99,6 +99,42 @@ const envSchema = z.object({
    */
   UPDATE_URL: z.string().default(''),
 
+  /* ---- app integrations ------------------------------------------ */
+
+  /**
+   * Credentials for the outside services, one app per provider, all registered
+   * by you against your own accounts.
+   *
+   * Every one is empty by default and the Integrations screen names the missing
+   * variable rather than offering a Connect button that fails — the same rule
+   * the Packages screen follows for `UPDATE_URL`. They are env vars rather than
+   * settings rows because they identify the *application*, not you: they belong
+   * with the install, they are the same on a reinstall, and they have no
+   * business being editable from a phone.
+   *
+   * Every provider left here supports PKCE, so no client secret is required at
+   * all — Google issues one only for a Web-application client, and it is
+   * optional even then. Nothing has to be kept anywhere it could leak.
+   */
+  SPOTIFY_CLIENT_ID: z.string().default(''),
+  GOOGLE_CLIENT_ID: z.string().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().default(''),
+  DISCORD_CLIENT_ID: z.string().default(''),
+  DISCORD_CLIENT_SECRET: z.string().default(''),
+  STEAM_API_KEY: z.string().default(''),
+
+  /**
+   * The origin an OAuth provider redirects back to, which must match what is
+   * registered at their end *character for character* — a trailing slash is a
+   * rejected login.
+   *
+   * Defaults to the loopback IP literal rather than `localhost`, because Spotify
+   * and Google both stopped accepting `http://localhost` while continuing to
+   * accept `http://127.0.0.1`. They are the same machine and not the same
+   * string, and the error message says neither.
+   */
+  OAUTH_REDIRECT_BASE: z.string().default(''),
+
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
   /** Set when running behind a reverse proxy so client IPs log correctly. */
@@ -115,7 +151,14 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const config = { ...parsed.data, DATABASE_URL: anchorDatabaseUrl(parsed.data.DATABASE_URL) };
+export const config = {
+  ...parsed.data,
+  DATABASE_URL: anchorDatabaseUrl(parsed.data.DATABASE_URL),
+  // Derived here rather than defaulted in the schema, because it depends on
+  // PORT, which is a sibling field and therefore not available to a `.default()`.
+  OAUTH_REDIRECT_BASE:
+    parsed.data.OAUTH_REDIRECT_BASE.replace(/\/$/, '') || `http://127.0.0.1:${parsed.data.PORT}`,
+};
 
 const configuredOrigins = config.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
 

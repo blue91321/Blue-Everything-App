@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Blue Everything Vault",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Fills passwords from your own Blue Everything vault, running on this PC.",
 
   "permissions": ["storage", "activeTab", "scripting"],

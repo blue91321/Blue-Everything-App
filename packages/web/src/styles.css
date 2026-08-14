@@ -47,6 +47,25 @@
   --danger: #ff6b6b;
   --ok: #5fd18c;
 
+  /*
+   * Presence, deliberately **not** the accent.
+   *
+   * Everything else on screen follows the accent, and these must not: green
+   * means online in every chat client on this machine, and re-teaching that per
+   * accent would make the one row of colour that carries meaning the one you
+   * cannot read at a glance. With the accent applied, choosing red would have
+   * made every online friend look busy.
+   *
+   * Declared twice like the accents, and for the same reason — these are read
+   * against `#14161c` here and against white below, and no single hex is legible
+   * on both.
+   */
+  --presence-in-game: #4d9bff;
+  --presence-online: #43b581;
+  --presence-away: #e5b04a;
+  --presence-dnd: #f04747;
+  --presence-offline: #6a7080;
+
   color-scheme: dark;
 }
 
@@ -59,6 +78,15 @@
   --muted: #666c7a;
   --danger: #c92a2a;
   --ok: #2b8a3e;
+
+  /* Darkened until each reads on white — the pale dark-theme greens and yellows
+     disappear against it, which is exactly the case a single shared value gets
+     wrong on precisely one screen. */
+  --presence-in-game: #1a73e8;
+  --presence-online: #1f9254;
+  --presence-away: #b07d10;
+  --presence-dnd: #d13438;
+  --presence-offline: #8b90a0;
 
   color-scheme: light;
 }
@@ -561,6 +589,34 @@ textarea {
   min-height: 88px;
 }
 
+/* A tick box is not a text field.
+
+   The rule above styles every `input` as one — full width, 12px of padding —
+   which is right for the text boxes this app is mostly made of and catastrophic
+   for a checkbox: it stretched to fill its flex row and squeezed the label
+   beside it until the text wrapped one character per line. Nothing caught it
+   sooner because the playlist boxes are the first native checkboxes in the app;
+   everything else uses the `.toggle` switch.
+
+   `flex: none` matters as much as the width: inside a `.row` the box would
+   otherwise be a flex item free to grow again. */
+input[type='checkbox'],
+input[type='radio'] {
+  width: auto;
+  flex: none;
+  padding: 0;
+  margin: 0;
+  /* Draws the tick in the theme's accent rather than the browser's blue. */
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type='checkbox']:disabled,
+input[type='radio']:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 input:focus,
 textarea:focus,
 select:focus {
@@ -896,4 +952,181 @@ button {
 .logo-choice .logo-mark {
   border-radius: 9px;
   object-fit: cover;
+}
+
+/* ---------- connections ---------- */
+
+/* A small inline label — the provider a friend came from, or whether a
+   capability works. Sized to sit on the same line as a title without pushing
+   it around, since these appear beside names of very different lengths. */
+.chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chip.presence-in-game,
+.chip.presence-online {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip.presence-offline {
+  opacity: 0.6;
+}
+
+/* ---- the presence dot --------------------------------------------- */
+
+/*
+ * A coloured dot on the corner of the avatar, the way every chat client does
+ * it. On the avatar rather than beside the name because that is where the eye
+ * already is when scanning a list of faces, and it costs no width in a row that
+ * already carries a name, a game, a chip and a button.
+ */
+.avatar-wrap {
+  position: relative;
+  flex: none;
+  line-height: 0;
+}
+
+.presence-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--presence-offline);
+  /* Against the card, not the avatar — a dot sitting directly on a busy
+     profile picture loses its edge and stops reading as a status light. */
+  border: 2px solid var(--surface);
+  box-sizing: border-box;
+}
+
+.presence-dot.presence-in-game { background: var(--presence-in-game); }
+.presence-dot.presence-online { background: var(--presence-online); }
+.presence-dot.presence-away { background: var(--presence-away); }
+.presence-dot.presence-dnd { background: var(--presence-dnd); }
+.presence-dot.presence-offline { background: var(--presence-offline); }
+
+/*
+ * "I cannot tell" is drawn hollow rather than in a sixth colour.
+ *
+ * Discord returns its friends list with no presence on it at all, and any
+ * filled dot would be a claim about somebody nobody can vouch for — grey would
+ * say offline, which is the specific thing that state exists to avoid saying.
+ */
+.presence-dot.presence-unknown {
+  background: transparent;
+  border-color: var(--muted);
+}
+
+/*
+ * The same dot, inline in a filter button.
+ *
+ * Its own class rather than a modifier on `.presence-dot`, because that one is
+ * absolutely positioned and unsetting `position`, `inset`, `border` and the
+ * ring on top of it is more rules than simply saying what this is. Both share
+ * the `presence-*` colour classes, which is the part that must not drift.
+ */
+.status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--presence-offline);
+  vertical-align: baseline;
+}
+
+.status-dot.presence-in-game { background: var(--presence-in-game); }
+.status-dot.presence-online { background: var(--presence-online); }
+.status-dot.presence-away { background: var(--presence-away); }
+.status-dot.presence-dnd { background: var(--presence-dnd); }
+.status-dot.presence-offline { background: var(--presence-offline); }
+
+.status-dot.presence-unknown {
+  background: transparent;
+  border: 1.5px solid var(--muted);
+  box-sizing: border-box;
+}
+
+/*
+ * A status that is switched off.
+ *
+ * Dimmed and struck through rather than hidden or recoloured: the count has to
+ * stay readable, because "offline 133" is the number that tells you what
+ * switching it back on would cost. Opacity alone was not enough to read as
+ * *off* at a glance on a row of six.
+ */
+.btn.status-off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.btn.status-off .status-dot {
+  text-decoration: none;
+}
+
+/* A provider row on the Services tab, collapsed until you open it.
+
+   `list-style: none` plus the ::marker rule removes the browser's default
+   triangle, which sits at the far left of a flex row and pushes the glyph out
+   of line. The chevron is drawn on the right instead, where the eye already is
+   after reading the name. */
+.card.provider > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.card.provider > summary::-webkit-details-marker {
+  display: none;
+}
+
+.card.provider > summary::marker {
+  content: '';
+}
+
+.card.provider > summary::after {
+  content: '⌄';
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  transition: transform 120ms ease;
+}
+
+.card.provider[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.card.provider > summary:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Something went wrong with a connection.
+
+   The only chip left on a provider card, now that the per-capability status
+   labels have gone: those graded things that the sentence beneath them already
+   described, whereas this reports a fact about the last attempt and clears
+   itself on the next success. */
+.chip.problem {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* "I cannot tell" — visually between online and offline, because that is where
+   it belongs. Discord returns its friends list with no presence on it, and
+   dimming those rows to look offline would restate the claim the state exists
+   to avoid. */
+.chip.presence-unknown {
+  opacity: 0.8;
+  border-style: dashed;
 }

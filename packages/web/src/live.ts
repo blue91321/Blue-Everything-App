@@ -33,6 +33,7 @@ export type ChangeScope =
   | 'devices'
   | 'time'
   | 'vault'
+  | 'integrations'
   | 'all';
 
 type Listener = (scope: ChangeScope) => void;

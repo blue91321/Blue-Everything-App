@@ -1,0 +1,14 @@
+{
+  "//": "The server had no tsconfig, so `npm run typecheck` covered the agent and the PWA and skipped the package with the most code in it. It runs through tsx, which strips types without checking them, so the first thing to notice a mistake was the process failing to start — a deleted closing brace shipped exactly that way. Same options as the agent's, deliberately: two configs that drift are worse than one that is copied.",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}

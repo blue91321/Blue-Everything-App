@@ -2,7 +2,7 @@
  * Builds the Fastify instance without starting it, so tests and the smoke
  * script can drive the real API in-process via `app.inject()`.
  */
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
@@ -39,7 +39,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // On the root instance so it sees every route, not just this plugin's.
   registerChangeAnnouncer(app);
 
-  app.setErrorHandler((error, request, reply) => {
+  // Annotated because the callback's parameter is inferred as `unknown`, so
+  // reading `statusCode` off it is only legal by accident.
+  app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof ZodError) {
       return reply.code(400).send({ error: 'invalid request body', issues: error.issues });
     }
@@ -86,6 +88,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await registerFeature(app, 'vault', () => import('./features/vault/index.js'));
   await registerFeature(app, 'voice', () => import('./features/voice/index.js'));
   await registerFeature(app, 'push', () => import('./features/push/index.js'));
+  await registerFeature(app, 'integrations', () => import('./features/integrations/index.js'));
 
   await registerWebApp(app);
 

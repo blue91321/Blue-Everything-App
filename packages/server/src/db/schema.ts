@@ -10,7 +10,7 @@
  *   - No SQLite-only SQL anywhere in queries.
  */
 import { sql } from 'drizzle-orm';
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { randomUUID } from 'node:crypto';
 
 const id = () => text('id').primaryKey().$defaultFn(() => randomUUID());
@@ -424,6 +424,26 @@ export const settings = sqliteTable('settings', {
    */
   overlayAvatar: text('overlay_avatar').notNull().default(''),
 
+  /**
+   * Services to leave out of the lists, as a JSON array of provider ids.
+   *
+   * **One switch, two effects, because each service only contributes one kind
+   * of thing.** Hiding Steam, Discord or Riot drops people from Friends; hiding
+   * YouTube drops its channels from Following and Spotify drops its artists.
+   * Splitting it into separate friend and follow settings would have meant two
+   * lists where no provider ever appeared in both.
+   *
+   * Here rather than in the integrations feature's own tables because there is
+   * nowhere better: Riot has no account row at all — the agent finds the client
+   * or it does not — so a `hidden` flag on `integration_accounts` could not
+   * express the one people most want to hide. Voice keeps its settings here for
+   * the same reason, and this column is a list of opaque slugs, so core still
+   * knows nothing about what a provider *is*.
+   *
+   * Empty is the default and means the lists are whole.
+   */
+  hiddenProviders: text('hidden_providers').notNull().default('[]'),
+
   updatedAt: touched(),
 });
 
@@ -484,6 +504,338 @@ export const vaultEntries = sqliteTable('vault_entries', {
   updatedAt: touched(),
 });
 
+/* ------------------------------------------------------------------ */
+/* App integrations                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One row per connected outside service. Holds the credentials.
+ *
+ * **These are live bearer tokens to your Spotify and Google accounts, and they
+ * are not under the vault key.** That is a deliberate choice and worth stating
+ * where the columns are: the vault is unlocked by typing a master password, and
+ * a library sync that runs while you are out cannot type one. Putting these
+ * behind it would mean the feature only worked while you were sitting there
+ * having just unlocked the vault, which is not a feature.
+ *
+ * So they live here, in the same gitignored database as everything else
+ * personal, and the mitigation is the same one the rest of the app relies on:
+ * `npm run publish-check` refuses to pass on a tracked database. Every scope
+ * requested is read-only, so the worst a leaked token does is read a playlist.
+ */
+export const integrationAccounts = sqliteTable('integration_accounts', {
+  /** The provider id itself — there is one of you, so one account per service. */
+  id: text('id').primaryKey(),
+  /** Whatever the service calls you. Shown so you can tell which account it is. */
+  accountName: text('account_name'),
+  /** The service's own id for you, which display names are not a substitute for. */
+  accountId: text('account_id'),
+
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  /** Absolute, not a duration — a duration is only meaningful next to the
+   *  moment it was issued, and that moment is exactly what a restart forgets. */
+  expiresAt: integer('expires_at'),
+  /**
+   * What was actually granted, which is not what was asked for. Discord will
+   * hand back a token with `identify` and quietly drop the presence scope; the
+   * screen has to be able to say so rather than showing an empty friends list.
+   */
+  scopes: text('scopes').notNull().default('[]'),
+
+  /** For `api-key` providers: the key, and whatever identifies you to them. */
+  apiKey: text('api_key'),
+  externalId: text('external_id'),
+
+  /**
+   * The OAuth application's own id and secret, when they were typed into the
+   * app rather than left in the environment.
+   *
+   * On this row, next to the token, because they belong to the same connection
+   * and go away with it. The env var is read only when the column is null, so
+   * pasting a value here always wins — an env var that silently took precedence
+   * would make re-pasting a client id appear to work and change nothing.
+   *
+   * A row can exist with these set and no token at all: that is "configured but
+   * not connected", which is why `connected` is decided by the presence of a
+   * token rather than by the row existing.
+   */
+  clientId: text('client_id'),
+  clientSecret: text('client_secret'),
+
+  /**
+   * The provider refused this application's optional scopes, so stop asking.
+   *
+   * Set when the authorize page answers `invalid_scope`. That happens *before*
+   * any token exists, so without remembering it the next Connect asks for the
+   * same refused scope and fails identically — the account is simply
+   * unconnectable, with no way out from inside the app.
+   *
+   * Cleared by the button on the card, for once the gated feature has been
+   * enabled at the provider's end.
+   */
+  optionalScopesRefused: integer('optional_scopes_refused').notNull().default(0),
+
+  /**
+   * Per-provider switches that change what a sync does, as JSON.
+   *
+   * JSON rather than a column each, because these are provider-specific and a
+   * `youtube_skip_liked` column on a table shared by five services describes the
+   * wrong thing. Read whole, written whole, and validated by
+   * `providerOptionsSchema` on the way in.
+   */
+  options: text('options').notNull().default('{}'),
+
+  /** Per-capability sync clock, as JSON: { playlists: 1786…, follows: 1786… }. */
+  syncedAt: text('synced_at').notNull().default('{}'),
+  /** Last failure, kept until the next success. A connection that stopped
+   *  working must say why on the screen, not just stop producing rows. */
+  lastError: text('last_error'),
+
+  createdAt: now(),
+  updatedAt: touched(),
+});
+
+/**
+ * A track or a video, deduplicated across every playlist it appears in.
+ *
+ * Keyed by (provider, provider_id) rather than by title: the same song appears
+ * in six playlists with one row, so a category assigned once is a category
+ * assigned everywhere. That is the whole reason this is a table and not a JSON
+ * blob hanging off each playlist.
+ */
+export const mediaItems = sqliteTable(
+  'media_items',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    /** Spotify track id, YouTube video id. */
+    providerItemId: text('provider_item_id').notNull(),
+    kind: text('kind').notNull(),
+
+    title: text('title').notNull(),
+    /** Artist, or channel. One field because it answers one question. */
+    creator: text('creator'),
+    /**
+     * The provider's ids for those artists or that channel, as a JSON array.
+     *
+     * `creator` is a display name — "Bicep", or "A$AP Rocky, Skepta" for a
+     * collaboration — and matching a followed artist to their tracks by name
+     * gets both halves wrong: a joint track does not equal either artist's
+     * name, and a short name is a substring of longer ones. These are the same
+     * ids `follows.provider_account_id` holds, so the join is exact.
+     *
+     * An array because a track genuinely has several artists and each of them
+     * should count it. JSON rather than a join table because it is only ever
+     * read whole, and a two-row side table per track is a lot of rows to carry
+     * for a number on one screen.
+     */
+    creatorIds: text('creator_ids').notNull().default('[]'),
+    album: text('album'),
+    durationMs: integer('duration_ms'),
+    url: text('url'),
+    artUrl: text('art_url'),
+
+    /** JSON array of the provider's own genre strings, kept verbatim. */
+    genres: text('genres').notNull().default('[]'),
+    /**
+     * The family `categoriseGenres` folded those into, stored rather than
+     * derived on read so the library can be grouped and counted in SQL.
+     *
+     * Recomputed on every sync, which makes it a cache rather than data: when
+     * the keyword table gets better, the next sync fixes every row, and nothing
+     * has to migrate.
+     */
+    category: text('category').notNull().default('unknown'),
+    /** Which genre string decided it. Null means nothing did — see `unknown`. */
+    categoryBecause: text('category_because'),
+
+    releasedAt: integer('released_at'),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [
+    // Unique, and that is the deduplication: a track in six playlists is one
+    // row, so the category assigned to it is assigned once.
+    uniqueIndex('media_items_provider_idx').on(t.provider, t.providerItemId),
+    index('media_items_category_idx').on(t.category),
+  ]
+);
+
+export const mediaCollections = sqliteTable(
+  'media_collections',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    /**
+     * notNull, and the pseudo-playlists get a literal — `saved`, `subscriptions`
+     * — rather than a null.
+     *
+     * SQLite treats every NULL as distinct in a unique index, so a nullable
+     * column here would let "Liked Songs" be inserted afresh on every sync while
+     * the index that was supposed to prevent exactly that reported no conflict.
+     */
+    providerCollectionId: text('provider_collection_id').notNull(),
+    /** playlist | saved | subscriptions. */
+    kind: text('kind').notNull().default('playlist'),
+    name: text('name').notNull(),
+    description: text('description'),
+    artUrl: text('art_url'),
+    /** What the provider claims, which can exceed what we managed to fetch. */
+    itemCount: integer('item_count').notNull().default(0),
+    /** The provider's own version marker, so an unchanged playlist is skipped. */
+    snapshotId: text('snapshot_id'),
+    /**
+     * Leave this one out of syncs, and out of the "in my playlists" counts.
+     *
+     * Per playlist rather than a provider-wide switch, which is what this
+     * started as ("skip Liked Videos"): the reason to skip one is that it is
+     * enormous and drowns everything else, and that is a property of the
+     * playlist and not of YouTube.
+     *
+     * Set on *insert* only for the ones ignored by default, so unticking a box
+     * is not quietly undone by the next sync.
+     */
+    ignored: integer('ignored').notNull().default(0),
+    syncedAt: integer('synced_at'),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [uniqueIndex('media_collections_provider_idx').on(t.provider, t.providerCollectionId)]
+);
+
+export const mediaCollectionItems = sqliteTable(
+  'media_collection_items',
+  {
+    id: id(),
+    collectionId: text('collection_id')
+      .notNull()
+      .references(() => mediaCollections.id, { onDelete: 'cascade' }),
+    itemId: text('item_id')
+      .notNull()
+      .references(() => mediaItems.id, { onDelete: 'cascade' }),
+    position: integer('position').notNull().default(0),
+    addedAt: integer('added_at'),
+  },
+  (t) => [index('media_collection_items_collection_idx').on(t.collectionId, t.position)]
+);
+
+/**
+ * Who is online, as a current snapshot rather than a log.
+ *
+ * Upserted in place and never appended to, which is what keeps this feature
+ * inside the leanness budget: forty friends is forty rows forever, however long
+ * the app runs. A presence *history* would be the interesting thing to have and
+ * is exactly what turns a cheap feature into an attention sampler for other
+ * people's evenings, so it is not kept.
+ */
+export const friends = sqliteTable(
+  'friends',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    providerUserId: text('provider_user_id').notNull(),
+    name: text('name').notNull(),
+    avatarUrl: text('avatar_url'),
+    /** offline | online | away | in-game. */
+    state: text('state').notNull().default('offline'),
+    game: text('game'),
+    detail: text('detail'),
+    lastOnlineAt: integer('last_online_at'),
+    /**
+     * Which real person this account belongs to, when you have said.
+     *
+     * Two rows sharing one of these are the same human on two services — a
+     * Discord handle and a Steam profile — and the friends list shows them as
+     * one entry. Null means unlinked, which is most of them.
+     *
+     * A shared id rather than a `links` table because the relation is a
+     * grouping, not a pair: a third service joins by taking the same id, and
+     * unlinking is setting one back to null. There is no join to write and no
+     * pair to keep symmetrical.
+     *
+     * It survives a sync because `replaceFriends` upserts and never touches
+     * this column — losing your linking every time Steam refreshed would make
+     * the feature pointless.
+     */
+    personId: text('person_id'),
+    /** When we last heard anything about this person, fresh or not. */
+    seenAt: integer('seen_at').notNull().$defaultFn(() => Date.now()),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [
+    uniqueIndex('friends_provider_user_idx').on(t.provider, t.providerUserId),
+    index('friends_person_idx').on(t.personId),
+  ]
+);
+
+/**
+ * Accounts you follow or subscribe to — YouTube channels, Spotify artists.
+ *
+ * Its own table rather than a collection of channels, which is what this was
+ * first. That shape stored a channel as a `media_item` of kind `video`, so every
+ * subscription landed in the library with no duration, no album and no play, and
+ * was counted in the Music tab's category breakdown as though it were a track.
+ *
+ * A followed account is a third kind of thing here: not a friend, because it has
+ * no presence and never will, and not a track, because it has none of a track's
+ * fields. Filing it as either is what put "Spotify — friends: not possible" on a
+ * screen about who is online.
+ *
+ * Snapshot-shaped like `friends`, for the same reasons: upserted in place so ids
+ * stay stable, pruned by `seenAt` so an unsubscribe actually disappears.
+ */
+export const follows = sqliteTable(
+  'follows',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    providerAccountId: text('provider_account_id').notNull(),
+    /** channel | artist. */
+    kind: text('kind').notNull(),
+    name: text('name').notNull(),
+    url: text('url'),
+    avatarUrl: text('avatar_url'),
+    /** JSON array of the provider's genre strings. Artists only. */
+    genres: text('genres').notNull().default('[]'),
+    /** Folded from `genres`, so the list groups without re-deriving on read. */
+    category: text('category').notNull().default('unknown'),
+    categoryBecause: text('category_because'),
+    followerCount: integer('follower_count'),
+    /**
+     * Accounts that are the same creator, the way `friends.person_id` groups
+     * accounts that are the same person. Null means it stands alone.
+     *
+     * **Unlike friends, two of these may be on the same service.** A creator
+     * routinely runs a main channel and a clips channel, and refusing to join
+     * them would rule out the commonest reason to want this at all. Friends
+     * keeps the opposite rule because one person has one Discord.
+     */
+    groupId: text('group_id'),
+    /**
+     * The one whose name, picture and link the merged row wears.
+     *
+     * Chosen by hand rather than by a preference order like
+     * `IDENTITY_PREFERENCE` does for friends. There is no honest ranking here:
+     * which of two YouTube channels is "the main one" is a fact about the
+     * creator that no rule can derive, and picking the bigger or the older one
+     * would be wrong often enough to be annoying.
+     *
+     * Exactly one row per group carries it. Meaningless without a `group_id`,
+     * and the unlink path promotes another rather than leaving a group headless.
+     */
+    isPrimary: integer('is_primary').notNull().default(0),
+    seenAt: integer('seen_at').notNull().$defaultFn(() => Date.now()),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [
+    uniqueIndex('follows_provider_account_idx').on(t.provider, t.providerAccountId),
+    index('follows_group_idx').on(t.groupId),
+  ]
+);
+
 export const schema = {
   projects,
   tasks,
@@ -497,6 +849,12 @@ export const schema = {
   devices,
   vault,
   vaultEntries,
+  integrationAccounts,
+  mediaItems,
+  mediaCollections,
+  mediaCollectionItems,
+  friends,
+  follows,
 };
 
 /** Used by the health check to prove the database is actually reachable. */

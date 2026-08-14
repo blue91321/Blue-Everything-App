@@ -434,11 +434,58 @@ the first question whenever something looks wrong.
 
 Bump with `npm version <patch|minor|major> --workspaces --include-workspace-root`.
 
+**Check what it committed before you walk away, because it does not commit all
+of it.** That command bumps all five files, but the commit and tag it creates
+contain **only the root `package.json`** — the four workspace bumps are left
+sitting in the working tree, unstaged. Nothing warns you.
+
+That is worse than untidy. `version.ts` reads `packages/server/package.json`, so
+a clone at the tag `v0.2.0` starts up and reports `0.1.0` on `/health` and on the
+Settings screen — the exact question the version exists to answer, answered
+wrongly, by a tag that looks authoritative. Caught when 0.2.0 was cut for the
+integrations module.
+
+So the bump is two steps, and the second is not optional:
+
+```bash
+npm version minor --workspaces --include-workspace-root
+git add -A && git commit --amend --no-edit && git tag -d v0.2.0 && git tag v0.2.0
+```
+
 That is about the **workspace packages**, which are one app. The *features* on
 the Packages screen are a different axis: they report the app's version while
 they ship with it, and gain their own `version` in the manifest if one is ever
 downloaded separately. Keeping those apart is what stops "one version for the
 app" and "this package is newer than that one" contradicting each other.
+
+## Typechecking
+
+`npm run typecheck` covers **server, agent and web**. The server was missing for
+a long time and that is worth knowing about, because it is the package with the
+most code in it and the one that runs through `tsx` — which strips types without
+looking at them. The first thing to notice a mistake was therefore the process
+failing to start, and a deleted closing brace shipped exactly that way.
+
+Adding a tsconfig turned up eleven errors. Ten were one bug written ten times
+and one was cosmetic:
+
+- **A conditional spread does not override.** The zod schemas describe the
+  *input* — booleans, because that is what JSON has — while the columns are
+  integers, because SQLite has no boolean type. `{ ...body, pinned: x ? 1 : 0 }`
+  is fine; `{ ...body, ...(x === undefined ? {} : { pinned: … }) }` is not,
+  because on one branch it contributes nothing and the schema's boolean is left
+  where a number belongs. The fix is to pull the field *out* of the spread,
+  which `habits.ts` already did for `voicePhrases` and had already written down
+  the reason for. The idiom was here; it just had not been applied to the
+  booleans, because nothing was checking.
+- `smoke.ts` built an `AttentionReport` without `audioPlaying` or `windowsDnd`,
+  both of which are required — so the helper's return type was a claim it did
+  not meet.
+- `tasks.ts` re-tested `body.status !== 'done'` in an arm the first branch had
+  already taken every `'done'` out of. Harmless, and dead.
+
+None of these were live bugs. That is the point: they are the class of thing
+that is invisible until it isn't, and the server had no net under it.
 
 ## Ground rules
 
@@ -632,6 +679,42 @@ lets `--import tsx` resolve the loader, but only the *command line* is visible t
 `Get-CimInstance`, and that's how `stop.ps1` distinguishes these from every
 other node process on the machine.
 
+### When the server is not running, the window is still there
+
+The service worker caches the shell, so stopping the server leaves the app
+window open and looking fine while every request fails. That failure used to be
+indistinguishable from a 401 — it dropped you on the **pairing screen**, asking
+for a device token, which is the one thing that was not broken. `api.ts` now
+throws `ServerUnreachable` for a network failure specifically, and `App.tsx`
+renders `Offline.tsx` instead.
+
+That screen offers to start it, through an `everything:` URL registered in HKCU
+by `scripts/register-protocol.ps1` (run by `Create Desktop Icon.cmd`, alongside
+the shortcut — both answer "set this machine up to run the app"). A web page has
+no other way to launch a process.
+
+**The command takes no `%1`.** Nothing from the link reaches PowerShell, so the
+whole of what any page on the internet achieves by invoking `everything://` is
+starting your own app — the same thing the desktop shortcut does. Verified:
+`Start-Process "everything://start"` with the server down brought it back up.
+
+**The click itself is a real `<a href>`, not `location.href` in a handler.**
+Chromium gates handing a URL to an external program on a user gesture and treats
+an anchor navigation as one far more readily than a scripted assignment, which
+it drops silently. Expect a one-time "Open Blue Everything?" prompt; that is the
+browser asking the right question in the right place.
+
+**This is the one part not verified end to end here.** The automation browser
+refuses external-protocol launches outright, so a real click produced no launch
+and no console error — which is what that policy looks like, and also what a
+broken button looks like. The handler and the screen are each verified
+independently; the handoff between them needs one press in a real window.
+
+The fallback is therefore always on screen rather than behind the failure — the
+file to double-click, named — because a protocol that was never registered does
+nothing visible at all. The button is hidden entirely off loopback: from the
+phone over Tailscale it could only ever appear to do nothing.
+
 ## Running the parts individually
 
 ```bash
@@ -660,9 +743,12 @@ npm run wake-probe -w @everything/agent    # what the wake partial says, block b
 npm run wake-falsing -w @everything/agent  # how often ordinary conversation wakes it
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
+npm run integrations-check -w @everything/server  # the categoriser and the Takeout reader
+
 npm run features         # what is switched on, and what is actually on disk
 npm run features-check   # prove each one can be switched off and deleted
 npm run publish-check    # is this repo safe to make public?
+npm run typecheck        # all three TypeScript packages, server included
 ```
 
 The voice CLIs live inside the feature (`src/features/voice/cli/`), so they stop
@@ -1900,6 +1986,746 @@ bypassed by a stale agent config.
 default would have meant the settings screen reading "only respond to my voice:
 on" while nothing was enrolled and nothing was being checked — a switch claiming
 a protection it was not providing.
+
+## App integrations
+
+Spotify and YouTube for what you listen to and watch; Steam, Discord and Riot
+for who is around. `npm run integrations-check -w
+@everything/server` proves the parts with no network in them — run it before
+trusting a change to the categoriser or the Takeout reader.
+
+**Off by default**, unlike everything else that is switchable. Every other
+feature works the moment it is switched on; this one does nothing at all until
+you have registered an app with a third party and put an id in the environment,
+so defaulting it on would add a tab that can only apologise.
+
+### The capability matrix is the feature
+
+Four of these seven services **cannot do the obvious thing**, for four different
+reasons, and finding that out one provider at a time — after building a screen
+that shows an empty list — is the expensive way to learn it. So a capability in
+`shared/src/integrations.ts` is not a boolean. It carries a `status` and a
+`why`, and the screen renders the `why` next to the thing it explains.
+
+| | playlists | following | who's online |
+| --- | --- | --- | --- |
+| **Spotify** | yes* | artists you follow | — |
+| **YouTube** | yes | subscriptions | — |
+| **Steam** | — | — | **yes, properly** |
+| **Discord** | — | — | needs their approval |
+| **Riot** | — | — | local client only |
+
+\* **Spotify needs Premium.** Since February 2026 a Development Mode app stops
+working the moment the owner's subscription lapses — it answers
+`403 Active premium subscription required for the owner of the app`. The same
+change stopped returning *contents* for playlists you merely follow: you get the
+name and nothing else unless you own or collaborate on it. Both are in the
+capability text, because a 403 on a playlist read otherwise looks like a broken
+token.
+
+**Play history was here and has been removed.** Spotify would only ever return
+the last fifty plays, so a local history had to be accumulated by polling; a
+Google Takeout import covered YouTube, whose API has served an empty watch
+history since 2016. Both worked. Neither is here, because the thing they fed —
+a taste profile inferred from counts — was never going to be worth the machinery
+once `audio-features` was withdrawn. `media_plays` is dropped in migration 0023,
+which cost nothing: it held zero rows.
+
+**Battle.net and Epic were here and have been removed.** Blizzard publishes no
+social namespace at any access level, and Epic's Friends interface needs a
+registered EOS product *and* per-friend consent, so it can never return the
+launcher list. Both were rows whose entire content was an explanation of why
+they could do nothing, plus launcher-process detection reporting "the launcher
+is open" — true, and not worth a row on a screen about who is around.
+
+The research was worth doing and the answer is recorded here; the *rows* were
+not worth keeping. `integrations-check` now asserts no shipped capability is
+`unavailable` and no provider exists purely to apologise. The status itself
+stays in the type, because a future provider may have a dead end worth stating
+next to things that work — as YouTube's history did before the Takeout importer
+made it real.
+
+**`follows` and `friends` are separate capabilities, and collapsing them was the
+first mistake here.** A Steam friend is a mutual relationship with somebody who
+is either around or not; a subscribed channel or a followed artist is a one-way
+interest in an account that has no presence and never will. Filing the second
+under the first put *"Spotify — friends: not possible"* on a screen about who is
+online, which answers a question nobody asked and pushes down the one they did.
+`integrations-check` asserts the split in both directions, because the tempting
+fix is to add the key back "for completeness".
+
+Followed accounts get **their own table** rather than a collection of channels,
+which is what they were first. That shape stored a channel as a `media_item` of
+kind `video`, so every subscription arrived in the music library with no
+duration and no plays, and was counted in the category breakdown as though it
+were a track.
+
+### Nothing here needs a text editor
+
+Every credential is a text box on the Services tab. They were environment
+variables and nothing else, which made setting a provider up read "open a
+terminal, edit a file, restart the app" — the exact friction the three
+double-clickable files in the repo root exist to remove.
+
+`ProviderSpec.credentials` declares the fields; the form, the "is this
+configured" check and the env-var fallback all read that one list, because three
+places listing which fields exist is how they stop agreeing. The value typed in
+**wins over the environment variable**, or pasting one would appear to work and
+change nothing — the same shape of bug as `features.json` being read from a
+directory nobody was writing to.
+
+Three things there are easy to get wrong:
+
+- **A stored value is never sent back to the browser.** The box for a field that
+  is set renders empty with a placeholder saying so. Round-tripping a secret
+  would put it in the DOM, the response cache and any devtools left open, to
+  save one paste.
+- **Blank therefore means "leave it", not "clear it".** Following directly from
+  the above: a blank box is the normal state for a field that is already set, so
+  clearing is an explicit button that sends `''`. Omitting the key means leave.
+- **`connected` is decided by having a token, not by the row existing.** The row
+  is created the moment you save a client id, which is *configured but not
+  connected* — a state that did not exist while these were env vars. Reading
+  `account !== null` showed Spotify as connected the instant its id was pasted,
+  hid the Connect button, and left no way to finish.
+
+The redirect URI is **sent by the server with a copy button**, not written into
+the setup text: it depends on the port and on `OAUTH_REDIRECT_BASE`, so a
+hard-coded one would be wrong for anybody who changed either — and wrong in a
+way whose only symptom is a rejected login.
+
+Steam went first, for a reason worth keeping: its Web API key is issued to *your
+account*, so it is personal data of the same kind as the Steam ID beside it. A
+Spotify or Discord client id identifies the *application*. Both now live in the
+app, but only the second has any business being an env var at all.
+
+### Every site you have to visit is a link
+
+`setup` is a list of `SetupStep`, not of strings: each step carries an optional
+`{ url, label }`, and the screen renders a real anchor. A domain in prose is a
+step you retype into the address bar by hand, and linkifying prose with a regex
+gets the boundaries wrong exactly where these strings are worst — the Steam one
+is `steamcommunity.com/dev/apikey — it asks for a domain`, where the em dash
+lands against the path. `integrations-check` asserts every link is an absolute
+`https:` URL; a relative one would resolve against the app's own origin and open
+a 404 inside the PWA, which reads as a broken app rather than a bad link.
+
+`sourceUrl` is separate from `source` for the same reason it is optional: half
+the citations name endpoints rather than pages — `ISteamUser/GetFriendList +
+GetPlayerSummaries` — and linking those would invent a URL.
+
+**The setup list stays visible after connecting**, collapsed, retitled *Setup
+and troubleshooting*. Hiding it on success removed the links at exactly the
+moment they became useful: "Steam returned no friends" is nearly always the
+privacy setting, and the link that fixes it is in that list.
+
+The four that hurt, and why they are stated rather than worked around:
+
+- **Spotify no longer tells you how a song sounds.** `audio-features`,
+  `audio-analysis` and `recommendations` were withdrawn on 27 November 2024 and
+  return 403 to any app registered since. There is no replacement. Categories
+  therefore come from the genre strings attached to *artists*, which is why
+  syncing costs an extra `/artists` fetch per batch, and why the Music tab says
+  what it is doing rather than presenting a genre count as taste modelling.
+- **YouTube's watch history has been an empty placeholder since 12 September
+  2016**, and the `activities` endpoint that partly replaced it is deprecated.
+  Takeout is not a workaround for a missing endpoint — it is the only complete
+  record, and it goes back further than an API ever would. The capability is
+  therefore `partial` rather than `unavailable`: it read "not possible" directly
+  above the button that imports it, which is a row contradicting the control
+  beneath it.
+- **An optional scope must never make an account unconnectable.** Discord
+  answers `invalid_scope` at the *authorize page* for an application without the
+  Social SDK enabled — before any token exists — so asking for the friends scope
+  unconditionally did not cost the friends list, it cost the whole connection.
+  `oauth.optionalScopes` is asked for once, and a refusal is recorded on the
+  account so the next attempt drops them and succeeds. The card says which part
+  is missing and carries the button that starts asking again, for once the
+  feature has been enabled at the provider's end.
+
+  The failure mode this replaces is the worst kind: pressing Connect, being
+  refused, and having no route out from inside the app.
+
+- **A gated capability has to say how to ungate it.** `CapabilitySpec.unlock`
+  carries the steps, attached to the capability rather than to the provider's
+  `setup`, because it is not part of connecting — you can have a working
+  connection and still not have this. They render under the capability, and
+  again inside the refusal banner, which is the moment you actually want them;
+  only one copy shows at a time. `needs-approval` without steps is the same dead
+  end `unavailable` was, so `integrations-check` refuses it.
+
+  **Name the menu path, and deep-link to the account's own application.** The
+  first version said "look for Social SDK in the left menu", and it is not there
+  — it is under *Games*. A step naming a menu entry that does not exist is worse
+  than no step. The portal's application id and the OAuth client id are the same
+  value, so a `{appId}` placeholder in a link is substituted server-side once one
+  has been pasted: the link opens your application rather than a list you then
+  search. `resolveSetupLinks` falls back to the generic page when nothing is
+  stored, and the check covers both directions plus "no placeholder survives".
+
+- **Discord's friends list comes through `sdk.social_layer_presence`.**
+  `grantedScopes` is checked rather than assumed, and that stays whatever the
+  approval position is: a token can come back with a scope silently dropped, and
+  the difference between "no friends online" and "we were not given permission
+  to look" has to be visible. The other route people use is a user token lifted
+  out of the desktop client, which is against Discord's terms and is not
+  implemented.
+### Who is online, and which process asks
+
+Steam and Discord are web APIs the server calls. Riot is not reachable that way,
+so the **agent** gathers it and POSTs to
+`/api/integrations/presence` — the same division the voice feature draws.
+Anything about *data* happens on the server, which owns the database; anything
+about *this machine* happens in the agent, because the server is meant to be
+movable and has no business assuming League is installed on the same box.
+
+- **Riot** is the League client's own loopback API. It writes a `lockfile` next
+  to itself containing a port and a password while it runs, and deletes it on
+  exit — so the file's presence *is* the liveness check. TLS verification is off
+  because the certificate is Riot's own self-signed one; the connection is to
+  `127.0.0.1` on a port named by a file only this user could have written, so
+  there is no network path to sit in the middle of.
+
+  **What it plays is asked of the client, not looked up in a table here.** The
+  friends payload names the mode as an internal enum — `RANKED_SOLO_5x5`,
+  `CHERRY`, `KIWI` — which reached the screen verbatim. A hand-written table
+  fixed the obvious ones and got two of seven live friends wrong:
+  `/lol-game-queues/v1/queues` calls `KIWI` **ARAM: Mayhem** and queue 1740
+  **Bravery Arena**, not simply Arena. So the queue list is fetched once per
+  client session — keyed on the lockfile port, since a new port is the only way
+  it can have changed — and the table survives only as the fallback for a client
+  that will not answer. It is ~150KB, which is nothing once and absurd every 30
+  seconds.
+
+  Both `gameQueueType` and `gameMode` arrive as **empty strings rather than
+  absent** when the client has no answer, so `??` kept the empty one and put
+  friends on screen playing nothing at all.
+
+  **`availability` says far more than it knows, so `online` has to be earned.**
+  It answers "is this account signed in to Riot somewhere" — true of a launcher
+  left open on the desktop and of the phone companion app, and reported as
+  `chat`, the same value somebody in champion select gets. Measured against a
+  live list: six friends were `chat` with `productName: "Riot Client"` and no
+  League data at all, and were on screen as online.
+
+  The `lol` block is the honest signal. The client fills it in for anybody it
+  can see a League session for and leaves it empty otherwise, so an empty one
+  means "signed in, but not here" — which covers the launcher and the phone with
+  one rule rather than a list of product names to keep up with. The demotion
+  only ever *weakens* a claim: `offline` and `away` are taken as given, and only
+  `online` needs the evidence.
+
+  They become `away` rather than being dropped — "reachable, but not about to
+  join a game" is what `away` already meant for the companion app.
+
+  **`hosting_` is a prefix, not a value.** `IN_GAME_STATUSES` listed a literal
+  `hosting_GAME` that never appears — the real ones name the queue, so
+  `hosting_JADE_RANKED_SOLO_5x5` and `hosting_PVE_PUZZLE_TFT` both fell through
+  to merely `online`. A lobby counts as in-game here: a queue has been picked
+  and they are waiting on players. Fourteen people read as in-game where seven
+  did.
+
+### Switching whole statuses off
+
+A second row of chips under the services one, one per status with its count and
+its own coloured dot. The two things it is for pull in opposite directions and
+are the same control: everything but *in-game* off answers "who could I join",
+and *offline* off answers "stop showing me the other hundred and thirty".
+Toggles rather than a one-of-these picker, since both are several clicks of the
+same kind and a picker could only do the first.
+
+**The state is a list of what is hidden, not of what to show.** That makes
+"everything" the empty case, so a new presence state appears on screen the day
+it is added rather than being invisible until somebody remembers to add it to an
+include list.
+
+Two things there are easy to get wrong and were checked on the real list:
+
+- **The counts are taken before this filter applies.** Counting what survives it
+  would send every count to zero the moment you switched that status off.
+- **A status that is switched off keeps its button**, even with nobody in it.
+  Hiding `offline` on a list that is mostly offline is exactly when you want to
+  undo it, and the button is the only way back. There is a **Show all** too,
+  because undoing four toggles one at a time is how a filter gets left on.
+
+Switched-off chips are dimmed *and* struck through — opacity alone did not read
+as off across a row of six — while the count stays legible, since "offline 136"
+is the number that says what switching it back on would cost.
+
+An empty list names **which** filter emptied it. Three stack here — service,
+search, status — and "nobody matches" while a status toggle is off sends
+somebody looking for a problem that is a button they pressed.
+
+### Presence has a colour, and it is not the accent
+
+A dot on the corner of each avatar: **blue in-game, green online, yellow away,
+red busy, grey offline**, with "I cannot tell" drawn as a hollow ring.
+
+**`dnd` had to become a real state to draw it.** Riot and Steam both publish it
+and both were folded into `away`, which loses the only thing it says — the
+person is *there* and has asked not to be disturbed, where away is the opposite
+claim. It ranks above `away` and sits in the top group, because busy is a choice
+somebody made and idle is what happens when they walk off.
+
+**The colours deliberately do not follow the accent.** Everything else on screen
+does, and these must not: green means online in every chat client on this
+machine, and re-teaching that per accent would make the one row of colour
+carrying meaning the one you cannot read at a glance — with the accent applied,
+choosing red would have made every online friend look busy. They are declared
+twice, once per theme, for the same reason the accents are: the pale dark-theme
+green and yellow vanish against white.
+
+`unknown` is a hollow ring rather than a sixth colour, because any filled dot
+would be a claim about somebody nobody can vouch for, and grey would say offline
+— the specific thing that state exists to avoid saying. Each dot carries a
+`title` and an `aria-label`, since a colour is nothing to a screen reader and
+nothing to anybody who cannot tell the green from the red.
+
+**The friends list counted `away` as online, which was the same lie one level
+up.** "N online" meant "not offline", so a Riot list — which is mostly launchers
+and phones — reported 39 people online when 9 were. `away` is now its own count
+and its own section, headed *"Away — signed in, but not in a game"*, sitting
+between online and offline. Being signed in somewhere is worth showing; it is
+not the same claim as being here.
+
+  Avatars come from Community Dragon, the public mirror of the client's own
+  assets: Riot reports an icon id and no URL. Same arrangement as the Steam and
+  Discord avatars — a URL the browser fetches, nothing this app stores.
+
+**A local report names its provider once, on the envelope.** `localPresenceSchema`
+used `friendSchema`, which requires `provider` on every row; the agent sent it
+at the top level, correctly, since a snapshot cannot span two providers. So
+**every report carrying actual friends was rejected 400 and only the empty ones
+landed** — and both paths that send an empty list are failure paths, so the
+screen showed a stale "connection refused" from whenever the client last
+restarted while 164 live friends never arrived. The only evidence was a wall of
+identical zod issues in `logs\agent.log` that nothing surfaced.
+
+The schema now `omit`s the field, so sending it is impossible rather than
+merely redundant, and `replaceFriends` takes the narrower `ReportedFriend[]` —
+it always took the provider as its own argument and never read it off the row.
+Unknown keys are still *stripped rather than refused*, because rejecting them
+would recreate the same failure with the sides swapped: a newer agent sending
+one extra field would have its whole report thrown out. `integrations-check`
+asserts both halves.
+
+Epic and Battle.net were also gathered here, by launcher process name, off a
+`processes` event `attention.ts` emitted so the scan it already takes could be
+reused. Both the providers and that event have been removed — an event in core
+existing for one deleted feature is exactly the sort of thing that survives by
+being cheap.
+
+Three things there are easy to get wrong:
+
+- **`clientRunning` is stored separately from an empty friends list.** "League
+  is closed" and "everybody is offline" both draw zero rows and mean completely
+  different things. A closed client therefore does **not** write through: the
+  last real snapshot is kept and marked stale, so quitting League leaves the
+  names on screen rather than emptying the list.
+- **A silent agent is a third state again.** Five minutes with no report is
+  reported as stale, distinct from a closed client, because the fixes differ —
+  start the agent, versus start the game.
+- **The presence POST is excluded from the change announcer.** It arrives on a
+  timer and nearly always says the same thing, so `recordLocalPresence`
+  fingerprints the snapshot and announces only a genuine difference. Left to the
+  generic hook it would reload every open browser every thirty seconds, which is
+  the polling the SSE stream exists to replace.
+
+### Discord knows who your friends are; Steam knows whether they are about
+
+**Discord's REST API carries no presence.** `GET /users/@me/relationships`
+returns the friends list with no `presence` key on any entry — presence reaches
+Discord's own client over the gateway, not over REST. Everything was therefore
+defaulting to `offline`, which reported a hundred people as away from their
+computers on no evidence at all.
+
+So `unknown` is a presence state distinct from `offline`, and sorts **last** —
+below offline. It was between the two at first, on the reasoning that "I cannot
+tell" might be hiding somebody who is around; with a hundred unknowns against
+eighteen of everything else, that buried the part of the list which answers the
+question under the part that cannot.
+
+**"No presence over REST" is not the same as "no presence".** Presence reaches
+Discord's own client, and the Social SDK, over the **gateway** — a WebSocket —
+and there are two ways to reach it:
+
+- **A bot with the `GUILD_PRESENCES` intent.** Fully documented and stable. A
+  bot in a server sees `PRESENCE_UPDATE` for that server's members, so it covers
+  people who share a guild with it rather than your whole friends list. It needs
+  `GUILD_MEMBERS` as well, and both are ticked on in the portal without review
+  while the bot is unverified and in under a hundred servers. The cost is a
+  persistent WebSocket in the server process and a bot token to keep.
+  **Decided against 2026-08-11** — it buys presence for the subset of friends who
+  share a server with a bot, where linking already buys it for the subset who
+  have Steam, and only one of those needs a socket held open forever.
+- **The Social SDK's own gateway session**, which is what the SDK does with the
+  OAuth token. It is a native library and the wire protocol is not documented
+  for third-party clients, so this route is reverse-engineering.
+
+Neither is built. Discord rows read `discord` where a status would go — naming
+the service rather than the absence, since they are the only rows that can have
+one and it says where the entry came from.
+
+**Linking is what makes it useful, and a linked person is one row.** They were
+returned per account, so somebody you had just matched up appeared twice — the
+opposite of what linking them was for. `friends.person_id` marks two accounts as
+one human and the read merges them, answering two questions from two rows:
+
+- *who is this* follows `IDENTITY_PREFERENCE`, **Discord first**, because that is
+  where somebody chose a name and a picture for themselves rather than whatever
+  their Steam persona happens to be. `imacowboyybaybaayy` on Steam is
+  `THEREALCTHULHU` on Discord, and only one of those is any use to you;
+- *what are they doing* comes from whichever account actually knows, which is
+  never Discord — labelled `via steam` so a borrowed status is never mistaken
+  for a reported one.
+
+Merged on read rather than stored: the underlying rows refresh on their own
+schedules, and a merged copy in the database would be a third thing to keep in
+step. Unlinking works by `personId` and dissolves the group, because the row *is*
+the person — taking one account out of a pair would leave the other looking
+unchanged.
+
+A shared id rather than a links table, because the relation is a grouping and
+not a pair — a third service joins by taking the same id, and unlinking is
+setting one back to null. `replaceFriends` never touches the column, so a sync
+cannot undo your work.
+
+**Auto-linking from Discord is not possible, and the suggestions are guesses.**
+A friend's connections live on `GET /users/{id}/profile`, which is a client-only
+endpoint and answers 401 to an OAuth app; even `/users/@me/connections` needs a
+scope that would only ever describe you. There is nothing authoritative to
+import. So names are compared — exact after normalising, or one containing the
+other when it is long enough to mean something — and *proposed*. A wrong link
+silently attributes one person's status to another, which is worth a click to
+avoid.
+
+### The Following list sorts by what you actually listen to
+
+Four hundred names in alphabetical order is a phone book. The default sort is
+how many of that account's tracks or videos are in your collections, which puts
+the artists you play at the top and the ones you followed once in 2019 at the
+bottom.
+
+**That count is why `media_items` carries `creator_ids`.** Matching a followed
+artist to their tracks by *name* gets both halves wrong: a collaboration's
+`creator` is "A, B" and equals neither artist's name, and a short name is a
+substring of longer ones — "Air" would collect everything by Airbourne. The ids
+are the same ones `follows.provider_account_id` holds, so the join is exact.
+Rows synced before the column existed fall back to an exact whole-name match,
+which is right for a solo track and declines to guess at a collaboration.
+
+Counted only where the item is in a collection: a track can be in the library
+because it turned up somewhere and since been removed from every playlist, and
+"in my playlists" has to mean what it says. One statement for the whole list,
+because 408 follows is otherwise 408 round trips for a screen that opens once.
+
+### A box per playlist, on the Music tab
+
+`media_collections.ignored` leaves one playlist out of syncs *and* out of the
+"in my playlists" counts the Following tab sorts by. The boxes live in the
+collapsible playlist list on the Music tab, next to the playlists they are
+about.
+
+This replaced a provider-wide "skip Liked Videos" switch on the Services tab,
+and the move is the point: the reason to skip a playlist is that it is enormous
+and drowns out everything else, which is a property of the *playlist* and not of
+the service it came from. The `ProviderOption` mechanism that switch needed went
+with it — `integration_accounts.options` is left behind and unused, because
+migrations are a linear journal.
+
+**Liked Videos is ticked by default**, set on insert only so unticking it is not
+undone by the next sync. The numbers say why: on this install it is 1,803 items
+against 1–16 for every other playlist, and excluding it took the Following
+counts from 195 accounts to 12 — which is the difference between "everyone I
+ever liked a video from" and "people whose music I actually keep".
+
+**Ticked means ticked everywhere**: out of syncs, out of the Following tab's
+counts, and out of the Music tab's own breakdown. That last one was missed at
+first, so the library header read 1,879 tracks while ninety-five per cent of
+them came from the one playlist that had been excluded — a tick that only half
+applies is worse than no tick, because the number looks authoritative either
+way. One `exists` condition now serves both counts.
+
+Items in *no* collection are excluded by the same condition. There are none
+today, but a playlist deleted at the provider would leave some, and "my library"
+means what is in my playlists rather than everything ever seen.
+
+Nothing already synced is deleted when you tick a box; it simply stops being
+refreshed and stops counting.
+
+**Every provider card is a `<details>`, collapsed.** Five providers with their
+capability lists, citations, credential forms and setup steps is several screens
+to scroll past on the way to the one you came to change, on a screen visited
+twice a year. The summary carries the name, the state, and a `problem` chip when
+the last attempt failed — its own chip rather than the `unavailable` capability
+status, which renders "not possible" and is a claim about the *service* rather
+than about one failed attempt that will retry.
+
+### Linking accounts that are the same person, or the same creator
+
+`friends.person_id` groups accounts that are one person; `follows.group_id` does
+the same for one creator. `linkFriends` and `linkFollows` both **absorb whole
+groups**, so a third account joins a pair and two pairs merge into a four.
+
+**Friends could only ever be a pair, and only the screen said so.** "Link" was
+replaced by "Unlink" the moment two accounts joined, so the only way to add a
+third was to take the pair apart and start again — the server had supported it
+all along.
+
+**One button per row, `Link` / `Manage links` / `Done`, on both tabs.** Adding
+and removing are the same job, and splitting them across two controls put the
+two halves in different places while spending a second slot on every row of a
+270-row list for something done a handful of times. The panel lists what is
+joined *before* the box that joins more, because you cannot decide what to add
+without seeing what is there — a list that previously existed nowhere.
+
+Unlinking is per account inside that panel. The row's old button dissolved the
+whole group, which is the same thing for a pair and wrong for three: there was
+no way to correct one bad link without losing the good one. A pair still comes
+apart in one click, because the server dissolves a group left with one member.
+
+Two things had to be fixed to make that real:
+
+- **The picker filtered on the identity's service, not the group's.** It
+  compared against whichever account supplied the name, which is Discord nearly
+  always, so a second Steam account was offered to a person who already had one
+  and the server rejected it after the click.
+- **The server's same-service guard compared only the two named rows.** Right
+  while a group was always a pair; wrong once a third could be added, since the
+  screen passes the group's *first* account. It now checks the whole merged set
+  — and must **deduplicate by row id first**, because `a` and `b` are already
+  inside the members query whenever they carry a person id. Without that, every
+  legitimate third was refused with "that would give one person two steam
+  accounts", naming a service that had exactly one.
+
+**Follows differ deliberately, in two ways.**
+
+*Two accounts on the same service are allowed.* A main channel and a clips
+channel is the commonest reason to want this, and "one person, one Discord" is
+simply not true of channels. The link route therefore does **not** reuse
+`linkFriendsSchema` — sharing the schema would have invited sharing the rule.
+
+*The main one is chosen by hand*, not by a preference order like
+`IDENTITY_PREFERENCE`. No rule can say which of two YouTube channels is the main
+one; it is a fact about the creator, and picking the bigger or older one would be
+wrong often enough to be irritating. `ensurePrimary` runs after every membership
+change so a group never renders headless, and unlinking the main promotes
+another rather than leaving nobody.
+
+`inPlaylists` is **summed across the group**, not taken from the main account.
+It is what the list sorts by, so counting only the main channel's share would
+rank a creator below people you listen to far less.
+
+Unlinking is per account on both tabs, and a group of one is dissolved rather
+than kept — left alone it renders identically to an unlinked row while still
+quietly absorbing whatever was linked to that id next. `unlinkPerson` remains
+on the server for dissolving a whole group in one call; nothing on screen needs
+it now that the panel lists the accounts.
+
+### An errored report must not be written through as an empty list
+
+`recordLocalPresence` refused to write when `clientRunning` was false, and that
+was only half of it. The agent's *other* empty-list path is "the client is up
+but would not answer" — starting, patching, mid-restart — which reports
+`clientRunning: true` with an error and no friends. `replaceFriends` prunes
+anything absent from the snapshot, so **every Riot friend was deleted and
+re-inserted with fresh ids on the next good poll, taking every link to a Discord
+account with it**.
+
+Nothing about that was visible. The names came straight back; they were just no
+longer joined to anybody, and the Discord side kept a `person_id` nothing else
+shared — a group of one, which renders exactly like an unlinked row while
+offering "Unlink" for a link that no longer existed. Five pairs were found
+unpicked this way. Migration `0031` nulls those, and the guard is now
+`clientRunning && !error`: both cases were always the same claim — "I cannot see
+the list right now" — and only one of them said so.
+
+### Searching, and the handle you actually know them by
+
+Both long lists lead with a search box, on its own full-width row above the
+filters. On Following it had been the last item of a row containing two groups
+of buttons, which at any real width put it on a wrapped third line — present,
+and the last thing anybody would find.
+
+**Friends matches every handle a person has, not just the name on the row.** A
+merged person is displayed under whichever account `IDENTITY_PREFERENCE` picked,
+which is Discord almost always — so searching the Steam persona you know them by
+found nothing while the row sat there in plain sight. That failure is something
+the merge introduced and the search box has to undo. Verified: typing a Steam
+handle finds the person shown under their Discord name.
+
+The game is matched too, so "who is in Arena" is a search rather than a scroll.
+
+While a search is running the counts lead with **how many matched**. "1 online"
+above a filtered list is true of the list and alarming as a statement about your
+friends. The link suggestions are hidden as well — proposals about two other
+people are noise when you are looking for a third.
+
+### Two filters, and they are not the same filter
+
+**A selector** across the top — All, then one chip per service with a count.
+Transient, `useState` like every other bit of navigation here. It is built from
+the `sources` the server already returns rather than a list written in the
+component, so adding a presence provider gives it a chip with a count attached
+and nothing to edit in a second place. A service contributing nobody is left
+out: a chip reading "Discord 0" invites a click that leads to an empty screen,
+and the sources panel explains that case properly.
+
+**A collapsible panel at the top of the Services tab** — services to leave out
+for good. Stored server-side in `settings.hidden_providers`, like the theme,
+because a filter set on the PC that left the phone showing everybody would read
+as not having saved.
+
+It began on Friends and does not belong there. Being left out is a fact about a
+*service*, the same kind of thing as whether it is connected — and it governs
+Following too, so a home on Friends made it both hard to find and wrong about
+its own scope.
+
+**One switch, two effects, because no service contributes both kinds of thing.**
+Steam, Discord and Riot bring people; YouTube brings channels and Spotify brings
+artists. Separate friend and follow settings would have been two lists with no
+provider ever appearing in both. Each row says which it costs you — read off the
+provider's own capabilities, so a new service says the right thing without that
+file being edited.
+
+A follow belongs to exactly one service, so `isHiddenByProviders` covers it
+unchanged: with a single account, the every-account test *is* the
+single-provider test.
+
+Both lists report what they are leaving out and **name the tab that did it** —
+"159 hidden by Services". The panel opens itself whenever anything is ticked.
+A count you cannot trace, or a filter you cannot see, is the failure this whole
+screen is against; Following's empty state distinguishes the two causes rather
+than telling somebody who has hidden both services to go and connect them.
+
+**The two tests are deliberately opposite, and that is the whole design.** The
+selector shows a person if *any* account matches; the hidden list drops them
+only when *every* account matches. Picking Steam should include the friend you
+also know from Discord, and hiding Riot must not remove them — someone you know
+from two places is someone you wanted to see, and a filter that quietly takes
+them away is one you stop trusting. `isHiddenByProviders()` in `shared` is the
+one place that rule lives, and `integrations-check` asserts both directions
+along with the empty-accounts case, since `every` on an empty array is true and
+would have made a stray row vanish for a reason nothing on screen could explain.
+
+The hiding happens **server-side**, not in the PWA, because the PWA cannot
+import `shared` — filtering there would mean a second copy of the condition,
+and the phone would need its own. The response carries `hiddenProviders` and
+`hiddenCount`, and the header shows "· 159 hidden" beside the online count: this
+screen's principle is that a short list explains itself, and "nobody is online"
+reads as a broken integration when the real answer is a filter set weeks ago.
+
+The **link picker is not filtered**. Hiding Riot and then being unable to find a
+Riot account to link a Discord friend to would make the visible-because-linked
+case unreachable — the one thing that rescues a person from a hidden service.
+
+`hidden_providers` is a core `settings` column holding **opaque slugs**,
+not validated against `PROVIDER_IDS`: those live in the deletable integrations
+feature, and core validating against them would be core depending on a feature.
+An id that no longer exists matches nobody, which is also the right behaviour
+when a provider is dropped — the setting goes quiet rather than failing to save.
+Riot is why it could not live on `integration_accounts` instead: it has no
+account row at all, so a `hidden` flag there could not express the one service
+most worth hiding.
+
+### Refresh-on-read, not a poller
+
+`GET /api/integrations/friends` refreshes anything staler than 60s and returns.
+There is no background poll, and that is a number-backed decision: a 60-second
+poller is 1,440 requests a day forever, against a project that tuned its
+attention loop down to ~1,500 database rows a day and requires anything on a
+timer to justify itself against those figures. Nobody watches a friends list at
+four in the morning, and a list nobody is looking at does not need to be right.
+The cost is that the first render may be a minute old; after that it is live for
+as long as the screen is open.
+
+`friends` is upserted in place and pruned by `seenAt`, never delete-then-insert.
+Forty friends stay forty rows however long the app runs, and nobody is handed a
+new primary key every minute.
+
+### Tokens are not in the vault, deliberately
+
+`integration_accounts` holds live bearer tokens to your Spotify and Google
+accounts in the clear. The vault is unlocked by typing a master password, and a
+library sync that runs while you are out cannot type one — so putting them
+behind it would mean the feature only worked while you were sitting there having
+just unlocked the vault, which is not a feature. Every scope requested is
+read-only, and the mitigation is the one the rest of the app already relies on:
+`npm run publish-check` refuses to pass on a tracked database.
+
+Connecting and disconnecting are **local-only**, like minting a device token.
+The OAuth redirect comes back to a browser on this PC, so a phone over Tailscale
+could not finish a handshake it started. Reading is not restricted — seeing who
+is online from the sofa is the point of the phone.
+
+**The callback lives at `/oauth/callback/:provider`, outside `/api/`** — the same
+move the icons and the manifest had to make, for the same reason: `auth.ts`
+protects exactly that prefix, and these are requests the browser's own machinery
+makes, which will never carry a bearer token.
+
+It was under `/api/` first, and this document confidently explained why that was
+safe: the redirect arrives on a loopback socket with a loopback Host, so
+`isTrustedLocal` allows it. **That was wrong**, and it failed on the first real
+connection with `{"error":"missing bearer token"}`. `isTrustedLocal` also refuses
+a cross-site `Sec-Fetch-Site` — and a redirect from `accounts.google.com` is
+precisely a cross-site navigation. That check is correct and stays; it is what
+stops a page you are reading from POSTing to 127.0.0.1 in the background. The
+route is what had to move.
+
+Nothing is lost by being unauthenticated, because the `state` parameter is what
+protected this endpoint all along: 32 random bytes, single-use, ten-minute
+window, issued only by the authorize route — which *is* local-only.
+
+**Neither `app.inject()` nor curl sends `Sec-Fetch-Site`**, which is exactly why
+this survived being tested. `npm run smoke` now drives the callback with the
+header a browser would actually send, and asserts both halves: that the check
+still refuses a cross-site request, and that the callback no longer depends on
+it.
+
+The redirect URI is **shown on the Services tab with a copy button, read live
+from the server**, and is deliberately not written into the setup text. It
+depends on the port and on `OAUTH_REDIRECT_BASE`, so a hard-coded copy goes
+stale silently — and when it moved out of `/api/`, four hard-coded copies in the
+instructions were each one rejected login waiting to happen.
+
+`OAUTH_REDIRECT_BASE` defaults to the **loopback IP literal**, not `localhost`:
+Spotify and Google both stopped accepting `http://localhost` while continuing to
+accept `http://127.0.0.1`. They are the same machine and not the same string,
+and the error message says neither.
+
+### Categorising, and what it honestly is
+
+`categoriseGenres` folds several thousand provider genre strings into eighteen
+families. Coarse on purpose — `escape room` and `deep filthstep` are wonderful
+and useless for finding anything, because almost every such tag has a handful of
+artists in it and no two people agree what it means.
+
+**The keyword table is an array, not a record, and the order is load-bearing.**
+`melodic death metal` contains "metal" and "death"; `pop punk` contains "pop"
+and "punk"; `jazz rap` contains both. Narrow families are checked first and
+`pop` — a substring of dozens of unrelated names — goes very nearly last. That
+property is a test rather than a comment, and it caught a real one: `jazz rap`
+landed in jazz until hip-hop was moved above it.
+
+`unknown` is a real member, not a failure. Self-released artists routinely have
+no genres at all, and filing those under whatever came closest is how a library
+ends up confidently wrong. `categoryBecause` records *which* string decided it,
+because a category nobody can explain is a category nobody trusts.
+
+### The Takeout import is two-phase
+
+Same shape as the vault's CSV import, for the same reason: a Takeout archive
+contains several files that look alike — search history, comment history,
+YouTube Music — and picking the wrong one produces a plausible number of
+plausible-looking rows. The first call reports what it found and the window it
+covers and writes nothing; you confirm against dates you recognise.
+
+Re-importing is safe. A unique index on `(item, played_at, source)` makes both
+feeding mechanisms idempotent, which they have to be: Spotify hands back its
+last fifty every single time, and a Takeout file is the whole history every time.
+
+Videos already known from a playlist sync keep the details they have, so an
+import can never downgrade a categorised track to a bare title.
 
 ## Attention model
 

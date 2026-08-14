@@ -65,6 +65,7 @@ if (process.argv[2] === 'probe') {
         health: await status('/health'),
         vault: await status('/api/vault/status'),
         voice: await status('/api/voice/config'),
+        integrations: await status('/api/integrations'),
         habits: await status('/api/habits'),
         notes: await status('/api/notes'),
         features: session.features,
@@ -90,6 +91,7 @@ interface Probe {
   health: number;
   vault: number;
   voice: number;
+  integrations: number;
   habits: number;
   notes: number;
   features: string[];
@@ -138,6 +140,22 @@ if (noVault) {
   check('nor claim it is missing — it was switched off', !noVault.missing.includes('vault'));
 }
 
+console.log('\nintegrations, which start off rather than on');
+// The only feature whose default is off, so this checks both directions —
+// a default-off feature that could not be switched *on* would look identical
+// to one that was simply never wired up.
+const withIntegrations = probe('integrations,habits,notes,time');
+if (withIntegrations) {
+  check('it mounts when named', withIntegrations.integrations === 200);
+  check('and appears in the session', withIntegrations.features.includes('integrations'));
+}
+const noIntegrations = probe('vault,voice,push,habits,notes,time');
+if (noIntegrations) {
+  check('it is not mounted when it is not', noIntegrations.integrations === 404);
+  check('and is absent from the session', !noIntegrations.features.includes('integrations'));
+  check('nor claimed missing — it was switched off', !noIntegrations.missing.includes('integrations'));
+}
+
 console.log('\nvoice switched off');
 const noVoice = probe('vault,push,habits,notes,time');
 if (noVoice) {
@@ -153,6 +171,7 @@ if (core) {
   check('the server boots with every optional feature off', core.health === 200);
   check('no vault', core.vault === 404);
   check('no voice', core.voice === 404);
+  check('no integrations', core.integrations === 404);
   check('no habits', core.habits === 404);
   check('no notes', core.notes === 404);
   check('and it says so', core.features.length === 0);
@@ -173,6 +192,24 @@ try {
     check('voice still works', deleted.voice === 200);
     check('it is reported as missing, not as off', deleted.missing.includes('vault'));
     check('and is absent from the active list', !deleted.features.includes('vault'));
+  }
+} finally {
+  rmSync(copySrc, { recursive: true, force: true });
+}
+
+console.log('\nthe integrations folder deleted from disk');
+try {
+  rmSync(copySrc, { recursive: true, force: true });
+  cpSync(realSrc, copySrc, { recursive: true });
+  rmSync(resolve(copySrc, 'features/integrations'), { recursive: true, force: true });
+
+  const deleted = probe('integrations,voice,habits,notes,time', copySrc);
+  if (deleted) {
+    check('the server still boots', deleted.health === 200);
+    check('integrations are not mounted', deleted.integrations === 404);
+    check('voice still works', deleted.voice === 200);
+    check('it is reported as missing, not as off', deleted.missing.includes('integrations'));
+    check('and is absent from the active list', !deleted.features.includes('integrations'));
   }
 } finally {
   rmSync(copySrc, { recursive: true, force: true });

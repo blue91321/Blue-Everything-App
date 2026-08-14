@@ -1371,6 +1371,16 @@ export const updateSettingsSchema = z.object({
   overlayScreen: z.string().max(200).nullish(),
   /** An emoji, `file` for the uploaded one, or empty for no avatar. */
   overlayAvatar: z.string().max(80).optional(),
+  /**
+   * Services to leave out of the friends list.
+   *
+   * **Plain slugs, deliberately not validated against the provider ids.** Those
+   * live in the integrations feature, which is deletable, and core validating
+   * against them would be core depending on a feature. An id that no longer
+   * exists simply matches nobody — which is also the right behaviour when a
+   * provider is dropped: the setting goes quiet rather than failing to save.
+   */
+  hiddenProviders: z.array(z.string().max(40)).max(20).optional(),
 });
 
 /**
@@ -1569,3 +1579,21 @@ export interface DeliverableNudge {
   /** True when this fired because its deadline passed, not because the moment was good. */
   escalated: boolean;
 }
+
+/* ------------------------------------------------------------------ */
+/* App integrations                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The provider manifest is at `@everything/shared/integrations`, and is
+ * deliberately **not** re-exported from here — the same arrangement `./features`
+ * has, for a reason that is easy to rediscover the hard way.
+ *
+ * `packages/web/scripts/make-icons.mjs` imports this file with plain `node`,
+ * which strips types but does not resolve `./integrations.js` back to a `.ts`
+ * the way tsx and every bundler do. A re-export here is therefore fine
+ * everywhere except the one place that builds the app icons, where it fails at
+ * module load with ERR_MODULE_NOT_FOUND and takes the whole build with it.
+ *
+ * A subpath costs importers nothing and keeps this file importable by anything.
+ */
