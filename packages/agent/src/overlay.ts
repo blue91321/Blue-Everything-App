@@ -228,6 +228,8 @@ const DT_END_ELLIPSIS = 0x8000;
 const DT_SINGLELINE = 0x0020;
 const DT_VCENTER = 0x0004;
 const DT_CENTER = 0x0001;
+/** What makes a `you` line hug the right edge, and the exchange read as a chat. */
+const DT_RIGHT = 0x0002;
 const MONITOR_DEFAULTTONEAREST = 0x00000002;
 const HALFTONE = 4;
 const SRCCOPY = 0x00cc0020;
@@ -251,6 +253,9 @@ const COLOR = {
 const WIDTH = 380;
 const PADDING = 14;
 const LINE_HEIGHT = 22;
+
+/** The ✕ in the top corner. Square, and big enough to hit without aiming. */
+const CLOSE_SIZE = 22;
 const BUTTON_HEIGHT = 30;
 
 const wide = (value: string): string => value;
@@ -337,6 +342,18 @@ export type Tone = 'normal' | 'muted' | 'good' | 'bad' | 'accent';
 export interface OverlayLine {
   text: string;
   tone?: Tone;
+  /**
+   * Who said it, which decides which edge it sits against.
+   *
+   * `you` is right-aligned and `app` left-aligned, so an exchange reads as a
+   * conversation rather than as a log — the same convention every messaging
+   * app uses, and the reason a transcript is scannable at a glance instead of
+   * needing to be read line by line.
+   *
+   * Undefined is neither, and stays left: most of what this window shows is a
+   * single status line with no speaker at all.
+   */
+  from?: 'you' | 'app';
 }
 
 export interface OverlayChoice {
@@ -474,6 +491,22 @@ export function createOverlay(handlers: {
   const className = 'EverythingOverlay';
 
   let content: OverlayContent = { title: '' };
+
+  /**
+   * Where the ✕ sits, in client coordinates.
+   *
+   * Fixed rather than recomputed per paint: the window is a constant width and
+   * the button is pinned to the top-right, so the box is the same whatever is
+   * inside. Shared by the painter and the hit test so the two cannot disagree
+   * about where it is — a close button that is drawn a few pixels from where it
+   * can be clicked is worse than none.
+   */
+  const closeBox = {
+    left: WIDTH - PADDING - CLOSE_SIZE,
+    top: PADDING - 2,
+    right: WIDTH - PADDING,
+    bottom: PADDING - 2 + CLOSE_SIZE,
+  };
   let placement: OverlayPlacement = { mode: 'cursor', screen: null };
   let avatar: Avatar = { kind: 'none', value: '' };
   let buttons: { id: string; top: number; bottom: number }[] = [];
@@ -490,7 +523,17 @@ export function createOverlay(handlers: {
 
     if (msg === WM_LBUTTONDOWN) {
       // lParam packs the click as two signed 16-bit values.
+      const x = lparam & 0xffff;
       const y = (lparam >> 16) & 0xffff;
+
+      // The close button is the one thing here that needs an *x* as well as a
+      // y: the choice rows span the full width, so testing height alone was
+      // enough until a control appeared in a corner.
+      if (x >= closeBox.left && x <= closeBox.right && y >= closeBox.top && y <= closeBox.bottom) {
+        handlers.onDismiss();
+        return 0;
+      }
+
       const hit = buttons.find((button) => y >= button.top && y <= button.bottom);
       if (hit) handlers.onChoice(hit.id);
       else handlers.onDismiss();
@@ -616,22 +659,54 @@ export function createOverlay(handlers: {
       hdc,
       wide(content.title),
       -1,
-      rectAt(textLeft, y, client.right - PADDING, y + LINE_HEIGHT),
+      // Stops short of the close button, or a long title would run underneath
+      // the one control on the window.
+      rectAt(textLeft, y, client.right - PADDING - CLOSE_SIZE, y + LINE_HEIGHT),
       DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS
     );
+
+    /*
+     * The close button.
+     *
+     * Every other way out of this window is a timer or a keystroke: it hides
+     * itself after a few seconds, or Escape dismisses it, or clicking anywhere
+     * that is not a choice does. None of those is *visible*, so a popup that
+     * had stayed up looked like something you had to wait out.
+     *
+     * Drawn as a glyph rather than a framed button — it is a dismissal, not a
+     * choice, and framing it would give it the same weight as the answers
+     * underneath.
+     */
+    SelectObject(hdc, bodyFont);
+    SetTextColor(hdc, COLOR.muted);
+    DrawTextW(
+      hdc,
+      wide('✕'),
+      -1,
+      rectAt(closeBox.left, closeBox.top, closeBox.right, closeBox.bottom),
+      DT_CENTER | DT_SINGLELINE | DT_VCENTER
+    );
+
     y += LINE_HEIGHT + 4;
 
-    SelectObject(hdc, bodyFont);
     for (const line of content.lines ?? []) {
       SetTextColor(hdc, colorFor(line.tone));
+      const tall = line.text.length > 44;
+      /*
+       * `you` hugs the right edge, everything else the left.
+       *
+       * Alignment alone carries the speaker, so no line needs a "you said"
+       * prefix eating the width — which matters on a 380px window where the
+       * transcript is the content.
+       */
       DrawTextW(
         hdc,
         wide(line.text),
         -1,
         rectAt(textLeft, y, client.right - PADDING, y + LINE_HEIGHT * 2),
-        DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS
+        (line.from === 'you' ? DT_RIGHT : DT_LEFT) | DT_WORDBREAK | DT_END_ELLIPSIS
       );
-      y += LINE_HEIGHT * (line.text.length > 44 ? 2 : 1);
+      y += LINE_HEIGHT * (tall ? 2 : 1);
     }
 
     for (const button of buttons) {

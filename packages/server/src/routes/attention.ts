@@ -104,6 +104,7 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const result = await collectDeliverable(report, request.deviceId);
+    const prefs = await getSettings();
 
     // This endpoint fires every few seconds, so it announces changes only when
     // it genuinely made one — otherwise every open client would reload on a
@@ -121,7 +122,20 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
        * deleted still raises nudges, and the switch has to reach it. This is the
        * only request the agent always makes.
        */
-      soundEnabled: Boolean((await getSettings()).soundEnabled),
+      soundEnabled: Boolean(prefs.soundEnabled),
+      /*
+       * Which tone each moment gets. On the *attention* heartbeat for the same
+       * reason the on/off switch is: popups are core, so an install with voice
+       * deleted still needs them, and this is the only request the agent always
+       * makes. Empty means "your default" and is sent as such rather than being
+       * resolved here — the palette lives in the agent.
+       */
+      tones: {
+        wake: prefs.soundWake,
+        ok: prefs.soundOk,
+        miss: prefs.soundMiss,
+        nudge: prefs.soundNudge,
+      },
     };
   });
 

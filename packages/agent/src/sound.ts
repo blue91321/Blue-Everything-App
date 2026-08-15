@@ -53,31 +53,97 @@ interface Blip {
   gain?: number;
 }
 
-export const SOUNDS = {
-  /** It heard the wake word and is listening — rising, "go ahead". */
-  wake: [
+/**
+ * The palette, keyed by the name stored in settings.
+ *
+ * A named list rather than a synth editor with sliders for frequency and
+ * duration. The thing anybody actually wants from "customise the tones" is for
+ * the wake sound to be distinguishable from the nudge sound and for neither to
+ * be irritating — that is a choice between a dozen options, not a design task.
+ * Twelve arrays of numbers is also the whole implementation, where a tone
+ * editor would need a UI, a storage format and a way to preview an unsaved one.
+ */
+export const TONES = {
+  none: [],
+  rise: [
     { hz: 660, ms: 70 },
     { hz: 880, ms: 90 },
   ],
-  /** A command worked — a brief two-note confirmation. */
-  ok: [
+  fall: [
+    { hz: 880, ms: 70 },
+    { hz: 660, ms: 90 },
+  ],
+  chime: [
     { hz: 880, ms: 70 },
     { hz: 1170, ms: 110 },
   ],
-  /** Heard, not understood — falling, and quieter, because it is not an alarm. */
-  miss: [
-    { hz: 520, ms: 80, gain: 0.5 },
-    { hz: 390, ms: 130, gain: 0.5 },
-  ],
-  /** A nudge has arrived. Lower and slower, so it does not sound like an error. */
-  nudge: [
+  /** Three notes climbing — reads as "something arrived" rather than "done". */
+  arrive: [
     { hz: 587, ms: 110 },
     { hz: 784, ms: 110 },
     { hz: 988, ms: 160 },
   ],
+  /** Deliberately quieter: a miss is information, not an alarm. */
+  sink: [
+    { hz: 520, ms: 80, gain: 0.5 },
+    { hz: 390, ms: 130, gain: 0.5 },
+  ],
+  blip: [{ hz: 990, ms: 60 }],
+  knock: [
+    { hz: 300, ms: 55, gain: 0.6 },
+    { hz: 300, ms: 55, gain: 0.6 },
+  ],
+  /** Low and short, for anyone who finds the rest too bright. */
+  soft: [{ hz: 440, ms: 120, gain: 0.4 }],
 } satisfies Record<string, Blip[]>;
 
-export type SoundName = keyof typeof SOUNDS;
+export type ToneName = keyof typeof TONES;
+
+export const TONE_NAMES = Object.keys(TONES) as ToneName[];
+
+/**
+ * The moments worth a sound, and which tone each gets unless you say otherwise.
+ *
+ * The *event* is fixed — these are the four things that happen — while the tone
+ * is a preference. Keeping them apart is what lets the picker be a list of
+ * tones rather than four separate half-settings, and what stops a renamed tone
+ * breaking the code that plays it.
+ */
+export const SOUND_EVENTS = ['wake', 'ok', 'miss', 'nudge'] as const;
+export type SoundName = (typeof SOUND_EVENTS)[number];
+
+export const DEFAULT_TONE: Record<SoundName, ToneName> = {
+  /** It heard the wake word and is listening — rising, "go ahead". */
+  wake: 'rise',
+  /** A command worked — a brief two-note confirmation. */
+  ok: 'chime',
+  /** Heard, not understood — falling, and quieter, because it is not an alarm. */
+  miss: 'sink',
+  /** A nudge arrived. Slower, so it does not sound like an error. */
+  nudge: 'arrive',
+};
+
+/** What each event is currently set to. Pushed in from settings. */
+const chosen: Record<SoundName, ToneName> = { ...DEFAULT_TONE };
+
+/**
+ * Point an event at a different tone.
+ *
+ * Unknown names are ignored rather than throwing: this arrives over HTTP from a
+ * settings row, and a tone renamed in a later version must not stop the agent
+ * making any noise at all. The default stands until it is recognised.
+ */
+export function setTones(next: Partial<Record<string, string>>): void {
+  for (const event of SOUND_EVENTS) {
+    const want = next[event];
+    if (want && want in TONES) chosen[event] = want as ToneName;
+    else if (want === undefined) chosen[event] = DEFAULT_TONE[event];
+  }
+}
+
+export function toneFor(event: SoundName): ToneName {
+  return chosen[event];
+}
 
 /**
  * A 16-bit mono PCM WAV, by hand.
@@ -122,18 +188,20 @@ function wav(blips: Blip[]): Buffer {
 }
 
 /** Written once per process, reused after. */
-const files = new Map<SoundName, string>();
+const files = new Map<ToneName, string>();
 
-function fileFor(name: SoundName): string {
-  const cached = files.get(name);
+function fileFor(tone: ToneName): string {
+  const cached = files.get(tone);
   if (cached) return cached;
 
-  const path = join(tmpdir(), `everything-${name}.wav`);
-  // Rewritten on a fresh process even if it exists, so changing a tone here
+  const path = join(tmpdir(), `everything-tone-${tone}.wav`);
+  // Keyed by *tone*, not by event, so two events set to the same tone share one
+  // file — and changing an event's tone is a lookup rather than a rewrite.
+  // Rewritten on a fresh process even if it exists, so editing the palette here
   // takes effect on restart rather than being masked by a stale temp file.
-  if (!existsSync(path) || !files.has(name)) writeFileSync(path, wav(SOUNDS[name]));
+  if (!existsSync(path) || !files.has(tone)) writeFileSync(path, wav(TONES[tone]));
 
-  files.set(name, path);
+  files.set(tone, path);
   return path;
 }
 
@@ -157,8 +225,20 @@ export function soundEnabled(): boolean {
  */
 export function playSound(name: SoundName): void {
   if (!enabled) return;
+  playTone(chosen[name]);
+}
+
+/**
+ * Play a tone by name, whatever it is attached to.
+ *
+ * Separate from `playSound` so the settings screen can preview one without
+ * having to pretend an event happened, and so `none` is handled in exactly one
+ * place: an empty tone is silence, not a zero-length WAV that clicks.
+ */
+export function playTone(tone: ToneName): void {
+  if (TONES[tone].length === 0) return;
   try {
-    PlaySoundW(fileFor(name), null, SND_ASYNC | SND_FILENAME | SND_NODEFAULT);
+    PlaySoundW(fileFor(tone), null, SND_ASYNC | SND_FILENAME | SND_NODEFAULT);
   } catch {
     // Deliberately silent, in both senses.
   }
@@ -166,5 +246,5 @@ export function playSound(name: SoundName): void {
 
 /** Used by the CLI to hear them all without waiting for the real events. */
 export function soundNames(): SoundName[] {
-  return Object.keys(SOUNDS) as SoundName[];
+  return [...SOUND_EVENTS];
 }

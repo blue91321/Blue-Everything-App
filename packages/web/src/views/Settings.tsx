@@ -393,6 +393,75 @@ function DevicesTab({ session, onChanged }: { session: Session; onChanged: () =>
 }
 
 /**
+ * A tone per moment.
+ *
+ * The names come from the agent's palette and are deliberately duplicated here
+ * rather than fetched: the PWA cannot import `@everything/shared` (zod), and an
+ * endpoint to serve nine strings that change about once a year would be a round
+ * trip and a route for nothing. The agent ignores a name it does not know and
+ * falls back to the default, so a list that drifts degrades to "the old sound"
+ * rather than to silence.
+ */
+const TONES = ['rise', 'fall', 'chime', 'arrive', 'sink', 'blip', 'knock', 'soft', 'none'];
+
+const SOUND_MOMENTS: { key: 'soundWake' | 'soundOk' | 'soundMiss' | 'soundNudge'; label: string; hint: string }[] = [
+  { key: 'soundNudge', label: 'A nudge arrives', hint: 'the one that interrupts you' },
+  { key: 'soundWake', label: 'Voice starts listening', hint: 'after the wake word' },
+  { key: 'soundOk', label: 'A command worked', hint: '' },
+  { key: 'soundMiss', label: "It didn't catch that", hint: '' },
+];
+
+function SoundTones({
+  current,
+  saving,
+  update,
+}: {
+  current: AppSettings;
+  saving: boolean;
+  update: (payload: Parameters<typeof api.settings.update>[0]) => Promise<void>;
+}) {
+  // A server older than the columns sends none of them, and a picker that
+  // writes a field the server drops is worse than no picker.
+  if (current.soundWake === undefined) return null;
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="meta" style={{ marginBottom: 8 }}>
+        Which tone each moment gets. They are generated on this PC rather than
+        shipped as files — hear the whole set with{' '}
+        <code>npm run sound-try -w @everything/agent -- --tones</code>.
+      </div>
+
+      {SOUND_MOMENTS.map(({ key, label, hint }) => (
+        <div className="row between" key={key} style={{ marginTop: 6 }}>
+          <div className="grow">
+            <span>{label}</span>
+            {hint && <span className="meta"> · {hint}</span>}
+          </div>
+          <select
+            value={current[key] || ''}
+            disabled={saving}
+            aria-label={`Tone for: ${label}`}
+            style={{ width: 'auto' }}
+            onChange={(e) => void update({ [key]: e.target.value } as Parameters<typeof api.settings.update>[0])}
+          >
+            {/* Empty rather than the default's name, so this keeps tracking the
+                default if it ever changes — the same reason a task's push
+                choice has a null. */}
+            <option value="">default</option>
+            {TONES.map((tone) => (
+              <option key={tone} value={tone}>
+                {tone === 'none' ? 'silent' : tone}
+              </option>
+            ))}
+          </select>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
  * Which parts of the app run at all.
  *
  * Not the same question as any other switch on this screen. Turning quiet hours
@@ -938,6 +1007,13 @@ function QuietHours() {
               onChange={(on) => update({ soundEnabled: on })}
             />
           </div>
+
+          {/* Only when there is something to hear. A row of tone pickers above
+              a switch that is off is four controls for a thing that cannot
+              happen. */}
+          {Boolean(current.soundEnabled) && (
+            <SoundTones current={current} saving={saving} update={update} />
+          )}
         </div>
       )}
 

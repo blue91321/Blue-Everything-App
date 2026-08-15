@@ -1349,6 +1349,17 @@ export const updateSettingsSchema = z.object({
   remindersEnabled: z.boolean().optional(),
   /** A short tone with each popup. On by default; see the schema. */
   soundEnabled: z.boolean().optional(),
+  /*
+   * Which tone each moment gets, by name. Validated as a bounded string rather
+   * than an enum of tone names: the palette lives in the agent, which is the
+   * only thing that can make a noise, and teaching the server the list would be
+   * a second copy to keep in step for no gain. An unknown name falls back to
+   * the default at the one place that can tell — see `setTones`.
+   */
+  soundWake: z.string().max(30).optional(),
+  soundOk: z.string().max(30).optional(),
+  soundMiss: z.string().max(30).optional(),
+  soundNudge: z.string().max(30).optional(),
   pushEnabled: z.boolean().optional(),
   /** What a task or habit that hasn't chosen gets. Not the master switch. */
   pushDefault: z.boolean().optional(),

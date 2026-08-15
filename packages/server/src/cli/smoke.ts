@@ -403,6 +403,77 @@ check('a snoozed nudge stays quiet', !snoozedFired);
  * which drains whatever is still queued from the sections above. Nothing after
  * this could assume a queue it had left full.
  */
+/*
+ * A held nudge must still be true when it finally lands.
+ *
+ * The queue exists to wait for a good moment, so a nudge routinely sits for an
+ * hour — and in that hour the thing it is about can be done. Delivering a stale
+ * count afterwards is worse than delivering nothing: it is confidently wrong,
+ * and the whole point of waiting was spent saying something untrue.
+ */
+console.log('\na nudge held through a game is re-checked before it lands');
+{
+  const { sweepHabitReminders } = await import('../nudge-engine.js');
+  const { db } = await import('../db/client.js');
+  const { nudges: nudgeTable } = await import('../db/schema.js');
+  const { eq: whereEq } = await import('drizzle-orm');
+
+  const habit = (await post('/api/habits', { name: 'Stretch', cadence: 'daily', targetPerPeriod: 4 })).json();
+  await app.inject({ method: 'PATCH', url: `/api/habits/${habit.id}`, payload: { reminderEveryMinutes: 30 } });
+
+  await sweepHabitReminders(Date.now());
+  const raised = (await app.inject({ method: 'GET', url: '/api/nudges/queue' })).json();
+  const mine = raised.find((n: { habitId: string }) => n.habitId === habit.id);
+  check('the reminder is raised with the count at the time', mine?.body === '0 of 4 so far today', mine?.body);
+
+  // Two of them done while the nudge waits — exactly what a match is long
+  // enough for.
+  await post(`/api/habits/${habit.id}/check`);
+  await post(`/api/habits/${habit.id}/check`);
+
+  const landed = await post('/api/attention', report({ reason: 'match over', idleMs: 0 }));
+  const shown = landed.json().deliver.find((n: { habitId: string }) => n.habitId === habit.id);
+  check('it arrives with the count as it is *now*', shown?.body === '2 of 4 so far today', shown?.body);
+
+  // And the interval runs from when it was said, not from when it was written
+  // down — otherwise a long session is rewarded with two reminders in a minute.
+  check('another is not due straight after', (await sweepHabitReminders(Date.now())) === 0);
+  const [row] = await db.select().from(nudgeTable).where(whereEq(nudgeTable.habitId, habit.id));
+  check('and it was stamped with a delivery time to count from', typeof row.deliveredAt === 'number');
+}
+
+console.log('\n…and one whose reason has gone is dropped, not shown');
+{
+  const { sweepHabitReminders, sweepDueTasks } = await import('../nudge-engine.js');
+
+  // Finished entirely while the nudge waited.
+  const done = (await post('/api/habits', { name: 'Vitamins', cadence: 'daily', targetPerPeriod: 1 })).json();
+  await app.inject({ method: 'PATCH', url: `/api/habits/${done.id}`, payload: { reminderEveryMinutes: 30 } });
+  await sweepHabitReminders(Date.now());
+  await post(`/api/habits/${done.id}/check`);
+
+  const afterHabit = await post('/api/attention', report({ reason: 'back at the desk', idleMs: 0 }));
+  check(
+    'a habit finished while it waited is not nagged about',
+    !afterHabit.json().deliver.some((n: { habitId: string }) => n.habitId === done.id)
+  );
+
+  // Same shape for a task: nothing clears its nudge when it is completed.
+  const task = (await post('/api/tasks', { title: 'Post the letter', dueAt: Date.now() + 20 * 60_000, priority: 3 })).json();
+  await sweepDueTasks(Date.now());
+  await app.inject({ method: 'PATCH', url: `/api/tasks/${task.id}`, payload: { status: 'done' } });
+
+  const afterTask = await post(
+    '/api/attention',
+    report({ reason: 'a good break', idleMs: 0, stoppingPoint: { quality: 'prime', reason: 'match ended' } })
+  );
+  check(
+    'a task completed while it waited is not nagged about',
+    !afterTask.json().deliver.some((n: { taskId: string }) => n.taskId === task.id),
+    titles(afterTask).join(', ')
+  );
+}
+
 console.log('\nper-item phone push');
 {
   const { resolvePush } = await import('@everything/shared');

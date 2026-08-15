@@ -310,6 +310,24 @@ export const settings = sqliteTable('settings', {
   soundEnabled: integer('sound_enabled').notNull().default(1),
 
   /**
+   * Which tone each moment gets, by name from the agent's palette.
+   *
+   * Four columns rather than one JSON blob, because there are exactly four
+   * moments worth a sound and they are a fixed list — the same reasoning that
+   * makes every other preference here a column. A blob would be one migration
+   * cheaper and would give up the typing, the defaults and the greppability.
+   *
+   * Empty means "the agent's default for that event". Storing the default name
+   * instead would freeze today's choice: change `DEFAULT_TONE` later and every
+   * install that never touched the setting would keep the old sound, with
+   * nothing on screen to say why.
+   */
+  soundWake: text('sound_wake').notNull().default(''),
+  soundOk: text('sound_ok').notNull().default(''),
+  soundMiss: text('sound_miss').notNull().default(''),
+  soundNudge: text('sound_nudge').notNull().default(''),
+
+  /**
    * How the app looks. Stored server-side rather than in the browser so the
    * phone and the PC agree — picking a colour on one and finding the other
    * still amber would read as the setting not having saved.

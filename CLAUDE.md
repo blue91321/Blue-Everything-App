@@ -538,9 +538,31 @@ may never see, so the app spent all that effort picking the right moment and
 then announced it somewhere invisible. The overlay draws above exclusive
 fullscreen; that is the whole reason it exists.
 
-**A nudge now raises both**, and they fail in opposite ways: the popup is the
-half that gets *noticed*, the toast is the half that *persists* in the Action
-Centre afterwards.
+**The Windows toast is gone.** It was raised alongside the popup on the
+reasoning that the two fail in opposite ways — the overlay gets *noticed*, above
+an exclusive-fullscreen game, while the toast *persists* in the Action Centre.
+What killed it is what one costs: there is no WinRT binding here, so every
+notification spawned PowerShell — a process and a few hundred milliseconds, for
+the half you were less likely to look at. `notify.ts`, `toast.ps1` and
+`npm run toast` went with it.
+
+What is genuinely lost is the Action Centre entry: a nudge you miss is now
+missed rather than waiting in a list. The queue still holds it, and an
+undelivered nudge is on the Dashboard either way.
+
+**The popup reads as a conversation.** Within one exchange each turn is appended
+rather than replacing the last, and the window grows — measured at 76px for a
+bare "Listening…" up to 164px for a wake, a command, a reply and a follow-up.
+What you said is right-aligned and what it did is left-aligned, so the two are
+distinguishable without a "you said" prefix eating the width of a 380px window.
+A fresh wake word calls `show` and starts over; that is the reset, and it is
+deliberate rather than a timer.
+
+**It has a ✕.** Every other way out was a timer, Escape, or clicking somewhere
+that is not a choice — none of them *visible*, so a popup that had stayed up
+looked like something to wait out. It is the one control here that needs an `x`
+as well as a `y` in the hit test: choice rows span the full width, so testing
+height alone was enough until something sat in a corner.
 
 **`show({forMs: 0})` means "stay up"; `hide(0)` means "hide now".** They are
 opposites and they briefly shared a code path, which drew the "Listening…"
@@ -573,6 +595,22 @@ They go out through `PlaySoundW` from winmm — the library `mic.ts` already loa
 — rather than PowerShell like `notify.ts` does. A toast is rare and can afford
 a few hundred milliseconds to spawn a process; a sound accompanies the wake word,
 where a few hundred milliseconds is the entire point missed.
+
+**Which tone goes with which moment is a setting.** Four moments — a nudge
+arriving, voice starting to listen, a command working, a command missed — each
+pointed at a name from a palette of nine (`rise`, `chime`, `arrive`, `sink`,
+`knock`, `soft`, `blip`, `fall`, `none`). `npm run sound-try -w @everything/agent
+-- --tones` plays the palette, which is the only way to choose between them.
+
+A named list rather than a synth editor: what anybody wants from "customise the
+tones" is for the wake sound to be distinguishable from the nudge sound and for
+neither to be irritating, which is a choice between options rather than a design
+task. Empty means "the default for that moment" rather than storing the default
+name, so changing `DEFAULT_TONE` later reaches installs that never touched it.
+The WAVs are cached by *tone*, not by event, so two moments set to the same tone
+share one file. An unknown name falls back to the default rather than to
+silence — the palette lives in the agent, and the server deliberately does not
+know the list.
 
 `soundEnabled` rides on the **attention** heartbeat, not the voice one, because
 popups are core: an install with `features/voice` deleted still raises nudges,
@@ -900,6 +938,32 @@ grows becomes a wall of struck-through names where four revoked "iPhone" entries
 are indistinguishable, so the record can be closed once it has been read. Local
 only, like minting, and the button asks first: it is the only irreversible thing
 on that screen and it sits next to one that isn't.
+
+### A held nudge is re-checked before it lands
+
+The queue exists to wait for a good moment, so a nudge routinely sits for an
+hour — and in that hour the thing it is about can be done. `"3 of 8 so far
+today"` is baked in when a habit reminder is raised, and a match is plenty of
+time to drink five more glasses. Delivering that afterwards is worse than
+delivering nothing: it is *confidently wrong*, and the whole value of waiting
+was spent saying something untrue.
+
+`freshenForDelivery()` runs in the instant before a nudge goes out. It
+recomputes the habit count, and drops anything whose reason has gone — a habit
+finished while it waited, a habit paused, a task completed or dropped. Nothing
+clears a queued nudge when the underlying row changes, deliberately, since the
+queue is the record of what was asked for; so the check belongs at the one point
+where it matters. Dropped ones are marked `expired`, which is exactly what
+happened: unfired, not `acknowledged` (you never saw it) and not `dismissed`
+(you never chose).
+
+**The interval runs from `deliveredAt`, not `createdAt`**, and that is the
+difference between a reminder and a queue. A nudge raised at ten and held
+through a match until eleven has only just been *said*; spacing from when it was
+written down made the next one due immediately, so a long session was rewarded
+with two reminders in a minute. A nudge you never saw did not remind you, so an
+undelivered one still counts from when it was raised — the fallback is doing
+real work, not defending a null.
 
 ### Nudge policy
 

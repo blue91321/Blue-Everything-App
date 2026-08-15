@@ -225,6 +225,13 @@
             "when": 1786063100000,
             "tag": "0031_tidy_lone_person_ids",
             "breakpoints": true
+        },
+        {
+            "idx": 32,
+            "version": "6",
+            "when": 1786063200000,
+            "tag": "0032_sound_tones",
+            "breakpoints": true
         }
     ]
 }

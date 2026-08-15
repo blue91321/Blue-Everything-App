@@ -187,6 +187,16 @@ export interface AppSettings {
   remindersEnabled: number;
   /** A short tone with each popup. Absent on a server older than the column. */
   soundEnabled?: number;
+  /**
+   * Which tone each moment gets, by name from the agent's palette.
+   *
+   * Empty string means "the agent's default for that moment", which keeps
+   * tracking the default rather than freezing today's choice.
+   */
+  soundWake?: string;
+  soundOk?: string;
+  soundMiss?: string;
+  soundNudge?: string;
   pushEnabled: number;
   /**
    * What a task or habit that hasn't chosen gets. Optional for the same reason
@@ -831,6 +841,10 @@ export const api = {
       dndUntil?: number | null;
       remindersEnabled?: boolean;
       soundEnabled?: boolean;
+      soundWake?: string;
+      soundOk?: string;
+      soundMiss?: string;
+      soundNudge?: string;
       pushEnabled?: boolean;
       pushDefault?: boolean;
       voiceEnabled?: boolean;

@@ -126,6 +126,91 @@ export interface DeliveryResult {
   awayFromPc: boolean;
 }
 
+interface Winner {
+  nudge: DeliverableNudge;
+  escalated: boolean;
+  mayPush: boolean;
+}
+
+/** How a habit reminder describes its own progress. */
+function progressLine(done: number, target: number, cadence: string): string {
+  return `${done} of ${target} so far ${cadence === 'weekly' ? 'this week' : 'today'}`;
+}
+
+/**
+ * Re-check a nudge against the world in the instant before it goes out.
+ *
+ * A nudge can sit in the queue for hours — that is the whole point of the
+ * engine — and in that time the thing it is about may have been done. Habit
+ * counts are the obvious case: `"3 of 8 so far today"` is baked in when the
+ * reminder is raised, and a two-hour session is plenty of time to drink five
+ * more glasses. Delivering that afterwards is worse than delivering nothing,
+ * because it is *confidently wrong*, and the whole value of waiting for a good
+ * moment is spent saying something untrue.
+ *
+ * The same applies to a task finished while its nudge was held. Nothing clears
+ * a queued nudge when the underlying row changes — deliberately, since the
+ * queue is the record of what was asked for — so the check belongs here, at the
+ * one point where it is about to matter.
+ *
+ * Anything whose reason for existing has gone is marked `expired`: it was
+ * dropped unfired, which is exactly what that state means. It is not
+ * `acknowledged` (you never saw it) and not `dismissed` (you never chose).
+ */
+async function freshenForDelivery(winners: Winner[], now: number): Promise<Winner[]> {
+  const drop = (id: string) => db.update(nudges).set({ state: 'expired' }).where(eq(nudges.id, id));
+  const kept: Winner[] = [];
+
+  for (const winner of winners) {
+    const { id, habitId, taskId } = winner.nudge;
+
+    if (habitId) {
+      const [habit] = await db.select().from(habits).where(eq(habits.id, habitId));
+      // Paused or deleted between raising and delivering.
+      if (!habit || !habit.active) {
+        await drop(id);
+        continue;
+      }
+
+      const periodKey = periodKeyFor(habit.cadence as 'daily' | 'weekly', new Date(now));
+      const entries = await db
+        .select()
+        .from(habitEntries)
+        .where(and(eq(habitEntries.habitId, habitId), eq(habitEntries.periodKey, periodKey)));
+      const done = entries.reduce((sum, entry) => sum + entry.count, 0);
+
+      // Finished while it waited. Nagging now would be the reminder arriving
+      // after the thing it was reminding you about.
+      if (done >= habit.targetPerPeriod) {
+        await drop(id);
+        continue;
+      }
+
+      const body = progressLine(done, habit.targetPerPeriod, habit.cadence);
+      if (body !== winner.nudge.body) {
+        // Written back as well as corrected in flight, so the queue view and
+        // the history agree with what was actually shown.
+        await db.update(nudges).set({ body }).where(eq(nudges.id, id));
+        winner.nudge.body = body;
+      }
+    }
+
+    if (taskId) {
+      const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      // A deleted task cascades its nudges away, so absent here is a race
+      // rather than a normal state — and either way there is nothing to say.
+      if (!task || task.status === 'done' || task.status === 'dropped') {
+        await drop(id);
+        continue;
+      }
+    }
+
+    kept.push(winner);
+  }
+
+  return kept;
+}
+
 export async function collectDeliverable(
   report: AttentionReport,
   deviceId: string | null
@@ -203,6 +288,13 @@ export async function collectDeliverable(
     return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
   }
 
+  // Everything above decided *whether the moment is good*. This decides whether
+  // the nudge is still **true** — see `freshenForDelivery`.
+  const live = await freshenForDelivery(winners, now);
+  if (live.length === 0) {
+    return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
+  }
+
   /**
    * On the phone leg, drop the ones that asked not to buzz a pocket.
    *
@@ -211,7 +303,7 @@ export async function collectDeliverable(
    * point of the setting: "not worth a phone" and "not worth telling me" are
    * different claims, and only the first is being made here.
    */
-  const going = toPhone ? winners.filter((w) => w.mayPush) : winners;
+  const going = toPhone ? live.filter((w) => w.mayPush) : live;
   // Checked before the send so a queue of desk-only nudges cannot spend the
   // ten-minute push cooldown on a notification that was never going out.
   if (going.length === 0) return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
@@ -326,7 +418,7 @@ export async function sweepHabitReminders(now = Date.now()): Promise<number> {
     if (done >= habit.targetPerPeriod) continue;
 
     const [previous] = await db
-      .select({ createdAt: nudges.createdAt })
+      .select({ createdAt: nudges.createdAt, deliveredAt: nudges.deliveredAt })
       .from(nudges)
       .where(eq(nudges.habitId, habit.id))
       .orderBy(desc(nudges.createdAt))
@@ -335,20 +427,28 @@ export async function sweepHabitReminders(now = Date.now()): Promise<number> {
     const lastTick = entries.reduce((latest, entry) => Math.max(latest, entry.doneAt), 0);
 
     /**
-     * Space reminders from whichever happened later: the last reminder raised,
-     * or the last time the habit was actually ticked off.
+     * Space reminders from whichever happened later: the last reminder that
+     * actually reached you, or the last time the habit was ticked off.
      *
      * Counting only from the reminder means drinking a glass of water two
      * minutes after being nudged still gets you nudged again on the original
      * schedule — which is exactly when it feels like nagging rather than
      * helping. Doing the thing should buy you the full interval.
+     *
+     * **`deliveredAt`, not `createdAt`**, and that is the difference between a
+     * reminder and a queue. A nudge raised at ten and held through a match
+     * until eleven has only just been *said*; measuring from when it was
+     * written down would make the next one due immediately, so the reward for
+     * a long session was two reminders in a minute. A reminder you never saw
+     * did not remind you, so an undelivered one still counts from when it was
+     * raised — the fallback below is doing real work, not defending a null.
      */
-    const since = Math.max(previous?.createdAt ?? 0, lastTick);
+    const since = Math.max(previous?.deliveredAt ?? previous?.createdAt ?? 0, lastTick);
     if (since > now - intervalMs) continue;
 
     await db.insert(nudges).values({
       title: habit.name,
-      body: `${done} of ${habit.targetPerPeriod} so far today`,
+      body: progressLine(done, habit.targetPerPeriod, habit.cadence),
       habitId: habit.id,
       earliestAt: now,
       expiresAt: now + intervalMs,
