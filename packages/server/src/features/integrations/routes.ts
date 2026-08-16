@@ -23,6 +23,7 @@ import {
   PROVIDERS,
   PROVIDER_LIST,
   FOLLOW_PROVIDERS,
+  connectCanvasSchema,
   connectSteamSchema,
   credentialsSchema,
   IDENTITY_PREFERENCE,
@@ -51,6 +52,7 @@ import {
   optionalScopesRefused,
   redirectUri,
 } from './oauth.js';
+import * as canvas from './providers/canvas.js';
 import { localStatusOf, recordLocalPresence } from './providers/local.js';
 import * as spotify from './providers/spotify.js';
 import * as steam from './providers/steam.js';
@@ -61,6 +63,7 @@ import {
   categoryBreakdown,
   collectionsFor,
   forgetAccount,
+  forgetTaskLinks,
   getAccount,
   itemsInCollection,
   linkFollows,
@@ -376,10 +379,54 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     return { connected: true, accountName: me.name, steamId: me.id };
   });
 
+  /**
+   * Canvas: the school's address and an access token, in one submission.
+   *
+   * Same shape as Steam's route and for the same reason — both halves are
+   * personal rather than an application registration, so neither belongs in an
+   * environment variable and both are typed into one form. The difference is
+   * that Canvas has no fixed host, so the address is not a convenience field:
+   * without it there is nothing to send the token to.
+   *
+   * Verified before either is stored. A mistyped host and a revoked token store
+   * perfectly happily and then fail on every sync afterwards, at which point the
+   * message is about a failed sync rather than about the thing that was typed.
+   */
+  app.post('/api/integrations/canvas/connect', async (request) => {
+    localOnly(request);
+    const { host, token } = connectCanvasSchema.parse(request.body);
+
+    const me = await canvas.verify(host, token);
+
+    await saveAccount('canvas', {
+      apiKey: token,
+      baseUrl: me.base,
+      // Both, as Steam does: `externalId` is what the rest of this module reads
+      // to decide a provider is connected, and `accountId` is the service's id
+      // for you. They are the same value here and mean different things.
+      externalId: me.id,
+      accountId: me.id,
+      accountName: me.name,
+      lastError: null,
+    });
+
+    return { connected: true, accountName: me.name, host: me.base };
+  });
+
   app.delete('/api/integrations/:provider', async (request, reply) => {
     localOnly(request);
     const provider = parseProvider((request.params as { provider: string }).provider);
     await forgetAccount(provider);
+    /*
+     * The tasks it made stay; the memory of having made them goes.
+     *
+     * Deleting a fortnight of deadlines because a token was revoked would be
+     * the worst possible reading of "disconnect" — they are ordinary tasks by
+     * now, and may have your own notes on them. What has to go is the link
+     * table, or reconnecting later would find every assignment already
+     * accounted for and import nothing at all.
+     */
+    await forgetTaskLinks(provider);
     // The friends stay until the next refresh writes over them, which is the
     // wrong answer for a disconnected provider — so they go with the account.
     const { replaceFriends } = await import('./store.js');

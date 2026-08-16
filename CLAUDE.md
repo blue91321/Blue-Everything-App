@@ -781,7 +781,7 @@ npm run wake-probe -w @everything/agent    # what the wake partial says, block b
 npm run wake-falsing -w @everything/agent  # how often ordinary conversation wakes it
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
-npm run integrations-check -w @everything/server  # the categoriser and the Takeout reader
+npm run integrations-check -w @everything/server  # the categoriser, the Takeout reader, the coursework rules
 
 npm run features         # what is switched on, and what is actually on disk
 npm run features-check   # prove each one can be switched off and deleted
@@ -2053,10 +2053,11 @@ a protection it was not providing.
 
 ## App integrations
 
-Spotify and YouTube for what you listen to and watch; Steam, Discord and Riot
-for who is around. `npm run integrations-check -w
+Canvas for coursework; Spotify and YouTube for what you listen to and watch;
+Steam, Discord and Riot for who is around. `npm run integrations-check -w
 @everything/server` proves the parts with no network in them — run it before
-trusting a change to the categoriser or the Takeout reader.
+trusting a change to the categoriser, the Takeout reader, or the rules that
+decide what happens to a synced task.
 
 **Off by default**, unlike everything else that is switchable. Every other
 feature works the moment it is switched on; this one does nothing at all until
@@ -2065,19 +2066,20 @@ so defaulting it on would add a tab that can only apologise.
 
 ### The capability matrix is the feature
 
-Four of these seven services **cannot do the obvious thing**, for four different
+Four of these services **cannot do the obvious thing**, for four different
 reasons, and finding that out one provider at a time — after building a screen
 that shows an empty list — is the expensive way to learn it. So a capability in
 `shared/src/integrations.ts` is not a boolean. It carries a `status` and a
 `why`, and the screen renders the `why` next to the thing it explains.
 
-| | playlists | following | who's online |
-| --- | --- | --- | --- |
-| **Spotify** | yes* | artists you follow | — |
-| **YouTube** | yes | subscriptions | — |
-| **Steam** | — | — | **yes, properly** |
-| **Discord** | — | — | needs their approval |
-| **Riot** | — | — | local client only |
+| | playlists | following | who's online | coursework |
+| --- | --- | --- | --- | --- |
+| **Spotify** | yes* | artists you follow | — | — |
+| **YouTube** | yes | subscriptions | — | — |
+| **Steam** | — | — | **yes, properly** | — |
+| **Discord** | — | — | needs their approval | — |
+| **Riot** | — | — | local client only | — |
+| **Canvas** | — | — | — | **yes, properly** |
 
 \* **Spotify needs Premium.** Since February 2026 a Development Mode app stops
 working the moment the owner's subscription lapses — it answers
@@ -2234,6 +2236,125 @@ The four that hurt, and why they are stated rather than worked around:
   to look" has to be visible. The other route people use is a user token lifted
   out of the desktop client, which is against Discord's terms and is not
   implemented.
+### Canvas: the one capability that writes into core
+
+Everything else in this module ends up on a screen the module owns. A Canvas
+deadline ends up as an ordinary **task**, which the nudge engine then holds and
+releases exactly like one you typed. That is the whole reason to want it — the
+engine is the app, and a deadline it cannot see is a deadline it cannot hold for
+you.
+
+**Read from `/api/v1/planner/items`, not from each course's assignment list.**
+Both exist, and the obvious one is worse in three ways: `/courses` then
+`/courses/:id/assignments` is a request per course, it returns last year's
+courses unless every one of them is filtered by term, and it says nothing about
+whether you handed anything in. The planner is what the Canvas dashboard itself
+draws, so it has already answered "which of these are current" the way a student
+expects — and it carries the submission state, which is what lets handing
+something in on Canvas tick it off here.
+
+Three things about it are unlike every other provider here, and all three are
+worth knowing before rather than after:
+
+- **It has no fixed address.** Every school runs its own Canvas, so the host is
+  half the credential. That is a `base_url` column on `integration_accounts`
+  rather than being folded into `external_id`, which means "who you are to
+  them" — a hostname is not that, and storing it there would have worked and
+  read as a mistake forever after. Generic on purpose: anything self-hosted
+  joins by filling it in.
+
+  It is also why the setup steps name a menu path in words rather than linking
+  it, which nothing else in this file does. The page you get the token from is
+  on the server you have not named yet.
+
+- **The token is not read-only, and cannot be made so.** Every other provider is
+  connected with a scoped read-only grant. A Canvas personal access token is the
+  whole account — grades, submissions, messages — because Canvas issues no
+  narrower kind to a personal app. This module stores tokens in the clear, for
+  the reason set out above, so the setup text and the connect form both say so
+  where you will read it. `https` is therefore **refused rather than assumed**:
+  `canvasHostInput` rejects an `http://` host outright instead of upgrading it,
+  because a scheme typed by mistake would put that token on the wire in the
+  clear, and a next-page link on a different origin is not followed for the same
+  reason.
+
+- **Assignments become tasks, and the rules for that are the interesting part.**
+  They live in `syncTasksFromService` in `store.ts`, not in the provider, so a
+  second school platform inherits them rather than forming a second opinion.
+
+#### A deleted task must stay deleted
+
+`integration_task_links` remembers that an item was turned into a task **even
+after that task is gone**. That table is the whole design, and the obvious
+alternative is the bug: deduplicating against `tasks` itself — which a
+`(source, source_id)` unique index would give you — recreates a task you
+deliberately threw away, on the very next sync, within the minute, with nothing
+on screen to explain it. Whichever way that argument is had, you lose it.
+
+So `task_id` goes null when the task goes, and a null one means "made once, and
+gone" — a decision, not a gap, never acted on again. The same null records an
+assignment that was **already handed in when we first looked**, which is what
+stops a term's worth of finished work arriving as a hundred tasks the first time
+you connect.
+
+#### Afterwards, only the deadline is carried across
+
+Extensions happen weekly and a stale `dueAt` makes the nudge engine wrong, which
+is the one thing this feature exists to get right. A title that changed at Canvas
+is rare and a stale one is merely untidy — whereas overwriting a title *you*
+renamed is an edit nobody asked for, and there is no signal here that could tell
+the two apart. `notes` is never touched for the same reason: it holds the course
+name to begin with and is yours after that.
+
+The comparison is against **what Canvas last said**, not against the task's own
+`dueAt`, so moving a deadline yourself is not undone by a service that has not
+changed its mind.
+
+**Ticking off only ever goes one way.** Canvas saying "handed in" closes the
+task; Canvas saying nothing never reopens one you closed. Submissions get
+retracted and windows reopened, and a task coming back to life would be the app
+arguing with you about something you had finished.
+
+#### What the id has to carry
+
+`plannable_id` is unique only within a kind, so `assignment:91` and `quiz:91` are
+two things. Without the prefix the second would silently never become a task.
+
+`planner_note` and `calendar_event` are deliberately not coursework:
+the first is a to-do you wrote *in Canvas*, and importing those would have two
+apps quietly competing over one list; the second is a fact about your timetable
+rather than something with an outcome. Something Canvas reports as `dismissed` is
+left alone, since that is the same request made of a different screen.
+
+`submissions` arrives as `false` when there is nothing to hand in, rather than as
+an object with everything unset — reading it as truthy would mark everything
+done.
+
+#### Two columns on `tasks`, and they are core
+
+`source` and `source_url` are on the core `tasks` table, holding **opaque
+slugs** that are deliberately *not* validated against `PROVIDER_IDS` — those
+live in a deletable folder, and core checking against them would be core
+depending on a feature. Exactly the arrangement `settings.hidden_providers`
+uses. All core does is render the string, so a slug that no longer means anything
+shows a label nobody clicks.
+
+They exist because a task appearing on your Dashboard that you did not write is
+confusing in a specific way — "did I write this, can I delete it, will it come
+back" — and the chip is what answers it.
+
+#### Two smaller things this turned up
+
+- **The api-key connect form was Steam's alone**, gated on `provider.auth ===
+  'api-key'`. Correct exactly until a second api-key provider existed, at which
+  point Canvas would have been shown a box asking for a Steam profile. Both are
+  now gated on the provider id, since the two credential pairs have nothing in
+  common.
+- **"Services to leave out" listed every provider**, and that panel governs only
+  the Friends and Following lists. Canvas feeds neither, so its box would have
+  done precisely nothing — with a line underneath admitting as much. The list is
+  now filtered to providers that actually contribute to one of the two.
+
 ### Who is online, and which process asks
 
 Steam and Discord are web APIs the server calls. Riot is not reachable that way,

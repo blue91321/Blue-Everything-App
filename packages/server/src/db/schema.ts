@@ -66,6 +66,23 @@ export const tasks = sqliteTable(
     scheduledAt: integer('scheduled_at'),
     estimateMinutes: integer('estimate_minutes'),
     sortOrder: integer('sort_order').notNull().default(0),
+    /**
+     * Where this task came from, when it was not typed here. An opaque slug.
+     *
+     * Core, deliberately, and deliberately *not* validated against the
+     * integrations feature's provider list — that folder is deletable, and core
+     * checking a value against it would be core depending on a feature. The same
+     * arrangement `settings.hidden_providers` uses, for the same reason. All
+     * core does with this is render it, so an id that no longer means anything
+     * shows a label nobody clicks rather than failing to load.
+     *
+     * It exists because a task appearing on your Dashboard that you did not
+     * write is confusing without a word saying who wrote it — and "can I delete
+     * this, will it come back" is a fair question that the chip answers.
+     */
+    source: text('source'),
+    /** The thing itself, at the service it came from. Rendered as a link. */
+    sourceUrl: text('source_url'),
     createdAt: now(),
     updatedAt: touched(),
     completedAt: integer('completed_at'),
@@ -566,6 +583,21 @@ export const integrationAccounts = sqliteTable('integration_accounts', {
   externalId: text('external_id'),
 
   /**
+   * Which installation of the service to talk to, for the ones that are not a
+   * single address.
+   *
+   * Every provider here but Canvas has exactly one host, hard-coded beside the
+   * fetch where it belongs. Canvas is per-school, so the address is half the
+   * credential — and it is a *column* rather than being folded into
+   * `external_id` because that field means "who you are to them" and a hostname
+   * is not that. Storing it there would have worked and read as a mistake
+   * forever after.
+   *
+   * Generic on purpose: anything self-hosted joins by filling this in.
+   */
+  baseUrl: text('base_url'),
+
+  /**
    * The OAuth application's own id and secret, when they were typed into the
    * app rather than left in the environment.
    *
@@ -854,6 +886,51 @@ export const follows = sqliteTable(
   ]
 );
 
+/**
+ * "This item from a service has already been turned into a task."
+ *
+ * A separate table rather than a `(source, source_id)` pair on `tasks`, and the
+ * reason is the row that has to survive its task: **deleting a synced task must
+ * be permanent.** Dedupe by looking for the task itself would recreate it on the
+ * next sync — you throw away an assignment you have already dealt with, and it
+ * is back within the minute with nothing on screen to explain why. Whichever way
+ * that argument is had, the user loses it.
+ *
+ * So the link is the memory. `task_id` goes null when the task goes, and a null
+ * one means "we made this once and it is gone" — which is a decision, not a gap,
+ * and is never acted on again. It is also what lets an assignment you had
+ * already submitted before connecting be recorded without making a task at all.
+ *
+ * Lives with the integrations feature. Like `vault_entries` and
+ * `voice_commands`, the table is created whatever is switched on — migrations
+ * are a linear journal and skipping one breaks every later hash — and simply
+ * sits empty when nothing is writing to it.
+ */
+export const integrationTaskLinks = sqliteTable(
+  'integration_task_links',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    /** The service's own id for the thing: a Canvas assignment id, say. */
+    externalId: text('external_id').notNull(),
+    /**
+     * Null once the task is gone — see above. Not a foreign key with a cascade,
+     * because a cascade would delete the row that has to outlive the task.
+     */
+    taskId: text('task_id'),
+    /** What the service last said the deadline was, so a change is detectable. */
+    lastDueAt: integer('last_due_at'),
+    /** Set when the service reported it handed in, so it is only ticked once. */
+    completedAt: integer('completed_at'),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [
+    uniqueIndex('integration_task_links_idx').on(t.provider, t.externalId),
+    index('integration_task_links_task_idx').on(t.taskId),
+  ]
+);
+
 export const schema = {
   projects,
   tasks,
@@ -873,6 +950,7 @@ export const schema = {
   mediaCollectionItems,
   friends,
   follows,
+  integrationTaskLinks,
 };
 
 /** Used by the health check to prove the database is actually reachable. */

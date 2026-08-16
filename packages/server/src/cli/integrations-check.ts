@@ -10,15 +10,32 @@
  * matches the code — which is exactly the assumption that was wrong when the
  * `audio-features` endpoint started returning 403.
  *
+ * **A throwaway database is not the same as an account.** The coursework rules
+ * at the bottom decide whether a task you deleted comes back, and there is no
+ * way to assert that without somewhere to write rows — so this ends by
+ * migrating a scratch file and driving `syncTasksFromService` against it, with
+ * planner items made up here rather than fetched. What is being checked is this
+ * app's rules, not Canvas's JSON.
+ *
  * Same shape as `voice-check` and `vault-check`: run it before trusting a
  * change to the logic it covers.
  */
+// Set before anything that reaches `db/client` is loaded, which is why the two
+// server-side imports below are dynamic and the shared one is not.
+process.env.DATABASE_URL = 'file:./data/integrations-check.db';
+process.env.LOG_LEVEL = 'error';
+
+// Removed here rather than beside the checks that use it: by then the client
+// has the file open, and Windows will not unlink a file with a handle on it.
+rmSync('./data/integrations-check.db', { force: true });
+import { rmSync } from 'node:fs';
 import {
   FOLLOW_PROVIDERS,
   MUSIC_CATEGORIES,
   PRESENCE_PROVIDERS,
   PROVIDERS,
   PROVIDER_LIST,
+  canvasHostInput,
   categoriseGenres,
   categoriseVideo,
   isHiddenByProviders,
@@ -27,7 +44,10 @@ import {
   steamProfileInput,
   type MusicCategory,
 } from '@everything/shared/integrations';
-import { parseIsoDuration } from '../features/integrations/providers/youtube.js';
+
+// Dynamic, so the scratch database above is already chosen by the time this
+// pulls in the store and the store pulls in the client.
+const { parseIsoDuration } = await import('../features/integrations/providers/youtube.js');
 
 let failures = 0;
 
@@ -445,6 +465,264 @@ check(
   'and it does not survive into the stored row',
   tolerant.success && !('provider' in tolerant.data.friends[0])
 );
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nWhich Canvas do you mean');
+
+/*
+ * The box takes whatever is in the address bar, which is nearly always a full
+ * URL with a course path on the end. A validator demanding a bare hostname would
+ * reject the exact thing everybody pastes first.
+ */
+function canvasHost(raw: string, expected: string | null): void {
+  const got = canvasHostInput(raw);
+  check(`${JSON.stringify(raw)} -> ${expected ?? 'refused'}`, got === expected, `got ${String(got)}`);
+}
+
+canvasHost('canvas.myschool.edu', 'https://canvas.myschool.edu');
+canvasHost('https://canvas.myschool.edu', 'https://canvas.myschool.edu');
+canvasHost('https://canvas.myschool.edu/', 'https://canvas.myschool.edu');
+canvasHost('https://myschool.instructure.com/courses/1234/assignments', 'https://myschool.instructure.com');
+canvasHost('  myschool.instructure.com  ', 'https://myschool.instructure.com');
+canvasHost('canvas.myschool.edu:8443', 'https://canvas.myschool.edu:8443');
+
+/*
+ * **http is refused rather than quietly upgraded.** A Canvas token is the whole
+ * account — there is no read-only kind to ask for — so a scheme typed by mistake
+ * would put it on the wire in the clear. Rewriting it to https would be the
+ * friendlier behaviour and the wrong one: if somebody has genuinely typed http,
+ * the thing to find out is why.
+ */
+canvasHost('http://canvas.myschool.edu', null);
+canvasHost('localhost:3000', null);
+canvasHost('not a url at all', null);
+canvasHost('', null);
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nCoursework is not a friends list');
+
+/*
+ * `assignments` is the first capability whose output lands in *core* rather than
+ * on one of this feature's own screens, and the tempting mistake is the one
+ * `follows` and `friends` already suffered: filing it under something that
+ * already exists. A Canvas deadline is not a playlist and not a person, and a
+ * provider appearing in `PRESENCE_PROVIDERS` would put "Canvas" on a screen
+ * about who is online.
+ */
+check('canvas declares assignments', PROVIDERS.canvas.capabilities.assignments !== undefined);
+check('canvas declares no friends capability', PROVIDERS.canvas.capabilities.friends === undefined);
+check('canvas declares no follows capability', PROVIDERS.canvas.capabilities.follows === undefined);
+check('canvas is not a presence provider', !PRESENCE_PROVIDERS.includes('canvas'));
+check('canvas is not a follow provider', !FOLLOW_PROVIDERS.includes('canvas'));
+/*
+ * And nothing else may claim it. `assignments` writes tasks, so a provider
+ * declaring it with no code behind it would render a Sync button that silently
+ * does nothing at all.
+ */
+check(
+  'nothing else claims assignments',
+  PROVIDER_LIST.filter((p) => p.capabilities.assignments).length === 1
+);
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nReading the planner');
+
+const { nextPage, toTask } = await import('../features/integrations/providers/canvas.js');
+
+const BASE = 'https://canvas.example.edu';
+
+/*
+ * Canvas paginates by `Link` header rather than by a cursor in the body, so
+ * there is nothing in the JSON to follow. Getting this wrong does not throw —
+ * it silently stops at the first page, which presents as "Canvas only has fifty
+ * things in it" and sends you looking at Canvas.
+ */
+const LINK =
+  `<${BASE}/api/v1/planner/items?page=1>; rel="current",` +
+  `<${BASE}/api/v1/planner/items?page=2>; rel="next",` +
+  `<${BASE}/api/v1/planner/items?page=1>; rel="first"`;
+check('the next page comes out of the Link header', nextPage(LINK, BASE) === `${BASE}/api/v1/planner/items?page=2`);
+check('the last page has no next', nextPage(`<${BASE}/api/v1/planner/items?page=1>; rel="current"`, BASE) === null);
+check('no header at all is the end of the list', nextPage(null, BASE) === null);
+/*
+ * **A next link on another host is not followed.** This is a URL out of a
+ * response header, and following it means handing over a bearer token that is
+ * the whole Canvas account — there is no read-only kind to ask for.
+ */
+check(
+  'a next page on another host is refused',
+  nextPage('<https://elsewhere.example/api/v1/planner/items?page=2>; rel="next"', BASE) === null
+);
+
+/*
+ * The mapping. Written out by hand rather than fetched: what is being checked
+ * is this app's rules about a documented shape, not that a mock of Canvas
+ * matches the code that reads it.
+ */
+const plannerItem = (over: Record<string, unknown> = {}) => ({
+  plannable_type: 'assignment',
+  plannable_id: 91,
+  context_name: 'HIST 210',
+  html_url: '/courses/12/assignments/91',
+  plannable: { title: 'Essay on Rome', due_at: '2026-09-01T23:59:00Z' },
+  submissions: { submitted: false },
+  ...over,
+});
+
+const mapped = toTask(plannerItem(), BASE);
+check('an assignment maps to a task', mapped?.title === 'Essay on Rome', JSON.stringify(mapped));
+check('with the course name', mapped?.context === 'HIST 210');
+check('with the deadline parsed', mapped?.dueAt === Date.parse('2026-09-01T23:59:00Z'));
+/*
+ * `html_url` is a path. Storing it as one gives a link that resolves against
+ * this app's own origin and opens a 404 inside the PWA — which reads as the app
+ * being broken rather than the link being wrong.
+ */
+check('and an absolute link', mapped?.url === `${BASE}/courses/12/assignments/91`, String(mapped?.url));
+
+/* The id has to carry the kind: assignment 91 and quiz 91 are two things. */
+check('the id names the kind', mapped?.externalId === 'assignment:91');
+check('so a quiz with the same number differs', toTask(plannerItem({ plannable_type: 'quiz' }), BASE)?.externalId === 'quiz:91');
+
+check('submitted work is marked done', toTask(plannerItem({ submissions: { submitted: true } }), BASE)?.done === true);
+check('excused work counts as done', toTask(plannerItem({ submissions: { excused: true } }), BASE)?.done === true);
+check(
+  'and so does ticking it off in Canvas itself',
+  toTask(plannerItem({ planner_override: { marked_complete: true } }), BASE)?.done === true
+);
+/*
+ * `submissions: false` is what Canvas sends when there is nothing to hand in —
+ * an ungraded discussion, say — rather than an object with everything unset.
+ * Reading it as an object would throw; reading it as truthy would mark
+ * everything done.
+ */
+check('nothing to hand in is not the same as handed in', toTask(plannerItem({ submissions: false }), BASE)?.done === false);
+
+/* Dismissed in Canvas is the same request, made of a different screen. */
+check('dismissed in Canvas is left alone', toTask(plannerItem({ planner_override: { dismissed: true } }), BASE) === null);
+
+/*
+ * A note you wrote in Canvas is not coursework — importing those would have two
+ * apps quietly competing over one list. A lecture in the calendar is a fact
+ * about your timetable, not something with an outcome.
+ */
+check('a planner note is not coursework', toTask(plannerItem({ plannable_type: 'planner_note' }), BASE) === null);
+check('nor is a calendar event', toTask(plannerItem({ plannable_type: 'calendar_event' }), BASE) === null);
+
+/*
+ * Undated coursework is real work and is not a deadline, and something with no
+ * date is not something the nudge engine can hold for a good moment.
+ */
+check(
+  'undated coursework is skipped',
+  toTask(plannerItem({ plannable: { title: 'Read chapter 4' }, plannable_date: undefined }), BASE) === null
+);
+/* ...but `plannable_date` stands in when the assignment itself carries no due date. */
+check(
+  'the planner date stands in for a missing due date',
+  toTask(plannerItem({ plannable: { title: 'Read chapter 4' }, plannable_date: '2026-09-05T00:00:00Z' }), BASE)
+    ?.dueAt === Date.parse('2026-09-05T00:00:00Z')
+);
+
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nCoursework, and what happens to a task you deleted');
+
+/*
+ * The only part of this file that needs a database, and the part most worth
+ * having one for. Every rule below is here because the obvious implementation
+ * gets it wrong in a way you would not notice for weeks.
+ */
+const { runMigrations } = await import('../db/migrate.js');
+await runMigrations();
+
+const { db } = await import('../db/client.js');
+const { tasks: taskTable } = await import('../db/schema.js');
+const { eq } = await import('drizzle-orm');
+const { syncTasksFromService } = await import('../features/integrations/store.js');
+
+const DUE = Date.parse('2026-09-01T23:59:00Z');
+const essay = { externalId: 'assignment:1', title: 'Essay on Rome', context: 'HIST 210', dueAt: DUE, done: false };
+
+const first = await syncTasksFromService('canvas', [essay]);
+check('a new assignment becomes a task', first.created === 1, JSON.stringify(first));
+
+const [row] = await db.select().from(taskTable).where(eq(taskTable.source, 'canvas'));
+check('with its deadline', row?.dueAt === DUE, String(row?.dueAt));
+check('and the course in the notes', row?.notes === 'HIST 210', String(row?.notes));
+check('and a real time of day, not an all-day date', row?.dueIsAllDay === 0);
+
+const again = await syncTasksFromService('canvas', [essay]);
+check('syncing again does not make a second one', again.created === 0 && again.untouched === 1);
+
+/*
+ * A deadline extension is weekly and a stale `dueAt` makes the nudge engine
+ * wrong, which is the one thing this feature exists to get right.
+ */
+const moved = DUE + 7 * 24 * 60 * 60_000;
+const extended = await syncTasksFromService('canvas', [{ ...essay, dueAt: moved }]);
+check('an extension is carried across', extended.rescheduled === 1, JSON.stringify(extended));
+const [afterMove] = await db.select().from(taskTable).where(eq(taskTable.id, row.id));
+check('and the task really moved', afterMove?.dueAt === moved);
+
+/*
+ * A title renamed here is *yours*. There is no signal that could tell "you
+ * renamed it" apart from "they renamed it", so the service is not allowed to
+ * win — only the deadline is carried across afterwards.
+ */
+await db.update(taskTable).set({ title: 'Rome essay — the one about roads' }).where(eq(taskTable.id, row.id));
+await syncTasksFromService('canvas', [{ ...essay, dueAt: moved, title: 'Essay on Rome' }]);
+const [afterRename] = await db.select().from(taskTable).where(eq(taskTable.id, row.id));
+check('a title you changed is not overwritten', afterRename?.title === 'Rome essay — the one about roads');
+
+/* Handing it in at the service closes the task. */
+const handed = await syncTasksFromService('canvas', [{ ...essay, dueAt: moved, done: true }]);
+check('handing it in ticks the task off', handed.completed === 1, JSON.stringify(handed));
+const [afterDone] = await db.select().from(taskTable).where(eq(taskTable.id, row.id));
+check('and the task is done', afterDone?.status === 'done');
+
+/*
+ * ...and never the other way. Submissions get retracted and windows reopened,
+ * and a task coming back to life is the app arguing with you about something
+ * you had finished.
+ */
+const unsubmitted = await syncTasksFromService('canvas', [{ ...essay, dueAt: moved, done: false }]);
+check('but a task you finished is never reopened', unsubmitted.created === 0 && unsubmitted.rescheduled === 0);
+const [stillDone] = await db.select().from(taskTable).where(eq(taskTable.id, row.id));
+check('and it stays done', stillDone?.status === 'done');
+
+/*
+ * **The one this table exists for.** Deduplicating by looking for the task
+ * itself — which a `(source, source_id)` unique index on `tasks` would give you
+ * — recreates one you deliberately threw away, on the very next sync, with
+ * nothing on screen to explain it.
+ */
+await db.delete(taskTable).where(eq(taskTable.id, row.id));
+const afterDelete = await syncTasksFromService('canvas', [{ ...essay, dueAt: moved }]);
+check('a task you deleted does not come back', afterDelete.created === 0, JSON.stringify(afterDelete));
+const left = await db.select().from(taskTable).where(eq(taskTable.source, 'canvas'));
+check('and nothing was recreated behind it', left.length === 0, `${left.length} rows`);
+
+/*
+ * A term's worth of finished work must not arrive as a hundred tasks the first
+ * time you connect. Already-submitted items are recorded and never made.
+ */
+const old = await syncTasksFromService('canvas', [
+  { externalId: 'assignment:2', title: 'Long-finished problem set', dueAt: DUE, done: true },
+]);
+check('work already handed in never becomes a task', old.created === 0 && old.untouched === 1);
+
+/* Two things with the same numeric id, on different kinds, are two things. */
+const clash = await syncTasksFromService('canvas', [
+  { externalId: 'assignment:9', title: 'Assignment nine', dueAt: DUE, done: false },
+  { externalId: 'quiz:9', title: 'Quiz nine', dueAt: DUE, done: false },
+]);
+check('assignment 9 and quiz 9 are not the same row', clash.created === 2, JSON.stringify(clash));
+
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

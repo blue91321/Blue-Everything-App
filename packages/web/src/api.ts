@@ -144,6 +144,16 @@ export interface Task {
   projectId: string | null;
   createdAt: number;
   completedAt: number | null;
+  /**
+   * Which service this came from, if it was not typed here. An opaque slug.
+   *
+   * A task appearing on the Dashboard that you did not write needs a word
+   * saying who wrote it — "can I delete this, will it come back" is a fair
+   * question and the chip is what answers it.
+   */
+  source: string | null;
+  /** The thing itself, at that service. */
+  sourceUrl: string | null;
 }
 
 /** What the API accepts for a task, as opposed to what a row looks like. */
@@ -980,6 +990,16 @@ export const api = {
       post<{ connected: boolean; accountName: string; steamId: string }>('/api/integrations/steam/connect', {
         profile,
         apiKey,
+      }),
+    /**
+     * Canvas needs an address as well as a token, because every school runs its
+     * own. `host` takes whatever is in the address bar — a course URL is fine,
+     * only the host is kept.
+     */
+    connectCanvas: (host: string, token: string) =>
+      post<{ connected: boolean; accountName: string; host: string }>('/api/integrations/canvas/connect', {
+        host,
+        token,
       }),
     /**
      * Save a provider's own client id/secret from the app rather than a file.

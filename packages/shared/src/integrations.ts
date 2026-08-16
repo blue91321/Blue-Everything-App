@@ -32,6 +32,7 @@ export const PROVIDER_IDS = [
   'steam',
   'discord',
   'riot',
+  'canvas',
 ] as const;
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
@@ -78,8 +79,14 @@ export type AuthKind = (typeof AUTH_KINDS)[number];
  * one-way interest in an account that has no presence at all. Filing the second
  * under the first put "Spotify — friends: not possible" on a screen about who is
  * online, which answers a question nobody asked and buries the one they did.
+ *
+ * `assignments` is the first one that writes into *core* rather than into this
+ * module's own tables. Everything else here ends up on a screen the integrations
+ * feature owns; a Canvas deadline ends up as a task, which the nudge engine then
+ * treats exactly like one you typed. That is the point of it — the engine is the
+ * app, and a due date it cannot see is a due date it cannot hold for you.
  */
-export const CAPABILITIES = ['playlists', 'taste', 'follows', 'friends'] as const;
+export const CAPABILITIES = ['playlists', 'taste', 'follows', 'friends', 'assignments'] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
@@ -607,6 +614,83 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     setup: [{ text: 'Nothing to connect. Start the League client and the agent finds it.' }],
   },
 
+  /**
+   * Canvas: coursework, as tasks the nudge engine can hold for you.
+   *
+   * The odd one out here in three ways, all worth stating rather than
+   * discovering.
+   *
+   * **It has no fixed address.** Every school runs its own Canvas, so the host
+   * is half the credential and there is no link to give you for the page you get
+   * the token from — the page is on the server you have not named yet. That is
+   * why the setup steps below describe a path in words, which nothing else in
+   * this file does.
+   *
+   * **The token is not read-only, and cannot be made so.** Every other provider
+   * here is connected with a scoped, read-only grant; a Canvas personal access
+   * token carries your whole account — grades, submissions, messages, the lot —
+   * because Canvas has no way to issue a narrower one to a personal app. This
+   * module stores tokens in the clear (see the note in CLAUDE.md about why they
+   * are not in the vault), so this is a bigger thing to hold than a Spotify
+   * token, and the setup says so where you will read it rather than here.
+   *
+   * **It is the only capability that writes into core.** Assignments become
+   * ordinary tasks, which is the whole reason to want it.
+   */
+  canvas: {
+    id: 'canvas',
+    label: 'Canvas',
+    glyph: '🎓',
+    blurb: 'Coursework with a due date, as tasks.',
+    reach: 'web',
+    auth: 'api-key',
+    /*
+     * Empty for the same reason Steam's is: both halves are personal rather than
+     * an application registration, and they are typed together into one form on
+     * the Services tab. `CredentialField` can only land in `clientId` and
+     * `clientSecret`, which are the OAuth application's — the wrong columns and
+     * the wrong words for a host and a token that belong to you.
+     */
+    credentials: [],
+    capabilities: {
+      assignments: {
+        status: 'works',
+        why:
+          'Everything with a due date across all your courses — assignments, quizzes and graded ' +
+          'discussions — read from the same planner the Canvas dashboard itself uses. Each becomes a ' +
+          'task with its real deadline, so the nudge engine can hold it until you are between things. ' +
+          'Handing something in on Canvas ticks it off here; deleting a task here stops it coming back.',
+        source: 'GET /api/v1/planner/items',
+        sourceUrl: 'https://canvas.instructure.com/doc/api/planner.html',
+      },
+    },
+    setup: [
+      {
+        text:
+          'In Canvas, open Account → Settings and scroll to Approved Integrations. Press ' +
+          '"+ New Access Token", give it a purpose, and leave the expiry blank so it does not stop ' +
+          'working in the middle of a term.',
+      },
+      {
+        text:
+          'Copy the token straight away. Canvas shows it once and there is no way to see it again — ' +
+          'if you lose it, delete that entry and make another.',
+      },
+      {
+        text:
+          'Worth knowing before you paste it: a Canvas token is your whole account, not a read-only ' +
+          'slice of it. There is no narrower kind to ask for. It is stored in this app’s database ' +
+          'in the clear, like every other token here, so treat it as you would the password.',
+      },
+      {
+        text:
+          'Paste it below with your school’s Canvas address — the one in the address bar, such as ' +
+          'canvas.yourschool.edu or yourschool.instructure.com. A full URL copied from a course page ' +
+          'works too; only the host is kept.',
+        link: { url: 'https://canvas.instructure.com/doc/api/', label: 'the Canvas API docs' },
+      },
+    ],
+  },
 };
 
 export const PROVIDER_LIST: ProviderSpec[] = PROVIDER_IDS.map((id) => PROVIDERS[id]);
@@ -1054,6 +1138,57 @@ export function steamProfileInput(raw: string): { steamId: string } | { vanity: 
   // guess here fails with "Steam does not know that profile", which is the
   // right message for a mistyped name as well as for a mistyped URL.
   return { vanity: input };
+}
+
+export const connectCanvasSchema = z.object({
+  /** The school's Canvas address, in whatever form it was copied. */
+  host: z.string().trim().min(3).max(300),
+  /**
+   * Required, unlike Steam's key, because there is no environment variable
+   * fallback and there should not be: this one is worth a deliberate paste.
+   */
+  token: z.string().trim().min(20).max(500),
+});
+
+/**
+ * Work out which Canvas somebody means.
+ *
+ * Pure, and in `shared` next to `steamProfileInput` rather than beside the
+ * fetch, so `integrations-check` covers the parsing without a network.
+ *
+ * The box takes whatever is in the address bar. That is nearly always a full
+ * URL with a course path on the end, so a validator demanding a bare hostname
+ * would reject the exact thing everybody pastes first. `null` is returned rather
+ * than a thrown error because the caller has a much better sentence to say about
+ * it than this function does.
+ *
+ * **https only, and not negotiable.** A Canvas token is the whole account, and
+ * an `http://` host typed by mistake would send it over the wire in the clear.
+ * A scheme is added when one is missing rather than demanded, since nobody
+ * copies the `https://` off the front by hand.
+ */
+export function canvasHostInput(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+
+  // A bare host has no scheme, and `new URL` will not parse one without it.
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== 'https:') return null;
+  // A hostname with no dot in it is a typo or a machine name, and either way is
+  // not a Canvas. `localhost` would also sail through the checks above.
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(url.hostname)) return null;
+
+  // Only the origin is kept. The path is whatever course page it was copied
+  // from, and appending `/api/v1/...` to it would produce a 404 per request.
+  return `https://${url.hostname}${url.port ? `:${url.port}` : ''}`;
 }
 
 /**

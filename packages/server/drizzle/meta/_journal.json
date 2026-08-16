@@ -232,6 +232,13 @@
             "when": 1786063200000,
             "tag": "0032_sound_tones",
             "breakpoints": true
+        },
+        {
+            "idx": 33,
+            "version": "6",
+            "when": 1786063300000,
+            "tag": "0033_canvas",
+            "breakpoints": true
         }
     ]
 }
