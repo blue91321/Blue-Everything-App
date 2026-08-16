@@ -479,6 +479,23 @@ export const settings = sqliteTable('settings', {
    */
   hiddenProviders: text('hidden_providers').notNull().default('[]'),
 
+  /**
+   * What sits in the Dashboard's side column, if anything.
+   *
+   * An **opaque id**, not validated against anything, for the same reason
+   * `hidden_providers` is not: the interesting panels come from features that
+   * can be deleted, and core checking the value against a list of them would be
+   * core depending on a feature. An id nothing answers to renders no panel,
+   * which is also the right behaviour when a feature is switched off — the
+   * setting goes quiet and comes back when the feature does, rather than being
+   * silently rewritten to empty behind your back.
+   *
+   * Empty is the default: the Dashboard is one column until you ask for two.
+   * Server-side rather than `localStorage` like the theme and the accent, so
+   * choosing a panel on the PC does not leave the phone showing the old one.
+   */
+  dashboardPanel: text('dashboard_panel').notNull().default(''),
+
   updatedAt: touched(),
 });
 

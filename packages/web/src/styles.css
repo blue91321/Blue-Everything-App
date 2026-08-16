@@ -1130,3 +1130,66 @@ button {
   opacity: 0.8;
   border-style: dashed;
 }
+
+/* ---------- the Dashboard's side column ---------- */
+
+/*
+ * One column until a panel is chosen, and two only when there is room for both.
+ *
+ * The breakpoint is 1100px rather than the 900px the drawer uses, and they are
+ * deliberately different numbers: 900 is "is there room for a drawer beside the
+ * content", while this is "is there room for a second column of content without
+ * squeezing the first". At 900 with the drawer showing, the task list would be
+ * left with about 320px, which is narrower than the phone layout it was
+ * designed for.
+ */
+.dash {
+  display: grid;
+  gap: var(--gap);
+}
+
+.dash-main {
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .dash.has-panel {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    /* Or a short panel would stretch to the height of the task list and float
+       its cards in the middle of a very tall box. */
+    align-items: start;
+  }
+}
+
+/*
+ * The container widens only when the Dashboard says it needs to.
+ *
+ * `:has()` rather than a class on `.app` set from `App`, because `App` does not
+ * read settings and the child already knows the answer. Unsupported `:has()`
+ * leaves `.app` at its reading width and the panel stacked underneath, which is
+ * the narrow-screen layout — a real fallback, not a broken one.
+ */
+.app:has(.dash.has-panel) {
+  max-width: 1140px;
+}
+
+.dash-panel > .card {
+  /* Tighter than the main column: this is a glance, not a list to work through. */
+  padding: 8px 10px;
+}
+
+.dash-panel h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  margin: 0 0 6px;
+}
+
+/* Long names and note titles must not widen the grid column they sit in —
+   `min-width: 0` on the flex parent is what lets this actually clip. */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

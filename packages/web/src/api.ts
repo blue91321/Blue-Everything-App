@@ -259,6 +259,15 @@ export interface AppSettings {
   overlayAvatar?: string;
   /** Services left out of the friends list. Absent on an older server. */
   hiddenProviders?: string[];
+  /**
+   * What the Dashboard shows in its side column. Empty for one column.
+   *
+   * An opaque id — the panels worth having come from features that can be
+   * deleted, so nothing here validates it. Optional because the server and the
+   * PWA update independently, and a browser holding a newer bundle than the
+   * process serving it is the ordinary case right after an edit.
+   */
+  dashboardPanel?: string;
   updatedAt?: number;
 }
 
@@ -868,6 +877,8 @@ export const api = {
       overlayScreen?: string | null;
       overlayAvatar?: string;
       hiddenProviders?: string[];
+      /** Opaque panel id, or '' for one column. */
+      dashboardPanel?: string;
     }) => patch<AppSettings>('/api/settings', payload),
   },
 

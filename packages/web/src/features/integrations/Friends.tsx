@@ -12,25 +12,9 @@
 import { useState } from 'react';
 import { api, type FriendRow, type FriendSource } from '../../api';
 import { useAsync } from '../../useAsync';
+import { STATE_LABEL } from './presence';
 import { relativeTime } from './Integrations';
 
-const STATE_LABEL: Record<FriendRow['state'], string> = {
-  'in-game': 'playing',
-  online: 'online',
-  away: 'away',
-  dnd: 'busy',
-  offline: 'offline',
-  /*
-   * Named after the service rather than the absence.
-   *
-   * It read "status unknown", which is accurate and says nothing you can act
-   * on. These rows are Discord friends and nothing else — Discord is the only
-   * provider here whose API carries no presence — so naming the service tells
-   * you where the entry came from and, by implication, why there is no status
-   * next to it.
-   */
-  unknown: 'discord',
-};
 
 /**
  * Which service's people to show right now.

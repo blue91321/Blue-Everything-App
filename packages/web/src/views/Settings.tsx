@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, type AppSettings, type Device, type Session } from '../api';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
+import { panelChoices } from '../panels';
 import { Toggle } from '../controls';
 import { clockTime, relative } from '../format';
 import {
@@ -304,6 +305,7 @@ function GeneralTab() {
   return (
     <>
       <Appearance />
+      <DashboardPanel />
       <section>
         <h2>This app</h2>
         <div className="card">
@@ -314,6 +316,102 @@ function GeneralTab() {
         </div>
       </section>
     </>
+  );
+}
+
+/**
+ * What sits beside the Dashboard.
+ *
+ * The options are discovered, not listed here: `panelChoices()` merges the
+ * panels core owns with whatever the installed features declare, so a build with
+ * `features/integrations` deleted simply offers one fewer and this file does not
+ * change. Same reasoning as the drawer's tabs.
+ *
+ * Radio buttons rather than a dropdown, unlike the tone picker. There are three
+ * of them, each wants a line of explanation about what you would actually see,
+ * and a `<select>` has nowhere to put one.
+ */
+function DashboardPanel() {
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState('');
+
+  const chosen = settings.data?.dashboardPanel ?? '';
+  const choices = panelChoices();
+
+  // A server that predates the column sends nothing, and a picker that writes a
+  // field the server drops is worse than no picker at all.
+  if (settings.data && settings.data.dashboardPanel === undefined) return null;
+
+  const choose = async (id: string) => {
+    setSaving(true);
+    setProblem('');
+    try {
+      await api.settings.update({ dashboardPanel: id });
+      settings.reload();
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2>Beside the Dashboard</h2>
+      <div className="card">
+        <div className="meta" style={{ marginBottom: 8 }}>
+          A second column on a wide screen, for something worth having in the corner of your eye. On a
+          phone it sits underneath instead.
+        </div>
+
+        <label className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: 6 }}>
+          <input
+            type="radio"
+            name="dashboard-panel"
+            checked={chosen === ''}
+            disabled={saving}
+            onChange={() => void choose('')}
+          />
+          <span className="grow">
+            Nothing <span className="meta">— one column, as it was</span>
+          </span>
+        </label>
+
+        {choices.map((panel) => (
+          <label key={panel.id} className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: 6 }}>
+            <input
+              type="radio"
+              name="dashboard-panel"
+              checked={chosen === panel.id}
+              disabled={saving}
+              onChange={() => void choose(panel.id)}
+            />
+            <span className="grow">
+              {panel.label}
+              {panel.hint && <span className="meta"> — {panel.hint}</span>}
+            </span>
+          </label>
+        ))}
+
+        {/*
+         * The stored choice belongs to a feature that is off, or to a build that
+         * no longer has it. Said out loud rather than silently rewritten to
+         * "Nothing": the setting is deliberately left alone so switching the
+         * feature back on restores what you had, and without this line the
+         * Dashboard would just be missing a column for no visible reason.
+         */}
+        {chosen !== '' && !choices.some((panel) => panel.id === chosen) && (
+          <div className="meta" style={{ marginTop: 8 }}>
+            The panel you picked (<code>{chosen}</code>) is not available in this build — its feature is
+            switched off or has been removed. Your choice is kept, so switching it back on brings the
+            panel back.
+          </div>
+        )}
+
+        {problem && <div className="banner">{problem}</div>}
+      </div>
+    </section>
   );
 }
 

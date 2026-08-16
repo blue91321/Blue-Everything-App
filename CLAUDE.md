@@ -104,6 +104,53 @@ dependencies, which is 66KB gzipped and nearly all of it framework.
   correct the tally. Ticking one off day to day belongs on the Dashboard.
 - **Notes**, **Settings**.
 
+### The Dashboard's side column
+
+A second column on a wide screen, holding one thing worth having in the corner
+of your eye — who is online, by default nothing. `settings.dashboard_panel`
+holds the choice, server-side like the theme so the PC and the phone agree.
+
+**Core cannot import the panel it most wants.** The Dashboard is core and the
+friends list lives in `features/integrations`, which is deletable. That is the
+same bind the drawer was in, solved the same way: a feature declares `panels` in
+its `meta.ts` and exports a lazy `panel.tsx`, and `features/index.ts` finds them
+with `import.meta.glob`. A build with the folder deleted offers one fewer
+option and nothing in core changes — verified by building the PWA with
+`features/integrations` moved aside.
+
+The stored id is **opaque**, like `settings.hidden_providers` and `tasks.source`.
+Nothing validates it, and an id nothing answers to draws no panel — which is
+what should happen while a feature is switched off, and means switching it back
+on restores the panel you had rather than finding the setting silently rewritten
+to empty. The Settings screen says so rather than leaving a column mysteriously
+absent.
+
+Three details:
+
+- **The container widens through `.app:has(.dash.has-panel)`**, not through a
+  class `App` passes down. `App` does not read settings, and threading one
+  boolean through it to set a `max-width` would touch three components for a
+  layout question the child already knows the answer to. Where `:has()` is
+  unsupported the page stays at its reading width with the panel stacked
+  underneath — which is the narrow-screen layout, so the fallback is a real one.
+- **The breakpoint is 1100px, not the drawer's 900px**, and they are deliberately
+  different questions: 900 is "is there room for a drawer beside the content",
+  this is "is there room for a second column without squeezing the first". At
+  900 with the drawer showing, the task list would be left about 320px — narrower
+  than the phone layout it was designed for.
+- **Panels are lazy, and one import nearly cost 9.5KB.** `panel.tsx` imported
+  `STATE_LABEL` from `Friends.tsx`, so choosing the panel pulled in the whole
+  Connections screen — searching, filtering, account linking — to render six
+  words. Rollup cannot tree-shake that: importing any part of a module pulls the
+  module in. `presence.ts` now holds the table, and the panel costs 1.0KB
+  gzipped against the 9.5KB it was dragging.
+
+The friends panel shows only `in-game`, `online`, `away` and `dnd`. `unknown` is
+excluded, which matters more than it sounds: Discord's REST API carries no
+presence, so every Discord-only friend is `unknown` — 87 of them here against a
+couple of dozen of everything else — and including them would bury the handful
+of people who are genuinely there.
+
 **Settings is pinned to the foot of the drawer**, not merely last in the list.
 The list grows — every feature adds a tab above it — and a Settings entry
 drifting down the middle of things you use daily is how it becomes hard to find.

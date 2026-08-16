@@ -1392,6 +1392,14 @@ export const updateSettingsSchema = z.object({
    * provider is dropped: the setting goes quiet rather than failing to save.
    */
   hiddenProviders: z.array(z.string().max(40)).max(20).optional(),
+  /**
+   * Which panel the Dashboard shows alongside its own columns. Empty for none.
+   *
+   * Opaque, and validated only for length — same reasoning as the slugs above.
+   * The panels worth having come from features, and a core schema listing their
+   * ids would be core depending on a folder that can be deleted.
+   */
+  dashboardPanel: z.string().max(64).optional(),
 });
 
 /**
