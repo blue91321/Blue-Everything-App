@@ -599,8 +599,7 @@ where a few hundred milliseconds is the entire point missed.
 **Which tone goes with which moment is a setting.** Four moments — a nudge
 arriving, voice starting to listen, a command working, a command missed — each
 pointed at a name from a palette of nine (`rise`, `chime`, `arrive`, `sink`,
-`knock`, `soft`, `blip`, `fall`, `none`). `npm run sound-try -w @everything/agent
--- --tones` plays the palette, which is the only way to choose between them.
+`knock`, `soft`, `blip`, `fall`, `none`).
 
 A named list rather than a synth editor: what anybody wants from "customise the
 tones" is for the wake sound to be distinguishable from the nudge sound and for
@@ -609,8 +608,53 @@ task. Empty means "the default for that moment" rather than storing the default
 name, so changing `DEFAULT_TONE` later reaches installs that never touched it.
 The WAVs are cached by *tone*, not by event, so two moments set to the same tone
 share one file. An unknown name falls back to the default rather than to
-silence — the palette lives in the agent, and the server deliberately does not
-know the list.
+silence.
+
+### Picking a tone plays it
+
+A dropdown of nine words is not a choice anybody can make — `knock` and `blip`
+are not self-describing — and for a while the only way to tell them apart was
+`npm run sound-try -w @everything/agent -- --tones`, which is exactly the "open
+a terminal to change a setting" friction the three double-clickable files exist
+to remove.
+
+**The browser cannot ask the agent to play one.** The agent holds no inbound
+connection; it polls. A preview routed through the attention heartbeat would
+land five to fifteen seconds after the click, and from the phone — where the
+setting is equally editable — it would never land at all.
+
+So the *server* renders the WAV and the browser plays it, from
+`/sounds/<tone>.wav`. Measured at **6ms** from selecting a tone to the bytes
+arriving.
+
+That is why `TONES`, the palette and the WAV encoder now live in
+`packages/shared/src/sound.ts` rather than in the agent that plays them: both
+the server and the agent have to reach them. The agent keeps the part that is
+genuinely about this machine — winmm, the temp file, and which tone each event
+currently points at.
+
+**The gain is not tidiness, it is that the preview cannot lie.** The obvious
+alternative was a Web Audio approximation in the PWA, and its failure mode is
+the worst available: a preview that sounds nearly like what interrupts you, with
+nothing to catch the drift. This project already fails a build over `ACCENT_HEX`
+drifting from `styles.css`. Both sides call the same `wav()` over the same
+table, and the agent's temp files were compared byte-for-byte against the
+route's responses for all eight audible tones — identical.
+
+Two details:
+
+- **It is outside `/api/`, like the icons and the manifest.** `auth.ts` protects
+  exactly that prefix, and an `<audio>` element sends no bearer token — under
+  `/api/` this would 401 in a way whose only symptom is silence. Nothing is
+  exposed: a tone is a sine computed from nine numbers.
+- **`none` answers 204, not a zero-length WAV.** An empty audio file is
+  something every browser is entitled to call broken, and the console error
+  would be the only feedback from choosing "silent". The picker does not ask for
+  it anyway; the route is honest regardless.
+
+The tone is played *before* the save returns, for the same reason the accent
+swatches apply their colour before theirs: you are choosing by listening, and a
+round trip in front of that is the one latency that cannot be spent.
 
 `soundEnabled` rides on the **attention** heartbeat, not the voice one, because
 popups are core: an install with `features/voice` deleted still raises nudges,

@@ -1,21 +1,29 @@
 /**
- * Short sounds, generated rather than shipped.
+ * Playing a tone on this machine.
  *
- * ### No audio files in the repo
+ * ### The shapes are not here any more
  *
- * The same reasoning that has the app icons drawn by `make-icons.mjs` instead of
- * checked in: a WAV header is 44 bytes of arithmetic and a sine wave is one line,
- * so a handful of binaries in git would buy nothing and cost review. The tones
- * are written to the temp directory the first time they are asked for and reused
- * from there.
+ * `TONES`, the palette, and the WAV encoder moved to `@everything/shared/sound`
+ * when the Settings screen gained an audible tone picker. The browser cannot ask
+ * this process to play one — the agent has no inbound connection, so a preview
+ * would ride the attention heartbeat and land five to fifteen seconds after the
+ * click, and would not work at all from the phone. So the server renders the
+ * bytes and the browser plays them, which means the shapes have to be somewhere
+ * both processes can reach.
+ *
+ * The gain is not tidiness. **The preview is byte-identical to what you hear
+ * here**, because both sides call the same `wav()` over the same table rather
+ * than being two implementations that sound nearly the same.
+ *
+ * What is left in this file is the part that is genuinely about this machine:
+ * winmm, a temp file, and which tone each event is currently pointed at.
  *
  * ### PlaySoundW, not PowerShell
  *
- * `notify.ts` spawns PowerShell for toasts and is right to — a toast is rare and
- * a few hundred milliseconds does not matter. A sound is the opposite: it
- * accompanies the wake word, so a few hundred milliseconds is the entire point
- * missed. `PlaySoundW` out of winmm is the same library `mic.ts` already loads,
- * costs no process, and returns immediately with `SND_ASYNC`.
+ * A toast is rare and can afford a few hundred milliseconds to spawn a process.
+ * A sound accompanies the wake word, where a few hundred milliseconds is the
+ * entire point missed. `PlaySoundW` out of winmm is the same library `mic.ts`
+ * already loads, costs no process, and returns immediately with `SND_ASYNC`.
  *
  * `SND_NOSTOP` is deliberately *not* used: a newer sound should cut off an older
  * one rather than being dropped, because the newest is always the one describing
@@ -25,6 +33,16 @@ import koffi from 'koffi';
 import { writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_TONE, SOUND_EVENTS, TONES, wav, type SoundName, type ToneName } from '@everything/shared/sound';
+
+/*
+ * Re-exported so the CLIs and the rest of the agent carry on importing `sound.js`
+ * for anything to do with sound. A dozen call sites reaching into `shared` for
+ * the names and into here for the playing would be the move made visible for no
+ * benefit — this module is still the agent's answer to "make a noise".
+ */
+export { DEFAULT_TONE, SOUND_EVENTS, TONES, TONE_NAMES } from '@everything/shared/sound';
+export type { Blip, SoundName, ToneName } from '@everything/shared/sound';
 
 const winmm = koffi.load('winmm.dll');
 
@@ -34,94 +52,6 @@ const SND_ASYNC = 0x0001;
 const SND_FILENAME = 0x00020000;
 /** Don't block, and don't complain, if the device is busy or absent. */
 const SND_NODEFAULT = 0x0002;
-
-const RATE = 22_050;
-
-/**
- * One tone, or a short sequence of them.
- *
- * Deliberately plain: two or three sine blips with a quick fade. Anything more
- * elaborate would need a real sound designer and a real file, and this is a
- * notification, not a game.
- */
-interface Blip {
-  /** Hz. */
-  hz: number;
-  /** Milliseconds. */
-  ms: number;
-  /** 0-1, before the envelope. */
-  gain?: number;
-}
-
-/**
- * The palette, keyed by the name stored in settings.
- *
- * A named list rather than a synth editor with sliders for frequency and
- * duration. The thing anybody actually wants from "customise the tones" is for
- * the wake sound to be distinguishable from the nudge sound and for neither to
- * be irritating — that is a choice between a dozen options, not a design task.
- * Twelve arrays of numbers is also the whole implementation, where a tone
- * editor would need a UI, a storage format and a way to preview an unsaved one.
- */
-export const TONES = {
-  none: [],
-  rise: [
-    { hz: 660, ms: 70 },
-    { hz: 880, ms: 90 },
-  ],
-  fall: [
-    { hz: 880, ms: 70 },
-    { hz: 660, ms: 90 },
-  ],
-  chime: [
-    { hz: 880, ms: 70 },
-    { hz: 1170, ms: 110 },
-  ],
-  /** Three notes climbing — reads as "something arrived" rather than "done". */
-  arrive: [
-    { hz: 587, ms: 110 },
-    { hz: 784, ms: 110 },
-    { hz: 988, ms: 160 },
-  ],
-  /** Deliberately quieter: a miss is information, not an alarm. */
-  sink: [
-    { hz: 520, ms: 80, gain: 0.5 },
-    { hz: 390, ms: 130, gain: 0.5 },
-  ],
-  blip: [{ hz: 990, ms: 60 }],
-  knock: [
-    { hz: 300, ms: 55, gain: 0.6 },
-    { hz: 300, ms: 55, gain: 0.6 },
-  ],
-  /** Low and short, for anyone who finds the rest too bright. */
-  soft: [{ hz: 440, ms: 120, gain: 0.4 }],
-} satisfies Record<string, Blip[]>;
-
-export type ToneName = keyof typeof TONES;
-
-export const TONE_NAMES = Object.keys(TONES) as ToneName[];
-
-/**
- * The moments worth a sound, and which tone each gets unless you say otherwise.
- *
- * The *event* is fixed — these are the four things that happen — while the tone
- * is a preference. Keeping them apart is what lets the picker be a list of
- * tones rather than four separate half-settings, and what stops a renamed tone
- * breaking the code that plays it.
- */
-export const SOUND_EVENTS = ['wake', 'ok', 'miss', 'nudge'] as const;
-export type SoundName = (typeof SOUND_EVENTS)[number];
-
-export const DEFAULT_TONE: Record<SoundName, ToneName> = {
-  /** It heard the wake word and is listening — rising, "go ahead". */
-  wake: 'rise',
-  /** A command worked — a brief two-note confirmation. */
-  ok: 'chime',
-  /** Heard, not understood — falling, and quieter, because it is not an alarm. */
-  miss: 'sink',
-  /** A nudge arrived. Slower, so it does not sound like an error. */
-  nudge: 'arrive',
-};
 
 /** What each event is currently set to. Pushed in from settings. */
 const chosen: Record<SoundName, ToneName> = { ...DEFAULT_TONE };
@@ -143,48 +73,6 @@ export function setTones(next: Partial<Record<string, string>>): void {
 
 export function toneFor(event: SoundName): ToneName {
   return chosen[event];
-}
-
-/**
- * A 16-bit mono PCM WAV, by hand.
- *
- * The envelope is not decoration. A sine cut off mid-cycle produces a click,
- * which on a short blip is most of what you hear — so each tone fades in and out
- * over a few milliseconds, and that is the difference between a note and a tick.
- */
-function wav(blips: Blip[]): Buffer {
-  const samples: number[] = [];
-
-  for (const blip of blips) {
-    const count = Math.round((RATE * blip.ms) / 1000);
-    const fade = Math.min(Math.round(RATE * 0.004), Math.floor(count / 2));
-
-    for (let i = 0; i < count; i++) {
-      const envelope = Math.min(1, i / fade, (count - i) / fade);
-      const value = Math.sin((2 * Math.PI * blip.hz * i) / RATE) * (blip.gain ?? 0.7) * envelope;
-      samples.push(Math.round(value * 32767));
-    }
-  }
-
-  const body = Buffer.alloc(samples.length * 2);
-  samples.forEach((value, i) => body.writeInt16LE(value, i * 2));
-
-  const header = Buffer.alloc(44);
-  header.write('RIFF', 0);
-  header.writeUInt32LE(36 + body.length, 4);
-  header.write('WAVE', 8);
-  header.write('fmt ', 12);
-  header.writeUInt32LE(16, 16); // PCM chunk size
-  header.writeUInt16LE(1, 20); // PCM
-  header.writeUInt16LE(1, 22); // mono
-  header.writeUInt32LE(RATE, 24);
-  header.writeUInt32LE(RATE * 2, 28); // bytes per second
-  header.writeUInt16LE(2, 32); // block align
-  header.writeUInt16LE(16, 34); // bits per sample
-  header.write('data', 36);
-  header.writeUInt32LE(body.length, 40);
-
-  return Buffer.concat([header, body]);
 }
 
 /** Written once per process, reused after. */

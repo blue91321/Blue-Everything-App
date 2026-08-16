@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./features": "./src/features.ts",
-    "./integrations": "./src/integrations.ts"
+    "./integrations": "./src/integrations.ts",
+    "./sound": "./src/sound.ts"
   },
   "dependencies": {
     "zod": "^3.25.76"

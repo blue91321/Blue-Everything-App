@@ -23,6 +23,7 @@ import { noteRoutes } from './routes/notes.js';
 import { nudgeRoutes } from './routes/nudges.js';
 import { iconRoutes } from './routes/icon.js';
 import { settingsRoutes } from './routes/settings.js';
+import { soundRoutes } from './routes/sound.js';
 import { taskRoutes } from './routes/tasks.js';
 import { timeRoutes } from './routes/time.js';
 import { featureNotes, isEnabled, registerFeature } from './features.js';
@@ -70,6 +71,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Before the static handler, so the generated manifest wins over the one
   // sitting in dist/ from the build.
   await app.register(iconRoutes);
+  /*
+   * Core, and unauthenticated for the same reason the icons are: an <audio>
+   * element sends no bearer token. The tones belong to popups, which are core —
+   * an install with `features/voice` deleted still raises nudges and still makes
+   * a noise doing it — so this is not part of the voice feature.
+   */
+  await app.register(soundRoutes);
 
   /*
    * Switchable, but not removable: the Dashboard renders habits inline, and the
