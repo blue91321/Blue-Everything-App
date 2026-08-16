@@ -2343,6 +2343,22 @@ They exist because a task appearing on your Dashboard that you did not write is
 confusing in a specific way — "did I write this, can I delete it, will it come
 back" — and the chip is what answers it.
 
+#### The one thing in this module on a timer
+
+Everything else here is refresh-on-read, and a 60-second friends poller was
+refused at 1,440 requests a day. Coursework is the opposite case, and the
+difference is what the data is *for*: a friends list is something you go and
+look at, so reading it is the moment it has to be true, whereas a deadline's
+whole job is to reach the nudge queue while you are thinking about something
+else. A "Sync now" button as the only route in would mean the one feature that
+exists to remember things for you had to be remembered.
+
+**48 requests a day while connected, none at all otherwise** — half an hour,
+chosen against the sweep, which queues a task within an hour of its due time. It
+lives inside `integrationRoutes` with an `onClose` hook and both handles
+`unref`ed, so it goes away with the folder, core never learns it exists, and
+`smoke` and `features-check` can still close an app without hanging on it.
+
 #### Two smaller things this turned up
 
 - **The api-key connect form was Steam's alone**, gated on `provider.auth ===
