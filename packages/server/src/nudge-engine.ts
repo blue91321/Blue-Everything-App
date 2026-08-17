@@ -161,6 +161,7 @@ function progressLine(
     gaugeLevel: number;
     gaugeLevelAt: number;
     gaugeDrainPerDay: number;
+    gaugeRemindAt: number;
   },
   context: { done: number; lastDoneAt: number | null },
   now: number
@@ -168,8 +169,11 @@ function progressLine(
   if (habit.mode === 'gauge') {
     const level = Math.round(gaugeLevelAt(habit, now));
     // Says which way it is going, not just where it is. "Empty" alone reads as
-    // a fault; "empty — it drains 50% a day" reads as the thing working.
-    return `empty — it drains ${habit.gaugeDrainPerDay}% a day${level > 0 ? ` (at ${level}%)` : ''}`;
+    // a fault; "down to 20%, draining 50% a day" reads as the thing working.
+    // And it must not claim "empty" when a threshold raised it at 30%.
+    return level <= 0
+      ? `empty — it drains ${habit.gaugeDrainPerDay}% a day`
+      : `down to ${level}% — it drains ${habit.gaugeDrainPerDay}% a day`;
   }
 
   if (habit.mode === 'interval') {

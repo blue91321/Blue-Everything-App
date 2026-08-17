@@ -560,9 +560,8 @@ console.log('\nper-item phone push');
 console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
 
 {
-  const { gaugeAfterFill, gaugeAfterUndo, gaugeLevelAt, habitWantsDoing } = await import(
-    '@everything/shared'
-  );
+  const { gaugeAfterFill, gaugeAfterUndo, gaugeLevelAt, gaugeReachesInMs, habitIsFinished, habitWantsDoing } =
+    await import('@everything/shared');
   const { db } = await import('../db/client.js');
   const { habits: habitTable } = await import('../db/schema.js');
   const { eq } = await import('drizzle-orm');
@@ -639,6 +638,42 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
       !habitWantsDoing({ ...base, mode: 'gauge', gaugeLevel: 100 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
   );
 
+  /*
+   * ...unless a threshold moves that line up. Empty-only is the wrong moment for
+   * anything that takes a while to act on — a plant would ask once it was
+   * already dead — and 0 keeps the original behaviour exactly.
+   */
+  const warned = { ...base, mode: 'gauge' as const, gaugeRemindAt: 30 };
+  check(
+    'a threshold brings the asking forward',
+    habitWantsDoing({ ...warned, gaugeLevel: 25 }, { doneThisPeriod: 0, lastDoneAt: null }, t0),
+    'at 25% with a 30% threshold'
+  );
+  check(
+    'and it is quiet above the line',
+    !habitWantsDoing({ ...warned, gaugeLevel: 35 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+  check(
+    'exactly on the line counts as due',
+    habitWantsDoing({ ...warned, gaugeLevel: 30 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+  /* Still never *finished*, however that line is drawn. */
+  check(
+    'a threshold does not make it finishable',
+    !habitIsFinished({ ...warned, gaugeLevel: 100 }, { doneThisPeriod: 0, lastDoneAt: null, startOfToday: t0 }, t0)
+  );
+
+  /* ---- the two countdowns ---- */
+
+  const counting = { gaugeLevel: 100, gaugeLevelAt: t0, gaugeDrainPerDay: 50 };
+  check('empty is a full two days away at 50% a day', gaugeReachesInMs(counting, 0, t0) === 2 * DAY);
+  const toThirty = gaugeReachesInMs(counting, 30, t0);
+  check('and the 30% line is a day and a half', toThirty === 1.4 * DAY, `${(toThirty ?? 0) / DAY} days`);
+  check('already past the line is now, not a negative', gaugeReachesInMs(counting, 100, t0) === 0);
+  // A gauge that does not drain never reaches anything, and saying "in 0" would
+  // be a countdown to a moment that is not coming.
+  check('one that never drains never gets there', gaugeReachesInMs({ ...counting, gaugeDrainPerDay: 0 }, 0, t0) === null);
+
   /* ---- and now through the real API ---- */
 
   const madeGauge = await post('/api/habits', { name: 'Water the plant', mode: 'gauge' });
@@ -681,6 +716,22 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
 
   await post(`/api/habits/${gaugeId}/check`);
   check('and a second tick stacks', (await listOf(gaugeId)).gaugeNow === 75);
+
+  /*
+   * The threshold over HTTP, and the countdown the Dashboard shows beside the
+   * empty one. The gauge is at 75% here, draining 50% a day: the 25% line is a
+   * day off and empty is a day and a half, and the two are deliberately
+   * different numbers so a swapped pair would show up.
+   */
+  await app.inject({ method: 'PATCH', url: `/api/habits/${gaugeId}`, payload: { gaugeRemindAt: 25 } });
+  const withLine = await listOf(gaugeId);
+  check('it counts down to the threshold', Math.round(withLine.gaugeRemindInMs / 3_600_000) === 24, String(withLine.gaugeRemindInMs));
+  check('and separately to empty', Math.round(withLine.gaugeEmptyInMs / 3_600_000) === 36, String(withLine.gaugeEmptyInMs));
+  check('and is not asking yet, well above the line', withLine.wantsDoing === false);
+  await app.inject({ method: 'PATCH', url: `/api/habits/${gaugeId}`, payload: { gaugeRemindAt: 80 } });
+  check('raising the line past the level starts it asking', (await listOf(gaugeId)).wantsDoing === true);
+  check('and it is still never finished', (await listOf(gaugeId)).met === false);
+  await app.inject({ method: 'PATCH', url: `/api/habits/${gaugeId}`, payload: { gaugeRemindAt: 0 } });
 
   await post(`/api/habits/${gaugeId}/uncheck`);
   check('undoing one takes it back off', (await listOf(gaugeId)).gaugeNow === 50);

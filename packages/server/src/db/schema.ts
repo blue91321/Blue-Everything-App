@@ -127,6 +127,15 @@ export const habits = sqliteTable('habits', {
   /** How much drains away in a day, and how much one tick puts back. */
   gaugeDrainPerDay: integer('gauge_drain_per_day').notNull().default(100),
   gaugeFillPercent: integer('gauge_fill_percent').notNull().default(100),
+  /**
+   * The level at or below which it starts asking to be done.
+   *
+   * 0 means "when it is empty", which is where this started and is still the
+   * default. Empty-only is the wrong moment for anything that takes a while to
+   * act on — a plant that reminds you when it is dead — so this is the warning
+   * line, and the Dashboard counts down to it as well as to empty.
+   */
+  gaugeRemindAt: integer('gauge_remind_at').notNull().default(0),
   /** A shape name or an emoji. Opaque — anything unrecognised is drawn as text. */
   gaugeShape: text('gauge_shape').notNull().default('circle'),
   active: integer('active').notNull().default(1),

@@ -6,6 +6,7 @@ import {
   gaugeAfterFill,
   gaugeAfterUndo,
   gaugeEmptyInMs,
+  gaugeReachesInMs,
   gaugeLevelAt,
   habitIsFinished,
   habitWantsDoing,
@@ -236,6 +237,13 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
            */
           gaugeNow: Math.round(gaugeLevelAt(habit, now)),
           gaugeEmptyInMs: gaugeEmptyInMs(habit, now),
+          /*
+           * And how long until it starts *asking*, which is the number you
+           * actually plan around — "empty in 6 hours" is no use if it reminds
+           * you at 30%. Both are sent; the row shows the second only when the
+           * threshold is above zero, since at zero they are the same instant.
+           */
+          gaugeRemindInMs: gaugeReachesInMs(habit, habit.gaugeRemindAt, now),
           /*
            * **`met` means finished — done with, belongs under "Finished today".**
            *

@@ -120,11 +120,24 @@ function roughly(ms: number): string {
 function habitLine(habit: Habit): string {
   if (habit.mode === 'gauge') {
     const level = habit.gaugeNow ?? 100;
-    if (level <= 0) return 'empty — needs doing';
-    const left = habit.gaugeEmptyInMs;
-    return left === null || left === undefined
-      ? `${level}% full`
-      : `${level}% full · empty in ${roughly(left)}`;
+    const remindAt = habit.gaugeRemindAt ?? 0;
+    const parts: string[] = [level <= 0 ? 'empty' : `${level}% full`];
+
+    /*
+     * Two countdowns, and they answer different questions: when will it start
+     * asking, and when will it be gone. At a threshold of 0 they are the same
+     * instant, so only one is shown — two identical times side by side would
+     * read as a bug rather than as thoroughness.
+     */
+    if (level <= remindAt) {
+      parts.push('needs doing');
+    } else if (remindAt > 0 && habit.gaugeRemindInMs != null) {
+      parts.push(`reminds in ${roughly(habit.gaugeRemindInMs)}`);
+    }
+
+    if (level > 0 && habit.gaugeEmptyInMs != null) parts.push(`empty in ${roughly(habit.gaugeEmptyInMs)}`);
+
+    return parts.join(' · ');
   }
 
   if (habit.mode === 'interval') {

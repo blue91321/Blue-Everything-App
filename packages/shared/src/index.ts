@@ -204,20 +204,31 @@ export function gaugeAfterUndo(
 }
 
 /**
- * How long until a draining gauge is empty, in ms. Null if it never will be.
+ * How long until a draining gauge is down to `level`, in ms. Null if never.
  *
- * Used for the "empty in about 6 hours" line rather than for anything the nudge
- * engine decides — the engine asks whether it is empty *now*, on the sweep it
- * already runs, rather than scheduling anything against this.
+ * For the countdowns on the Dashboard rather than for anything the nudge engine
+ * decides — the engine asks whether the gauge is *past its threshold now*, on
+ * the sweep it already runs, and schedules nothing against this. Which is what
+ * keeps a gauge free of timers: the arithmetic is only ever done when somebody
+ * is looking.
  */
+export function gaugeReachesInMs(
+  habit: { gaugeLevel: number; gaugeLevelAt: number; gaugeDrainPerDay: number },
+  level: number,
+  now = Date.now()
+): number | null {
+  if (habit.gaugeDrainPerDay <= 0) return null;
+  const current = gaugeLevelAt(habit, now);
+  if (current <= level) return 0;
+  return ((current - level) / habit.gaugeDrainPerDay) * 86_400_000;
+}
+
+/** How long until it is empty. The `level: 0` case, named for the common one. */
 export function gaugeEmptyInMs(
   habit: { gaugeLevel: number; gaugeLevelAt: number; gaugeDrainPerDay: number },
   now = Date.now()
 ): number | null {
-  if (habit.gaugeDrainPerDay <= 0) return null;
-  const level = gaugeLevelAt(habit, now);
-  if (level <= 0) return 0;
-  return (level / habit.gaugeDrainPerDay) * 86_400_000;
+  return gaugeReachesInMs(habit, 0, now);
 }
 
 /**
@@ -235,11 +246,21 @@ export function habitWantsDoing(
     gaugeLevel: number;
     gaugeLevelAt: number;
     gaugeDrainPerDay: number;
+    gaugeRemindAt?: number;
   },
   context: { doneThisPeriod: number; lastDoneAt: number | null },
   now = Date.now()
 ): boolean {
-  if (habit.mode === 'gauge') return gaugeLevelAt(habit, now) <= 0;
+  /*
+   * At or below the threshold, not merely empty.
+   *
+   * Empty-only was the first version and it is the wrong moment for anything
+   * that takes a while to act on: a plant reminds you when it is dead, and a
+   * water gauge draining at 200% a day gives you no warning at all. The
+   * threshold is the level at which it starts asking, and 0 — the default —
+   * keeps the original behaviour exactly.
+   */
+  if (habit.mode === 'gauge') return gaugeLevelAt(habit, now) <= (habit.gaugeRemindAt ?? 0);
 
   if (habit.mode === 'interval') {
     // No interval set is a half-configured habit, not a habit that is always
@@ -281,6 +302,7 @@ export function habitIsFinished(
     gaugeLevel: number;
     gaugeLevelAt: number;
     gaugeDrainPerDay: number;
+    gaugeRemindAt?: number;
   },
   context: { doneThisPeriod: number; lastDoneAt: number | null; startOfToday: number },
   now = Date.now()
@@ -329,6 +351,14 @@ export const createHabitSchema = z.object({
   gaugeDrainPerDay: z.number().int().min(1).max(1000).default(100),
   /** `gauge` mode: how much one tick puts back. */
   gaugeFillPercent: z.number().int().min(1).max(100).default(100),
+  /**
+   * `gauge` mode: the level at or below which it starts asking to be done.
+   *
+   * 0 is "when it is empty", which is where this started and stays the default.
+   * Capped below full because a threshold of 100 would mean "always", which is
+   * not a reminder — it is the absence of one.
+   */
+  gaugeRemindAt: z.number().int().min(0).max(90).default(0),
   /**
    * One of `gaugeShapes`, or an emoji. Not validated against the list — see the
    * note there; an unknown value is drawn as whatever it is.

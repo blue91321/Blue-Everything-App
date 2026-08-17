@@ -1189,7 +1189,7 @@ that one question again and nothing more.
 | --- | --- | --- |
 | `target` | done this period < target | `reminderEveryMinutes`, null to never interrupt |
 | `interval` | `intervalMinutes` since the last tick | `reminderEveryMinutes` ?? `intervalMinutes` |
-| `gauge` | the level has drained to empty | `reminderEveryMinutes`, null to never interrupt |
+| `gauge` | the level is at or below `gaugeRemindAt` | `reminderEveryMinutes`, null to never interrupt |
 
 `habitWantsDoing()` in `shared` is the one place that table lives, so the sweep,
 the API and the screens cannot disagree — the same role `resolvePush` and
@@ -1218,7 +1218,7 @@ So `habitIsFinished()` sits beside `habitWantsDoing()` in `shared`:
 | --- | --- | --- |
 | `target` | the target is met | the target is not met |
 | `interval` | done *today* **and** not due again | the interval has elapsed |
-| `gauge` | **never** | the level has drained to empty |
+| `gauge` | **never** | the level is at or below `gaugeRemindAt` |
 
 A gauge is draining the moment it is full, so there is no instant at which it is
 finished — which is why a full one still belongs in the list rather than under a
@@ -1288,6 +1288,29 @@ hard-coded to `${name} — ${done} of ${target}`, which for a gauge is a sentenc
 about a target it does not have; it now says "Drink water — 56% full".
 
 A spoken count fills that many times, so "I drank two waters" is two ticks.
+
+### It asks before it is empty, and says when it will
+
+`gauge_remind_at` is the level at which it starts asking. **0 is the default and
+is exactly the old behaviour** — ask when there is nothing left — which is right
+for a glass of water and wrong for anything you need warning about: a plant set
+that way reminds you once it is already dead. Capped at 90, because a threshold
+of 100 is not a reminder, it is the absence of one.
+
+The Dashboard row therefore carries **two countdowns**, and they answer different
+questions: *reminds in 3 hours · empty in 7 hours*. At a threshold of 0 they are
+the same instant, so only one is shown — two identical times side by side read as
+a bug rather than as thoroughness. Below the line it says *needs doing* in place
+of the first.
+
+`gaugeReachesInMs()` computes both, and `gaugeEmptyInMs()` is now just the
+`level: 0` case of it. Neither schedules anything: they are arithmetic done when
+somebody is looking, which is what keeps a gauge free of timers. A gauge with no
+drain returns `null` rather than 0 — a countdown to a moment that is not coming
+would be worse than no countdown.
+
+The raised nudge says *"down to 20% — it drains 200% a day"* rather than
+"empty", since with a threshold it very often is not.
 
 ### Drawn, not a progress bar
 

@@ -150,7 +150,7 @@ function ManagedHabit({
               statement about the kind of thing it is.
             */}
             {habit.mode === 'gauge'
-              ? `gauge · ${habit.gaugeNow ?? 100}% full · drains ${habit.gaugeDrainPerDay ?? 100}% a day`
+              ? `gauge · ${habit.gaugeNow ?? 100}% full · drains ${habit.gaugeDrainPerDay ?? 100}% a day · asks at ${habit.gaugeRemindAt ? `${habit.gaugeRemindAt}%` : 'empty'}`
               : habit.mode === 'interval'
                 ? `every ${habit.intervalMinutes ? formatInterval(habit.intervalMinutes) : '—'} after doing it`
                 : `${habit.doneThisPeriod} of ${habit.targetPerPeriod} this ${habit.cadence === 'daily' ? 'day' : 'week'}`}
@@ -277,6 +277,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
   const [intervalMinutes, setIntervalMinutes] = useState(habit.intervalMinutes ?? 24 * 60);
   const [drain, setDrain] = useState(habit.gaugeDrainPerDay ?? 100);
   const [fill, setFill] = useState(habit.gaugeFillPercent ?? 100);
+  const [remindAt, setRemindAt] = useState(habit.gaugeRemindAt ?? 0);
   const [shape, setShape] = useState(habit.gaugeShape ?? 'circle');
   const [reminder, setReminder] = useState(habit.reminderEveryMinutes ?? 0);
   const [startTime, setStartTime] = useState(
@@ -300,6 +301,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
       intervalMinutes: mode === 'interval' ? Math.max(5, intervalMinutes) : null,
       gaugeDrainPerDay: Math.max(1, drain),
       gaugeFillPercent: Math.min(100, Math.max(1, fill)),
+      gaugeRemindAt: Math.min(90, Math.max(0, remindAt)),
       gaugeShape: shape.trim() || 'circle',
       reminderEveryMinutes: reminder > 0 ? reminder : null,
       reminderStartMinute: startTime ? timeToMinute(startTime) : null,
@@ -445,6 +447,36 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
               style={{ width: 160 }}
             />
           </label>
+
+          <label className="row between" style={{ alignItems: 'center', marginTop: 8 }}>
+            <span className="grow">
+              Starts asking at <strong>{remindAt === 0 ? 'empty' : `${remindAt}%`}</strong>
+              <span className="meta">
+                {' — '}
+                {remindAt === 0
+                  ? 'no warning; it asks once there is nothing left'
+                  : `about ${((100 - remindAt) / drain * 24).toFixed(1)}h after a full top-up`}
+              </span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={90}
+              step={5}
+              value={remindAt}
+              onChange={(e) => setRemindAt(Number(e.target.value))}
+              aria-label="Starts asking at"
+              style={{ width: 160 }}
+            />
+          </label>
+
+          <div className="meta" style={{ marginTop: 8 }}>
+            {/* Why the threshold is worth setting at all, in the place where you
+                are deciding. Empty-only is the wrong moment for anything that
+                takes a while to act on. */}
+            Reminding only at empty is fine for a glass of water and wrong for anything you need warning
+            about — a plant would ask once it was already dead. The Dashboard counts down to both.
+          </div>
 
           <div className="meta" style={{ marginTop: 8 }}>
             The level is stored rather than worked out from the last tick, so topping it up twice in a

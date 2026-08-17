@@ -201,8 +201,19 @@ export interface Habit {
    * out would draw a different gauge from the PC.
    */
   gaugeNow?: number;
+  /** The level at or below which it starts asking. 0 means "when empty". */
+  gaugeRemindAt?: number;
   /** How long until it empties, in ms. Null if it never will. */
   gaugeEmptyInMs?: number | null;
+  /**
+   * How long until it starts *asking* — the number you plan around.
+   *
+   * Sent separately from `gaugeEmptyInMs` rather than derived here, for the same
+   * reason the level is: doing the arithmetic in the browser would make both
+   * countdowns follow the device's clock, and the phone would disagree with the
+   * PC about when you are due.
+   */
+  gaugeRemindInMs?: number | null;
   active: number;
   sortOrder: number;
   reminderEveryMinutes: number | null;
@@ -872,6 +883,7 @@ export const api = {
         intervalMinutes?: number | null;
         gaugeDrainPerDay?: number;
         gaugeFillPercent?: number;
+        gaugeRemindAt?: number;
         gaugeShape?: string;
         active?: boolean;
         reminderEveryMinutes?: number | null;
