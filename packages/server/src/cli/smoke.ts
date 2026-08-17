@@ -666,7 +666,14 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   const drained = await listOf(gaugeId);
   check('and drains as time passes', drained.gaugeNow === 25, `got ${drained.gaugeNow}`);
   check('and says when it will be empty', Math.round(drained.gaugeEmptyInMs / 3_600_000) === 12, String(drained.gaugeEmptyInMs));
-  check('and is not "met" while it still has something in it', drained.met === true);
+  /*
+   * **A gauge is never finished, however full it is.** It was reported from the
+   * Dashboard: a water gauge at 20% sitting under *Finished today*, which is a
+   * heading claiming you are done with something that is visibly draining. The
+   * cause was one field answering two questions — see `habitIsFinished`.
+   */
+  check('a gauge is never finished, even part full', drained.met === false, `met=${drained.met}`);
+  check('but it does not want doing yet either', drained.wantsDoing === false);
 
   await post(`/api/habits/${gaugeId}/check`);
   const topped = await listOf(gaugeId);
@@ -693,7 +700,11 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
     (await listOf(gaugeId)).gaugeNow === 0,
     `got ${(await listOf(gaugeId)).gaugeNow}`
   );
-  check('an empty gauge is what wants doing', (await listOf(gaugeId)).met === false);
+  check('an empty gauge wants doing', (await listOf(gaugeId)).wantsDoing === true);
+  check('and is still not "finished"', (await listOf(gaugeId)).met === false);
+
+  await post(`/api/habits/${gaugeId}/check`);
+  check('and topping it up does not finish it either', (await listOf(gaugeId)).met === false);
 
   /* ---- an interval habit reaches the queue, and only when it is due ---- */
 
@@ -707,6 +718,31 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
     payload: { intervalMinutes: 6 * 60 },
   });
 
+  /*
+   * An interval habit is finished only if it was done *today* and is not due
+   * again. Both halves matter: without the first, one done last Tuesday would
+   * sit under "Finished today" every day for a week; without the second, a
+   * four-hour habit done at nine would still read as finished at two.
+   */
+  const intervalNow = await listOf(intervalId);
+  check('a never-done interval habit is not finished', intervalNow.met === false);
+  check('and it wants doing', intervalNow.wantsDoing === true);
+
+  await post(`/api/habits/${intervalId}/check`);
+  const justDone = await listOf(intervalId);
+  check('doing it finishes it for today', justDone.met === true);
+  check('and it stops wanting doing', justDone.wantsDoing === false);
+
+  // Wind the tick back a week: no longer today, and due again.
+  const { habitEntries: entryTable } = await import('../db/schema.js');
+  await db
+    .update(entryTable)
+    .set({ doneAt: Date.now() - 8 * DAY })
+    .where(eq(entryTable.habitId, intervalId));
+  const staleInterval = await listOf(intervalId);
+  check('one done last week is not "finished today"', staleInterval.met === false);
+  check('and wants doing again', staleInterval.wantsDoing === true);
+
   const { sweepHabitReminders } = await import('../nudge-engine.js');
   await sweepHabitReminders(Date.now());
 
@@ -716,11 +752,14 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
     queuedNow.some((n: { title: string }) => n.title === 'Change the filter'),
     queuedNow.map((n: { title: string }) => n.title).join(', ')
   );
-  check(
-    'and its line says so rather than counting to a target it does not have',
-    queuedNow.find((n: { title: string }) => n.title === 'Change the filter')?.body === 'not done yet',
-    queuedNow.find((n: { title: string }) => n.title === 'Change the filter')?.body
-  );
+  /*
+   * The line reports the *gap*, not a count against a target it does not have.
+   * By this point the habit has been ticked and the entry wound back a week, so
+   * the honest sentence is how long ago — "0 of 1 so far today" would be a
+   * statement about a kind of habit this is not.
+   */
+  const intervalBody = queuedNow.find((n: { title: string }) => n.title === 'Change the filter')?.body;
+  check('and its line reports the gap, not a target', intervalBody === 'last done 8 days ago', intervalBody);
 
   /*
    * A gauge with no reminder interval is purely something to look at. Nagging

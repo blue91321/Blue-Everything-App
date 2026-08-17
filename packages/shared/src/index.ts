@@ -253,6 +253,47 @@ export function habitWantsDoing(
 }
 
 /**
+ * Is this habit **finished** — done with, and belonging under "Finished today"?
+ *
+ * **Not the same question as `habitWantsDoing`, and collapsing them was a
+ * mistake worth spelling out.** "Should this interrupt me right now" and "is
+ * there nothing left to do today" look identical for a counted habit, where
+ * hitting the target answers both. They come apart for the two newer modes, and
+ * the symptom was a gauge sitting under *Finished today* at 20% full.
+ *
+ *   - `target`   the target is met. Period-scoped, so it clears at midnight.
+ *   - `interval` you did it today *and* it is not due again yet. Both halves
+ *                are needed: a four-hour habit done at nine is due again by two,
+ *                and one done last Tuesday was not done today whatever its
+ *                interval says.
+ *   - `gauge`    **never.** A gauge is draining the moment it is full, so there
+ *                is no instant at which it is finished — which is exactly why a
+ *                full one still belongs in the list rather than under a heading
+ *                saying you are done with it.
+ */
+export function habitIsFinished(
+  habit: {
+    mode: string;
+    targetPerPeriod: number;
+    intervalMinutes: number | null;
+    gaugeLevel: number;
+    gaugeLevelAt: number;
+    gaugeDrainPerDay: number;
+  },
+  context: { doneThisPeriod: number; lastDoneAt: number | null; startOfToday: number },
+  now = Date.now()
+): boolean {
+  if (habit.mode === 'gauge') return false;
+
+  if (habit.mode === 'interval') {
+    if (context.lastDoneAt === null || context.lastDoneAt < context.startOfToday) return false;
+    return !habitWantsDoing(habit, context, now);
+  }
+
+  return context.doneThisPeriod >= habit.targetPerPeriod;
+}
+
+/**
  * How often to nag while it wants doing.
  *
  * `interval` falls back to its own interval, so the ordinary case — "remind me

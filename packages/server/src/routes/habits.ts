@@ -7,6 +7,7 @@ import {
   gaugeAfterUndo,
   gaugeEmptyInMs,
   gaugeLevelAt,
+  habitIsFinished,
   habitWantsDoing,
   reorderSchema,
   updateHabitSchema,
@@ -61,6 +62,13 @@ function normalisePush(body: { pushToPhone?: boolean | null }) {
 export async function habitRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/habits', async () => {
     const now = Date.now();
+    /*
+     * Local midnight, like `periodKeyFor` — a habit ticked off at 11pm belongs
+     * to that day as you experienced it, not as UTC saw it.
+     */
+    const midnight = new Date(now);
+    midnight.setHours(0, 0, 0, 0);
+    const startOfToday = midnight.getTime();
     const all = await db
       .select()
       .from(habits)
@@ -108,14 +116,19 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
           gaugeNow: Math.round(gaugeLevelAt(habit, now)),
           gaugeEmptyInMs: gaugeEmptyInMs(habit, now),
           /*
-           * **`met` means "nothing wanted right now", across all three modes.**
-           * Every screen already keys off it — the Dashboard's "habits left",
-           * the settling animation, the Finished-today section — so widening
-           * the word rather than adding a second one is what keeps a gauge
-           * behaving like a habit everywhere without those screens learning
-           * what a gauge is.
+           * **`met` means finished — done with, belongs under "Finished today".**
+           *
+           * It briefly meant "nothing wanted right now" instead, on the
+           * reasoning that one word could serve both the screens and the nudge
+           * engine. It cannot: the two questions are the same for a counted
+           * habit and come apart for the other two, and the symptom was a gauge
+           * at 20% sitting under a heading saying you were done with it. The
+           * engine asks `habitWantsDoing` for itself; every screen asks this.
            */
-          met: !habitWantsDoing(habit, { doneThisPeriod: done, lastDoneAt }, now),
+          met: habitIsFinished(habit, { doneThisPeriod: done, lastDoneAt, startOfToday }, now),
+          /** Wants doing *now* — what the nudge engine acts on, for the screens
+           *  that want to say so. Not the negation of `met`; see above. */
+          wantsDoing: habitWantsDoing(habit, { doneThisPeriod: done, lastDoneAt }, now),
         };
       })
     );

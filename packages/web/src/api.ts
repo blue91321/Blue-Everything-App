@@ -217,13 +217,17 @@ export interface Habit {
   /** The last tick ever, not just this period. Null if never done. */
   lastDoneAt?: number | null;
   /**
-   * Nothing wanted right now — across all three modes, not just "target met".
+   * Finished — done with, and belonging under "Finished today".
    *
-   * Widened rather than joined by a second field, so every screen that already
-   * keys off it — habits left, the settling animation, Finished today — treats a
-   * gauge like a habit without learning what a gauge is.
+   * **Not the negation of `wantsDoing`.** The two are the same question for a
+   * counted habit and come apart for the other modes: a gauge is draining the
+   * moment it is full, so it is never finished, while it only *wants doing* once
+   * it is empty. Collapsing them put a gauge at 20% under a heading saying you
+   * were done with it.
    */
   met: boolean;
+  /** Wants doing right now — the question the nudge engine acts on. */
+  wantsDoing?: boolean;
 }
 
 export interface AppSettings {

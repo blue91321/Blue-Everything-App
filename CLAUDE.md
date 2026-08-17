@@ -1204,11 +1204,32 @@ every couple of hours. That fallback is also why the sweep now selects every
 active habit rather than filtering on `reminder_every_minutes IS NOT NULL` — that
 filter would have made the one mode it exists for permanently silent.
 
-**`met` was widened rather than joined by a second field.** It now means "nothing
-wanted right now" in every mode. Every screen already keys off it — habits left,
-the settling animation, Finished today — so widening the word is what lets a
-gauge behave like a habit everywhere without those screens learning what a gauge
-is.
+**`met` and `wantsDoing` are two questions, and collapsing them was a mistake.**
+`met` was widened to mean "nothing wanted right now" on the reasoning that one
+word could serve the screens and the engine alike. It cannot. The two are the
+same question for a counted habit — hitting the target answers both — and they
+come apart for the other two modes. The symptom was reported from the Dashboard:
+a water gauge at 20% sitting under **Finished today**, a heading claiming you
+were done with something visibly draining.
+
+So `habitIsFinished()` sits beside `habitWantsDoing()` in `shared`:
+
+| mode | finished when | wants doing when |
+| --- | --- | --- |
+| `target` | the target is met | the target is not met |
+| `interval` | done *today* **and** not due again | the interval has elapsed |
+| `gauge` | **never** | the level has drained to empty |
+
+A gauge is draining the moment it is full, so there is no instant at which it is
+finished — which is why a full one still belongs in the list rather than under a
+heading saying otherwise. The engine asks `habitWantsDoing`; every screen asks
+`met`. Both halves of the `interval` rule are load-bearing: without "done today"
+one ticked off last Tuesday reads as finished all week, and without "not due
+again" a four-hour habit done at nine still reads as finished at two.
+
+A gauge is also excluded from the **settling** animation, which exists to pin a
+row in place before it drops to *Finished today*. A gauge never drops, so there
+is no movement to cushion.
 
 ### The gauge stores a level, and that is the whole design
 

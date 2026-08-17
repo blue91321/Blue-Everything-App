@@ -151,7 +151,13 @@ export function HabitRow({
   const isGauge = habit.mode === 'gauge';
 
   async function check() {
-    if (!habit.met) settling?.hold(habit.id);
+    /*
+     * Settling pins a just-ticked row in place for a beat before it drops to
+     * *Finished today*. A gauge never drops — it is never finished — so there is
+     * no movement to cushion, and holding it would apply the animation to a row
+     * that was not going anywhere.
+     */
+    if (!habit.met && !isGauge) settling?.hold(habit.id);
     await api.habits.check(habit.id);
     onChange();
   }
