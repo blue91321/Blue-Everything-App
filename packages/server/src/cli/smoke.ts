@@ -757,6 +757,60 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   await post(`/api/habits/${gaugeId}/check`);
   check('and topping it up does not finish it either', (await listOf(gaugeId)).met === false);
 
+  /* ---- a picture of your own ---- */
+
+  /*
+   * A 1x1 PNG is enough: what is under test is the round trip and the guards,
+   * not the decoding — nothing here decodes it, the browser does.
+   */
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  check('no picture to begin with', (await listOf(gaugeId)).hasImage === false);
+  /*
+   * The same guard the app logo has: `image` with nothing uploaded draws the
+   * fallback, which looks exactly like the upload having failed.
+   */
+  const tooEarly = await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${gaugeId}`,
+    payload: { gaugeShape: 'image' },
+  });
+  check('and it refuses to point at one that is not there', tooEarly.statusCode === 400, String(tooEarly.statusCode));
+
+  const uploaded = await app.inject({
+    method: 'PUT',
+    url: `/api/habits/${gaugeId}/image`,
+    payload: { data: PNG, type: 'image/png' },
+  });
+  check('a picture uploads', uploaded.statusCode === 200, uploaded.body);
+  const afterUpload = await listOf(gaugeId);
+  check('and the habit knows it has one', afterUpload.hasImage === true);
+  // Uploading points the gauge at it — the reason you uploaded it.
+  check('and the gauge is pointed at it', afterUpload.gaugeShape === 'image');
+
+  const served = await app.inject({ method: 'GET', url: `/api/habits/${gaugeId}/image` });
+  check('it reads back as an image', served.statusCode === 200 && served.headers['content-type'] === 'image/png');
+  check('with the bytes that went in', served.rawPayload.equals(Buffer.from(PNG, 'base64')));
+
+  /*
+   * Switching to a shape must not delete the file. Somebody who uploads a photo,
+   * tries a triangle and comes back should find the photo still there — the same
+   * rule the app logo follows.
+   */
+  await app.inject({ method: 'PATCH', url: `/api/habits/${gaugeId}`, payload: { gaugeShape: 'triangle' } });
+  check('changing shape keeps the picture', (await listOf(gaugeId)).hasImage === true);
+
+  await app.inject({ method: 'DELETE', url: `/api/habits/${gaugeId}/image` });
+  check('removing it takes the file', (await listOf(gaugeId)).hasImage === false);
+  check(
+    'and leaves a shape that was not pointing at it alone',
+    (await listOf(gaugeId)).gaugeShape === 'triangle'
+  );
+  check(
+    'and it is gone from the read route too',
+    (await app.inject({ method: 'GET', url: `/api/habits/${gaugeId}/image` })).statusCode === 404
+  );
+
   /* ---- an interval habit reaches the queue, and only when it is due ---- */
 
   const madeInterval = await post('/api/habits', { name: 'Change the filter', mode: 'interval' });

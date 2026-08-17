@@ -34,6 +34,44 @@ export class Unauthorized extends Error {}
 export class ServerUnreachable extends Error {}
 
 /**
+ * A habit's picture, as something an `<img>` can point at.
+ *
+ * **It cannot be a plain URL.** The picture lives under `/api/`, deliberately —
+ * it is personal in the way the rest of the database is, unlike the icons and
+ * the notification tones, which sit outside that prefix because the browser's
+ * own machinery fetches them and will never send a bearer token. An `<img src>`
+ * will not either, so the bytes are fetched with the token and wrapped in an
+ * object URL.
+ *
+ * Cached by `id:updatedAt`, which the upload route bumps — so a replaced picture
+ * appears immediately and an unchanged one is fetched once per page load rather
+ * than once per render of every list it appears in. Nothing is revoked: there is
+ * one entry per habit per version, a handful at most, and revoking on unmount
+ * would break the next row that wanted the same picture.
+ */
+const habitImages = new Map<string, Promise<string>>();
+
+export function habitImageUrl(id: string, version: number): Promise<string> {
+  const key = `${id}:${version}`;
+  const known = habitImages.get(key);
+  if (known) return known;
+
+  const loading = (async () => {
+    const response = await fetch(`/api/habits/${id}/image`, {
+      headers: { authorization: `Bearer ${getToken()}` },
+    });
+    if (!response.ok) throw new Error(`no picture (${response.status})`);
+    return URL.createObjectURL(await response.blob());
+  })();
+
+  habitImages.set(key, loading);
+  // A failed load must not be remembered, or a picture uploaded a moment later
+  // would never be fetched again.
+  void loading.catch(() => habitImages.delete(key));
+  return loading;
+}
+
+/**
  * GETs for the same URL that are already in flight, so they become one.
  *
  * A single change announcement reaches every `useAsync` on screen at once, and
@@ -191,8 +229,19 @@ export interface Habit {
   /** `gauge` mode: the stored anchor, which the server also resolves for us. */
   gaugeDrainPerDay?: number;
   gaugeFillPercent?: number;
-  /** A shape name or an emoji — opaque, so an unknown value is drawn as text. */
+  /**
+   * A shape name, an emoji, or `image` for an uploaded picture.
+   *
+   * Opaque — an unknown value is drawn as text. `image` is a sentinel rather
+   * than a separate `useCustomPicture` flag, because the two are exclusive and a
+   * boolean alongside a shape would allow "custom picture *and* triangle". The
+   * app logo settled the same question the same way.
+   */
   gaugeShape?: string;
+  /** A picture has been uploaded — not the same as the gauge being set to it. */
+  hasImage?: boolean;
+  /** Bumped when the picture is replaced, which is how its cache is busted. */
+  updatedAt?: number;
   /**
    * The gauge right now, 0–100, computed **on the server**.
    *
@@ -896,6 +945,29 @@ export const api = {
     reorder: (ids: string[]) => post('/api/habits/reorder', { ids }),
     check: (id: string) => post(`/api/habits/${id}/check`),
     uncheck: (id: string) => post(`/api/habits/${id}/uncheck`),
+    /**
+     * A picture of your own for the gauge.
+     *
+     * Base64 in JSON rather than multipart, like the logo and the avatar — the
+     * server registers no multipart parser, and one endpoint used twice a year
+     * does not justify a dependency.
+     */
+    uploadImage: (id: string, file: File) =>
+      new Promise<{ ok: boolean; bytes: number; updatedAt: number }>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('could not read that file'));
+        reader.onload = () => {
+          const result = String(reader.result);
+          // Strip the `data:image/png;base64,` prefix the reader adds.
+          const data = result.slice(result.indexOf(',') + 1);
+          request<{ ok: boolean; bytes: number; updatedAt: number }>(`/api/habits/${id}/image`, {
+            method: 'PUT',
+            body: JSON.stringify({ data, type: file.type }),
+          }).then(resolve, reject);
+        };
+        reader.readAsDataURL(file);
+      }),
+    removeImage: (id: string) => request<void>(`/api/habits/${id}/image`, { method: 'DELETE' }),
   },
 
   connectInfo: () => request<ConnectInfo>('/api/connect-info'),

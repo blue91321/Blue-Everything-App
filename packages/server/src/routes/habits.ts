@@ -1,5 +1,10 @@
+import { existsSync } from 'node:fs';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import {
   GAUGE_FULL,
   createHabitSchema,
@@ -39,6 +44,40 @@ export function periodKeyFor(cadence: Cadence, at = new Date()): string {
   const week =
     1 + Math.round((thursday.getTime() - firstThursday.getTime()) / (7 * 24 * 60 * 60_000));
   return `${thursday.getFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+/**
+ * A picture of your own for a gauge, on disk beside the database.
+ *
+ * Not in it: a habits list is fetched on every page load and has no business
+ * carrying a JPEG. Same arrangement as the app logo and the overlay avatar, and
+ * the path is resolved from this file rather than the working directory for the
+ * same reason they are — Task Scheduler starts the server in System32, where a
+ * relative path writes somewhere nobody would ever look.
+ */
+const IMAGE_TYPES: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+};
+
+const CONTENT_TYPE: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+
+const imagePath = (habitId: string, extension: string): string =>
+  resolve(dirname(fileURLToPath(import.meta.url)), '../../data', `habit-${habitId}.${extension}`);
+
+function storedImage(habitId: string): { path: string; extension: string } | null {
+  for (const extension of Object.values(IMAGE_TYPES)) {
+    const path = imagePath(habitId, extension);
+    if (existsSync(path)) return { path, extension };
+  }
+  return null;
 }
 
 /** Local midnight — a habit ticked at 11pm belongs to that day as you lived it. */
@@ -250,6 +289,13 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
            * reads as the app being broken.
            */
           gaugeNow: Math.round(gaugeLevelAt(habit, now)),
+          /*
+           * Whether a picture has been uploaded, which is not the same as
+           * whether the gauge is *set* to use one — somebody who uploads a
+           * photo, switches to a triangle, and comes back should find the photo
+           * still there. The editor needs both answers.
+           */
+          hasImage: storedImage(habit.id) !== null,
           gaugeEmptyInMs: gaugeEmptyInMs(habit, now),
           /*
            * And how long until it starts *asking*, which is the number you
@@ -330,6 +376,15 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
      */
     const becomingGauge = body.mode === 'gauge' && before.mode !== 'gauge';
 
+    /*
+     * The same guard `settings.logoShape` has, for the same reason: `image` with
+     * nothing uploaded draws the fallback shape, which looks exactly like the
+     * upload having failed. The schema cannot see the disk, so the route must.
+     */
+    if (body.gaugeShape === 'image' && storedImage(id) === null) {
+      return reply.code(400).send({ error: 'upload a picture first — there is nothing to show yet' });
+    }
+
     const [updated] = await db
       .update(habits)
       .set({
@@ -347,7 +402,12 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete('/api/habits/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
-    // habit_entries cascade, so the streak history goes with it.
+    // habit_entries cascade, so the streak history goes with it. The picture is
+    // a file rather than a row, so nothing cascades to it — without this, every
+    // deleted gauge would leave a JPEG in `data/` forever.
+    for (const extension of Object.values(IMAGE_TYPES)) {
+      await rm(imagePath(id, extension), { force: true }).catch(() => {});
+    }
     await db.delete(habits).where(eq(habits.id, id));
     return reply.code(204).send();
   });
@@ -402,6 +462,107 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
       doneThisPeriod: progress.doneThisPeriod,
       gaugeNow: progress.gaugeNow,
     };
+  });
+
+  /* ---- a picture of your own ------------------------------------- */
+
+  /**
+   * The gauge picture, read back.
+   *
+   * **Under `/api/`, unlike the icons and the tones**, and the difference is
+   * what it carries. Those are a colour and a sine wave, fetched by machinery
+   * that will never send a bearer token — the browser's installer, an `<audio>`
+   * element. This is a picture you uploaded, which is personal in the way the
+   * rest of the database is, so it stays behind auth and the PWA fetches it with
+   * its token and makes an object URL. That costs a few lines in the component
+   * and is the right side of the trade.
+   */
+  app.get('/api/habits/:id/image', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const stored = storedImage(id);
+    if (!stored) return reply.code(404).send({ error: 'no picture for that habit' });
+
+    return reply
+      .type(CONTENT_TYPE[stored.extension] ?? 'application/octet-stream')
+      // Cached hard and busted by `updatedAt` in the URL the client builds —
+      // the bytes at a given version never change.
+      .header('cache-control', 'private, max-age=86400')
+      .send(await readFile(stored.path));
+  });
+
+  /**
+   * Upload one.
+   *
+   * Base64 in JSON rather than multipart, matching the logo and the avatar: the
+   * server registers no multipart parser and adding one for an endpoint used
+   * twice a year is a dependency for nothing.
+   *
+   * **Not local-only**, unlike the app logo. That restriction is there because
+   * the logo is a property of *this machine's* installation; a habit is your
+   * data, editable from the phone like everything else about it, and a picture
+   * for one is no different.
+   */
+  app.put('/api/habits/:id/image', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const [habit] = await db.select().from(habits).where(eq(habits.id, id));
+    if (!habit) return reply.code(404).send({ error: 'no such habit' });
+
+    const body = z
+      .object({
+        /** Bare base64, no `data:` prefix — the client strips it. */
+        data: z.string().min(1).max(3 * 1024 * 1024),
+        type: z.string().max(100),
+      })
+      .parse(request.body);
+
+    const extension = IMAGE_TYPES[body.type];
+    if (!extension) return reply.code(400).send({ error: 'needs to be a PNG, JPEG, GIF or WebP' });
+
+    const bytes = Buffer.from(body.data, 'base64');
+    if (bytes.length === 0) return reply.code(400).send({ error: 'that file was empty' });
+
+    // One picture per habit: the old one goes, so swapping a PNG for a JPEG does
+    // not leave the previous file behind for `storedImage` to find first.
+    for (const old of Object.values(IMAGE_TYPES)) {
+      await rm(imagePath(id, old), { force: true }).catch(() => {});
+    }
+    await writeFile(imagePath(id, extension), bytes);
+
+    /*
+     * Point the gauge at it and touch the row. The touch is load-bearing: the
+     * PWA keys its object-URL cache on `updatedAt`, so without it a replaced
+     * picture would keep showing the old one until something else changed.
+     */
+    const [updated] = await db
+      .update(habits)
+      .set({ gaugeShape: 'image', updatedAt: Date.now() })
+      .where(eq(habits.id, id))
+      .returning();
+
+    return { ok: true, bytes: bytes.length, updatedAt: updated.updatedAt };
+  });
+
+  app.delete('/api/habits/:id/image', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const [habit] = await db.select().from(habits).where(eq(habits.id, id));
+    if (!habit) return reply.code(404).send({ error: 'no such habit' });
+
+    for (const old of Object.values(IMAGE_TYPES)) {
+      await rm(imagePath(id, old), { force: true }).catch(() => {});
+    }
+
+    await db
+      .update(habits)
+      .set({
+        // Only reset the shape if it was pointing at the file. Somebody who
+        // uploaded a picture, switched to a triangle, then deleted the picture
+        // should still have a triangle — the same rule the app logo follows.
+        ...(habit.gaugeShape === 'image' ? { gaugeShape: 'circle' } : {}),
+        updatedAt: Date.now(),
+      })
+      .where(eq(habits.id, id));
+
+    return reply.code(204).send();
   });
 
   app.get('/api/habits/:id/entries', async (request) => {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type Habit, type HabitMode } from '../api';
-import { Gauge } from '../Gauge';
+import { HabitGauge } from '../Gauge';
+import { spanLabel } from '../format';
 import { useAsync } from '../useAsync';
 import { featureEnabled } from '../features';
 import { PushChoice } from '../controls';
@@ -258,6 +259,26 @@ const INTERVAL_CHOICES = [
   { value: 30 * 24 * 60, label: 'every month' },
 ];
 
+const DAY_MS = 86_400_000;
+
+/**
+ * What the drain and the fill add up to, as a habit rather than as arithmetic.
+ *
+ * "Empties by 200% a day" and "each tick adds 40%" are two abstractions, and
+ * neither is the thing you want to know — which is that this means five glasses
+ * of water a day, or watering the plant every four days. That number is the one
+ * you can hold against your actual life and decide the settings are wrong.
+ */
+function rhythm(drainPerDay: number, fillPercent: number): string {
+  const perDay = drainPerDay / fillPercent;
+  if (perDay >= 1) {
+    const rounded = Math.round(perDay * 10) / 10;
+    return `about ${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} a day to keep up`;
+  }
+  // Fewer than one a day: the useful framing flips to how long one tick lasts.
+  return `one every ${spanLabel((fillPercent / drainPerDay) * DAY_MS)} to keep up`;
+}
+
 const SHAPE_NAMES = ['circle', 'square', 'triangle', 'bar'];
 /**
  * The four drawn shapes and a few emoji to show the box takes one.
@@ -279,6 +300,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
   const [fill, setFill] = useState(habit.gaugeFillPercent ?? 100);
   const [remindAt, setRemindAt] = useState(habit.gaugeRemindAt ?? 0);
   const [shape, setShape] = useState(habit.gaugeShape ?? 'circle');
+  const [uploading, setUploading] = useState('');
   const [reminder, setReminder] = useState(habit.reminderEveryMinutes ?? 0);
   const [startTime, setStartTime] = useState(
     habit.reminderStartMinute === null ? '' : minuteToTime(habit.reminderStartMinute)
@@ -391,7 +413,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
             {/* The real component, at the real size, showing the real level —
                 so what you are choosing is what you will see, the same reason
                 the accent swatches carry their own `data-accent`. */}
-            <Gauge shape={shape} percent={habit.gaugeNow ?? 100} size={40} />
+            <HabitGauge habit={habit} shape={shape} size={40} />
             <div className="grow">
               <input
                 value={shape}
@@ -414,10 +436,79 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
             ))}
           </div>
 
+          {/*
+            A picture of your own.
+            
+            The upload happens immediately rather than waiting for Save, because
+            it is a *file* — the server has to hold it before the shape can point
+            at it, and the route refuses `image` with nothing uploaded for
+            exactly that reason. Same order the app logo does it in.
+          */}
+          <div className="row wrap" style={{ marginTop: 8, gap: '.35rem', alignItems: 'center' }}>
+            <label className="btn subtle" style={{ cursor: 'pointer' }}>
+              {uploading === 'up' ? 'Uploading…' : habit.hasImage ? 'Replace picture…' : 'Use my own picture…'}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                hidden
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  // Cleared straight away so picking the *same* file again after
+                  // a failure still fires a change event.
+                  e.target.value = '';
+                  if (!file) return;
+                  setUploading('up');
+                  try {
+                    await api.habits.uploadImage(habit.id, file);
+                    setShape('image');
+                    onSaved();
+                  } catch (error) {
+                    setUploading('');
+                    alert((error as Error).message);
+                    return;
+                  }
+                  setUploading('');
+                }}
+              />
+            </label>
+
+            {habit.hasImage && (
+              <>
+                <button
+                  type="button"
+                  className={shape === 'image' ? 'btn primary' : 'btn subtle'}
+                  onClick={() => setShape('image')}
+                >
+                  my picture
+                </button>
+                <button
+                  type="button"
+                  className="btn subtle"
+                  onClick={async () => {
+                    await api.habits.removeImage(habit.id);
+                    // The server resets the shape only if it was pointing at the
+                    // file, so this mirrors it rather than assuming.
+                    if (shape === 'image') setShape('circle');
+                    onSaved();
+                  }}
+                >
+                  remove
+                </button>
+              </>
+            )}
+          </div>
+          <div className="meta" style={{ marginTop: 6 }}>
+            A PNG, JPEG, GIF or WebP up to 3MB. It is drawn small and greyed out as it empties, so
+            something with a clear silhouette reads best.
+          </div>
+
           <label className="row between" style={{ alignItems: 'center', marginTop: 12 }}>
             <span className="grow">
               Empties by <strong>{drain}%</strong> a day
-              <span className="meta"> — {drain >= 100 ? `empty after ${(100 / drain).toFixed(1)} days` : `full lasts ${(100 / drain).toFixed(1)} days`}</span>
+              {/* In whatever unit fits. "empty after 0.3 days" is a number you
+                  have to multiply by 24 in your head, and "20.0 days" is three
+                  weeks said badly. */}
+              <span className="meta"> — full lasts {spanLabel((100 / drain) * DAY_MS)}</span>
             </span>
             <input
               type="range"
@@ -434,7 +525,16 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
           <label className="row between" style={{ alignItems: 'center', marginTop: 8 }}>
             <span className="grow">
               Each tick adds <strong>{fill}%</strong>
-              <span className="meta"> — {Math.ceil(100 / fill)} to refill from empty</span>
+              {/*
+                Two percentages are two abstractions, and the thing you actually
+                want to know is the rhythm they imply: "6 a day" or "one every 3
+                days". That is the number you can check against your life, and it
+                falls straight out of the drain and the fill.
+              */}
+              <span className="meta">
+                {' — '}
+                {Math.ceil(100 / fill)} to refill from empty · {rhythm(drain, fill)}
+              </span>
             </span>
             <input
               type="range"
@@ -455,7 +555,7 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
                 {' — '}
                 {remindAt === 0
                   ? 'no warning; it asks once there is nothing left'
-                  : `about ${((100 - remindAt) / drain * 24).toFixed(1)}h after a full top-up`}
+                  : `${spanLabel(((100 - remindAt) / drain) * DAY_MS)} after a full top-up`}
               </span>
             </span>
             <input

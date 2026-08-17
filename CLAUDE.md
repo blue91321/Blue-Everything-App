@@ -1352,14 +1352,44 @@ triangle empties to a point and a circle to a lens. A bar would have been three
 lines of CSS; the reason for a shape is that it is read *without* being looked
 at, which is the same argument the whole app runs on.
 
-**Any emoji works too**, which is how "a picture that empties" is satisfied
-without an upload route and a file per habit — the same decision the overlay
-avatar made, and the same reasoning that has the app icons generated rather than
-committed. An emoji cannot be clipped by an SVG path, so it is drawn twice: once
-greyed as the empty part, once inside a wrapper with a height and
-`overflow: hidden` on top. `gauge_shape` is therefore **opaque** — validated for
-length, not against the list of four — and anything unrecognised is drawn as
-text.
+**Any emoji works too**, which covers "a picture that empties" for most habits
+at no cost at all — the same decision the overlay avatar made, and the same
+reasoning that has the app icons generated rather than committed. An emoji cannot
+be clipped by an SVG path, so it is drawn twice: once greyed as the empty part,
+once inside a wrapper with a height and `overflow: hidden` on top. `gauge_shape`
+is therefore **opaque** — validated for length, not against the list of four —
+and anything unrecognised is drawn as text.
+
+**And a picture of your own**, uploaded per habit. `gauge_shape` is set to
+`image`, a sentinel rather than a separate boolean, because the two are exclusive
+and a flag beside a shape would allow "custom picture *and* triangle" — the app
+logo settled the same question the same way. The file lives in `data/` beside the
+database rather than in it, since a habits list is fetched on every page load and
+has no business carrying a JPEG.
+
+Three things there are worth knowing:
+
+- **It is under `/api/`, unlike the icons and the tones**, and the difference is
+  what it carries. Those are a colour and a sine wave, fetched by machinery that
+  will never send a bearer token. This is a picture you uploaded, personal in the
+  way the rest of the database is — so it stays behind auth, and since `<img
+  src>` sends no token either, the PWA fetches the bytes and wraps them in an
+  object URL. Cached by `id:updatedAt`, which the upload route bumps.
+- **Not local-only**, unlike the app logo. That restriction exists because a logo
+  is a property of *this machine's* installation; a habit is your data, editable
+  from the phone like everything else about it.
+- **Deleting a habit deletes its file.** Nothing cascades to a file, so without
+  that every removed gauge would leave a JPEG in `data/` for good.
+
+**The editor says what the numbers mean, in the unit that fits.** Two
+percentages are two abstractions: "empties by 200% a day" and "each tick adds
+40%" are both true and neither is the thing you want to know, which is that it
+means about five glasses a day. So the drain reports how long a full gauge lasts
+— `spanLabel` switching between minutes, hours and days rather than reporting
+"0.3 days" or "20.0 days" — and the fill reports the rhythm the two imply,
+flipping from "about 5 a day to keep up" to "one every 4 days" at the crossover.
+That is the number you can hold against your actual life and decide the settings
+are wrong.
 
 The gauge follows `var(--accent)`, unlike the presence dots which deliberately
 do not. Nothing is learned about a gauge's colour, whereas green meaning online

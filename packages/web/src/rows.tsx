@@ -1,6 +1,6 @@
 import { api, type Habit, type Task } from './api';
 import { dueLabel, isOverdue, relative } from './format';
-import { Gauge } from './Gauge';
+import { HabitGauge } from './Gauge';
 import type { Settling } from './useSettling';
 
 /**
@@ -190,11 +190,7 @@ export function HabitRow({
           onClick={check}
         >
           {isGauge ? (
-            <Gauge
-              shape={habit.gaugeShape ?? 'circle'}
-              percent={habit.gaugeNow ?? 100}
-              title={`${habit.name} — ${habit.gaugeNow ?? 100}% full, tap to top up`}
-            />
+            <HabitGauge habit={habit} />
           ) : habit.met ? (
             '✓'
           ) : (

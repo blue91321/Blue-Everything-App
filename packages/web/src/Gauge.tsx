@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react';
+import { habitImageUrl, type Habit } from './api';
+
 /**
  * A shape that empties as the day goes on, and fills back up when you do the
  * thing.
@@ -23,6 +26,14 @@
  * on a wrapper of a known height does the clipping, which is the one technique
  * that works on a glyph the browser owns.
  *
+ * ### And a picture of your own
+ *
+ * `shape === 'image'` draws an uploaded file the same way, since an `<img>`
+ * cannot be clipped by an SVG path either. The URL is passed in rather than
+ * fetched here: it lives behind auth, so it is an object URL somebody had to go
+ * and get, and a component that started a fetch per render would do so once per
+ * row of every list the habit appears in.
+ *
  * ### The colour
  *
  * `var(--accent)`, so the gauge matches whatever the app is set to — unlike the
@@ -44,12 +55,15 @@ export function Gauge({
   percent,
   size = 26,
   title,
+  imageUrl,
 }: {
   shape: string;
   /** 0–100. Clamped, because a server that has not caught up may send anything. */
   percent: number;
   size?: number;
   title?: string;
+  /** For `shape === 'image'`: the object URL, already fetched with the token. */
+  imageUrl?: string | null;
 }) {
   const level = Math.max(0, Math.min(100, percent));
   const path = PATHS[shape];
@@ -60,6 +74,35 @@ export function Gauge({
    * one.
    */
   const label = title ?? `${Math.round(level)}% full`;
+
+  if (shape === 'image') {
+    /*
+     * Still loading, or the file has gone. A circle rather than a gap: the row
+     * has to keep its shape while the picture arrives, or every gauge on the
+     * Dashboard would jump sideways a moment after it drew.
+     */
+    if (!imageUrl) return <Gauge shape="circle" percent={level} size={size} title={title} />;
+
+    return (
+      <span
+        className="gauge-emoji"
+        style={{ width: size, height: size }}
+        role="img"
+        aria-label={label}
+        title={label}
+      >
+        <img className="gauge-emoji-empty" src={imageUrl} alt="" width={size} height={size} />
+        <span className="gauge-emoji-full" style={{ height: `${level}%` }} aria-hidden="true">
+          {/*
+            The inner copy is drawn at full size inside a wrapper that hides its
+            overflow, so the picture is *revealed* from the bottom rather than
+            squashed — a squashed photo reads as a rendering bug, not as a level.
+          */}
+          <img src={imageUrl} alt="" width={size} height={size} style={{ display: 'block' }} />
+        </span>
+      </span>
+    );
+  }
 
   if (!path) {
     // An emoji, or anything else stored in the column. Two copies, the top one
@@ -126,5 +169,55 @@ export function Gauge({
       />
       <path d={path} className="gauge-edge" />
     </svg>
+  );
+}
+
+/**
+ * A gauge for a particular habit, fetching its picture if it has one.
+ *
+ * A wrapper rather than doing this inside `Gauge`, so the presentational half
+ * stays a pure function of its props — the editor draws a preview of a shape
+ * that is not saved yet, and that must not trigger a fetch for the habit's
+ * stored file.
+ */
+export function HabitGauge({
+  habit,
+  shape,
+  size,
+}: {
+  habit: Habit;
+  /** Overridden while editing, before the change is saved. */
+  shape?: string;
+  size?: number;
+}) {
+  const drawn = shape ?? habit.gaugeShape ?? 'circle';
+  const [url, setUrl] = useState<string | null>(null);
+  const version = habit.updatedAt ?? 0;
+
+  useEffect(() => {
+    if (drawn !== 'image') return;
+    let alive = true;
+    /*
+     * `alive` because the row can be gone before the bytes arrive — a habit
+     * ticked off moves sections, and setting state on the unmounted copy is the
+     * warning nobody ever fixes. The promise itself is cached, so a remount
+     * costs a lookup rather than a second request.
+     */
+    void habitImageUrl(habit.id, version)
+      .then((next) => alive && setUrl(next))
+      .catch(() => alive && setUrl(null));
+    return () => {
+      alive = false;
+    };
+  }, [habit.id, version, drawn]);
+
+  return (
+    <Gauge
+      shape={drawn}
+      percent={habit.gaugeNow ?? 100}
+      size={size}
+      imageUrl={url}
+      title={`${habit.name} — ${habit.gaugeNow ?? 100}% full, tap to top up`}
+    />
   );
 }

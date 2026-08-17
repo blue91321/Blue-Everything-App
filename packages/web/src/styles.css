@@ -1265,3 +1265,9 @@ button {
   display: grid;
   place-items: center;
 }
+
+/* An uploaded picture fills the same two-layer wrapper the emoji uses. */
+.gauge-emoji img {
+  border-radius: 5px;
+  object-fit: cover;
+}
