@@ -81,6 +81,8 @@ export function App() {
    * render or two.
    */
   const [focus, setFocus] = useState<string | null>(null);
+  /** Text for the destination's search box — see `NavRequest.search`. */
+  const [search, setSearch] = useState<string | null>(null);
   /**
    * The mark, held here so the drawer can draw it.
    *
@@ -211,7 +213,7 @@ export function App() {
 
   useEffect(
     () =>
-      onNavigate(({ view: wanted, focus: wantedFocus }) => {
+      onNavigate(({ view: wanted, focus: wantedFocus, search: wantedSearch }) => {
         const { nav: items, isDesktop: wide, setDrawerOpen } = latest.current;
         // An unknown view is ignored rather than switched to: the caller is a
         // menu item, and a typo should leave you where you are rather than on a
@@ -219,6 +221,7 @@ export function App() {
         if (!items.some((item) => item.id === wanted)) return;
         setView(wanted as NavId);
         setFocus(wantedFocus ?? null);
+        setSearch(wantedSearch ?? null);
         if (!wide) setDrawerOpen(false);
       }),
     []
@@ -228,7 +231,10 @@ export function App() {
    * Stable, so the effect in the target screen does not re-run on every render
    * of this one while a focus request is outstanding.
    */
-  const clearFocus = useCallback(() => setFocus(null), []);
+  const clearFocus = useCallback(() => {
+    setFocus(null);
+    setSearch(null);
+  }, []);
 
   if (checking) {
     return (
@@ -344,7 +350,9 @@ export function App() {
         {current.id === 'tasks' && <Tasks focus={focus} onFocused={clearFocus} />}
         {current.id === 'habits' && <Habits focus={focus} onFocused={clearFocus} />}
         {current.id === 'notes' && <Notes />}
-        {current.id === 'settings' && <Settings session={session} onChanged={checkSession} />}
+        {current.id === 'settings' && (
+          <Settings session={session} onChanged={checkSession} focus={focus} onFocused={clearFocus} />
+        )}
 
         {/*
           Each feature is its own chunk, fetched the first time its tab is
@@ -354,7 +362,7 @@ export function App() {
         */}
         {feature && (
           <Suspense fallback={<div className="empty">loading…</div>}>
-            <feature.View local={session.local} />
+            <feature.View local={session.local} search={search} onFocused={clearFocus} />
           </Suspense>
         )}
       </div>

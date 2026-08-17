@@ -72,7 +72,7 @@ export function TaskRow({
    * Dashboard that may be holding twenty of them.
    */
   const { onContextMenu, menu } = useContextMenu(
-    useCallback(() => [{ label: 'Edit task…', onSelect: () => goTo('tasks', task.id) }], [task.id])
+    useCallback(() => [{ label: 'Edit task…', onSelect: () => goTo('tasks', { focus: task.id }) }], [task.id])
   );
 
   async function toggle() {
@@ -179,7 +179,7 @@ export function HabitRow({
   const isGauge = habit.mode === 'gauge';
 
   const { onContextMenu, menu } = useContextMenu(
-    useCallback(() => [{ label: 'Edit habit…', onSelect: () => goTo('habits', habit.id) }], [habit.id])
+    useCallback(() => [{ label: 'Edit habit…', onSelect: () => goTo('habits', { focus: habit.id }) }], [habit.id])
   );
 
   async function check() {

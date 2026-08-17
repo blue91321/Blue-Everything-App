@@ -273,8 +273,102 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 
-export function Settings({ session, onChanged }: { session: Session; onChanged: () => void }) {
+/**
+ * Which tab a linkable section lives behind.
+ *
+ * A table rather than a search of the DOM, because the section is not *in* the
+ * DOM until its tab is open — so finding it has to start from knowing where it
+ * is. The key is the element's `id`, which is also what the caller passes.
+ */
+const SECTION_TAB: Record<string, TabId> = {
+  'dashboard-panel': 'general',
+};
+
+export function Settings({
+  session,
+  onChanged,
+  focus,
+  onFocused,
+}: {
+  session: Session;
+  onChanged: () => void;
+  /** A section id to open and scroll to — see `SECTION_TAB`. */
+  focus?: string | null;
+  onFocused?: () => void;
+}) {
   const [tab, setTab] = useState<TabId>('general');
+
+  /*
+   * Sent here by something that wanted a *particular* setting — the Dashboard
+   * panel's "change what's here" button. The tabs made Settings much easier to
+   * navigate and made linking into it impossible without this: the section you
+   * were pointed at may be behind a tab you are not on, and landing on General
+   * while the answer is under Packages is worse than not linking at all.
+   */
+  useEffect(() => {
+    if (!focus) return;
+    const home = SECTION_TAB[focus];
+    if (!home) return;
+    setTab(home);
+    /*
+     * **Waited for on a timer, not looked for once, and not on a frame.**
+     *
+     * Two goes at this, both silently doing nothing:
+     *
+     * A single `requestAnimationFrame` was the first, and the section is behind
+     * its tab *and* behind a `useAsync` — so at the next frame it is usually not
+     * in the document. Retrying across frames fixed that and still did nothing,
+     * because **`requestAnimationFrame` does not fire at all when the page is
+     * not compositing** — a hidden tab, a window nobody is showing. `setTimeout`
+     * runs regardless, throttled at worst, for exactly the same complexity.
+     *
+     * Both failures presented identically: the tab switched, because that part
+     * is synchronous, and nothing else happened. The half that worked hid the
+     * half that did not.
+     *
+     * Bounded, so a section id that matches nothing gives up rather than
+     * retrying for the life of the page.
+     */
+    let frames = 0;
+    let cancelled = false;
+
+    /*
+     * **`onFocused` is called at the *end*, not before the wait.**
+     *
+     * Clearing the request changes `focus`, which re-runs this effect, whose
+     * cleanup sets `cancelled` — so announcing "handled" up front cancelled the
+     * frame loop it had just started, every time. The tab still switched, since
+     * that happens synchronously, which is what made it look like the scroll was
+     * the broken part rather than the waiting.
+     */
+    const done = () => {
+      cancelled = true;
+      onFocused?.();
+    };
+
+    const find = () => {
+      if (cancelled) return;
+      const element = document.getElementById(focus);
+      if (!element) {
+        // Giving up still counts as handled, or the request would sit there and
+        // fire again the next time this screen mounted.
+        if (frames++ < 120) setTimeout(find, 16);
+        else done();
+        return;
+      }
+      element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      // A moment of highlight, because "we brought you here" is otherwise
+      // indistinguishable from "the tab you opened happened to look like this".
+      element.classList.add('flash');
+      setTimeout(() => element.classList.remove('flash'), 1400);
+      done();
+    };
+    setTimeout(find, 0);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [focus, onFocused]);
 
   return (
     <>
@@ -357,7 +451,7 @@ function DashboardPanel() {
   };
 
   return (
-    <section>
+    <section id="dashboard-panel">
       <h2>Beside the Dashboard</h2>
       <div className="card">
         <div className="meta" style={{ marginBottom: 8 }}>

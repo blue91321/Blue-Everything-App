@@ -9,7 +9,7 @@
  * fixes, so the sources panel sits under the list and names the one that
  * applies.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type FriendRow, type FriendSource } from '../../api';
 import { useAsync } from '../../useAsync';
 import { STATE_LABEL } from './presence';
@@ -47,10 +47,22 @@ function matchesSearch(friend: FriendRow, needle: string): boolean {
   );
 }
 
-export function Friends() {
+export function Friends({ seed }: { seed?: string | null } = {}) {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
+
+  /*
+   * A name handed in from elsewhere — the Dashboard panel's "find this person".
+   *
+   * Applied through an effect rather than as `useState(seed)`, because this
+   * screen is already mounted when a second request arrives: you can right-click
+   * one person, then another, without leaving the tab. An initial value would
+   * only ever honour the first.
+   */
+  useEffect(() => {
+    if (seed) setSearch(seed);
+  }, [seed]);
   /**
    * Statuses switched off, rather than the one status to show.
    *

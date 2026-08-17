@@ -14,12 +14,29 @@
  * a concept for something a callback already does.
  */
 
-/** Where to go, and what to open when you get there. */
+/** Where to go, and what to do when you get there. */
 export interface NavRequest {
   /** A `NavId` from App — kept as a string here so this file imports nothing. */
   view: string;
-  /** The id of the row to open for editing, if any. */
+  /**
+   * What to open on arrival. **Opaque, and read differently by each screen** —
+   * a row id on Tasks and Habits, a section name on Settings.
+   *
+   * One field rather than one per screen, for the same reason
+   * `settings.dashboard_panel` holds an opaque id: this file would otherwise
+   * have to know what every destination contains, and gain a field each time
+   * one of them grows a new place worth linking to.
+   */
   focus?: string;
+  /**
+   * Text to put in the destination's search box.
+   *
+   * Genuinely separate from `focus` rather than encoded into it. They are not
+   * the same request — "open this row" and "show me everything matching this"
+   * differ in whether the answer is one thing — and a screen may want both, so
+   * folding them into one string would mean parsing a separator back out.
+   */
+  search?: string;
 }
 
 /**
@@ -45,6 +62,6 @@ export function onNavigate(fn: (request: NavRequest) => void): () => void {
  * something has gone wrong upstream and a throw here would take the app down to
  * report it.
  */
-export function goTo(view: string, focus?: string): void {
-  listener?.({ view, focus });
+export function goTo(view: string, options: Omit<NavRequest, 'view'> = {}): void {
+  listener?.({ view, ...options });
 }

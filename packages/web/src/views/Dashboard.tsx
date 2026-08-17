@@ -3,6 +3,7 @@ import { api, type Nudge, type Task } from '../api';
 import { useAsync } from '../useAsync';
 import { useSettling } from '../useSettling';
 import { clockTime, endOfToday, relative, startOfToday } from '../format';
+import { goTo } from '../nav';
 import { resolvePanel } from '../panels';
 import { TaskRow, HabitRow } from '../rows';
 import { Capture } from './Capture';
@@ -139,6 +140,16 @@ export function Dashboard() {
           <Suspense fallback={<div className="empty">loading…</div>}>
             <Panel panelId={panelId} />
           </Suspense>
+
+          {/*
+            Here rather than inside each panel, so every panel gets it and no
+            feature has to know that the *setting* exists — the panel is the
+            feature's, the slot it sits in is core's, and this button is about
+            the slot.
+          */}
+          <button className="btn subtle panel-settings" onClick={() => goTo('settings', { focus: 'dashboard-panel' })}>
+            Change what's here
+          </button>
         </aside>
       )}
     </div>

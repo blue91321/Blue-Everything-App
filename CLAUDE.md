@@ -145,6 +145,15 @@ Three details:
   module in. `presence.ts` now holds the table, and the panel costs 1.0KB
   gzipped against the 9.5KB it was dragging.
 
+**Each person is a button, and the panel has one of its own.** Clicking a row
+lands on Connections → Friends with that name in the search box; "Change what's
+here" goes to the setting that decides what the column holds. The whole row is
+the button rather than a magnifying glass beside the name — in a 320px column an
+icon per row is width taken from the thing the column is for, and a row-sized hit
+target is easier to hit than a 20px square. The settings button lives on the
+Dashboard's `aside` rather than inside each panel, so every panel gets it and no
+feature has to know that the setting exists.
+
 The friends panel shows only `in-game`, `online`, `away` and `dnd`. `unknown` is
 excluded, which matters more than it sounds: Discord's REST API carries no
 presence, so every Discord-only friend is `unknown` — 87 of them here against a
@@ -245,6 +254,39 @@ have any business carrying a navigate function. It is deliberately not a router:
 the whole navigation model here is one `useState` holding a string, and adding a
 router to satisfy one menu item would be a dependency and a concept for something
 a callback already does.
+
+A request carries `focus` — **opaque, read differently by each screen**: a row id
+on Tasks and Habits, a section id on Settings — and `search`, which is separate
+rather than encoded into it because "open this one thing" and "show me everything
+matching" are different requests and a screen may want both.
+
+### Getting to a particular setting
+
+`settings.dashboard_panel` is chosen on a Settings tab, which the friends panel
+links straight to. Tabs made Settings navigable and made linking *into* it
+impossible without help: the section you are pointed at may be behind a tab you
+are not on, and landing on General while the answer is under Packages is worse
+than not linking at all. `SECTION_TAB` maps a section id to the tab that holds
+it, and a moment of highlight says "we brought you here" — otherwise arriving is
+indistinguishable from the tab you opened happening to look like that.
+
+**Three goes at the scroll, and the first two silently did nothing.** All three
+switched the tab correctly, because that part is synchronous — the half that
+worked hiding the half that did not, every time:
+
+1. One `requestAnimationFrame`. The section is behind its tab *and* behind a
+   `useAsync`, so at the next frame it is usually not in the document.
+2. Retrying across frames — and cancelling on cleanup, while announcing
+   "handled" up front. Clearing the request changes `focus`, which re-runs the
+   effect, whose cleanup cancelled the loop it had just started. `onFocused` is
+   now called at the *end*.
+3. Still on `requestAnimationFrame`, which **does not fire at all when the page
+   is not compositing** — a hidden tab, a window nobody is showing. `setTimeout`
+   runs regardless, throttled at worst, for identical complexity.
+
+Worth knowing beyond this one button: a probe built on `requestAnimationFrame`
+measures nothing in a browser pane that is not on screen, so it will happily
+report a working feature as broken and a broken one as working.
 
 Three things there are worth knowing:
 

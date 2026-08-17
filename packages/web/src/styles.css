@@ -1322,3 +1322,40 @@ button {
   background: var(--urgent, #e5484d);
   color: #fff;
 }
+
+/* A whole panel row that is a button. Resets what <button> assumes. */
+.panel-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.panel-row:hover,
+.panel-row:focus-visible {
+  border-color: var(--accent);
+}
+
+.panel-settings {
+  width: 100%;
+  margin-top: 8px;
+}
+
+/*
+ * "We brought you here." Without it, arriving at a settings section is
+ * indistinguishable from the tab you clicked happening to open on it.
+ */
+.flash {
+  animation: flash 1.4s ease-out;
+}
+
+@keyframes flash {
+  0%, 60% { box-shadow: 0 0 0 2px var(--accent); border-radius: 10px; }
+  100% { box-shadow: 0 0 0 2px transparent; border-radius: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash { animation: none; outline: 2px solid var(--accent); }
+}

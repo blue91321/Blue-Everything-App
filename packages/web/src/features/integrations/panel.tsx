@@ -14,6 +14,7 @@
 import { api, type FriendRow } from '../../api';
 import { useAsync } from '../../useAsync';
 import { STATE_LABEL } from './presence';
+import { goTo } from '../../nav';
 import type { PanelProps } from '../index';
 
 /**
@@ -77,7 +78,21 @@ export default function FriendsPanel(_props: PanelProps) {
       )}
 
       {around.map((friend) => (
-        <div className="card" key={friend.id}>
+        /*
+         * The whole row is the button, rather than a magnifying glass beside
+         * the name. In a 320px column an icon per row is width taken from the
+         * thing the column is for — and a row that is entirely the hit target is
+         * easier to hit than a 20px square, which matters more than the icon
+         * would have communicated. The cursor and the hover state say it is
+         * live; the label says what it does.
+         */
+        <button
+          className="card panel-row"
+          key={friend.id}
+          title={`Find ${friend.name} in Connections`}
+          aria-label={`Find ${friend.name} in Connections`}
+          onClick={() => goTo('integrations', { search: friend.name })}
+        >
           <div className="row" style={{ alignItems: 'center', gap: '.6rem' }}>
             {/* The same wrapper and dot the Friends screen uses, from the core
                 stylesheet — a second set of presence colours is the one thing
@@ -107,7 +122,7 @@ export default function FriendsPanel(_props: PanelProps) {
               <div className="meta truncate">{friend.game ?? friend.detail ?? STATE_LABEL[friend.state]}</div>
             </div>
           </div>
-        </div>
+        </button>
       ))}
     </>
   );

@@ -21,6 +21,16 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 export interface FeatureViewProps {
   /** Whether this browser is on the PC running the server. */
   local: boolean;
+  /**
+   * Text to put in this screen's search box, sent by something elsewhere in the
+   * app — the Dashboard panel's "find this person" button, today.
+   *
+   * Optional on both sides: core has no idea whether a given feature *has* a
+   * search box, and a feature that does not simply ignores it.
+   */
+  search?: string | null;
+  /** Called once the hint above has been acted on, so it is not applied twice. */
+  onFocused?: () => void;
 }
 
 export interface FeatureMeta {
