@@ -1,5 +1,6 @@
 import { api, type Habit, type Task } from './api';
-import { dueLabel, isOverdue } from './format';
+import { dueLabel, isOverdue, relative } from './format';
+import { Gauge } from './Gauge';
 import type { Settling } from './useSettling';
 
 /**
@@ -100,6 +101,43 @@ export function TaskRow({
   );
 }
 
+/** "in 3 hours", "in 4 days" — how long a gauge has left. */
+function roughly(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${Math.max(1, minutes)} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  return `${Math.round(hours / 24)} days`;
+}
+
+/**
+ * The line under a habit's name, which is a different sentence per mode.
+ *
+ * The count is meaningless for the two new modes and saying it anyway was the
+ * temptation worth resisting: "1 of 1 this day" under a plant you water every
+ * four days is not merely useless, it is wrong about what the habit is.
+ */
+function habitLine(habit: Habit): string {
+  if (habit.mode === 'gauge') {
+    const level = habit.gaugeNow ?? 100;
+    if (level <= 0) return 'empty — needs doing';
+    const left = habit.gaugeEmptyInMs;
+    return left === null || left === undefined
+      ? `${level}% full`
+      : `${level}% full · empty in ${roughly(left)}`;
+  }
+
+  if (habit.mode === 'interval') {
+    if (!habit.lastDoneAt) return 'never done';
+    const done = `last done ${relative(habit.lastDoneAt)}`;
+    if (!habit.intervalMinutes) return done;
+    const dueAt = habit.lastDoneAt + habit.intervalMinutes * 60_000;
+    return dueAt <= Date.now() ? `due now · ${done}` : `${done} · due ${relative(dueAt)}`;
+  }
+
+  return `${habit.doneThisPeriod} of ${habit.targetPerPeriod} this ${habit.cadence === 'daily' ? 'day' : 'week'}`;
+}
+
 export function HabitRow({
   habit,
   onChange,
@@ -110,6 +148,7 @@ export function HabitRow({
   settling?: Settling;
 }) {
   const isSettling = settling?.has(habit.id) ?? false;
+  const isGauge = habit.mode === 'gauge';
 
   async function check() {
     if (!habit.met) settling?.hold(habit.id);
@@ -120,18 +159,37 @@ export function HabitRow({
   return (
     <div className={`card${isSettling ? ' settling' : ''}`}>
       <div className="row">
+        {/*
+          The gauge *is* the button, rather than sitting beside a tick box.
+          Two controls on one row would raise the question of what the tick did
+          that the shape did not — and the answer would have to be "nothing",
+          since topping it up is the only thing you can do to a gauge.
+        */}
         <button
-          className={`check ${habit.met ? 'done' : ''}`}
+          className={isGauge ? 'check gauge-button' : `check ${habit.met ? 'done' : ''}`}
           aria-label={`Record ${habit.name}`}
           onClick={check}
         >
-          {habit.met ? '✓' : ''}
+          {isGauge ? (
+            <Gauge
+              shape={habit.gaugeShape ?? 'circle'}
+              percent={habit.gaugeNow ?? 100}
+              title={`${habit.name} — ${habit.gaugeNow ?? 100}% full, tap to top up`}
+            />
+          ) : habit.met ? (
+            '✓'
+          ) : (
+            ''
+          )}
         </button>
         <div className="grow">
-          <div className={`title${habit.met ? ' struck' : ''}`}>{habit.name}</div>
-          <div className="meta">
-            {habit.doneThisPeriod} of {habit.targetPerPeriod} this {habit.cadence === 'daily' ? 'day' : 'week'}
-          </div>
+          {/*
+            A gauge is never struck through. Striking means finished, and a
+            gauge that is full is not finished — it is draining again already,
+            which is the whole idea of it.
+          */}
+          <div className={`title${habit.met && !isGauge ? ' struck' : ''}`}>{habit.name}</div>
+          <div className="meta">{habitLine(habit)}</div>
         </div>
       </div>
     </div>

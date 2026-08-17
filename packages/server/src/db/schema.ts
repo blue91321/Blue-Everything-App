@@ -98,8 +98,37 @@ export const habits = sqliteTable('habits', {
   id: id(),
   name: text('name').notNull(),
   notes: text('notes'),
+  /**
+   * `target`, `interval` or `gauge` — see `habitModes` in shared.
+   *
+   * They differ in exactly one thing: when the habit wants doing. Entries,
+   * reminders, voice phrases and the nudge queue are identical across all
+   * three, which is why this is a column rather than three tables.
+   */
+  mode: text('mode').notNull().default('target'),
   cadence: text('cadence').notNull().default('daily'),
   targetPerPeriod: integer('target_per_period').notNull().default(1),
+  /** `interval` mode: due again this long after the last time it was done. */
+  intervalMinutes: integer('interval_minutes'),
+  /**
+   * `gauge` mode: the level, and the moment that level was true.
+   *
+   * **An anchor, not a running total.** Everything between anchors is computed
+   * by `gaugeLevelAt` in shared, so a draining gauge costs no timer and no
+   * writes — this project requires anything that would otherwise tick to
+   * justify itself, and a gauge that wrote a row a minute could not.
+   *
+   * Storing the level rather than deriving it from the last entry is the point:
+   * derived, it could not express a gauge topped up twice in a morning, nor one
+   * neglected for a fortnight and then filled halfway.
+   */
+  gaugeLevel: integer('gauge_level').notNull().default(100),
+  gaugeLevelAt: integer('gauge_level_at').notNull().$defaultFn(() => Date.now()),
+  /** How much drains away in a day, and how much one tick puts back. */
+  gaugeDrainPerDay: integer('gauge_drain_per_day').notNull().default(100),
+  gaugeFillPercent: integer('gauge_fill_percent').notNull().default(100),
+  /** A shape name or an emoji. Opaque — anything unrecognised is drawn as text. */
+  gaugeShape: text('gauge_shape').notNull().default('circle'),
   active: integer('active').notNull().default(1),
   /** Hand-ordered in the Habits tab; ties fall back to name. */
   sortOrder: integer('sort_order').notNull().default(0),

@@ -1193,3 +1193,75 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- the draining gauge ---------- */
+
+.gauge {
+  flex: none;
+  display: block;
+}
+
+/* Whole even when empty, so the shape is still a shape rather than a gap. */
+.gauge-track {
+  fill: var(--card);
+}
+
+.gauge-fill {
+  fill: var(--accent);
+  /* The level only ever changes on a tick or a reload, so this animates the
+     one moment worth animating — the shape filling as you tick it off. */
+  transition: y 240ms ease, height 240ms ease;
+}
+
+.gauge-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+/*
+ * An emoji cannot be clipped by an SVG path, so it is drawn twice and the top
+ * copy is revealed by a wrapper with a height and `overflow: hidden`.
+ */
+.gauge-emoji {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  line-height: 1;
+}
+
+.gauge-emoji-empty {
+  position: absolute;
+  inset: 0;
+  /* Drained, not gone: the outline of the picture stays readable so an empty
+     gauge still says which habit it belongs to. */
+  filter: grayscale(1);
+  opacity: 0.28;
+}
+
+.gauge-emoji-full {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  transition: height 240ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge-fill,
+  .gauge-emoji-full {
+    transition: none;
+  }
+}
+
+/* The gauge is the button, so the button gets out of its way. */
+.check.gauge-button {
+  background: none;
+  border: none;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}

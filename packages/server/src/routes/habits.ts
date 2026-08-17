@@ -1,6 +1,17 @@
 import { and, asc, desc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { createHabitSchema, reorderSchema, updateHabitSchema, type Cadence } from '@everything/shared';
+import {
+  GAUGE_FULL,
+  createHabitSchema,
+  gaugeAfterFill,
+  gaugeAfterUndo,
+  gaugeEmptyInMs,
+  gaugeLevelAt,
+  habitWantsDoing,
+  reorderSchema,
+  updateHabitSchema,
+  type Cadence,
+} from '@everything/shared';
 import { db } from '../db/client.js';
 import { habitEntries, habits } from '../db/schema.js';
 
@@ -49,6 +60,7 @@ function normalisePush(body: { pushToPhone?: boolean | null }) {
 
 export async function habitRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/habits', async () => {
+    const now = Date.now();
     const all = await db
       .select()
       .from(habits)
@@ -62,12 +74,48 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
           .from(habitEntries)
           .where(and(eq(habitEntries.habitId, habit.id), eq(habitEntries.periodKey, key)));
         const done = entries.reduce((sum, e) => sum + e.count, 0);
+
+        /*
+         * The last tick *ever*, not the last one this period. `interval` mode
+         * spans periods by definition — "every four days" has nothing to do
+         * with a day or a week — so reading it out of the period's entries
+         * would reset the timer at midnight and make a four-day habit due
+         * every morning.
+         */
+        const [lastEntry] = await db
+          .select({ doneAt: habitEntries.doneAt })
+          .from(habitEntries)
+          .where(eq(habitEntries.habitId, habit.id))
+          .orderBy(desc(habitEntries.doneAt))
+          .limit(1);
+        const lastDoneAt = lastEntry?.doneAt ?? null;
+
         return {
           ...habit,
           voicePhrases: parsePhrases(habit.voicePhrases),
           periodKey: key,
           doneThisPeriod: done,
-          met: done >= habit.targetPerPeriod,
+          lastDoneAt,
+          /*
+           * The live gauge level, computed here rather than left to the PWA.
+           *
+           * The browser could do the arithmetic — it is one subtraction — but
+           * then the level would depend on the *device's* clock, and a phone a
+           * few minutes out would show a different gauge from the PC. The whole
+           * reason settings live server-side is that two screens disagreeing
+           * reads as the app being broken.
+           */
+          gaugeNow: Math.round(gaugeLevelAt(habit, now)),
+          gaugeEmptyInMs: gaugeEmptyInMs(habit, now),
+          /*
+           * **`met` means "nothing wanted right now", across all three modes.**
+           * Every screen already keys off it — the Dashboard's "habits left",
+           * the settling animation, the Finished-today section — so widening
+           * the word rather than adding a second one is what keeps a gauge
+           * behaving like a habit everywhere without those screens learning
+           * what a gauge is.
+           */
+          met: !habitWantsDoing(habit, { doneThisPeriod: done, lastDoneAt }, now),
         };
       })
     );
@@ -92,6 +140,11 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
         active: body.active ? 1 : 0,
         sortOrder: body.sortOrder ?? nextOrder,
         voicePhrases: JSON.stringify(body.voicePhrases),
+        // A new gauge starts full, from now. Without the anchor it would inherit
+        // the column default of 0 — the epoch — and compute as empty the instant
+        // it was created, which looks exactly like a broken feature.
+        gaugeLevel: GAUGE_FULL,
+        gaugeLevelAt: Date.now(),
       })
       .returning();
     return reply.code(201).send({ ...created, voicePhrases: parsePhrases(created.voicePhrases) });
@@ -103,6 +156,24 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
     // JSON text but the schema is an array, and leaving both in scope makes the
     // written type `string | string[]`.
     const { voicePhrases, active, pushToPhone, ...body } = updateHabitSchema.parse(request.body);
+
+    const [before] = await db.select().from(habits).where(eq(habits.id, id));
+    if (!before) return reply.code(404).send({ error: 'no such habit' });
+
+    /*
+     * Turning a habit into a gauge starts it full, from now.
+     *
+     * A habit that has been `target` mode for a year has never had an anchor
+     * written, so its `gauge_level_at` is the migration's 0 — the epoch — and it
+     * would compute as bone empty the moment you switched modes. Nudging you
+     * about a habit within a second of configuring it is the worst possible
+     * first impression of the mode.
+     *
+     * Only on the *transition*, so editing the drain rate of a gauge that is
+     * already half empty does not secretly refill it.
+     */
+    const becomingGauge = body.mode === 'gauge' && before.mode !== 'gauge';
+
     const [updated] = await db
       .update(habits)
       .set({
@@ -110,6 +181,7 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
         ...normalisePush({ pushToPhone }),
         ...(active === undefined ? {} : { active: active ? 1 : 0 }),
         ...(voicePhrases === undefined ? {} : { voicePhrases: JSON.stringify(voicePhrases) }),
+        ...(becomingGauge ? { gaugeLevel: GAUGE_FULL, gaugeLevelAt: Date.now() } : {}),
       })
       .where(eq(habits.id, id))
       .returning();
@@ -143,14 +215,33 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
       .insert(habitEntries)
       .values({ habitId: id, periodKey: periodKeyFor(habit.cadence as Cadence) })
       .returning();
+
+    /*
+     * An entry is recorded in every mode — that is the history, and `interval`
+     * mode reads it to know when you last did the thing. A gauge *additionally*
+     * moves its anchor, because the level is not derivable from the entries: two
+     * ticks an hour apart leave a different level than two a week apart.
+     */
+    if (habit.mode === 'gauge') {
+      await db.update(habits).set(gaugeAfterFill(habit)).where(eq(habits.id, id));
+    }
+
     return reply.code(201).send(entry);
   });
 
   /**
-   * Undo one completion in the current period.
+   * Undo one completion.
    *
    * Removes the most recent entry rather than zeroing the count, so a habit
    * with a target of 3 goes 3 -> 2 and a mis-tap costs one tap to fix.
+   *
+   * **A gauge is not gated on there being an entry in this period, and that is
+   * the whole difference.** For a counted habit "nothing to undo" is a true
+   * statement about today; for a gauge the level *is* the state, and it was very
+   * likely last filled yesterday. Returning early left the − button working
+   * exactly once and then silently doing nothing, which is indistinguishable
+   * from a broken button — found by pressing it three times and watching the
+   * level stop at 75%.
    */
   app.post('/api/habits/:id/uncheck', async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -165,10 +256,18 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
       .orderBy(desc(habitEntries.doneAt))
       .limit(1);
 
-    if (!latest) return { removed: 0 };
+    // Removed when there is one to remove, in every mode: the entry log is the
+    // history and a mis-tap should not stay in it.
+    if (latest) await db.delete(habitEntries).where(eq(habitEntries.id, latest.id));
 
-    await db.delete(habitEntries).where(eq(habitEntries.id, latest.id));
-    return { removed: 1 };
+    if (habit.mode === 'gauge') {
+      // See `gaugeAfterUndo`: not a true inverse where the fill had clamped, and
+      // deliberately not made into one.
+      await db.update(habits).set(gaugeAfterUndo(habit)).where(eq(habits.id, id));
+      return { removed: latest ? 1 : 0, gaugeAdjusted: true };
+    }
+
+    return { removed: latest ? 1 : 0 };
   });
 
   app.get('/api/habits/:id/entries', async (request) => {

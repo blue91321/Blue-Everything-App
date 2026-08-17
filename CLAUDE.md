@@ -1177,6 +1177,107 @@ Windows' DND is live state, so the server keeps the agent's last report in
 memory (`currentWindowsDnd`) rather than deriving it from the sample log —
 samples are coalesced and couldn't answer "is it on right now" anyway.
 
+### Three kinds of habit, differing in one question
+
+`habits.mode` is `target`, `interval` or `gauge`, and they differ in **when does
+this want doing** and nothing else. Entries, reminders, voice phrases, push
+choices and the nudge queue are identical across all three, which is why this is
+a column rather than three tables — and why adding a fourth mode means answering
+that one question again and nothing more.
+
+| mode | wants doing when | nag spacing |
+| --- | --- | --- |
+| `target` | done this period < target | `reminderEveryMinutes`, null to never interrupt |
+| `interval` | `intervalMinutes` since the last tick | `reminderEveryMinutes` ?? `intervalMinutes` |
+| `gauge` | the level has drained to empty | `reminderEveryMinutes`, null to never interrupt |
+
+`habitWantsDoing()` in `shared` is the one place that table lives, so the sweep,
+the API and the screens cannot disagree — the same role `resolvePush` and
+`quietReason` play for their own decisions. `freshenForDelivery` calls it too,
+which is what stops a nudge raised an hour ago being delivered about a gauge you
+topped up during the match.
+
+**`interval` falls back to its own interval for nag spacing**, so "water the
+plants every four days" is one number rather than two. Setting both is for the
+case that genuinely wants them: due every four days, and once it *is* due, say so
+every couple of hours. That fallback is also why the sweep now selects every
+active habit rather than filtering on `reminder_every_minutes IS NOT NULL` — that
+filter would have made the one mode it exists for permanently silent.
+
+**`met` was widened rather than joined by a second field.** It now means "nothing
+wanted right now" in every mode. Every screen already keys off it — habits left,
+the settling animation, Finished today — so widening the word is what lets a
+gauge behave like a habit everywhere without those screens learning what a gauge
+is.
+
+### The gauge stores a level, and that is the whole design
+
+Two columns: `gauge_level` and `gauge_level_at` — a level, and the moment that
+level was true. Everything in between is computed by `gaugeLevelAt()` in
+`shared`. **Nothing runs on a timer**, which this project demands of anything
+that would otherwise tick, and the database is written once per action rather
+than once per minute.
+
+The obvious alternative is deriving the level from the last tick — full minus
+the time since you last did it — and it cannot express the two things a gauge is
+*for*: one topped up twice in a morning, and one neglected for a fortnight and
+then filled halfway. Both have the same last tick and different levels.
+
+- **Filling tops up from the current level rather than jumping to full**, which
+  is what makes a partial fill mean anything: at 25% a tick, four glasses of
+  water refill it from empty.
+- **Undo is not a true inverse and cannot be.** Filling clamps at 100, so a tick
+  that would have taken it to 130 loses the overflow and there is nothing left
+  to give back. Storing the overflow would mean a level that reads 100 and
+  secretly holds 130, which is a worse lie than an imperfect undo.
+- **A backwards clock must not refill it.** A resumed laptop or a corrected
+  timezone gives a negative elapsed time, and draining by a negative amount
+  fills. Clamped at the stored level.
+- **The level is resolved on the server**, not in the browser, though it is one
+  subtraction. In the browser it would depend on the *device's* clock, and a
+  phone a few minutes out would draw a different gauge from the PC — which is
+  the same reason the theme is stored server-side.
+- **Switching a habit into gauge mode re-anchors it.** A habit that has been
+  `target` for a year has never had an anchor written, so its `gauge_level_at`
+  is the migration's 0 — the epoch — and it would compute as bone empty the
+  instant you changed modes. Only on the transition, so editing the drain rate
+  of a half-empty gauge does not secretly refill it.
+
+**Undo on a gauge is not gated on there being an entry in this period**, and
+that was a real bug rather than a hypothetical. For a counted habit "nothing to
+undo" is a true statement about today; for a gauge the level *is* the state and
+it was very likely last filled yesterday. The early return left the − button
+working exactly once and then silently doing nothing — found by pressing it
+three times and watching the level stop at 75%. The Habits screen's stepper had
+the matching bug: it disabled − on `doneThisPeriod` and showed the number of
+top-ups today where the level belonged.
+
+### Drawn, not a progress bar
+
+`Gauge.tsx` renders four shapes as SVG with the fill clipped to the path, so a
+triangle empties to a point and a circle to a lens. A bar would have been three
+lines of CSS; the reason for a shape is that it is read *without* being looked
+at, which is the same argument the whole app runs on.
+
+**Any emoji works too**, which is how "a picture that empties" is satisfied
+without an upload route and a file per habit — the same decision the overlay
+avatar made, and the same reasoning that has the app icons generated rather than
+committed. An emoji cannot be clipped by an SVG path, so it is drawn twice: once
+greyed as the empty part, once inside a wrapper with a height and
+`overflow: hidden` on top. `gauge_shape` is therefore **opaque** — validated for
+length, not against the list of four — and anything unrecognised is drawn as
+text.
+
+The gauge follows `var(--accent)`, unlike the presence dots which deliberately
+do not. Nothing is learned about a gauge's colour, whereas green meaning online
+is learned from every other chat client on the machine.
+
+**The gauge is the button.** A tick box beside it would raise the question of
+what the tick did that the shape did not, and the answer would be "nothing" —
+topping it up is the only thing you can do to a gauge. It is never struck
+through either: struck means finished, and a full gauge is already draining
+again.
+
 ### Recurring habit reminders expire — they never stack
 
 A habit can carry `reminderEveryMinutes` ("drink water, every 2 hours"). The

@@ -168,12 +168,41 @@ export interface TaskInput {
   pushToPhone?: boolean | null;
 }
 
+/**
+ * How a habit decides it wants doing. Mirrors `habitModes` in shared, which this
+ * package cannot import.
+ *
+ *   - `target`   N times a day or week.
+ *   - `interval` due again a fixed time after the last time you did it.
+ *   - `gauge`    a level that drains, topped up by doing the thing.
+ */
+export type HabitMode = 'target' | 'interval' | 'gauge';
+
 export interface Habit {
   id: string;
   name: string;
   notes: string | null;
+  /** Optional: a server older than the column sends nothing, and that is target. */
+  mode?: HabitMode;
   cadence: 'daily' | 'weekly';
   targetPerPeriod: number;
+  /** `interval` mode: due again this long after the last tick. */
+  intervalMinutes?: number | null;
+  /** `gauge` mode: the stored anchor, which the server also resolves for us. */
+  gaugeDrainPerDay?: number;
+  gaugeFillPercent?: number;
+  /** A shape name or an emoji — opaque, so an unknown value is drawn as text. */
+  gaugeShape?: string;
+  /**
+   * The gauge right now, 0–100, computed **on the server**.
+   *
+   * Not worked out here, though it is one subtraction: doing it in the browser
+   * would make the level depend on the device's clock, and a phone a few minutes
+   * out would draw a different gauge from the PC.
+   */
+  gaugeNow?: number;
+  /** How long until it empties, in ms. Null if it never will. */
+  gaugeEmptyInMs?: number | null;
   active: number;
   sortOrder: number;
   reminderEveryMinutes: number | null;
@@ -185,6 +214,15 @@ export interface Habit {
   voicePhrases: string[];
   periodKey: string;
   doneThisPeriod: number;
+  /** The last tick ever, not just this period. Null if never done. */
+  lastDoneAt?: number | null;
+  /**
+   * Nothing wanted right now — across all three modes, not just "target met".
+   *
+   * Widened rather than joined by a second field, so every screen that already
+   * keys off it — habits left, the settling animation, Finished today — treats a
+   * gauge like a habit without learning what a gauge is.
+   */
   met: boolean;
 }
 
@@ -814,14 +852,23 @@ export const api = {
 
   habits: {
     list: () => request<Habit[]>('/api/habits'),
-    create: (payload: { name: string; cadence?: 'daily' | 'weekly'; targetPerPeriod?: number }) =>
-      post<Habit>('/api/habits', payload),
+    create: (payload: {
+      name: string;
+      mode?: HabitMode;
+      cadence?: 'daily' | 'weekly';
+      targetPerPeriod?: number;
+    }) => post<Habit>('/api/habits', payload),
     update: (
       id: string,
       payload: {
         name?: string;
+        mode?: HabitMode;
         cadence?: 'daily' | 'weekly';
         targetPerPeriod?: number;
+        intervalMinutes?: number | null;
+        gaugeDrainPerDay?: number;
+        gaugeFillPercent?: number;
+        gaugeShape?: string;
         active?: boolean;
         reminderEveryMinutes?: number | null;
         reminderStartMinute?: number | null;

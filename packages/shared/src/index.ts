@@ -99,14 +99,201 @@ export const cadences = ['daily', 'weekly'] as const;
 export const cadenceSchema = z.enum(cadences);
 export type Cadence = z.infer<typeof cadenceSchema>;
 
+/**
+ * The three shapes a habit can take.
+ *
+ * They differ in one question and one only — **when does this habit want
+ * doing?** Everything else about a habit is shared: entries are recorded the
+ * same way, reminders are spaced the same way, and the nudge engine holds and
+ * releases them identically. Adding a fourth mode means answering that one
+ * question again and nothing else.
+ *
+ *   - `target`   N times per day or week. The original, and still the default.
+ *   - `interval` no target at all — due again a fixed time after you last did
+ *                it. "Water the plants, every four days" is not three-a-week and
+ *                pretending it is makes the count meaningless.
+ *   - `gauge`    a level that drains and is topped up by doing the thing. The
+ *                same information as `interval` really, drawn rather than
+ *                counted — which turns out to matter, because a shape that is
+ *                visibly half empty is read at a glance where "last done 2 days
+ *                ago" has to be worked out.
+ */
+export const habitModes = ['target', 'interval', 'gauge'] as const;
+export const habitModeSchema = z.enum(habitModes);
+export type HabitMode = (typeof habitModes)[number];
+
+/**
+ * What the gauge is drawn as.
+ *
+ * Four shapes, or **any emoji**, which is the same decision the overlay avatar
+ * made and for the same reason: Windows and every browser here draw emoji in
+ * colour, so a gallery of pictures costs no checked-in binaries and no upload
+ * route. "A picture that empties" is satisfied by 🪴 or 💧 far more cheaply
+ * than by a file per habit.
+ *
+ * Anything that is not one of the four names is treated as the emoji to draw,
+ * so this is validated for *length* rather than against a list — the same
+ * opaque-value reasoning as `settings.dashboard_panel`.
+ */
+export const gaugeShapes = ['circle', 'square', 'triangle', 'bar'] as const;
+export type GaugeShape = (typeof gaugeShapes)[number] | string;
+
+/** A gauge is full at 100 and wants doing at 0. Percent, so the maths reads. */
+export const GAUGE_FULL = 100;
+
+/**
+ * Where a draining gauge is *right now*.
+ *
+ * **The level is stored, not derived from the last tick**, and the difference is
+ * the whole reason for the two columns. Deriving it — `full minus time since you
+ * last did it` — cannot express a gauge you topped up twice in a morning, and
+ * cannot express one you neglected for a fortnight and then filled halfway. Both
+ * are things people actually do, and both are the state a gauge is *for*.
+ *
+ * What is stored is an anchor: a level, and the moment that level was true.
+ * Everything between anchors is computed here. So nothing runs on a timer —
+ * which this project requires of anything that would otherwise tick — and the
+ * database is written once per action rather than once per minute.
+ */
+export function gaugeLevelAt(
+  habit: { gaugeLevel: number; gaugeLevelAt: number; gaugeDrainPerDay: number },
+  now = Date.now()
+): number {
+  const days = (now - habit.gaugeLevelAt) / 86_400_000;
+  // A negative elapsed time means the clock moved backwards — a resumed laptop,
+  // a corrected timezone. Draining by a negative amount would *fill* the gauge,
+  // so it is clamped to the stored level rather than trusted.
+  const drained = habit.gaugeLevel - habit.gaugeDrainPerDay * Math.max(0, days);
+  return Math.max(0, Math.min(GAUGE_FULL, drained));
+}
+
+/**
+ * The new anchor after doing the thing once.
+ *
+ * Topping up from the *current* level rather than jumping to full is what makes
+ * a partial fill mean anything: a gauge set to fill 25% per tick takes four
+ * glasses of water to refill from empty, which is the point of that setting.
+ */
+export function gaugeAfterFill(
+  habit: { gaugeLevel: number; gaugeLevelAt: number; gaugeDrainPerDay: number; gaugeFillPercent: number },
+  now = Date.now()
+): { gaugeLevel: number; gaugeLevelAt: number } {
+  const level = Math.min(GAUGE_FULL, gaugeLevelAt(habit, now) + habit.gaugeFillPercent);
+  return { gaugeLevel: level, gaugeLevelAt: now };
+}
+
+/**
+ * And undoing one.
+ *
+ * **Not a true inverse, and it cannot be.** Filling clamps at 100, so a tick
+ * that would have taken a gauge to 130 loses the overflow, and there is nothing
+ * left to give back. This subtracts the fill amount from wherever the gauge is
+ * now, which is right in every case except the one that had already clamped —
+ * where it leaves the gauge lower than it was before the tick it is undoing.
+ * Storing the overflow to make undo exact would mean a level that reads 100 and
+ * secretly holds 130, which is a worse lie than an imperfect undo.
+ */
+export function gaugeAfterUndo(
+  habit: { gaugeLevel: number; gaugeLevelAt: number; gaugeDrainPerDay: number; gaugeFillPercent: number },
+  now = Date.now()
+): { gaugeLevel: number; gaugeLevelAt: number } {
+  const level = Math.max(0, gaugeLevelAt(habit, now) - habit.gaugeFillPercent);
+  return { gaugeLevel: level, gaugeLevelAt: now };
+}
+
+/**
+ * How long until a draining gauge is empty, in ms. Null if it never will be.
+ *
+ * Used for the "empty in about 6 hours" line rather than for anything the nudge
+ * engine decides — the engine asks whether it is empty *now*, on the sweep it
+ * already runs, rather than scheduling anything against this.
+ */
+export function gaugeEmptyInMs(
+  habit: { gaugeLevel: number; gaugeLevelAt: number; gaugeDrainPerDay: number },
+  now = Date.now()
+): number | null {
+  if (habit.gaugeDrainPerDay <= 0) return null;
+  const level = gaugeLevelAt(habit, now);
+  if (level <= 0) return 0;
+  return (level / habit.gaugeDrainPerDay) * 86_400_000;
+}
+
+/**
+ * Does this habit want doing right now?
+ *
+ * The one question the three modes answer differently, in one place, so the
+ * sweep, the API and the screens cannot disagree — the same role `resolvePush`
+ * and `quietReason` play for their own decisions.
+ */
+export function habitWantsDoing(
+  habit: {
+    mode: string;
+    targetPerPeriod: number;
+    intervalMinutes: number | null;
+    gaugeLevel: number;
+    gaugeLevelAt: number;
+    gaugeDrainPerDay: number;
+  },
+  context: { doneThisPeriod: number; lastDoneAt: number | null },
+  now = Date.now()
+): boolean {
+  if (habit.mode === 'gauge') return gaugeLevelAt(habit, now) <= 0;
+
+  if (habit.mode === 'interval') {
+    // No interval set is a half-configured habit, not a habit that is always
+    // due. Always-due would nag forever on something nobody finished setting up.
+    if (!habit.intervalMinutes || habit.intervalMinutes <= 0) return false;
+    // Never done is due now — that is the first reminder, and it is the one that
+    // gets the habit started.
+    if (context.lastDoneAt === null) return true;
+    return now - context.lastDoneAt >= habit.intervalMinutes * 60_000;
+  }
+
+  return context.doneThisPeriod < habit.targetPerPeriod;
+}
+
+/**
+ * How often to nag while it wants doing.
+ *
+ * `interval` falls back to its own interval, so the ordinary case — "remind me
+ * every four days" — is one number rather than two. Setting both is for the case
+ * that genuinely needs them: due every four days, and once it *is* due, say so
+ * every couple of hours until it is done.
+ *
+ * Null means never interrupt, which stays the default for every mode: a habit
+ * you have not asked to be reminded about should appear in a list and nothing
+ * more.
+ */
+export function habitNagMinutes(habit: {
+  mode: string;
+  reminderEveryMinutes: number | null;
+  intervalMinutes: number | null;
+}): number | null {
+  if (habit.reminderEveryMinutes) return habit.reminderEveryMinutes;
+  if (habit.mode === 'interval' && habit.intervalMinutes) return habit.intervalMinutes;
+  return null;
+}
+
 export const createHabitSchema = z.object({
   name: z.string().min(1).max(200),
   notes: z.string().max(20_000).nullish(),
+  mode: habitModeSchema.default('target'),
   cadence: cadenceSchema.default('daily'),
   targetPerPeriod: z.number().int().positive().default(1),
+  /** `interval` mode: due again this long after the last time you did it. */
+  intervalMinutes: z.number().int().min(5).max(365 * 24 * 60).nullish(),
+  /** `gauge` mode: how much of the gauge drains away in a day. */
+  gaugeDrainPerDay: z.number().int().min(1).max(1000).default(100),
+  /** `gauge` mode: how much one tick puts back. */
+  gaugeFillPercent: z.number().int().min(1).max(100).default(100),
+  /**
+   * One of `gaugeShapes`, or an emoji. Not validated against the list — see the
+   * note there; an unknown value is drawn as whatever it is.
+   */
+  gaugeShape: z.string().min(1).max(16).default('circle'),
   active: z.boolean().default(true),
   sortOrder: z.number().int().optional(),
-  /** Nag every N minutes until the target is met; null to never interrupt. */
+  /** Nag every N minutes while it wants doing; null to never interrupt. */
   reminderEveryMinutes: z.number().int().min(5).max(24 * 60).nullish(),
   /**
    * Minutes since local midnight before reminders may start. Null means as

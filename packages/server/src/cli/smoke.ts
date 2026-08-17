@@ -555,6 +555,185 @@ console.log('\nper-item phone push');
   resetPushPort();
 }
 
+/* ------------------------------------------------------------------ */
+
+console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
+
+{
+  const { gaugeAfterFill, gaugeAfterUndo, gaugeLevelAt, habitWantsDoing } = await import(
+    '@everything/shared'
+  );
+  const { db } = await import('../db/client.js');
+  const { habits: habitTable } = await import('../db/schema.js');
+  const { eq } = await import('drizzle-orm');
+
+  const DAY = 86_400_000;
+  const t0 = Date.parse('2026-08-16T09:00:00Z');
+
+  /* ---- the maths, before anything touches a database ---- */
+
+  const half = { gaugeLevel: 100, gaugeLevelAt: t0, gaugeDrainPerDay: 50, gaugeFillPercent: 25 };
+  check('a gauge starts where it was stored', gaugeLevelAt(half, t0) === 100);
+  check('and drains at its own rate', gaugeLevelAt(half, t0 + DAY) === 50, String(gaugeLevelAt(half, t0 + DAY)));
+  check('never below empty', gaugeLevelAt(half, t0 + 10 * DAY) === 0);
+
+  /*
+   * **The reason the level is stored rather than derived.** Two ticks an hour
+   * apart must leave it fuller than one — which a "time since the last tick"
+   * gauge cannot express, because both have the same last tick.
+   */
+  const once = gaugeAfterFill(half, t0 + DAY);
+  const twice = gaugeAfterFill({ ...half, ...once }, t0 + DAY);
+  check('one top-up adds the fill amount', once.gaugeLevel === 75, String(once.gaugeLevel));
+  check('and a second one stacks on it', twice.gaugeLevel === 100, String(twice.gaugeLevel));
+
+  check(
+    'a full gauge does not overflow',
+    gaugeAfterFill({ ...half, gaugeLevel: 100, gaugeFillPercent: 60 }, t0).gaugeLevel === 100
+  );
+  check('undoing takes the fill back off', gaugeAfterUndo({ ...half, ...once }, t0 + DAY).gaugeLevel === 50);
+
+  /*
+   * A clock that goes backwards — a resumed laptop, a corrected timezone —
+   * must not *fill* the gauge by draining a negative number of days.
+   */
+  check('a backwards clock does not refill it', gaugeLevelAt(half, t0 - DAY) === 100);
+
+  /* ---- which mode wants doing when ---- */
+
+  const base = { targetPerPeriod: 3, intervalMinutes: null, gaugeLevel: 0, gaugeLevelAt: t0, gaugeDrainPerDay: 100 };
+  check(
+    'a target habit wants doing until the target is met',
+    habitWantsDoing({ ...base, mode: 'target' }, { doneThisPeriod: 2, lastDoneAt: t0 }, t0) &&
+      !habitWantsDoing({ ...base, mode: 'target' }, { doneThisPeriod: 3, lastDoneAt: t0 }, t0)
+  );
+  check(
+    'an interval habit waits out its interval',
+    !habitWantsDoing(
+      { ...base, mode: 'interval', intervalMinutes: 60 },
+      { doneThisPeriod: 0, lastDoneAt: t0 },
+      t0 + 30 * 60_000
+    ) &&
+      habitWantsDoing(
+        { ...base, mode: 'interval', intervalMinutes: 60 },
+        { doneThisPeriod: 0, lastDoneAt: t0 },
+        t0 + 61 * 60_000
+      )
+  );
+  check(
+    'one never done is due immediately',
+    habitWantsDoing({ ...base, mode: 'interval', intervalMinutes: 60 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+  /*
+   * A half-configured habit is not an always-due one. Reading a missing
+   * interval as "due now" would nag forever about something nobody finished
+   * setting up.
+   */
+  check(
+    'and one with no interval set never is',
+    !habitWantsDoing({ ...base, mode: 'interval' }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+  check(
+    'a gauge wants doing only when it is empty',
+    habitWantsDoing({ ...base, mode: 'gauge', gaugeLevel: 0 }, { doneThisPeriod: 0, lastDoneAt: null }, t0) &&
+      !habitWantsDoing({ ...base, mode: 'gauge', gaugeLevel: 100 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+
+  /* ---- and now through the real API ---- */
+
+  const madeGauge = await post('/api/habits', { name: 'Water the plant', mode: 'gauge' });
+  check('a gauge habit is created', madeGauge.statusCode === 201);
+  const gaugeId = madeGauge.json().id;
+
+  await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${gaugeId}`,
+    payload: { gaugeDrainPerDay: 50, gaugeFillPercent: 25 },
+  });
+
+  const listOf = async (id: string) =>
+    (await app.inject({ method: 'GET', url: '/api/habits' })).json().find((h: { id: string }) => h.id === id);
+
+  check('it starts full', (await listOf(gaugeId)).gaugeNow === 100);
+
+  // Wind the anchor back a day and a half rather than waiting for one. The read
+  // path is what is under test, and it is the arithmetic that has to be right.
+  await db
+    .update(habitTable)
+    .set({ gaugeLevelAt: Date.now() - 1.5 * DAY })
+    .where(eq(habitTable.id, gaugeId));
+
+  const drained = await listOf(gaugeId);
+  check('and drains as time passes', drained.gaugeNow === 25, `got ${drained.gaugeNow}`);
+  check('and says when it will be empty', Math.round(drained.gaugeEmptyInMs / 3_600_000) === 12, String(drained.gaugeEmptyInMs));
+  check('and is not "met" while it still has something in it', drained.met === true);
+
+  await post(`/api/habits/${gaugeId}/check`);
+  const topped = await listOf(gaugeId);
+  check('ticking it off tops it up rather than jumping to full', topped.gaugeNow === 50, `got ${topped.gaugeNow}`);
+
+  await post(`/api/habits/${gaugeId}/check`);
+  check('and a second tick stacks', (await listOf(gaugeId)).gaugeNow === 75);
+
+  await post(`/api/habits/${gaugeId}/uncheck`);
+  check('undoing one takes it back off', (await listOf(gaugeId)).gaugeNow === 50);
+
+  /*
+   * **And it keeps working once the period's entries are used up.** Undo
+   * originally returned early on "no entry today", which is a true statement
+   * about a counted habit and a wrong one about a gauge — the level is the
+   * state and it was very likely last filled yesterday. The symptom was a −
+   * button that worked exactly once and then silently did nothing, found by
+   * pressing it three times and watching the level stop.
+   */
+  await post(`/api/habits/${gaugeId}/uncheck`);
+  await post(`/api/habits/${gaugeId}/uncheck`);
+  check(
+    'and keeps working with no entry left in this period',
+    (await listOf(gaugeId)).gaugeNow === 0,
+    `got ${(await listOf(gaugeId)).gaugeNow}`
+  );
+  check('an empty gauge is what wants doing', (await listOf(gaugeId)).met === false);
+
+  /* ---- an interval habit reaches the queue, and only when it is due ---- */
+
+  const madeInterval = await post('/api/habits', { name: 'Change the filter', mode: 'interval' });
+  const intervalId = madeInterval.json().id;
+  await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${intervalId}`,
+    // No `reminderEveryMinutes`: the whole point is that "every 6 hours" is one
+    // number, not two. `habitNagMinutes` falls back to the interval.
+    payload: { intervalMinutes: 6 * 60 },
+  });
+
+  const { sweepHabitReminders } = await import('../nudge-engine.js');
+  await sweepHabitReminders(Date.now());
+
+  const queuedNow = (await app.inject({ method: 'GET', url: '/api/nudges/queue' })).json();
+  check(
+    'a never-done interval habit reaches the queue',
+    queuedNow.some((n: { title: string }) => n.title === 'Change the filter'),
+    queuedNow.map((n: { title: string }) => n.title).join(', ')
+  );
+  check(
+    'and its line says so rather than counting to a target it does not have',
+    queuedNow.find((n: { title: string }) => n.title === 'Change the filter')?.body === 'not done yet',
+    queuedNow.find((n: { title: string }) => n.title === 'Change the filter')?.body
+  );
+
+  /*
+   * A gauge with no reminder interval is purely something to look at. Nagging
+   * about one nobody asked to be nagged about would make the mode unusable as
+   * decoration, which is a legitimate way to use it.
+   */
+  check(
+    'a gauge with no reminder set stays out of the queue',
+    !queuedNow.some((n: { title: string }) => n.title === 'Water the plant'),
+    queuedNow.map((n: { title: string }) => n.title).join(', ')
+  );
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);
