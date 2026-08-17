@@ -1289,6 +1289,39 @@ about a target it does not have; it now says "Drink water — 56% full".
 
 A spoken count fills that many times, so "I drank two waters" is two ticks.
 
+### "To max" fills it, without you knowing the number
+
+`spokenAmount()` reads `max`, `maximum` or `full` out of a transcript, the way
+`spokenCount` reads "two". It exists because **for a gauge you rarely know the
+number**: six glasses refills a 16%-a-glass gauge from empty and four does it
+from a third, and working that out in your head is exactly the arithmetic saying
+it aloud is meant to avoid.
+
+`ticksFor()` turns it into a count, and it is a different one per mode — which
+is why the *habit* resolves it and not the caller:
+
+| mode | "to max" is |
+| --- | --- |
+| `gauge` | however many top-ups reach full from where it is now |
+| `target` | whatever is left of the target |
+| `interval` | one — there is no more done than done |
+
+Never zero. A full gauge asked to max still records a tick, because a command
+that answers "done" having written nothing is indistinguishable from one that
+failed.
+
+The three words go in `ALWAYS_IN_VOCABULARY`, on the same bargain the counting
+words struck: a closed grammar can only emit what it contains, so without them
+"drink water to max" comes back with the "max" replaced by whatever sounded
+nearest — reading for a word the recogniser was never allowed to say. They are
+kept to three for the opposite reason: each one is another thing an unrelated
+noise can become. **"all the way" was the obvious fourth and is not here**, since
+it would put "all" and "way" permanently into the vocabulary to save two
+characters over "max".
+
+In a chain, the amount is read from the *segment* rather than the sentence, so
+"water to max and one coffee" maxes only the first.
+
 ### It asks before it is empty, and says when it will
 
 `gauge_remind_at` is the level at which it starts asking. **0 is the default and

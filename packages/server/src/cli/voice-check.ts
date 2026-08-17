@@ -13,7 +13,9 @@
 import {
   ALWAYS_IN_VOCABULARY,
   cosineSimilarity,
+  spokenAmount,
   spokenVariants,
+  ticksFor,
   matchVoiceCommand,
   matchVoiceCommandLoosely,
   matchesWakeWord,
@@ -147,6 +149,47 @@ for (const [stored, said] of [
 ] as const) {
   check(`saying "${said}" reaches a stored "${stored}"`, voiceTokens(said), voiceTokens(stored));
 }
+
+console.log('\nAll the way, without knowing the number');
+
+/*
+ * "to max" exists because for a gauge you rarely know the number: six glasses
+ * refills a 16%-a-glass gauge from empty and four does it from a third, and
+ * working that out in your head is the arithmetic saying it aloud is meant to
+ * avoid.
+ */
+check('"to max" reads as max', spokenAmount('i drank water to max'), 'max');
+check('…as does "to the maximum"', spokenAmount('drink water to the maximum'), 'max');
+check('…and "full"', spokenAmount('fill the water full'), 'max');
+check('a plain number is still a number', spokenAmount('i drank two waters'), 2);
+check('and nothing said is one', spokenAmount('i drank water'), 1);
+// The stronger claim wins: "two waters, actually fill it up" means fill it up.
+check('max outranks a count when both are said', spokenAmount('two waters to max'), 'max');
+
+/*
+ * The grammar has to be able to *emit* them, or this reads for words the
+ * recogniser was never allowed to say — the exact bug the counting words had.
+ */
+check('"max" is in the vocabulary', ALWAYS_IN_VOCABULARY.includes('max'), true);
+check('…and "full"', ALWAYS_IN_VOCABULARY.includes('full'), true);
+
+/* And "max" is a different number in every mode. */
+const gaugeAt = (level: number, fill: number) => ({
+  mode: 'gauge', targetPerPeriod: 1, gaugeLevel: level, gaugeLevelAt: 0, gaugeDrainPerDay: 0, gaugeFillPercent: fill,
+});
+check('max on an empty 25%-a-tick gauge is four', ticksFor(gaugeAt(0, 25), 'max', { doneThisPeriod: 0 }, 0), 4);
+check('…and two from half full', ticksFor(gaugeAt(50, 25), 'max', { doneThisPeriod: 0 }, 0), 2);
+// Never zero: saying it must always *do* something, or a full gauge would
+// answer "done" having recorded nothing at all.
+check('…and one when it is already full', ticksFor(gaugeAt(100, 25), 'max', { doneThisPeriod: 0 }, 0), 1);
+check('an uneven fill rounds up rather than leaving a sliver', ticksFor(gaugeAt(0, 40), 'max', { doneThisPeriod: 0 }, 0), 3);
+
+const target = { ...gaugeAt(0, 100), mode: 'target', targetPerPeriod: 8 };
+check('max on a target habit is whatever is left of it', ticksFor(target, 'max', { doneThisPeriod: 3 }, 0), 5);
+check('…and one when the target is already met', ticksFor(target, 'max', { doneThisPeriod: 8 }, 0), 1);
+// There is no "more done" than done.
+check('max on an interval habit is one', ticksFor({ ...target, mode: 'interval' }, 'max', { doneThisPeriod: 0 }, 0), 1);
+check('a spoken count is passed straight through', ticksFor(gaugeAt(0, 25), 3, { doneThisPeriod: 0 }, 0), 3);
 
 // `spokenCount` reads these out of a transcript, so the grammar has to carry
 // them whatever the phrases are. Without them "I drank two waters" came back as

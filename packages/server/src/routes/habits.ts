@@ -10,9 +10,11 @@ import {
   gaugeLevelAt,
   habitIsFinished,
   habitWantsDoing,
+  ticksFor,
   reorderSchema,
   updateHabitSchema,
   type Cadence,
+  type SpokenAmount,
 } from '@everything/shared';
 import { db } from '../db/client.js';
 import { habitEntries, habits } from '../db/schema.js';
@@ -76,15 +78,27 @@ export interface HabitProgress {
  */
 export async function recordHabitDone(
   habitId: string,
-  count = 1,
+  /**
+   * A number, or `'max'` for "all the way" — which is a different number in
+   * every mode, so it is resolved here where the habit is in hand rather than
+   * by the caller, who would have to fetch the row to work it out.
+   */
+  amount: SpokenAmount = 1,
   now = Date.now()
 ): Promise<HabitProgress | null> {
   const [habit] = await db.select().from(habits).where(eq(habits.id, habitId));
   if (!habit) return null;
 
-  await db
-    .insert(habitEntries)
-    .values({ habitId, periodKey: periodKeyFor(habit.cadence as Cadence, new Date(now)), count });
+  const periodKey = periodKeyFor(habit.cadence as Cadence, new Date(now));
+  const already = await db
+    .select()
+    .from(habitEntries)
+    .where(and(eq(habitEntries.habitId, habitId), eq(habitEntries.periodKey, periodKey)));
+  const count = ticksFor(habit, amount, {
+    doneThisPeriod: already.reduce((sum, e) => sum + e.count, 0),
+  }, now);
+
+  await db.insert(habitEntries).values({ habitId, periodKey, count });
 
   /*
    * The gauge additionally moves its anchor, because the level is not derivable

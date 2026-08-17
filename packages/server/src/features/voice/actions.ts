@@ -22,7 +22,7 @@ import {
   parseHotkey,
   remainderAfterPhrase,
   segmentUtterance,
-  spokenCount,
+  spokenAmount,
   type MediaAction,
   type VoiceCandidate,
   type VoiceCommandKind,
@@ -148,7 +148,7 @@ export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): stri
   const words = new Set<string>();
   for (const word of wakeWord.toLowerCase().split(/\s+/)) if (word) words.add(word);
 
-  // The counting words, always — `spokenCount` reads them and the recogniser
+  // The counting words, always — `spokenAmount` reads them and the recogniser
   // cannot emit what it was never given.
   for (const word of ALWAYS_IN_VOCABULARY) words.add(word);
 
@@ -380,9 +380,10 @@ async function resolveChain(
 
   const steps: VoiceOutcome[] = [];
   for (const { command, phrase, segment } of resolved) {
-    // The *segment*, not the whole sentence, so `spokenCount` reads the number
-    // that belongs to this part — "two waters and one coffee" is 2 then 1, not
-    // 2 twice.
+    // The *segment*, not the whole sentence, so `spokenAmount` reads the number
+    // — or the "max" — that belongs to this part: "two waters and one coffee" is
+    // 2 then 1, not 2 twice, and "water to max and one coffee" maxes only the
+    // first.
     steps.push(await runCommand(command, segment, phrase, wakeWord));
   }
 
@@ -438,7 +439,13 @@ export async function runCommand(
        * The spoken line comes back from there too, because "3 of 8" is a
        * sentence about a target a gauge does not have.
        */
-      const progress = await recordHabitDone(command.target ?? '', spokenCount(text));
+      /*
+       * `spokenAmount`, not `spokenCount`: "to max" is a real thing to say and
+       * is not a number you could know. For a gauge, how many top-ups reach full
+       * depends on where it is now, which is why the habit resolves it rather
+       * than this.
+       */
+      const progress = await recordHabitDone(command.target ?? '', spokenAmount(text));
       if (!progress) return { outcome: 'no-match', text, say: 'That habit has been deleted' };
 
       return {

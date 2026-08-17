@@ -790,6 +790,14 @@ export const ALWAYS_IN_VOCABULARY = [
   'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
   'twice', 'once', 'couple',
   /*
+   * The same bargain as the counting words, for the same reason: `spokenAmount`
+   * reads these, and a closed grammar can only emit what it contains — so
+   * without them "drink water to max" comes back with the "max" replaced by
+   * whatever sounded nearest, and the feature reads for a word the recogniser
+   * was never allowed to say.
+   */
+  'max', 'maximum', 'full',
+  /*
    * `and` earns its place differently from the counting words, and more
    * modestly. Nothing *reads* it — `segmentUtterance` deliberately does not look
    * for the joint, having learned that "water and" comes back as "watering".
@@ -993,6 +1001,74 @@ export function spokenCount(text: string): number {
     if (NUMBER_WORDS[word] !== undefined && word !== 'a' && word !== 'an') return NUMBER_WORDS[word];
   }
   return 1;
+}
+
+/**
+ * Saying "to max" means all the way, however far that is.
+ *
+ * The counterpart to `spokenCount`, and the reason it is a separate word rather
+ * than a number: for a gauge you rarely know the number. Six glasses of water
+ * refills a 16%-a-glass gauge from empty and four does it from a third — you
+ * would have to read the percentage and divide, which is exactly the sort of
+ * arithmetic saying it out loud is meant to avoid.
+ *
+ * Three words, kept few on purpose. Every one of these goes into a *closed*
+ * grammar that must map every noise it hears onto something it contains, so each
+ * addition is one more thing an unrelated sound can become. "all the way" was
+ * the obvious fourth and is not here: it would put "all" and "way" — two of the
+ * commonest words in English — permanently into the vocabulary, to save two
+ * characters over "max".
+ */
+const MAX_WORDS = new Set(['max', 'maximum', 'full']);
+
+/** A count, or `max`. What one utterance asks to be recorded. */
+export type SpokenAmount = number | 'max';
+
+/**
+ * How much was asked for: "two waters" is 2, "water to max" is everything.
+ *
+ * `max` outranks a number when both appear, because it is the stronger claim —
+ * "two waters, actually fill it up" means fill it up.
+ */
+export function spokenAmount(text: string): SpokenAmount {
+  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+  if (words.some((word) => MAX_WORDS.has(word))) return 'max';
+  return spokenCount(text);
+}
+
+/**
+ * Turn that into a number of ticks for a particular habit.
+ *
+ * `max` means "as done as this thing gets", which is a different number in each
+ * mode — and none of them is a constant the caller could have known:
+ *
+ *   - `gauge`    however many top-ups reach full from where it is now.
+ *   - `target`   whatever is left of the target.
+ *   - `interval` one. There is no "more done" than done.
+ */
+export function ticksFor(
+  habit: {
+    mode: string;
+    targetPerPeriod: number;
+    gaugeLevel: number;
+    gaugeLevelAt: number;
+    gaugeDrainPerDay: number;
+    gaugeFillPercent: number;
+  },
+  amount: SpokenAmount,
+  context: { doneThisPeriod: number },
+  now = Date.now()
+): number {
+  if (amount !== 'max') return Math.max(1, amount);
+
+  if (habit.mode === 'gauge') {
+    const missing = GAUGE_FULL - gaugeLevelAt(habit, now);
+    return Math.max(1, Math.ceil(missing / Math.max(1, habit.gaugeFillPercent)));
+  }
+
+  if (habit.mode === 'interval') return 1;
+
+  return Math.max(1, habit.targetPerPeriod - context.doneThisPeriod);
 }
 
 /* ------------------------------------------------------------------ */

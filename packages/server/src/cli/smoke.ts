@@ -867,6 +867,20 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   );
 
   /*
+   * And "to max" fills it the rest of the way, whatever that is — the whole
+   * point being that at 60% with a 20% fill you would otherwise have to notice
+   * it needed exactly two more.
+   */
+  const maxed = await post('/api/voice/command', { text: 'hey everything i sipped water to max', speakerScore: null });
+  check('"to max" fills it the rest of the way', (await listOf(voiceGaugeId)).gaugeNow === 100, `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}%`);
+  check('and says so', maxed.json().say === 'Sip water — 100% full', maxed.json().say);
+  // Saying it must always record something, or a full gauge answers "done"
+  // having done nothing at all.
+  const again = await post('/api/voice/command', { text: 'hey everything i sipped water to max', speakerScore: null });
+  check('saying it again on a full gauge is still an answer', again.json().outcome === 'habit-checked');
+  check('and leaves it full rather than overflowing', (await listOf(voiceGaugeId)).gaugeNow === 100);
+
+  /*
    * A gauge with no reminder interval is purely something to look at. Nagging
    * about one nobody asked to be nagged about would make the mode unusable as
    * decoration, which is a legitimate way to use it.
