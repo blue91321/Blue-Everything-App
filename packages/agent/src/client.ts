@@ -54,6 +54,14 @@ export interface AttentionResponse {
    * default for a setting that is on.
    */
   soundEnabled?: boolean;
+  /**
+   * Which tone each moment gets, by name. Empty or absent means the default.
+   *
+   * Sent as names rather than resolved definitions because the palette lives
+   * here, in the only process that can make a noise — the server storing tone
+   * *shapes* would be a second copy of something that is already arithmetic.
+   */
+  tones?: Partial<Record<string, string>>;
 }
 
 /** Something for the agent to do on the machine you are sitting at. */

@@ -34,6 +34,44 @@ export class Unauthorized extends Error {}
 export class ServerUnreachable extends Error {}
 
 /**
+ * A habit's picture, as something an `<img>` can point at.
+ *
+ * **It cannot be a plain URL.** The picture lives under `/api/`, deliberately —
+ * it is personal in the way the rest of the database is, unlike the icons and
+ * the notification tones, which sit outside that prefix because the browser's
+ * own machinery fetches them and will never send a bearer token. An `<img src>`
+ * will not either, so the bytes are fetched with the token and wrapped in an
+ * object URL.
+ *
+ * Cached by `id:updatedAt`, which the upload route bumps — so a replaced picture
+ * appears immediately and an unchanged one is fetched once per page load rather
+ * than once per render of every list it appears in. Nothing is revoked: there is
+ * one entry per habit per version, a handful at most, and revoking on unmount
+ * would break the next row that wanted the same picture.
+ */
+const habitImages = new Map<string, Promise<string>>();
+
+export function habitImageUrl(id: string, version: number): Promise<string> {
+  const key = `${id}:${version}`;
+  const known = habitImages.get(key);
+  if (known) return known;
+
+  const loading = (async () => {
+    const response = await fetch(`/api/habits/${id}/image`, {
+      headers: { authorization: `Bearer ${getToken()}` },
+    });
+    if (!response.ok) throw new Error(`no picture (${response.status})`);
+    return URL.createObjectURL(await response.blob());
+  })();
+
+  habitImages.set(key, loading);
+  // A failed load must not be remembered, or a picture uploaded a moment later
+  // would never be fetched again.
+  void loading.catch(() => habitImages.delete(key));
+  return loading;
+}
+
+/**
  * GETs for the same URL that are already in flight, so they become one.
  *
  * A single change announcement reaches every `useAsync` on screen at once, and
@@ -144,6 +182,16 @@ export interface Task {
   projectId: string | null;
   createdAt: number;
   completedAt: number | null;
+  /**
+   * Which service this came from, if it was not typed here. An opaque slug.
+   *
+   * A task appearing on the Dashboard that you did not write needs a word
+   * saying who wrote it — "can I delete this, will it come back" is a fair
+   * question and the chip is what answers it.
+   */
+  source: string | null;
+  /** The thing itself, at that service. */
+  sourceUrl: string | null;
 }
 
 /** What the API accepts for a task, as opposed to what a row looks like. */
@@ -158,12 +206,63 @@ export interface TaskInput {
   pushToPhone?: boolean | null;
 }
 
+/**
+ * How a habit decides it wants doing. Mirrors `habitModes` in shared, which this
+ * package cannot import.
+ *
+ *   - `target`   N times a day or week.
+ *   - `interval` due again a fixed time after the last time you did it.
+ *   - `gauge`    a level that drains, topped up by doing the thing.
+ */
+export type HabitMode = 'target' | 'interval' | 'gauge';
+
 export interface Habit {
   id: string;
   name: string;
   notes: string | null;
+  /** Optional: a server older than the column sends nothing, and that is target. */
+  mode?: HabitMode;
   cadence: 'daily' | 'weekly';
   targetPerPeriod: number;
+  /** `interval` mode: due again this long after the last tick. */
+  intervalMinutes?: number | null;
+  /** `gauge` mode: the stored anchor, which the server also resolves for us. */
+  gaugeDrainPerDay?: number;
+  gaugeFillPercent?: number;
+  /**
+   * A shape name, an emoji, or `image` for an uploaded picture.
+   *
+   * Opaque — an unknown value is drawn as text. `image` is a sentinel rather
+   * than a separate `useCustomPicture` flag, because the two are exclusive and a
+   * boolean alongside a shape would allow "custom picture *and* triangle". The
+   * app logo settled the same question the same way.
+   */
+  gaugeShape?: string;
+  /** A picture has been uploaded — not the same as the gauge being set to it. */
+  hasImage?: boolean;
+  /** Bumped when the picture is replaced, which is how its cache is busted. */
+  updatedAt?: number;
+  /**
+   * The gauge right now, 0–100, computed **on the server**.
+   *
+   * Not worked out here, though it is one subtraction: doing it in the browser
+   * would make the level depend on the device's clock, and a phone a few minutes
+   * out would draw a different gauge from the PC.
+   */
+  gaugeNow?: number;
+  /** The level at or below which it starts asking. 0 means "when empty". */
+  gaugeRemindAt?: number;
+  /** How long until it empties, in ms. Null if it never will. */
+  gaugeEmptyInMs?: number | null;
+  /**
+   * How long until it starts *asking* — the number you plan around.
+   *
+   * Sent separately from `gaugeEmptyInMs` rather than derived here, for the same
+   * reason the level is: doing the arithmetic in the browser would make both
+   * countdowns follow the device's clock, and the phone would disagree with the
+   * PC about when you are due.
+   */
+  gaugeRemindInMs?: number | null;
   active: number;
   sortOrder: number;
   reminderEveryMinutes: number | null;
@@ -175,7 +274,20 @@ export interface Habit {
   voicePhrases: string[];
   periodKey: string;
   doneThisPeriod: number;
+  /** The last tick ever, not just this period. Null if never done. */
+  lastDoneAt?: number | null;
+  /**
+   * Finished — done with, and belonging under "Finished today".
+   *
+   * **Not the negation of `wantsDoing`.** The two are the same question for a
+   * counted habit and come apart for the other modes: a gauge is draining the
+   * moment it is full, so it is never finished, while it only *wants doing* once
+   * it is empty. Collapsing them put a gauge at 20% under a heading saying you
+   * were done with it.
+   */
   met: boolean;
+  /** Wants doing right now — the question the nudge engine acts on. */
+  wantsDoing?: boolean;
 }
 
 export interface AppSettings {
@@ -187,6 +299,16 @@ export interface AppSettings {
   remindersEnabled: number;
   /** A short tone with each popup. Absent on a server older than the column. */
   soundEnabled?: number;
+  /**
+   * Which tone each moment gets, by name from the agent's palette.
+   *
+   * Empty string means "the agent's default for that moment", which keeps
+   * tracking the default rather than freezing today's choice.
+   */
+  soundWake?: string;
+  soundOk?: string;
+  soundMiss?: string;
+  soundNudge?: string;
   pushEnabled: number;
   /**
    * What a task or habit that hasn't chosen gets. Optional for the same reason
@@ -239,6 +361,15 @@ export interface AppSettings {
   overlayAvatar?: string;
   /** Services left out of the friends list. Absent on an older server. */
   hiddenProviders?: string[];
+  /**
+   * What the Dashboard shows in its side column. Empty for one column.
+   *
+   * An opaque id — the panels worth having come from features that can be
+   * deleted, so nothing here validates it. Optional because the server and the
+   * PWA update independently, and a browser holding a newer bundle than the
+   * process serving it is the ordinary case right after an edit.
+   */
+  dashboardPanel?: string;
   updatedAt?: number;
 }
 
@@ -630,7 +761,13 @@ export interface FriendRow {
   seenAt: number;
   /** Set when the status came from a different account than the name. */
   statusFrom: string | null;
-  accounts: Array<{ id: string; provider: string; name: string }>;
+  accounts: Array<{
+    id: string;
+    provider: string;
+    name: string;
+    /** The service's own id for them, for deep links. Absent on an older server. */
+    providerUserId?: string;
+  }>;
 }
 
 export interface LinkSuggestion {
@@ -785,14 +922,24 @@ export const api = {
 
   habits: {
     list: () => request<Habit[]>('/api/habits'),
-    create: (payload: { name: string; cadence?: 'daily' | 'weekly'; targetPerPeriod?: number }) =>
-      post<Habit>('/api/habits', payload),
+    create: (payload: {
+      name: string;
+      mode?: HabitMode;
+      cadence?: 'daily' | 'weekly';
+      targetPerPeriod?: number;
+    }) => post<Habit>('/api/habits', payload),
     update: (
       id: string,
       payload: {
         name?: string;
+        mode?: HabitMode;
         cadence?: 'daily' | 'weekly';
         targetPerPeriod?: number;
+        intervalMinutes?: number | null;
+        gaugeDrainPerDay?: number;
+        gaugeFillPercent?: number;
+        gaugeRemindAt?: number;
+        gaugeShape?: string;
         active?: boolean;
         reminderEveryMinutes?: number | null;
         reminderStartMinute?: number | null;
@@ -804,6 +951,29 @@ export const api = {
     reorder: (ids: string[]) => post('/api/habits/reorder', { ids }),
     check: (id: string) => post(`/api/habits/${id}/check`),
     uncheck: (id: string) => post(`/api/habits/${id}/uncheck`),
+    /**
+     * A picture of your own for the gauge.
+     *
+     * Base64 in JSON rather than multipart, like the logo and the avatar — the
+     * server registers no multipart parser, and one endpoint used twice a year
+     * does not justify a dependency.
+     */
+    uploadImage: (id: string, file: File) =>
+      new Promise<{ ok: boolean; bytes: number; updatedAt: number }>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('could not read that file'));
+        reader.onload = () => {
+          const result = String(reader.result);
+          // Strip the `data:image/png;base64,` prefix the reader adds.
+          const data = result.slice(result.indexOf(',') + 1);
+          request<{ ok: boolean; bytes: number; updatedAt: number }>(`/api/habits/${id}/image`, {
+            method: 'PUT',
+            body: JSON.stringify({ data, type: file.type }),
+          }).then(resolve, reject);
+        };
+        reader.readAsDataURL(file);
+      }),
+    removeImage: (id: string) => request<void>(`/api/habits/${id}/image`, { method: 'DELETE' }),
   },
 
   connectInfo: () => request<ConnectInfo>('/api/connect-info'),
@@ -831,6 +1001,10 @@ export const api = {
       dndUntil?: number | null;
       remindersEnabled?: boolean;
       soundEnabled?: boolean;
+      soundWake?: string;
+      soundOk?: string;
+      soundMiss?: string;
+      soundNudge?: string;
       pushEnabled?: boolean;
       pushDefault?: boolean;
       voiceEnabled?: boolean;
@@ -844,6 +1018,8 @@ export const api = {
       overlayScreen?: string | null;
       overlayAvatar?: string;
       hiddenProviders?: string[];
+      /** Opaque panel id, or '' for one column. */
+      dashboardPanel?: string;
     }) => patch<AppSettings>('/api/settings', payload),
   },
 
@@ -966,6 +1142,16 @@ export const api = {
       post<{ connected: boolean; accountName: string; steamId: string }>('/api/integrations/steam/connect', {
         profile,
         apiKey,
+      }),
+    /**
+     * Canvas needs an address as well as a token, because every school runs its
+     * own. `host` takes whatever is in the address bar — a course URL is fine,
+     * only the host is kept.
+     */
+    connectCanvas: (host: string, token: string) =>
+      post<{ connected: boolean; accountName: string; host: string }>('/api/integrations/canvas/connect', {
+        host,
+        token,
       }),
     /**
      * Save a provider's own client id/secret from the app rather than a file.

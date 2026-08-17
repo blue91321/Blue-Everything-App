@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type Task } from '../api';
 import { useAsync } from '../useAsync';
 import { toDateInputValue, toTimeInputValue } from '../format';
@@ -8,12 +8,29 @@ import { useSettling } from '../useSettling';
 import { PushChoice } from '../controls';
 import { featureEnabled } from '../features';
 
-export function Tasks() {
+export function Tasks({ focus, onFocused }: { focus?: string | null; onFocused?: () => void } = {}) {
   const list = useAsync(() => api.tasks.list('todo,doing,done'), [], ['tasks']);
   const [editing, setEditing] = useState<Task | null>(null);
   const settling = useSettling();
 
   const all = list.data ?? [];
+
+  /*
+   * Arrived here from a right-click elsewhere. The list may not have loaded yet
+   * — that is the ordinary case, since the screen mounts and fetches at the same
+   * moment — so this waits for the row to exist rather than firing once on
+   * mount and finding nothing.
+   *
+   * `onFocused` clears the request the instant it is honoured, or closing the
+   * editor would reopen it on the next render.
+   */
+  useEffect(() => {
+    if (!focus) return;
+    const wanted = all.find((task) => task.id === focus);
+    if (!wanted) return;
+    setEditing(wanted);
+    onFocused?.();
+  }, [focus, all, onFocused]);
   const open = all.filter((t) => t.status !== 'done' || settling.has(t.id));
   const done = all.filter((t) => t.status === 'done' && !settling.has(t.id));
 

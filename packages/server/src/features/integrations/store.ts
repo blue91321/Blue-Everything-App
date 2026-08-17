@@ -21,9 +21,11 @@ import {
   follows,
   friends,
   integrationAccounts,
+  integrationTaskLinks,
   mediaCollectionItems,
   mediaCollections,
   mediaItems,
+  tasks,
 } from '../../db/schema.js';
 
 export type Account = typeof integrationAccounts.$inferSelect;
@@ -852,4 +854,184 @@ export async function suggestFriendLinks(): Promise<LinkSuggestion[]> {
   }
 
   return suggestions;
+}
+
+/* ------------------------------------------------------------------ */
+/* Coursework, as tasks                                                */
+/* ------------------------------------------------------------------ */
+
+/** One thing with a deadline, in this app's vocabulary rather than a service's. */
+export interface IncomingTask {
+  /** The service's own id, unique within that service. */
+  externalId: string;
+  title: string;
+  /** Course, channel, whatever names where it came from. Goes in the notes. */
+  context?: string | null;
+  dueAt: number;
+  /** The thing itself, at the service. Absolute. */
+  url?: string | null;
+  /** The service says this is handed in, marked complete, or excused. */
+  done: boolean;
+}
+
+export interface TaskSyncResult {
+  created: number;
+  /** Deadline moved at the service and was carried across. */
+  rescheduled: number;
+  /** Ticked off because the service says it is handed in. */
+  completed: number;
+  /** Already dealt with, or deliberately deleted here. Not an error. */
+  untouched: number;
+}
+
+/**
+ * Turn a service's deadlines into tasks, once each, for good.
+ *
+ * Three rules, and each of them is here because the obvious version is wrong in
+ * a way you would only find out weeks later:
+ *
+ * **A deleted task stays deleted.** `integration_task_links` remembers that an
+ * item was turned into a task even after that task is gone, so throwing one away
+ * is permanent. Deduplicating by looking for the task itself — the obvious
+ * design, and the one a `(source, source_id)` unique index would give you —
+ * recreates it on the next sync, within the minute, with nothing on screen to
+ * say why.
+ *
+ * **Only the deadline is carried across afterwards.** Extensions happen weekly
+ * and a stale `dueAt` makes the nudge engine wrong, which is the one thing this
+ * feature exists to get right. A title that changed at the service is rare and a
+ * stale one is merely untidy — whereas overwriting a title *you* renamed is an
+ * edit nobody asked for, and there is no signal here that could tell the two
+ * apart. `notes` is never touched for the same reason: it is yours.
+ *
+ * **Ticking off only ever goes one way.** The service saying "handed in" closes
+ * the task; the service saying nothing never reopens one you closed. Submissions
+ * get retracted and regraded, and a task that came back to life because a
+ * teacher reopened a window would be the app arguing with you about something
+ * you had finished.
+ */
+export async function syncTasksFromService(
+  provider: ProviderId,
+  incoming: IncomingTask[],
+  now = Date.now()
+): Promise<TaskSyncResult> {
+  const result: TaskSyncResult = { created: 0, rescheduled: 0, completed: 0, untouched: 0 };
+
+  for (const item of incoming) {
+    const [link] = await db
+      .select()
+      .from(integrationTaskLinks)
+      .where(
+        and(eq(integrationTaskLinks.provider, provider), eq(integrationTaskLinks.externalId, item.externalId))
+      );
+
+    /* ---- never seen before ---- */
+    if (!link) {
+      // Already handed in when we first looked. The link is written anyway, with
+      // no task attached: that is what stops a term's worth of finished work
+      // arriving as a hundred tasks the first time you connect.
+      if (item.done) {
+        await db.insert(integrationTaskLinks).values({
+          provider,
+          externalId: item.externalId,
+          taskId: null,
+          lastDueAt: item.dueAt,
+          completedAt: now,
+        });
+        result.untouched += 1;
+        continue;
+      }
+
+      const [task] = await db
+        .insert(tasks)
+        .values({
+          title: item.title,
+          notes: item.context ?? null,
+          dueAt: item.dueAt,
+          // A Canvas deadline is a real time — 11:59pm, or 2pm for a quiz — so
+          // it is not the all-day case, which exists for a date with no hour
+          // worth saying out loud.
+          dueIsAllDay: 0,
+          source: provider,
+          sourceUrl: item.url ?? null,
+        })
+        .returning();
+
+      await db.insert(integrationTaskLinks).values({
+        provider,
+        externalId: item.externalId,
+        taskId: task.id,
+        lastDueAt: item.dueAt,
+      });
+      result.created += 1;
+      continue;
+    }
+
+    /* ---- seen before ---- */
+
+    // No task attached: either it was already done when we found it, or you
+    // deleted it. Both are decisions, and neither is revisited.
+    if (!link.taskId) {
+      result.untouched += 1;
+      continue;
+    }
+
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, link.taskId));
+
+    // The task is gone. Record that plainly rather than leaving a link pointing
+    // at nothing, so the tombstone reads as a decision instead of a dangling id.
+    if (!task) {
+      await db
+        .update(integrationTaskLinks)
+        .set({ taskId: null })
+        .where(eq(integrationTaskLinks.id, link.id));
+      result.untouched += 1;
+      continue;
+    }
+
+    const open = task.status !== 'done' && task.status !== 'dropped';
+
+    if (item.done && open) {
+      await db.update(tasks).set({ status: 'done', completedAt: now }).where(eq(tasks.id, task.id));
+      await db
+        .update(integrationTaskLinks)
+        .set({ completedAt: now, lastDueAt: item.dueAt })
+        .where(eq(integrationTaskLinks.id, link.id));
+      result.completed += 1;
+      continue;
+    }
+
+    // Compared against what the *service* last said rather than against the
+    // task's own `dueAt`, so moving a deadline yourself is not undone on the
+    // next sync by a service that has not changed its mind.
+    if (open && link.lastDueAt !== item.dueAt) {
+      await db.update(tasks).set({ dueAt: item.dueAt }).where(eq(tasks.id, task.id));
+      await db
+        .update(integrationTaskLinks)
+        .set({ lastDueAt: item.dueAt })
+        .where(eq(integrationTaskLinks.id, link.id));
+      result.rescheduled += 1;
+      continue;
+    }
+
+    result.untouched += 1;
+  }
+
+  return result;
+}
+
+/**
+ * Forget that this service ever made any tasks.
+ *
+ * Called when a provider is disconnected. The tasks themselves stay — they are
+ * yours now, they may have notes on them, and silently deleting a fortnight of
+ * deadlines because a token was revoked would be the worst possible reading of
+ * "disconnect". What goes is the memory, so reconnecting starts cleanly.
+ */
+export async function forgetTaskLinks(provider: ProviderId): Promise<number> {
+  const gone = await db
+    .delete(integrationTaskLinks)
+    .where(eq(integrationTaskLinks.provider, provider))
+    .returning({ id: integrationTaskLinks.id });
+  return gone.length;
 }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, type AppSettings, type Device, type Session } from '../api';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
+import { panelChoices } from '../panels';
 import { Toggle } from '../controls';
 import { clockTime, relative } from '../format';
 import {
@@ -272,8 +273,102 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]['id'];
 
-export function Settings({ session, onChanged }: { session: Session; onChanged: () => void }) {
+/**
+ * Which tab a linkable section lives behind.
+ *
+ * A table rather than a search of the DOM, because the section is not *in* the
+ * DOM until its tab is open — so finding it has to start from knowing where it
+ * is. The key is the element's `id`, which is also what the caller passes.
+ */
+const SECTION_TAB: Record<string, TabId> = {
+  'dashboard-panel': 'general',
+};
+
+export function Settings({
+  session,
+  onChanged,
+  focus,
+  onFocused,
+}: {
+  session: Session;
+  onChanged: () => void;
+  /** A section id to open and scroll to — see `SECTION_TAB`. */
+  focus?: string | null;
+  onFocused?: () => void;
+}) {
   const [tab, setTab] = useState<TabId>('general');
+
+  /*
+   * Sent here by something that wanted a *particular* setting — the Dashboard
+   * panel's "change what's here" button. The tabs made Settings much easier to
+   * navigate and made linking into it impossible without this: the section you
+   * were pointed at may be behind a tab you are not on, and landing on General
+   * while the answer is under Packages is worse than not linking at all.
+   */
+  useEffect(() => {
+    if (!focus) return;
+    const home = SECTION_TAB[focus];
+    if (!home) return;
+    setTab(home);
+    /*
+     * **Waited for on a timer, not looked for once, and not on a frame.**
+     *
+     * Two goes at this, both silently doing nothing:
+     *
+     * A single `requestAnimationFrame` was the first, and the section is behind
+     * its tab *and* behind a `useAsync` — so at the next frame it is usually not
+     * in the document. Retrying across frames fixed that and still did nothing,
+     * because **`requestAnimationFrame` does not fire at all when the page is
+     * not compositing** — a hidden tab, a window nobody is showing. `setTimeout`
+     * runs regardless, throttled at worst, for exactly the same complexity.
+     *
+     * Both failures presented identically: the tab switched, because that part
+     * is synchronous, and nothing else happened. The half that worked hid the
+     * half that did not.
+     *
+     * Bounded, so a section id that matches nothing gives up rather than
+     * retrying for the life of the page.
+     */
+    let frames = 0;
+    let cancelled = false;
+
+    /*
+     * **`onFocused` is called at the *end*, not before the wait.**
+     *
+     * Clearing the request changes `focus`, which re-runs this effect, whose
+     * cleanup sets `cancelled` — so announcing "handled" up front cancelled the
+     * frame loop it had just started, every time. The tab still switched, since
+     * that happens synchronously, which is what made it look like the scroll was
+     * the broken part rather than the waiting.
+     */
+    const done = () => {
+      cancelled = true;
+      onFocused?.();
+    };
+
+    const find = () => {
+      if (cancelled) return;
+      const element = document.getElementById(focus);
+      if (!element) {
+        // Giving up still counts as handled, or the request would sit there and
+        // fire again the next time this screen mounted.
+        if (frames++ < 120) setTimeout(find, 16);
+        else done();
+        return;
+      }
+      element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      // A moment of highlight, because "we brought you here" is otherwise
+      // indistinguishable from "the tab you opened happened to look like this".
+      element.classList.add('flash');
+      setTimeout(() => element.classList.remove('flash'), 1400);
+      done();
+    };
+    setTimeout(find, 0);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [focus, onFocused]);
 
   return (
     <>
@@ -304,6 +399,7 @@ function GeneralTab() {
   return (
     <>
       <Appearance />
+      <DashboardPanel />
       <section>
         <h2>This app</h2>
         <div className="card">
@@ -314,6 +410,102 @@ function GeneralTab() {
         </div>
       </section>
     </>
+  );
+}
+
+/**
+ * What sits beside the Dashboard.
+ *
+ * The options are discovered, not listed here: `panelChoices()` merges the
+ * panels core owns with whatever the installed features declare, so a build with
+ * `features/integrations` deleted simply offers one fewer and this file does not
+ * change. Same reasoning as the drawer's tabs.
+ *
+ * Radio buttons rather than a dropdown, unlike the tone picker. There are three
+ * of them, each wants a line of explanation about what you would actually see,
+ * and a `<select>` has nowhere to put one.
+ */
+function DashboardPanel() {
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState('');
+
+  const chosen = settings.data?.dashboardPanel ?? '';
+  const choices = panelChoices();
+
+  // A server that predates the column sends nothing, and a picker that writes a
+  // field the server drops is worse than no picker at all.
+  if (settings.data && settings.data.dashboardPanel === undefined) return null;
+
+  const choose = async (id: string) => {
+    setSaving(true);
+    setProblem('');
+    try {
+      await api.settings.update({ dashboardPanel: id });
+      settings.reload();
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section id="dashboard-panel">
+      <h2>Beside the Dashboard</h2>
+      <div className="card">
+        <div className="meta" style={{ marginBottom: 8 }}>
+          A second column on a wide screen, for something worth having in the corner of your eye. On a
+          phone it sits underneath instead.
+        </div>
+
+        <label className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: 6 }}>
+          <input
+            type="radio"
+            name="dashboard-panel"
+            checked={chosen === ''}
+            disabled={saving}
+            onChange={() => void choose('')}
+          />
+          <span className="grow">
+            Nothing <span className="meta">— one column, as it was</span>
+          </span>
+        </label>
+
+        {choices.map((panel) => (
+          <label key={panel.id} className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: 6 }}>
+            <input
+              type="radio"
+              name="dashboard-panel"
+              checked={chosen === panel.id}
+              disabled={saving}
+              onChange={() => void choose(panel.id)}
+            />
+            <span className="grow">
+              {panel.label}
+              {panel.hint && <span className="meta"> — {panel.hint}</span>}
+            </span>
+          </label>
+        ))}
+
+        {/*
+         * The stored choice belongs to a feature that is off, or to a build that
+         * no longer has it. Said out loud rather than silently rewritten to
+         * "Nothing": the setting is deliberately left alone so switching the
+         * feature back on restores what you had, and without this line the
+         * Dashboard would just be missing a column for no visible reason.
+         */}
+        {chosen !== '' && !choices.some((panel) => panel.id === chosen) && (
+          <div className="meta" style={{ marginTop: 8 }}>
+            The panel you picked (<code>{chosen}</code>) is not available in this build — its feature is
+            switched off or has been removed. Your choice is kept, so switching it back on brings the
+            panel back.
+          </div>
+        )}
+
+        {problem && <div className="banner">{problem}</div>}
+      </div>
+    </section>
   );
 }
 
@@ -389,6 +581,124 @@ function DevicesTab({ session, onChanged }: { session: Session; onChanged: () =>
         ))}
       </section>
     </>
+  );
+}
+
+/**
+ * A tone per moment.
+ *
+ * The names are deliberately duplicated here rather than fetched: the PWA cannot
+ * import `@everything/shared` (zod), and an endpoint to serve nine strings that
+ * change about once a year would be a round trip and a route for nothing. The
+ * agent ignores a name it does not know and falls back to the default, so a list
+ * that drifts degrades to "the old sound" rather than to silence.
+ *
+ * The *sounds* are not duplicated, which is the important half — see `playTone`.
+ */
+const TONES = ['rise', 'fall', 'chime', 'arrive', 'sink', 'blip', 'knock', 'soft', 'none'];
+
+/**
+ * Hear one.
+ *
+ * A dropdown of nine words is not a choice anybody can make: `knock` and `blip`
+ * are not self-describing, and the only way to tell them apart used to be a
+ * terminal command. So picking one plays it.
+ *
+ * **The bytes come from the server, not from Web Audio here.** Synthesising an
+ * approximation in the browser would be a second implementation of the tone
+ * shapes, and the failure mode is the worst kind: the preview would be subtly
+ * not what interrupts you, with nothing to catch the drift. `/sounds/<tone>.wav`
+ * is rendered by the same `wav()` over the same table the agent writes its temp
+ * file from, so this is byte-for-byte the real thing.
+ *
+ * It cannot go through the agent, which is the other obvious route: the agent
+ * polls rather than listening, so a preview would land five to fifteen seconds
+ * after the click — and never at all from the phone, where this setting is
+ * equally editable.
+ *
+ * Elements are kept per tone so clicking down the list does not refetch, and
+ * `currentTime = 0` restarts one that is already playing rather than ignoring
+ * the second click.
+ */
+const auditioned = new Map<string, HTMLAudioElement>();
+
+function playTone(tone: string): void {
+  // Silence is a real choice, and the server answers 204 for it. Asking anyway
+  // would be harmless and would put an empty-source error in the console.
+  if (tone === '' || tone === 'none') return;
+
+  let audio = auditioned.get(tone);
+  if (!audio) {
+    audio = new Audio(`/sounds/${tone}.wav`);
+    auditioned.set(tone, audio);
+  }
+  audio.currentTime = 0;
+  // Autoplay policy rejects this if nothing has been clicked yet, which cannot
+  // happen here — but a rejected promise with no handler is an unhandled
+  // rejection, and a tone preview is not worth one.
+  void audio.play().catch(() => {});
+}
+
+const SOUND_MOMENTS: { key: 'soundWake' | 'soundOk' | 'soundMiss' | 'soundNudge'; label: string; hint: string }[] = [
+  { key: 'soundNudge', label: 'A nudge arrives', hint: 'the one that interrupts you' },
+  { key: 'soundWake', label: 'Voice starts listening', hint: 'after the wake word' },
+  { key: 'soundOk', label: 'A command worked', hint: '' },
+  { key: 'soundMiss', label: "It didn't catch that", hint: '' },
+];
+
+function SoundTones({
+  current,
+  saving,
+  update,
+}: {
+  current: AppSettings;
+  saving: boolean;
+  update: (payload: Parameters<typeof api.settings.update>[0]) => Promise<void>;
+}) {
+  // A server older than the columns sends none of them, and a picker that
+  // writes a field the server drops is worse than no picker.
+  if (current.soundWake === undefined) return null;
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="meta" style={{ marginBottom: 8 }}>
+        Which tone each moment gets — picking one plays it. They are generated rather than shipped as
+        files, and what you hear here is the same bytes the agent will play.
+      </div>
+
+      {SOUND_MOMENTS.map(({ key, label, hint }) => (
+        <div className="row between" key={key} style={{ marginTop: 6 }}>
+          <div className="grow">
+            <span>{label}</span>
+            {hint && <span className="meta"> · {hint}</span>}
+          </div>
+          <select
+            value={current[key] || ''}
+            disabled={saving}
+            aria-label={`Tone for: ${label}`}
+            style={{ width: 'auto' }}
+            onChange={(e) => {
+              // Played before the save, not after. The save is a round trip and
+              // this is the one interaction where waiting for one is
+              // unacceptable — you are choosing by listening, exactly as the
+              // accent swatches apply their colour before the save returns.
+              playTone(e.target.value);
+              void update({ [key]: e.target.value } as Parameters<typeof api.settings.update>[0]);
+            }}
+          >
+            {/* Empty rather than the default's name, so this keeps tracking the
+                default if it ever changes — the same reason a task's push
+                choice has a null. */}
+            <option value="">default</option>
+            {TONES.map((tone) => (
+              <option key={tone} value={tone}>
+                {tone === 'none' ? 'silent' : tone}
+              </option>
+            ))}
+          </select>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -938,6 +1248,13 @@ function QuietHours() {
               onChange={(on) => update({ soundEnabled: on })}
             />
           </div>
+
+          {/* Only when there is something to hear. A row of tone pickers above
+              a switch that is off is four controls for a thing that cannot
+              happen. */}
+          {Boolean(current.soundEnabled) && (
+            <SoundTones current={current} saving={saving} update={update} />
+          )}
         </div>
       )}
 

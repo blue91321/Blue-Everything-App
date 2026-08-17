@@ -4,6 +4,113 @@ All six packages carry the same version and move together — they are one app
 released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 second step `npm version` does not do for you.
 
+## 0.2.2
+
+Coursework arrives on its own, habits stopped being only a counter, and the
+Dashboard gained a second column. Every item below was found or confirmed by
+running the app rather than by reading about it — several of them are bugs the
+first version of the same feature shipped with.
+
+### Canvas
+
+- **Coursework becomes tasks the nudge engine can hold.** Assignments, quizzes
+  and graded discussions with a due date, read from `/api/v1/planner/items` —
+  the same planner the Canvas dashboard draws, so it has already decided which
+  courses are current, and it carries the submission state.
+- **A deleted task stays deleted.** `integration_task_links` remembers that an
+  item became a task even after the task is gone. Deduplicating against `tasks`
+  itself — which a `(source, source_id)` unique index would give you — recreates
+  something you deliberately threw away on the very next sync.
+- **Afterwards only the deadline is carried across.** Extensions happen weekly
+  and a stale `dueAt` makes the engine wrong; a title you renamed is yours, and
+  nothing here could tell "you renamed it" from "they renamed it". Compared
+  against what Canvas last said rather than the task's own date.
+- Handing something in on Canvas ticks the task off. Canvas going quiet never
+  reopens one you closed.
+- **The only background timer in the module** — half-hourly while connected, none
+  at all otherwise. A friends list is something you go and look at; a deadline's
+  whole job is to reach the queue while you are thinking about something else.
+- The token is the whole Canvas account and cannot be scoped, so the setup text
+  and the connect form say so. `http://` hosts are refused rather than upgraded.
+- Two things this turned up: the api-key connect form was Steam's alone and
+  would have shown Canvas a box asking for a Steam profile, and "Services to
+  leave out" listed every provider while governing only Friends and Following.
+
+### Habits
+
+- **Three modes, differing in one question — when does this want doing.**
+  `target` is unchanged; `interval` is due again a fixed time after the last
+  tick, with no target to fall behind on; `gauge` is a level that drains and is
+  topped up by doing the thing.
+- **The gauge stores a level and the moment it was true.** Everything between
+  anchors is computed, so it costs no timer and one write per action. Deriving
+  it from the last tick cannot express a gauge topped up twice in a morning, nor
+  one neglected a fortnight and then filled halfway.
+- Drawn as SVG clipped to the path so a triangle empties to a point, or as any
+  emoji, or as **a picture of your own** uploaded per habit.
+- **`met` and `wantsDoing` are two questions**, and collapsing them was the
+  mistake: a gauge at 20% sat under *Finished today*, a heading claiming you
+  were done with something visibly draining. A gauge is never finished; an
+  interval habit is finished only if it was done *today* and is not due again.
+- **A threshold, so it asks before it is empty** — reminding at empty is fine for
+  a glass of water and wrong for a plant. The row carries two countdowns,
+  *reminds in* and *empty in*, and shows one when they are the same instant.
+- **Say "to max"** and it fills the rest of the way, which is a different number
+  in every mode — for a gauge you rarely know how many top-ups reach full.
+- The editor says what the numbers mean: how long a full gauge lasts in the unit
+  that fits, and the rhythm the drain and fill imply — "about 5 a day to keep
+  up" rather than two percentages.
+- **Undo on a gauge is not gated on an entry in this period.** For a counted
+  habit "nothing to undo" is true about today; for a gauge the level *is* the
+  state and it was last filled yesterday. The − button worked exactly once.
+- **Recording a completion is one function again.** The voice feature had its own
+  copy, identical to the HTTP route until gauge mode arrived — so saying "I drank
+  water" logged an entry and left the gauge where it was. The spoken reply came
+  from the same place: it said "1 of 16" about something whose whole state is a
+  percentage.
+
+### The Dashboard
+
+- **A second column**, holding one thing worth having in the corner of your eye:
+  who is online, recent notes, or nothing. Features declare panels in their
+  `meta.ts` and export a lazy `panel.tsx`, so core never imports the panel it
+  most wants — verified by building the PWA with `features/integrations` gone.
+- **Right-click a task or habit** to get to the screen that edits it, with its
+  editor open. A text selection still gets the browser's own menu, so copying a
+  title keeps working.
+- Each person in the friends panel finds themselves in Connections; the panel
+  itself links to the setting that decides what the column holds.
+
+### Elsewhere
+
+- **Picking a notification tone plays it.** `TONES` and the WAV encoder moved to
+  `shared` so the server can render what the agent plays — byte-for-byte, checked
+  across all eight audible tones, rather than a Web Audio approximation that
+  could drift. 6ms from selecting to the bytes arriving.
+- **A friend row that does not squash.** At 375px the chip and buttons held their
+  width while the text was crushed to 32px and 13 of 40 names wrapped; now 214px
+  and none. Nothing is hidden — the controls wrap underneath instead.
+- **Message** on a friend row opens Discord, via `discord://-/users/<id>` — one
+  link the desktop client claims here and the phone app claims there.
+- Two stemmer bugs found while checking a voice phrase reached its habit at all:
+  English doubles the final consonant before `-ed`/`-ing`, so "sipped" matched
+  nothing against a stored "sip" and the grammar was offered "siped", a spelling
+  nobody says; and a lone `-s` was stripped from words ending `-ss`, so "press"
+  and "pressed" reduced differently. `jog`, `plan`, `stop`, `nap`, `log`, `trim`,
+  `pass` and `floss` all failed one way or the other.
+
+### Notes
+
+- Migrations `0033`–`0036`: Canvas task links and `tasks.source`, the Dashboard
+  panel setting, habit modes and the gauge columns, and the gauge threshold.
+- `packages/extension` still carries a `manifest.json` and no `package.json`, so
+  `npm version --workspaces` cannot see it and it is bumped by hand.
+- Three things that only presented as "the feature does nothing": hooks written
+  below `App`'s early returns took the whole app down with React error #310 on
+  the pairing screen; clearing a focus request cancelled the work that request
+  had started; and `requestAnimationFrame` does not fire at all when a page is
+  not compositing, which broke a scroll *and* the probe measuring it.
+
 ## 0.2.1
 
 The app integrations module, as actually used: everything below was found by

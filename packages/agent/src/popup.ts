@@ -26,6 +26,7 @@ import {
   type Avatar,
   type Overlay,
   type OverlayContent,
+  type OverlayLine,
   type OverlayPlacement,
 } from './overlay.js';
 import { playSound, type SoundName } from './sound.js';
@@ -89,6 +90,7 @@ function ui(): Overlay | null {
 }
 
 export function show(options: PopupOptions): void {
+  showing = options;
   const { forMs = POPUP_RESULT_MS, sound, ...content } = options;
 
   // Before the window, so the sound lands with the appearance rather than after
@@ -137,6 +139,39 @@ function clearHideTimer(): void {
 
 export function visible(): boolean {
   return overlay?.visible ?? false;
+}
+
+/** What is on screen now, so `say` can add to it rather than replace it. */
+let showing: PopupOptions | null = null;
+
+/**
+ * Add a line to the exchange already on screen, growing the window.
+ *
+ * An exchange is a conversation — you say something, it answers, and with
+ * follow-ups on you say something else without the wake word. Replacing the
+ * contents each time threw away the half you were checking: the reply appeared
+ * where your own words had been, so there was no way to see *what it heard*
+ * next to *what it did* about it.
+ *
+ * Falls back to `show` when nothing is up, so a caller never has to ask which
+ * of the two it wants. A new wake word calls `show` and starts a fresh one —
+ * that is the reset, and it is deliberate rather than a timer.
+ */
+export function say(line: OverlayLine, options: { sound?: SoundName; forMs?: number } = {}): void {
+  if (!showing || !visible()) {
+    show({ title: line.from === 'you' ? 'Heard' : 'Blue Everything', lines: [line], ...options });
+    return;
+  }
+
+  showing = {
+    ...showing,
+    lines: [...(showing.lines ?? []), line],
+    // A choice belonged to the turn that offered it; carrying it down the
+    // transcript would leave a dead button under an answered question.
+    choices: undefined,
+    ...options,
+  };
+  show(showing);
 }
 
 /** Where it appears and what face it wears. Applied on the next `show`. */

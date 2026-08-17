@@ -14,6 +14,7 @@ import {
 import { Logo, type LogoShape } from './Logo';
 import { Offline } from './Offline';
 import { onDataChange } from './live';
+import { onNavigate } from './nav';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
@@ -69,6 +70,19 @@ export function App() {
    */
   const sessionRef = useRef<Session | null>(null);
   const [view, setView] = useState<NavId>('dashboard');
+  /**
+   * The row a screen should open for editing when it arrives, from the
+   * right-click menu.
+   *
+   * Held here because `App` is the only thing that can change the view, and
+   * cleared by the screen once it has acted — see `onFocused`. Keeping it until
+   * then rather than clearing on the same tick matters: the target screen has to
+   * load its list before it can find the row, so the request has to survive a
+   * render or two.
+   */
+  const [focus, setFocus] = useState<string | null>(null);
+  /** Text for the destination's search box — see `NavRequest.search`. */
+  const [search, setSearch] = useState<string | null>(null);
   /**
    * The mark, held here so the drawer can draw it.
    *
@@ -178,6 +192,50 @@ export function App() {
     };
   }, [session]);
 
+  /**
+   * "Take me to that thing" — the right-click menu's half of the navigation.
+   *
+   * **Above the early returns**, with every other hook, because the three below
+   * it are not: React counts hooks per render, and a `useEffect` after
+   * `if (checking) return …` is called on some renders and not others. It was
+   * written down here first and it took the app down with error #310 on the
+   * pairing screen, which is exactly the render where the returns fire.
+   *
+   * A ref rather than dependencies: `nav`, `isDesktop` and the drawer are all
+   * recomputed every render, so depending on them would tear the subscription
+   * down and rebuild it constantly. Fed further down, where they exist.
+   */
+  const latest = useRef<{
+    nav: NavItem[];
+    isDesktop: boolean;
+    setDrawerOpen: (open: boolean) => void;
+  }>({ nav: [], isDesktop: true, setDrawerOpen: () => {} });
+
+  useEffect(
+    () =>
+      onNavigate(({ view: wanted, focus: wantedFocus, search: wantedSearch }) => {
+        const { nav: items, isDesktop: wide, setDrawerOpen } = latest.current;
+        // An unknown view is ignored rather than switched to: the caller is a
+        // menu item, and a typo should leave you where you are rather than on a
+        // blank screen.
+        if (!items.some((item) => item.id === wanted)) return;
+        setView(wanted as NavId);
+        setFocus(wantedFocus ?? null);
+        setSearch(wantedSearch ?? null);
+        if (!wide) setDrawerOpen(false);
+      }),
+    []
+  );
+
+  /*
+   * Stable, so the effect in the target screen does not re-run on every render
+   * of this one while a focus request is outstanding.
+   */
+  const clearFocus = useCallback(() => {
+    setFocus(null);
+    setSearch(null);
+  }, []);
+
   if (checking) {
     return (
       <div className="pair">
@@ -223,6 +281,10 @@ export function App() {
   // While a finger is down the drawer tracks it exactly, so transitions are
   // suppressed — animating toward a position that changes every frame is what
   // makes a drag feel laggy.
+  // Not a hook: the ref is created above, with the others, and only fed here
+  // where the values it carries actually exist.
+  latest.current = { nav, isDesktop, setDrawerOpen: drawer.setOpen };
+
   const drawerStyle = isDesktop
     ? undefined
     : {
@@ -235,6 +297,11 @@ export function App() {
     if (!isDesktop) drawer.setOpen(false);
   }
 
+  /*
+   * Nothing else in the app navigates itself, so this is the whole of the port.
+   * An unknown view is ignored rather than switched to: the caller is a menu
+   * item and a typo there should leave you where you are, not on a blank screen.
+   */
   return (
     <div className={isDesktop ? 'shell desktop' : 'shell'}>
       <aside className="drawer" style={drawerStyle} aria-hidden={!shown && !isDesktop}>
@@ -280,10 +347,12 @@ export function App() {
         </header>
 
         {current.id === 'dashboard' && <Dashboard />}
-        {current.id === 'tasks' && <Tasks />}
-        {current.id === 'habits' && <Habits />}
+        {current.id === 'tasks' && <Tasks focus={focus} onFocused={clearFocus} />}
+        {current.id === 'habits' && <Habits focus={focus} onFocused={clearFocus} />}
         {current.id === 'notes' && <Notes />}
-        {current.id === 'settings' && <Settings session={session} onChanged={checkSession} />}
+        {current.id === 'settings' && (
+          <Settings session={session} onChanged={checkSession} focus={focus} onFocused={clearFocus} />
+        )}
 
         {/*
           Each feature is its own chunk, fetched the first time its tab is
@@ -293,7 +362,7 @@ export function App() {
         */}
         {feature && (
           <Suspense fallback={<div className="empty">loading…</div>}>
-            <feature.View local={session.local} />
+            <feature.View local={session.local} search={search} onFocused={clearFocus} />
           </Suspense>
         )}
       </div>

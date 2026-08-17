@@ -104,6 +104,62 @@ dependencies, which is 66KB gzipped and nearly all of it framework.
   correct the tally. Ticking one off day to day belongs on the Dashboard.
 - **Notes**, **Settings**.
 
+### The Dashboard's side column
+
+A second column on a wide screen, holding one thing worth having in the corner
+of your eye — who is online, by default nothing. `settings.dashboard_panel`
+holds the choice, server-side like the theme so the PC and the phone agree.
+
+**Core cannot import the panel it most wants.** The Dashboard is core and the
+friends list lives in `features/integrations`, which is deletable. That is the
+same bind the drawer was in, solved the same way: a feature declares `panels` in
+its `meta.ts` and exports a lazy `panel.tsx`, and `features/index.ts` finds them
+with `import.meta.glob`. A build with the folder deleted offers one fewer
+option and nothing in core changes — verified by building the PWA with
+`features/integrations` moved aside.
+
+The stored id is **opaque**, like `settings.hidden_providers` and `tasks.source`.
+Nothing validates it, and an id nothing answers to draws no panel — which is
+what should happen while a feature is switched off, and means switching it back
+on restores the panel you had rather than finding the setting silently rewritten
+to empty. The Settings screen says so rather than leaving a column mysteriously
+absent.
+
+Three details:
+
+- **The container widens through `.app:has(.dash.has-panel)`**, not through a
+  class `App` passes down. `App` does not read settings, and threading one
+  boolean through it to set a `max-width` would touch three components for a
+  layout question the child already knows the answer to. Where `:has()` is
+  unsupported the page stays at its reading width with the panel stacked
+  underneath — which is the narrow-screen layout, so the fallback is a real one.
+- **The breakpoint is 1100px, not the drawer's 900px**, and they are deliberately
+  different questions: 900 is "is there room for a drawer beside the content",
+  this is "is there room for a second column without squeezing the first". At
+  900 with the drawer showing, the task list would be left about 320px — narrower
+  than the phone layout it was designed for.
+- **Panels are lazy, and one import nearly cost 9.5KB.** `panel.tsx` imported
+  `STATE_LABEL` from `Friends.tsx`, so choosing the panel pulled in the whole
+  Connections screen — searching, filtering, account linking — to render six
+  words. Rollup cannot tree-shake that: importing any part of a module pulls the
+  module in. `presence.ts` now holds the table, and the panel costs 1.0KB
+  gzipped against the 9.5KB it was dragging.
+
+**Each person is a button, and the panel has one of its own.** Clicking a row
+lands on Connections → Friends with that name in the search box; "Change what's
+here" goes to the setting that decides what the column holds. The whole row is
+the button rather than a magnifying glass beside the name — in a 320px column an
+icon per row is width taken from the thing the column is for, and a row-sized hit
+target is easier to hit than a 20px square. The settings button lives on the
+Dashboard's `aside` rather than inside each panel, so every panel gets it and no
+feature has to know that the setting exists.
+
+The friends panel shows only `in-game`, `online`, `away` and `dnd`. `unknown` is
+excluded, which matters more than it sounds: Discord's REST API carries no
+presence, so every Discord-only friend is `unknown` — 87 of them here against a
+couple of dozen of everything else — and including them would bury the handful
+of people who are genuinely there.
+
 **Settings is pinned to the foot of the drawer**, not merely last in the list.
 The list grows — every feature adds a tab above it — and a Settings entry
 drifting down the middle of things you use daily is how it becomes hard to find.
@@ -174,6 +230,80 @@ A task due later today has no nudge yet — the sweep only queues within an hour
 of the due time. Showing "Nothing queued" while a task is due in two hours is
 false, so the Dashboard also lists what *will* queue, marked `later` with the
 time it'll fire.
+
+### Right-click to get to the thing that edits it
+
+A task or habit on the Dashboard opens its own editor from a context menu, on
+the screen that owns it. One item today — the menu is a list because it is going
+to grow, and one item is the honest amount to ship.
+
+**It replaces the browser's menu, so it makes two concessions.** A non-empty text
+selection passes straight through, so copying a task title never stops working —
+that is the one thing the native menu is genuinely used for here. And only rows
+that offer something intercept the event; the rest of the page behaves exactly as
+it did.
+
+**There is no long-press.** Touch has no right-click, so this is a desktop
+affordance and is stated as one rather than half-built. Nothing lives *only*
+here: the phone reaches the same editors through the tab and the `edit` button.
+
+**Navigation goes through a port, not a prop.** `nav.ts` holds one listener that
+`App` registers, because the thing asking is a row three components below the
+only component that knows what a view is, and none of the components in between
+have any business carrying a navigate function. It is deliberately not a router:
+the whole navigation model here is one `useState` holding a string, and adding a
+router to satisfy one menu item would be a dependency and a concept for something
+a callback already does.
+
+A request carries `focus` — **opaque, read differently by each screen**: a row id
+on Tasks and Habits, a section id on Settings — and `search`, which is separate
+rather than encoded into it because "open this one thing" and "show me everything
+matching" are different requests and a screen may want both.
+
+### Getting to a particular setting
+
+`settings.dashboard_panel` is chosen on a Settings tab, which the friends panel
+links straight to. Tabs made Settings navigable and made linking *into* it
+impossible without help: the section you are pointed at may be behind a tab you
+are not on, and landing on General while the answer is under Packages is worse
+than not linking at all. `SECTION_TAB` maps a section id to the tab that holds
+it, and a moment of highlight says "we brought you here" — otherwise arriving is
+indistinguishable from the tab you opened happening to look like that.
+
+**Three goes at the scroll, and the first two silently did nothing.** All three
+switched the tab correctly, because that part is synchronous — the half that
+worked hiding the half that did not, every time:
+
+1. One `requestAnimationFrame`. The section is behind its tab *and* behind a
+   `useAsync`, so at the next frame it is usually not in the document.
+2. Retrying across frames — and cancelling on cleanup, while announcing
+   "handled" up front. Clearing the request changes `focus`, which re-runs the
+   effect, whose cleanup cancelled the loop it had just started. `onFocused` is
+   now called at the *end*.
+3. Still on `requestAnimationFrame`, which **does not fire at all when the page
+   is not compositing** — a hidden tab, a window nobody is showing. `setTimeout`
+   runs regardless, throttled at worst, for identical complexity.
+
+Worth knowing beyond this one button: a probe built on `requestAnimationFrame`
+measures nothing in a browser pane that is not on screen, so it will happily
+report a working feature as broken and a broken one as working.
+
+Three things there are worth knowing:
+
+- **The hooks sit above `App`'s early returns**, and that is not style. React
+  counts hooks per render, so a `useEffect` written after `if (checking) return
+  …` is called on some renders and not others — it took the whole app down with
+  error #310 on the pairing screen, which is exactly the render where those
+  returns fire. The values the listener needs are fed to a ref further down,
+  where they exist.
+- **The focus request survives a render or two.** `App` holds the id and the
+  target screen clears it once honoured, because that screen mounts and fetches
+  at the same moment — firing once on mount would find an empty list and open
+  nothing. Clearing it on use is what stops closing the editor reopening it.
+- **The menu is measured, then clamped.** Its width depends on its longest label,
+  which will change as items are added, so a hard-coded estimate is a thing that
+  silently stops being true. `useLayoutEffect`, so the correction lands before
+  paint rather than as a visible jump.
 
 ### Navigation
 
@@ -538,9 +668,31 @@ may never see, so the app spent all that effort picking the right moment and
 then announced it somewhere invisible. The overlay draws above exclusive
 fullscreen; that is the whole reason it exists.
 
-**A nudge now raises both**, and they fail in opposite ways: the popup is the
-half that gets *noticed*, the toast is the half that *persists* in the Action
-Centre afterwards.
+**The Windows toast is gone.** It was raised alongside the popup on the
+reasoning that the two fail in opposite ways — the overlay gets *noticed*, above
+an exclusive-fullscreen game, while the toast *persists* in the Action Centre.
+What killed it is what one costs: there is no WinRT binding here, so every
+notification spawned PowerShell — a process and a few hundred milliseconds, for
+the half you were less likely to look at. `notify.ts`, `toast.ps1` and
+`npm run toast` went with it.
+
+What is genuinely lost is the Action Centre entry: a nudge you miss is now
+missed rather than waiting in a list. The queue still holds it, and an
+undelivered nudge is on the Dashboard either way.
+
+**The popup reads as a conversation.** Within one exchange each turn is appended
+rather than replacing the last, and the window grows — measured at 76px for a
+bare "Listening…" up to 164px for a wake, a command, a reply and a follow-up.
+What you said is right-aligned and what it did is left-aligned, so the two are
+distinguishable without a "you said" prefix eating the width of a 380px window.
+A fresh wake word calls `show` and starts over; that is the reset, and it is
+deliberate rather than a timer.
+
+**It has a ✕.** Every other way out was a timer, Escape, or clicking somewhere
+that is not a choice — none of them *visible*, so a popup that had stayed up
+looked like something to wait out. It is the one control here that needs an `x`
+as well as a `y` in the hit test: choice rows span the full width, so testing
+height alone was enough until something sat in a corner.
 
 **`show({forMs: 0})` means "stay up"; `hide(0)` means "hide now".** They are
 opposites and they briefly shared a code path, which drew the "Listening…"
@@ -573,6 +725,66 @@ They go out through `PlaySoundW` from winmm — the library `mic.ts` already loa
 — rather than PowerShell like `notify.ts` does. A toast is rare and can afford
 a few hundred milliseconds to spawn a process; a sound accompanies the wake word,
 where a few hundred milliseconds is the entire point missed.
+
+**Which tone goes with which moment is a setting.** Four moments — a nudge
+arriving, voice starting to listen, a command working, a command missed — each
+pointed at a name from a palette of nine (`rise`, `chime`, `arrive`, `sink`,
+`knock`, `soft`, `blip`, `fall`, `none`).
+
+A named list rather than a synth editor: what anybody wants from "customise the
+tones" is for the wake sound to be distinguishable from the nudge sound and for
+neither to be irritating, which is a choice between options rather than a design
+task. Empty means "the default for that moment" rather than storing the default
+name, so changing `DEFAULT_TONE` later reaches installs that never touched it.
+The WAVs are cached by *tone*, not by event, so two moments set to the same tone
+share one file. An unknown name falls back to the default rather than to
+silence.
+
+### Picking a tone plays it
+
+A dropdown of nine words is not a choice anybody can make — `knock` and `blip`
+are not self-describing — and for a while the only way to tell them apart was
+`npm run sound-try -w @everything/agent -- --tones`, which is exactly the "open
+a terminal to change a setting" friction the three double-clickable files exist
+to remove.
+
+**The browser cannot ask the agent to play one.** The agent holds no inbound
+connection; it polls. A preview routed through the attention heartbeat would
+land five to fifteen seconds after the click, and from the phone — where the
+setting is equally editable — it would never land at all.
+
+So the *server* renders the WAV and the browser plays it, from
+`/sounds/<tone>.wav`. Measured at **6ms** from selecting a tone to the bytes
+arriving.
+
+That is why `TONES`, the palette and the WAV encoder now live in
+`packages/shared/src/sound.ts` rather than in the agent that plays them: both
+the server and the agent have to reach them. The agent keeps the part that is
+genuinely about this machine — winmm, the temp file, and which tone each event
+currently points at.
+
+**The gain is not tidiness, it is that the preview cannot lie.** The obvious
+alternative was a Web Audio approximation in the PWA, and its failure mode is
+the worst available: a preview that sounds nearly like what interrupts you, with
+nothing to catch the drift. This project already fails a build over `ACCENT_HEX`
+drifting from `styles.css`. Both sides call the same `wav()` over the same
+table, and the agent's temp files were compared byte-for-byte against the
+route's responses for all eight audible tones — identical.
+
+Two details:
+
+- **It is outside `/api/`, like the icons and the manifest.** `auth.ts` protects
+  exactly that prefix, and an `<audio>` element sends no bearer token — under
+  `/api/` this would 401 in a way whose only symptom is silence. Nothing is
+  exposed: a tone is a sine computed from nine numbers.
+- **`none` answers 204, not a zero-length WAV.** An empty audio file is
+  something every browser is entitled to call broken, and the console error
+  would be the only feedback from choosing "silent". The picker does not ask for
+  it anyway; the route is honest regardless.
+
+The tone is played *before* the save returns, for the same reason the accent
+swatches apply their colour before theirs: you are choosing by listening, and a
+round trip in front of that is the one latency that cannot be spent.
 
 `soundEnabled` rides on the **attention** heartbeat, not the voice one, because
 popups are core: an install with `features/voice` deleted still raises nudges,
@@ -743,7 +955,7 @@ npm run wake-probe -w @everything/agent    # what the wake partial says, block b
 npm run wake-falsing -w @everything/agent  # how often ordinary conversation wakes it
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
-npm run integrations-check -w @everything/server  # the categoriser and the Takeout reader
+npm run integrations-check -w @everything/server  # the categoriser, the Takeout reader, the coursework rules
 
 npm run features         # what is switched on, and what is actually on disk
 npm run features-check   # prove each one can be switched off and deleted
@@ -901,6 +1113,32 @@ are indistinguishable, so the record can be closed once it has been read. Local
 only, like minting, and the button asks first: it is the only irreversible thing
 on that screen and it sits next to one that isn't.
 
+### A held nudge is re-checked before it lands
+
+The queue exists to wait for a good moment, so a nudge routinely sits for an
+hour — and in that hour the thing it is about can be done. `"3 of 8 so far
+today"` is baked in when a habit reminder is raised, and a match is plenty of
+time to drink five more glasses. Delivering that afterwards is worse than
+delivering nothing: it is *confidently wrong*, and the whole value of waiting
+was spent saying something untrue.
+
+`freshenForDelivery()` runs in the instant before a nudge goes out. It
+recomputes the habit count, and drops anything whose reason has gone — a habit
+finished while it waited, a habit paused, a task completed or dropped. Nothing
+clears a queued nudge when the underlying row changes, deliberately, since the
+queue is the record of what was asked for; so the check belongs at the one point
+where it matters. Dropped ones are marked `expired`, which is exactly what
+happened: unfired, not `acknowledged` (you never saw it) and not `dismissed`
+(you never chose).
+
+**The interval runs from `deliveredAt`, not `createdAt`**, and that is the
+difference between a reminder and a queue. A nudge raised at ten and held
+through a match until eleven has only just been *said*; spacing from when it was
+written down made the next one due immediately, so a long session was rewarded
+with two reminders in a minute. A nudge you never saw did not remind you, so an
+undelivered one still counts from when it was raised — the fallback is doing
+real work, not defending a null.
+
 ### Nudge policy
 
 Defined once, in `shouldDeliver()` in `src/nudge-engine.ts`:
@@ -1021,6 +1259,230 @@ nothing to turn back on.
 Windows' DND is live state, so the server keeps the agent's last report in
 memory (`currentWindowsDnd`) rather than deriving it from the sample log —
 samples are coalesced and couldn't answer "is it on right now" anyway.
+
+### Three kinds of habit, differing in one question
+
+`habits.mode` is `target`, `interval` or `gauge`, and they differ in **when does
+this want doing** and nothing else. Entries, reminders, voice phrases, push
+choices and the nudge queue are identical across all three, which is why this is
+a column rather than three tables — and why adding a fourth mode means answering
+that one question again and nothing more.
+
+| mode | wants doing when | nag spacing |
+| --- | --- | --- |
+| `target` | done this period < target | `reminderEveryMinutes`, null to never interrupt |
+| `interval` | `intervalMinutes` since the last tick | `reminderEveryMinutes` ?? `intervalMinutes` |
+| `gauge` | the level is at or below `gaugeRemindAt` | `reminderEveryMinutes`, null to never interrupt |
+
+`habitWantsDoing()` in `shared` is the one place that table lives, so the sweep,
+the API and the screens cannot disagree — the same role `resolvePush` and
+`quietReason` play for their own decisions. `freshenForDelivery` calls it too,
+which is what stops a nudge raised an hour ago being delivered about a gauge you
+topped up during the match.
+
+**`interval` falls back to its own interval for nag spacing**, so "water the
+plants every four days" is one number rather than two. Setting both is for the
+case that genuinely wants them: due every four days, and once it *is* due, say so
+every couple of hours. That fallback is also why the sweep now selects every
+active habit rather than filtering on `reminder_every_minutes IS NOT NULL` — that
+filter would have made the one mode it exists for permanently silent.
+
+**`met` and `wantsDoing` are two questions, and collapsing them was a mistake.**
+`met` was widened to mean "nothing wanted right now" on the reasoning that one
+word could serve the screens and the engine alike. It cannot. The two are the
+same question for a counted habit — hitting the target answers both — and they
+come apart for the other two modes. The symptom was reported from the Dashboard:
+a water gauge at 20% sitting under **Finished today**, a heading claiming you
+were done with something visibly draining.
+
+So `habitIsFinished()` sits beside `habitWantsDoing()` in `shared`:
+
+| mode | finished when | wants doing when |
+| --- | --- | --- |
+| `target` | the target is met | the target is not met |
+| `interval` | done *today* **and** not due again | the interval has elapsed |
+| `gauge` | **never** | the level is at or below `gaugeRemindAt` |
+
+A gauge is draining the moment it is full, so there is no instant at which it is
+finished — which is why a full one still belongs in the list rather than under a
+heading saying otherwise. The engine asks `habitWantsDoing`; every screen asks
+`met`. Both halves of the `interval` rule are load-bearing: without "done today"
+one ticked off last Tuesday reads as finished all week, and without "not due
+again" a four-hour habit done at nine still reads as finished at two.
+
+A gauge is also excluded from the **settling** animation, which exists to pin a
+row in place before it drops to *Finished today*. A gauge never drops, so there
+is no movement to cushion.
+
+### The gauge stores a level, and that is the whole design
+
+Two columns: `gauge_level` and `gauge_level_at` — a level, and the moment that
+level was true. Everything in between is computed by `gaugeLevelAt()` in
+`shared`. **Nothing runs on a timer**, which this project demands of anything
+that would otherwise tick, and the database is written once per action rather
+than once per minute.
+
+The obvious alternative is deriving the level from the last tick — full minus
+the time since you last did it — and it cannot express the two things a gauge is
+*for*: one topped up twice in a morning, and one neglected for a fortnight and
+then filled halfway. Both have the same last tick and different levels.
+
+- **Filling tops up from the current level rather than jumping to full**, which
+  is what makes a partial fill mean anything: at 25% a tick, four glasses of
+  water refill it from empty.
+- **Undo is not a true inverse and cannot be.** Filling clamps at 100, so a tick
+  that would have taken it to 130 loses the overflow and there is nothing left
+  to give back. Storing the overflow would mean a level that reads 100 and
+  secretly holds 130, which is a worse lie than an imperfect undo.
+- **A backwards clock must not refill it.** A resumed laptop or a corrected
+  timezone gives a negative elapsed time, and draining by a negative amount
+  fills. Clamped at the stored level.
+- **The level is resolved on the server**, not in the browser, though it is one
+  subtraction. In the browser it would depend on the *device's* clock, and a
+  phone a few minutes out would draw a different gauge from the PC — which is
+  the same reason the theme is stored server-side.
+- **Switching a habit into gauge mode re-anchors it.** A habit that has been
+  `target` for a year has never had an anchor written, so its `gauge_level_at`
+  is the migration's 0 — the epoch — and it would compute as bone empty the
+  instant you changed modes. Only on the transition, so editing the drain rate
+  of a half-empty gauge does not secretly refill it.
+
+**Undo on a gauge is not gated on there being an entry in this period**, and
+that was a real bug rather than a hypothetical. For a counted habit "nothing to
+undo" is a true statement about today; for a gauge the level *is* the state and
+it was very likely last filled yesterday. The early return left the − button
+working exactly once and then silently doing nothing — found by pressing it
+three times and watching the level stop at 75%. The Habits screen's stepper had
+the matching bug: it disabled − on `doneThisPeriod` and showed the number of
+top-ups today where the level belonged.
+
+### Recording a completion is one function, and briefly was two
+
+`recordHabitDone()` in `routes/habits.ts` is the only thing that writes a habit
+entry, and `undoHabitDone()` the only thing that removes one. The voice feature
+had its own copy — it inserted the entry and counted the period up by hand —
+which was *identical* to the HTTP route right until gauge mode arrived. The fill
+went into the route, so saying "I drank water" logged an entry and left the
+gauge exactly where it was. Reported as the voice command not working, and it
+had not: it had done half the write, silently.
+
+The spoken reply came back from the same place for the same reason. It was
+hard-coded to `${name} — ${done} of ${target}`, which for a gauge is a sentence
+about a target it does not have; it now says "Drink water — 56% full".
+
+A spoken count fills that many times, so "I drank two waters" is two ticks.
+
+### "To max" fills it, without you knowing the number
+
+`spokenAmount()` reads `max`, `maximum` or `full` out of a transcript, the way
+`spokenCount` reads "two". It exists because **for a gauge you rarely know the
+number**: six glasses refills a 16%-a-glass gauge from empty and four does it
+from a third, and working that out in your head is exactly the arithmetic saying
+it aloud is meant to avoid.
+
+`ticksFor()` turns it into a count, and it is a different one per mode — which
+is why the *habit* resolves it and not the caller:
+
+| mode | "to max" is |
+| --- | --- |
+| `gauge` | however many top-ups reach full from where it is now |
+| `target` | whatever is left of the target |
+| `interval` | one — there is no more done than done |
+
+Never zero. A full gauge asked to max still records a tick, because a command
+that answers "done" having written nothing is indistinguishable from one that
+failed.
+
+The three words go in `ALWAYS_IN_VOCABULARY`, on the same bargain the counting
+words struck: a closed grammar can only emit what it contains, so without them
+"drink water to max" comes back with the "max" replaced by whatever sounded
+nearest — reading for a word the recogniser was never allowed to say. They are
+kept to three for the opposite reason: each one is another thing an unrelated
+noise can become. **"all the way" was the obvious fourth and is not here**, since
+it would put "all" and "way" permanently into the vocabulary to save two
+characters over "max".
+
+In a chain, the amount is read from the *segment* rather than the sentence, so
+"water to max and one coffee" maxes only the first.
+
+### It asks before it is empty, and says when it will
+
+`gauge_remind_at` is the level at which it starts asking. **0 is the default and
+is exactly the old behaviour** — ask when there is nothing left — which is right
+for a glass of water and wrong for anything you need warning about: a plant set
+that way reminds you once it is already dead. Capped at 90, because a threshold
+of 100 is not a reminder, it is the absence of one.
+
+The Dashboard row therefore carries **two countdowns**, and they answer different
+questions: *reminds in 3 hours · empty in 7 hours*. At a threshold of 0 they are
+the same instant, so only one is shown — two identical times side by side read as
+a bug rather than as thoroughness. Below the line it says *needs doing* in place
+of the first.
+
+`gaugeReachesInMs()` computes both, and `gaugeEmptyInMs()` is now just the
+`level: 0` case of it. Neither schedules anything: they are arithmetic done when
+somebody is looking, which is what keeps a gauge free of timers. A gauge with no
+drain returns `null` rather than 0 — a countdown to a moment that is not coming
+would be worse than no countdown.
+
+The raised nudge says *"down to 20% — it drains 200% a day"* rather than
+"empty", since with a threshold it very often is not.
+
+### Drawn, not a progress bar
+
+`Gauge.tsx` renders four shapes as SVG with the fill clipped to the path, so a
+triangle empties to a point and a circle to a lens. A bar would have been three
+lines of CSS; the reason for a shape is that it is read *without* being looked
+at, which is the same argument the whole app runs on.
+
+**Any emoji works too**, which covers "a picture that empties" for most habits
+at no cost at all — the same decision the overlay avatar made, and the same
+reasoning that has the app icons generated rather than committed. An emoji cannot
+be clipped by an SVG path, so it is drawn twice: once greyed as the empty part,
+once inside a wrapper with a height and `overflow: hidden` on top. `gauge_shape`
+is therefore **opaque** — validated for length, not against the list of four —
+and anything unrecognised is drawn as text.
+
+**And a picture of your own**, uploaded per habit. `gauge_shape` is set to
+`image`, a sentinel rather than a separate boolean, because the two are exclusive
+and a flag beside a shape would allow "custom picture *and* triangle" — the app
+logo settled the same question the same way. The file lives in `data/` beside the
+database rather than in it, since a habits list is fetched on every page load and
+has no business carrying a JPEG.
+
+Three things there are worth knowing:
+
+- **It is under `/api/`, unlike the icons and the tones**, and the difference is
+  what it carries. Those are a colour and a sine wave, fetched by machinery that
+  will never send a bearer token. This is a picture you uploaded, personal in the
+  way the rest of the database is — so it stays behind auth, and since `<img
+  src>` sends no token either, the PWA fetches the bytes and wraps them in an
+  object URL. Cached by `id:updatedAt`, which the upload route bumps.
+- **Not local-only**, unlike the app logo. That restriction exists because a logo
+  is a property of *this machine's* installation; a habit is your data, editable
+  from the phone like everything else about it.
+- **Deleting a habit deletes its file.** Nothing cascades to a file, so without
+  that every removed gauge would leave a JPEG in `data/` for good.
+
+**The editor says what the numbers mean, in the unit that fits.** Two
+percentages are two abstractions: "empties by 200% a day" and "each tick adds
+40%" are both true and neither is the thing you want to know, which is that it
+means about five glasses a day. So the drain reports how long a full gauge lasts
+— `spanLabel` switching between minutes, hours and days rather than reporting
+"0.3 days" or "20.0 days" — and the fill reports the rhythm the two imply,
+flipping from "about 5 a day to keep up" to "one every 4 days" at the crossover.
+That is the number you can hold against your actual life and decide the settings
+are wrong.
+
+The gauge follows `var(--accent)`, unlike the presence dots which deliberately
+do not. Nothing is learned about a gauge's colour, whereas green meaning online
+is learned from every other chat client on the machine.
+
+**The gauge is the button.** A tick box beside it would raise the question of
+what the tick did that the shape did not, and the answer would be "nothing" —
+topping it up is the only thing you can do to a gauge. It is never struck
+through either: struck means finished, and a full gauge is already draining
+again.
 
 ### Recurring habit reminders expire — they never stack
 
@@ -1876,6 +2338,22 @@ elsewhere**, in ways that silently lost common sentences:
 - The irregular table returned early and bypassed all of it, so `took` gave
   `take` against a stored `tak`.
 
+**Doubling before `-ed` and `-ing` was the third case, and it broke a whole
+class of ordinary short verbs.** "sip" gives "sipped", so stripping `ed` left
+`sipp` while the stored `sip` reduced to `sip` — and the generator was no help
+either, offering the grammar `siped` and `siping`, spellings nobody says and
+Vosk drops as absent from its lexicon. So the recogniser could not emit the word
+and the matcher could not have folded it back if it had. `jog`, `plan`, `stop`,
+`nap`, `log` and `trim` all failed the same way. `undouble()` and
+`doublesFinal()` are the two halves, and `l`, `s` and `z` are excluded from the
+first because plenty of words simply end in those doubled — collapsing "pressed"
+to "pres" would trade one broken class for another.
+
+**A lone `-s` is never the plural of a word ending `-ss`**, which was a separate
+pre-existing bug found by the round-trip check the above added: `press` reduced
+to `pres` while `pressed` reduced to `press`, so the two halves of one word
+stopped matching. `pass` and `floss` failed identically.
+
 `voiceTokens` also filters filler **before** stemming as well as after, because
 `FILLER` is spelled the way people write these words and `have` had already
 become `hav` by the time it was checked.
@@ -1989,10 +2467,11 @@ a protection it was not providing.
 
 ## App integrations
 
-Spotify and YouTube for what you listen to and watch; Steam, Discord and Riot
-for who is around. `npm run integrations-check -w
+Canvas for coursework; Spotify and YouTube for what you listen to and watch;
+Steam, Discord and Riot for who is around. `npm run integrations-check -w
 @everything/server` proves the parts with no network in them — run it before
-trusting a change to the categoriser or the Takeout reader.
+trusting a change to the categoriser, the Takeout reader, or the rules that
+decide what happens to a synced task.
 
 **Off by default**, unlike everything else that is switchable. Every other
 feature works the moment it is switched on; this one does nothing at all until
@@ -2001,19 +2480,20 @@ so defaulting it on would add a tab that can only apologise.
 
 ### The capability matrix is the feature
 
-Four of these seven services **cannot do the obvious thing**, for four different
+Four of these services **cannot do the obvious thing**, for four different
 reasons, and finding that out one provider at a time — after building a screen
 that shows an empty list — is the expensive way to learn it. So a capability in
 `shared/src/integrations.ts` is not a boolean. It carries a `status` and a
 `why`, and the screen renders the `why` next to the thing it explains.
 
-| | playlists | following | who's online |
-| --- | --- | --- | --- |
-| **Spotify** | yes* | artists you follow | — |
-| **YouTube** | yes | subscriptions | — |
-| **Steam** | — | — | **yes, properly** |
-| **Discord** | — | — | needs their approval |
-| **Riot** | — | — | local client only |
+| | playlists | following | who's online | coursework |
+| --- | --- | --- | --- | --- |
+| **Spotify** | yes* | artists you follow | — | — |
+| **YouTube** | yes | subscriptions | — | — |
+| **Steam** | — | — | **yes, properly** | — |
+| **Discord** | — | — | needs their approval | — |
+| **Riot** | — | — | local client only | — |
+| **Canvas** | — | — | — | **yes, properly** |
 
 \* **Spotify needs Premium.** Since February 2026 a Development Mode app stops
 working the moment the owner's subscription lapses — it answers
@@ -2170,6 +2650,141 @@ The four that hurt, and why they are stated rather than worked around:
   to look" has to be visible. The other route people use is a user token lifted
   out of the desktop client, which is against Discord's terms and is not
   implemented.
+### Canvas: the one capability that writes into core
+
+Everything else in this module ends up on a screen the module owns. A Canvas
+deadline ends up as an ordinary **task**, which the nudge engine then holds and
+releases exactly like one you typed. That is the whole reason to want it — the
+engine is the app, and a deadline it cannot see is a deadline it cannot hold for
+you.
+
+**Read from `/api/v1/planner/items`, not from each course's assignment list.**
+Both exist, and the obvious one is worse in three ways: `/courses` then
+`/courses/:id/assignments` is a request per course, it returns last year's
+courses unless every one of them is filtered by term, and it says nothing about
+whether you handed anything in. The planner is what the Canvas dashboard itself
+draws, so it has already answered "which of these are current" the way a student
+expects — and it carries the submission state, which is what lets handing
+something in on Canvas tick it off here.
+
+Three things about it are unlike every other provider here, and all three are
+worth knowing before rather than after:
+
+- **It has no fixed address.** Every school runs its own Canvas, so the host is
+  half the credential. That is a `base_url` column on `integration_accounts`
+  rather than being folded into `external_id`, which means "who you are to
+  them" — a hostname is not that, and storing it there would have worked and
+  read as a mistake forever after. Generic on purpose: anything self-hosted
+  joins by filling it in.
+
+  It is also why the setup steps name a menu path in words rather than linking
+  it, which nothing else in this file does. The page you get the token from is
+  on the server you have not named yet.
+
+- **The token is not read-only, and cannot be made so.** Every other provider is
+  connected with a scoped read-only grant. A Canvas personal access token is the
+  whole account — grades, submissions, messages — because Canvas issues no
+  narrower kind to a personal app. This module stores tokens in the clear, for
+  the reason set out above, so the setup text and the connect form both say so
+  where you will read it. `https` is therefore **refused rather than assumed**:
+  `canvasHostInput` rejects an `http://` host outright instead of upgrading it,
+  because a scheme typed by mistake would put that token on the wire in the
+  clear, and a next-page link on a different origin is not followed for the same
+  reason.
+
+- **Assignments become tasks, and the rules for that are the interesting part.**
+  They live in `syncTasksFromService` in `store.ts`, not in the provider, so a
+  second school platform inherits them rather than forming a second opinion.
+
+#### A deleted task must stay deleted
+
+`integration_task_links` remembers that an item was turned into a task **even
+after that task is gone**. That table is the whole design, and the obvious
+alternative is the bug: deduplicating against `tasks` itself — which a
+`(source, source_id)` unique index would give you — recreates a task you
+deliberately threw away, on the very next sync, within the minute, with nothing
+on screen to explain it. Whichever way that argument is had, you lose it.
+
+So `task_id` goes null when the task goes, and a null one means "made once, and
+gone" — a decision, not a gap, never acted on again. The same null records an
+assignment that was **already handed in when we first looked**, which is what
+stops a term's worth of finished work arriving as a hundred tasks the first time
+you connect.
+
+#### Afterwards, only the deadline is carried across
+
+Extensions happen weekly and a stale `dueAt` makes the nudge engine wrong, which
+is the one thing this feature exists to get right. A title that changed at Canvas
+is rare and a stale one is merely untidy — whereas overwriting a title *you*
+renamed is an edit nobody asked for, and there is no signal here that could tell
+the two apart. `notes` is never touched for the same reason: it holds the course
+name to begin with and is yours after that.
+
+The comparison is against **what Canvas last said**, not against the task's own
+`dueAt`, so moving a deadline yourself is not undone by a service that has not
+changed its mind.
+
+**Ticking off only ever goes one way.** Canvas saying "handed in" closes the
+task; Canvas saying nothing never reopens one you closed. Submissions get
+retracted and windows reopened, and a task coming back to life would be the app
+arguing with you about something you had finished.
+
+#### What the id has to carry
+
+`plannable_id` is unique only within a kind, so `assignment:91` and `quiz:91` are
+two things. Without the prefix the second would silently never become a task.
+
+`planner_note` and `calendar_event` are deliberately not coursework:
+the first is a to-do you wrote *in Canvas*, and importing those would have two
+apps quietly competing over one list; the second is a fact about your timetable
+rather than something with an outcome. Something Canvas reports as `dismissed` is
+left alone, since that is the same request made of a different screen.
+
+`submissions` arrives as `false` when there is nothing to hand in, rather than as
+an object with everything unset — reading it as truthy would mark everything
+done.
+
+#### Two columns on `tasks`, and they are core
+
+`source` and `source_url` are on the core `tasks` table, holding **opaque
+slugs** that are deliberately *not* validated against `PROVIDER_IDS` — those
+live in a deletable folder, and core checking against them would be core
+depending on a feature. Exactly the arrangement `settings.hidden_providers`
+uses. All core does is render the string, so a slug that no longer means anything
+shows a label nobody clicks.
+
+They exist because a task appearing on your Dashboard that you did not write is
+confusing in a specific way — "did I write this, can I delete it, will it come
+back" — and the chip is what answers it.
+
+#### The one thing in this module on a timer
+
+Everything else here is refresh-on-read, and a 60-second friends poller was
+refused at 1,440 requests a day. Coursework is the opposite case, and the
+difference is what the data is *for*: a friends list is something you go and
+look at, so reading it is the moment it has to be true, whereas a deadline's
+whole job is to reach the nudge queue while you are thinking about something
+else. A "Sync now" button as the only route in would mean the one feature that
+exists to remember things for you had to be remembered.
+
+**48 requests a day while connected, none at all otherwise** — half an hour,
+chosen against the sweep, which queues a task within an hour of its due time. It
+lives inside `integrationRoutes` with an `onClose` hook and both handles
+`unref`ed, so it goes away with the folder, core never learns it exists, and
+`smoke` and `features-check` can still close an app without hanging on it.
+
+#### Two smaller things this turned up
+
+- **The api-key connect form was Steam's alone**, gated on `provider.auth ===
+  'api-key'`. Correct exactly until a second api-key provider existed, at which
+  point Canvas would have been shown a box asking for a Steam profile. Both are
+  now gated on the provider id, since the two credential pairs have nothing in
+  common.
+- **"Services to leave out" listed every provider**, and that panel governs only
+  the Friends and Following lists. Canvas feeds neither, so its box would have
+  done precisely nothing — with a line underneath admitting as much. The list is
+  now filtered to providers that actually contribute to one of the two.
+
 ### Who is online, and which process asks
 
 Steam and Discord are web APIs the server calls. Riot is not reachable that way,
@@ -2224,6 +2839,49 @@ movable and has no business assuming League is installed on the same box.
   to merely `online`. A lobby counts as in-game here: a queue has been picked
   and they are waiting on players. Fourteen people read as in-game where seven
   did.
+
+### A friend row that does not squash, and a way to message them
+
+The chip and the buttons were holding their width while the name and status
+column shrank around them, so at 375px the text broke into ragged lines beside a
+full-width "steam + discord". Measured on the real list before and after:
+
+| | before | after |
+| --- | --- | --- |
+| narrowest text column | **32px** | 214px |
+| names broken over more than one line | **13 of 40** | 0 |
+| worst status line | **8 lines** | 2 |
+
+Two rules, and neither hides anything. `flex-basis` plus `min-width: 0` on the
+text column is what actually lets it ellipsis — a flex child defaults to
+`min-width: auto` and refuses to shrink below its content — and `flex-wrap` lets
+the trailing controls drop underneath instead of squeezing what is worth
+reading. Hiding the chip below a breakpoint was the alternative and costs the one
+place that says which services a merged row came from. At 1280 nothing wraps, so
+the wide layout is exactly as it was.
+
+**Message opens Discord**, via `discord://-/users/<id>`. One link covers both
+ends: the desktop client claims the scheme on this PC and the Discord app claims
+it on a phone, so there is no platform sniffing. A real `<a href>` rather than a
+click handler, for the reason `everything://` needs one — Chromium gates handing
+a URL to an external program on a user gesture and treats an anchor navigation as
+one far more readily than a scripted assignment.
+
+That needed `providerUserId` on each account in the friends payload: the `id`
+beside it is this app's row key and means nothing to Discord. It is carried for
+every provider rather than only the one using it today, since it is already in
+hand.
+
+**Like the `everything://` button, the handoff itself is not verified here.** The
+automation browser refuses external-protocol launches outright, so a click
+produces no launch and no error — which is what that policy looks like and also
+what a broken link looks like. The href is asserted to be a well-formed
+`discord://-/users/<snowflake>` on 104 of 113 rows; whether Discord opens needs
+one press in a real window.
+
+Steam has an equivalent — `steam://friends/message/<id>` — and is deliberately
+not there yet: Discord is where the messaging happens, and a second button per
+row costs width on the screen this change was about.
 
 ### Switching whole statuses off
 

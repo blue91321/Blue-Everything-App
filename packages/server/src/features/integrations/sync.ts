@@ -17,6 +17,7 @@ import {
 import { changes } from '../../events.js';
 import { missingCredentials } from './oauth.js';
 import { friendsFreshness, getAccount, markFailed, markSynced } from './store.js';
+import * as canvas from './providers/canvas.js';
 import * as discord from './providers/discord.js';
 import * as spotify from './providers/spotify.js';
 import * as steam from './providers/steam.js';
@@ -67,6 +68,30 @@ const RUNNERS: Partial<Record<ProviderId, Partial<Record<Capability, Runner>>>> 
       return { notes: [`${count} friends, ${online} online`] };
     },
   },
+  canvas: {
+    assignments: async () => {
+      const { seen, created, rescheduled, completed, untouched } = await canvas.syncAssignments();
+
+      if (seen === 0) {
+        return {
+          notes: [
+            'Canvas answered, with nothing due. That is either a quiet fortnight or a term that has ' +
+              'not started — the planner only carries courses you are currently enrolled on.',
+          ],
+        };
+      }
+
+      // Spelled out rather than reduced to "n tasks", because three of these four
+      // numbers are the app having changed something you did not ask it to, and
+      // "4 rescheduled" is the line worth reading.
+      const parts = [`${seen} with a deadline`];
+      if (created > 0) parts.push(`${created} new ${created === 1 ? 'task' : 'tasks'}`);
+      if (rescheduled > 0) parts.push(`${rescheduled} rescheduled`);
+      if (completed > 0) parts.push(`${completed} ticked off as handed in`);
+      if (created + rescheduled + completed === 0) parts.push(`${untouched} already up to date`);
+      return { notes: [parts.join(', ')] };
+    },
+  },
 };
 
 export function runnableCapabilities(provider: ProviderId): Capability[] {
@@ -90,8 +115,12 @@ export async function syncProvider(provider: ProviderId, capabilities?: Capabili
   if (missing.length > 0) {
     return [
       {
+        // The provider's own first capability, not a hard-coded `playlists`.
+        // That was right while every configurable provider had one and became a
+        // small lie the moment one did not — "Canvas · playlists: not
+        // configured" names something Canvas has never claimed to do.
         provider,
-        capability: 'playlists',
+        capability: (Object.keys(runners)[0] ?? 'playlists') as Capability,
         ok: false,
         note: `not configured — fill in its fields on the Services tab, or set ${missing.join(' and ')}`,
       },
@@ -116,6 +145,14 @@ export async function syncProvider(provider: ProviderId, capabilities?: Capabili
   // One announcement for the whole sync, not one per capability — the clients
   // reload on it, and a two-capability sync should not reload them twice.
   changes.emitChange('integrations');
+  /*
+   * `assignments` is the one capability whose output is not on this feature's
+   * own screens, so the `integrations` scope does not reach the readers that
+   * care. Without this a sync writes tasks into the database and the Dashboard
+   * sitting open in front of you shows the old list until something else
+   * happens to change — which reads as the sync not having worked.
+   */
+  if (wanted.includes('assignments')) changes.emitChange('tasks');
   return outcomes;
 }
 

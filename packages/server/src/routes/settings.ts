@@ -96,6 +96,10 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         followWindowsDnd: toInt(body.followWindowsDnd),
         remindersEnabled: toInt(body.remindersEnabled),
         soundEnabled: toInt(body.soundEnabled),
+        soundWake: body.soundWake,
+        soundOk: body.soundOk,
+        soundMiss: body.soundMiss,
+        soundNudge: body.soundNudge,
         pushEnabled: toInt(body.pushEnabled),
         pushDefault: toInt(body.pushDefault),
         voiceEnabled: toInt(body.voiceEnabled),
@@ -121,6 +125,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         // it back out, so an array is the only shape the API ever speaks.
         hiddenProviders:
           body.hiddenProviders === undefined ? undefined : JSON.stringify(body.hiddenProviders),
+        dashboardPanel: body.dashboardPanel,
       })
       .where(eq(settings.id, current.id))
       .returning();

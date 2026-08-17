@@ -1,10 +1,14 @@
 /**
  * The Windows agent.
  *
- * One headless Node process: watch what you are doing, tell the server, raise
- * a toast when the server says a nudge has earned it. No window and no
+ * One headless Node process: watch what you are doing, tell the server, and
+ * raise the popup when the server says a nudge has earned it. No window and no
  * Electron — the UI is the PWA in a browser, and this stays a background
  * service that should be easy to forget is running.
+ *
+ * It raised Windows toasts once. Every one spawned PowerShell, because there is
+ * no WinRT binding here — a process and a few hundred milliseconds for the half
+ * of the notification you were *less* likely to look at. See the nudge loop.
  *
  * It does now put an icon in the notification area, which the header here used
  * to rule out. That line meant "not Electron, which wants 150-250MB to draw
@@ -22,9 +26,8 @@ import { AttentionMonitor, type AttentionSnapshot, type StoppingPoint } from './
 import { ServerClient, ServerUnreachable } from './client.js';
 import { agentConfig, assertConfigured } from './config.js';
 import { registerExtraGames } from './games.js';
-import { showToast } from './notify.js';
 import * as popup from './popup.js';
-import { setSoundEnabled } from './sound.js';
+import { setSoundEnabled, setTones } from './sound.js';
 import { createTray, runAppScript, type Tray } from './tray.js';
 
 assertConfigured();
@@ -88,11 +91,14 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
   inFlight = true;
 
   try {
-    const { deliver, soundEnabled } = await client.report(toReport(snapshot, stoppingPoint));
+    const { deliver, soundEnabled, tones } = await client.report(toReport(snapshot, stoppingPoint));
 
     // A server that predates the column sends nothing; on rather than off is the
     // right reading of silence for a setting whose default is on.
     setSoundEnabled(soundEnabled ?? true);
+    // Likewise: an absent map leaves every event on its default rather than
+    // silencing the app because an older server did not know about tones.
+    setTones(tones ?? {});
 
     if (offlineReported) {
       console.log(`[${clock()}] server back`);
@@ -106,17 +112,23 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
       console.log(`[${clock()}] nudge: ${nudge.title}${suffix}`);
 
       /*
-       * The popup as well as the toast, because they fail in opposite ways.
+       * The overlay, and only the overlay.
        *
-       * A nudge is delivered at a stopping point — which very often means the
-       * instant a match ends, with a game still holding the screen. A Windows
-       * toast raised then is a toast you may never see, and the whole point of
-       * waiting for a good moment is lost at the last step. The overlay draws
-       * above exclusive fullscreen, so it is the one that will actually be seen.
+       * This used to raise a Windows toast as well, on the reasoning that the
+       * two fail in opposite ways: the overlay gets *noticed* — it draws above
+       * an exclusive-fullscreen game, which is exactly where a nudge lands —
+       * while the toast *persists* in the Action Centre afterwards.
        *
-       * The toast stays because it is the half that *persists*: it sits in the
-       * Action Centre afterwards, which the overlay cannot do. One is for
-       * noticing, the other for finding again later.
+       * The toast is gone because of what it costs to raise one. There is no
+       * WinRT binding here, so every notification spawned PowerShell: a process,
+       * a few hundred milliseconds, and a flash of console at the moment the app
+       * is trying to be unobtrusive. Paying that for the half you were less
+       * likely to look at was the wrong way round.
+       *
+       * What is genuinely lost is the Action Centre entry — a nudge you miss is
+       * now missed, rather than waiting in a list. The queue still holds it: an
+       * undelivered nudge is on the Dashboard either way, which is the place
+       * this app already asks you to look.
        */
       popup.show({
         title: nudge.title + suffix,
@@ -125,10 +137,9 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
         sound: 'nudge',
       });
 
-      const shown = await showToast({ title: nudge.title + suffix, body, tag: nudge.id });
-      // Only acknowledge what actually reached the screen; a failed toast
-      // should stay in the queue rather than being silently marked as seen.
-      if (shown) await client.acknowledge(nudge.id).catch(() => {});
+      // The popup cannot fail the way a spawned process could, so there is no
+      // longer a "did it actually reach the screen" to gate this on.
+      await client.acknowledge(nudge.id).catch(() => {});
     }
   } catch (error) {
     if (error instanceof ServerUnreachable) {

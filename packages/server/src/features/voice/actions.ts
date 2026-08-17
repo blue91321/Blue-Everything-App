@@ -22,15 +22,14 @@ import {
   parseHotkey,
   remainderAfterPhrase,
   segmentUtterance,
-  spokenCount,
+  spokenAmount,
   type MediaAction,
   type VoiceCandidate,
   type VoiceCommandKind,
 } from '@everything/shared';
 import { db } from '../../db/client.js';
-import { habitEntries, habits, notes, settings, voiceCommands } from '../../db/schema.js';
-import { periodKeyFor } from '../../routes/habits.js';
-import type { Cadence } from '@everything/shared';
+import { habits, notes, settings, voiceCommands } from '../../db/schema.js';
+import { recordHabitDone } from '../../routes/habits.js';
 
 /** Something for the agent to do on the machine you are sitting at. */
 export type VoiceAction =
@@ -149,7 +148,7 @@ export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): stri
   const words = new Set<string>();
   for (const word of wakeWord.toLowerCase().split(/\s+/)) if (word) words.add(word);
 
-  // The counting words, always — `spokenCount` reads them and the recogniser
+  // The counting words, always — `spokenAmount` reads them and the recogniser
   // cannot emit what it was never given.
   for (const word of ALWAYS_IN_VOCABULARY) words.add(word);
 
@@ -381,9 +380,10 @@ async function resolveChain(
 
   const steps: VoiceOutcome[] = [];
   for (const { command, phrase, segment } of resolved) {
-    // The *segment*, not the whole sentence, so `spokenCount` reads the number
-    // that belongs to this part — "two waters and one coffee" is 2 then 1, not
-    // 2 twice.
+    // The *segment*, not the whole sentence, so `spokenAmount` reads the number
+    // — or the "max" — that belongs to this part: "two waters and one coffee" is
+    // 2 then 1, not 2 twice, and "water to max and one coffee" maxes only the
+    // first.
     steps.push(await runCommand(command, segment, phrase, wakeWord));
   }
 
@@ -428,28 +428,35 @@ export async function runCommand(
 ): Promise<VoiceOutcome> {
   switch (command.kind) {
     case 'habit': {
-      const [habit] = await db.select().from(habits).where(eq(habits.id, command.target ?? ''));
-      if (!habit) return { outcome: 'no-match', text, say: 'That habit has been deleted' };
-
-      const count = spokenCount(text);
-      const periodKey = periodKeyFor(habit.cadence as Cadence);
-      await db.insert(habitEntries).values({ habitId: habit.id, periodKey, count });
-
-      const entries = await db
-        .select()
-        .from(habitEntries)
-        .where(and(eq(habitEntries.habitId, habit.id), eq(habitEntries.periodKey, periodKey)));
-      const done = entries.reduce((sum, e) => sum + e.count, 0);
+      /*
+       * **Through `recordHabitDone`, not a second implementation.** This case
+       * used to insert the entry itself and count the period up by hand, which
+       * was identical to the HTTP route right up until gauge mode arrived — the
+       * fill was added to the route and saying "I drank water" quietly logged an
+       * entry and left the gauge exactly where it was. Reported as the voice
+       * command not updating it, and that is what a half-done write looks like.
+       *
+       * The spoken line comes back from there too, because "3 of 8" is a
+       * sentence about a target a gauge does not have.
+       */
+      /*
+       * `spokenAmount`, not `spokenCount`: "to max" is a real thing to say and
+       * is not a number you could know. For a gauge, how many top-ups reach full
+       * depends on where it is now, which is why the habit resolves it rather
+       * than this.
+       */
+      const progress = await recordHabitDone(command.target ?? '', spokenAmount(text));
+      if (!progress) return { outcome: 'no-match', text, say: 'That habit has been deleted' };
 
       return {
         outcome: 'habit-checked',
         text,
-        habitId: habit.id,
-        habitName: habit.name,
-        doneThisPeriod: done,
-        target: habit.targetPerPeriod,
-        met: done >= habit.targetPerPeriod,
-        say: `${habit.name} — ${done} of ${habit.targetPerPeriod}`,
+        habitId: progress.habit.id,
+        habitName: progress.habit.name,
+        doneThisPeriod: progress.doneThisPeriod,
+        target: progress.habit.targetPerPeriod,
+        met: progress.met,
+        say: progress.say,
       };
     }
 

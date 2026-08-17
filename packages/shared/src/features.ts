@@ -102,7 +102,9 @@ export const FEATURES: Record<FeatureId, FeatureSpec> = {
   integrations: {
     id: 'integrations',
     label: 'App integrations',
-    blurb: 'Spotify and YouTube libraries, and which of your friends are online on Steam, Discord and Riot.',
+    blurb:
+      'Canvas coursework as tasks, Spotify and YouTube libraries, and which of your friends are ' +
+      'online on Steam, Discord and Riot.',
     // Off until somebody asks for it. Every other feature here works the moment
     // it is switched on; this one does nothing at all until you have registered
     // an app with a third party and pasted an id into the environment, so

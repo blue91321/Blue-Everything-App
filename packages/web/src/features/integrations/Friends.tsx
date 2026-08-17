@@ -9,28 +9,12 @@
  * fixes, so the sources panel sits under the list and names the one that
  * applies.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type FriendRow, type FriendSource } from '../../api';
 import { useAsync } from '../../useAsync';
+import { STATE_LABEL } from './presence';
 import { relativeTime } from './Integrations';
 
-const STATE_LABEL: Record<FriendRow['state'], string> = {
-  'in-game': 'playing',
-  online: 'online',
-  away: 'away',
-  dnd: 'busy',
-  offline: 'offline',
-  /*
-   * Named after the service rather than the absence.
-   *
-   * It read "status unknown", which is accurate and says nothing you can act
-   * on. These rows are Discord friends and nothing else — Discord is the only
-   * provider here whose API carries no presence — so naming the service tells
-   * you where the entry came from and, by implication, why there is no status
-   * next to it.
-   */
-  unknown: 'discord',
-};
 
 /**
  * Which service's people to show right now.
@@ -63,10 +47,22 @@ function matchesSearch(friend: FriendRow, needle: string): boolean {
   );
 }
 
-export function Friends() {
+export function Friends({ seed }: { seed?: string | null } = {}) {
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
+
+  /*
+   * A name handed in from elsewhere — the Dashboard panel's "find this person".
+   *
+   * Applied through an effect rather than as `useState(seed)`, because this
+   * screen is already mounted when a second request arrives: you can right-click
+   * one person, then another, without leaving the tab. An initial value would
+   * only ever honour the first.
+   */
+  useEffect(() => {
+    if (seed) setSearch(seed);
+  }, [seed]);
   /**
    * Statuses switched off, rather than the one status to show.
    *
@@ -440,9 +436,26 @@ function StatusFilter({
 function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () => void }) {
   const [linking, setLinking] = useState(false);
 
+  /*
+   * The Discord snowflake, if this person has a Discord account in the group.
+   *
+   * `providerUserId` rather than `id`: the latter is this app's row key and
+   * means nothing to Discord. Optional on the type because the server and the
+   * PWA update independently, so an older server sends rows without it — and an
+   * absent id simply means no button rather than a link to nowhere.
+   */
+  const discordId = friend.accounts.find((account) => account.provider === 'discord')?.providerUserId;
+
   return (
     <div className="card">
-      <div className="row" style={{ alignItems: 'center', gap: '.75rem' }}>
+      {/*
+        `friend-row` rather than a bare `row`: at a narrow width the chip and the
+        buttons were holding their size while the name and status column shrank
+        around them, so the text squashed into two or three ragged lines while
+        "steam + discord" sat there at full width. The column now refuses to go
+        below a readable width and the trailing controls wrap underneath instead.
+      */}
+      <div className="row friend-row" style={{ alignItems: 'center', gap: '.75rem' }}>
         {/*
           The dot rides on the avatar, so it needs a positioned wrapper that
           exists whether or not there is a picture — the fallback glyph gets one
@@ -467,8 +480,8 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
           />
         </span>
 
-        <div className="grow">
-          <div className="title">{friend.name}</div>
+        <div className="grow friend-text">
+          <div className="title truncate">{friend.name}</div>
           <div className="meta">
             {/* What they are playing outranks the status word: "playing Deep Rock
                 Galactic" is the answer, and "online" is the less useful half of it. */}
@@ -506,6 +519,31 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
           removing are both *managing the links*, so they live together behind a
           single control, the same shape the Following tab uses.
         */}
+        {/*
+          Message them, when we know where.
+          
+          `discord://` opens the desktop client on this PC and is claimed by the
+          Discord app on a phone, so one link covers both — which is why there is
+          no platform sniffing here. A real `<a href>` rather than a click
+          handler, for the reason `everything://` needs one: Chromium gates
+          handing a URL to an external program on a user gesture and treats an
+          anchor navigation as one far more readily than a scripted assignment.
+
+          Steam has an equivalent (`steam://friends/message/<id>`) and is
+          deliberately not here yet — Discord is where the messaging actually
+          happens, and a second button per row costs width on the very screen
+          this change is about.
+        */}
+        {discordId && (
+          <a
+            className="btn subtle"
+            href={`discord://-/users/${discordId}`}
+            title={`Message ${friend.name} on Discord`}
+          >
+            Message
+          </a>
+        )}
+
         <button className="btn subtle" onClick={() => setLinking((open) => !open)}>
           {linking ? 'Done' : friend.accounts.length > 1 ? 'Manage links' : 'Link'}
         </button>

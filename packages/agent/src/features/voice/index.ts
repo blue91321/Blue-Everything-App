@@ -204,23 +204,32 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
      */
     const sound = result.outcome === 'no-match' ? 'miss' : 'ok';
 
+    /*
+     * The exchange reads as a conversation: what you said on the right, what it
+     * did on the left, each turn added below the last.
+     *
+     * Appending rather than replacing is the point. With follow-ups on you can
+     * say a second thing without the wake word, and the old behaviour put the
+     * reply where your own words had been — so there was no way to see *what it
+     * heard* next to *what it did about it*, which is the one comparison worth
+     * making when something goes wrong. A fresh wake word calls `show` and
+     * starts the transcript over; that is the reset.
+     */
+    if (result.text) popup.say({ text: result.text, from: 'you', tone: 'muted' });
+
     if (result.steps?.length) {
-      popup.show({
-        title: `Heard ${result.steps.length} things`,
-        lines: result.steps.map((step) => ({
-          text: step.say ?? step.text,
-          tone: TONE_FOR[step.outcome] ?? 'muted',
-        })),
-        sound,
-      });
+      // One line per part, so a chain that half-worked shows which half.
+      for (const step of result.steps) {
+        popup.say({ text: step.say ?? step.text, from: 'app', tone: TONE_FOR[step.outcome] ?? 'muted' });
+      }
+      popup.say({ text: `— ${result.steps.length} things`, from: 'app', tone: 'muted' }, { sound });
     } else {
-      popup.show({
-        title: result.say ?? result.text,
-        // Coloured by outcome, so a miss does not look like a success at a glance —
-        // which matters most for the ones that changed nothing.
-        lines: [{ text: `heard "${result.text}"`, tone: TONE_FOR[result.outcome] ?? 'muted' }],
-        sound,
-      });
+      popup.say(
+        // Coloured by outcome, so a miss does not look like a success at a
+        // glance — which matters most for the ones that changed nothing.
+        { text: result.say ?? result.text, from: 'app', tone: TONE_FOR[result.outcome] ?? 'muted' },
+        { sound }
+      );
     }
 
     /*

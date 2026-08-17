@@ -1,13 +1,18 @@
+import { Suspense } from 'react';
 import { api, type Nudge, type Task } from '../api';
 import { useAsync } from '../useAsync';
 import { useSettling } from '../useSettling';
 import { clockTime, endOfToday, relative, startOfToday } from '../format';
+import { goTo } from '../nav';
+import { resolvePanel } from '../panels';
 import { TaskRow, HabitRow } from '../rows';
 import { Capture } from './Capture';
 
 /**
  * The landing screen: capture something, see what's waiting to interrupt you,
  * see what's actually due, and see what you've already finished.
+ *
+ * Optionally with a second column — see `SidePanel`.
  */
 export function Dashboard() {
   // 'done' is included so finished items can be shown rather than vanishing.
@@ -45,8 +50,29 @@ export function Dashboard() {
 
   const nothingPending = (queue.data?.length ?? 0) === 0 && willQueue.length === 0;
 
+  /*
+   * Read here rather than passed down from `App`, which does not fetch settings.
+   * `useAsync` coalesces concurrent GETs of the same path, so this costs no
+   * extra request on a page that is already asking for `/api/settings`.
+   */
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
+  const panelId = settings.data?.dashboardPanel ?? '';
+  const Panel = resolvePanel(panelId);
+
   return (
-    <>
+    /*
+     * `has-panel` widens the container, and it does that through
+     * `.app:has(.dash.has-panel)` in the stylesheet rather than by `App` passing
+     * a class down. `App` does not read settings and threading one boolean
+     * through it purely to set a max-width would be a prop through three
+     * components for a layout question the child already knows the answer to.
+     *
+     * Where `:has()` is unsupported this degrades to the one-column layout with
+     * the panel stacked underneath, which is exactly what a narrow screen gets
+     * anyway — so the fallback is a real layout rather than a broken one.
+     */
+    <div className={Panel ? 'dash has-panel' : 'dash'}>
+      <div className="dash-main">
       <section>
         <Capture onAdded={reloadAll} />
       </section>
@@ -100,7 +126,33 @@ export function Dashboard() {
           ))}
         </section>
       )}
-    </>
+      </div>
+
+      {Panel && (
+        <aside className="dash-panel">
+          {/*
+            Its own Suspense boundary, so a panel whose chunk is still arriving
+            leaves the tasks on screen rather than blanking the Dashboard. The
+            fallback is deliberately plain and deliberately not a spinner: on
+            this network the chunk lands in a frame or two, and something that
+            animates would be more noticeable than the thing it is covering for.
+          */}
+          <Suspense fallback={<div className="empty">loading…</div>}>
+            <Panel panelId={panelId} />
+          </Suspense>
+
+          {/*
+            Here rather than inside each panel, so every panel gets it and no
+            feature has to know that the *setting* exists — the panel is the
+            feature's, the slot it sits in is core's, and this button is about
+            the slot.
+          */}
+          <button className="btn subtle panel-settings" onClick={() => goTo('settings', { focus: 'dashboard-panel' })}>
+            Change what's here
+          </button>
+        </aside>
+      )}
+    </div>
   );
 }
 

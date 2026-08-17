@@ -53,6 +53,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   taste: 'Categories',
   follows: 'Following',
   friends: 'Friends',
+  assignments: 'Coursework',
 };
 
 export function Connections({ local }: { local: boolean }) {
@@ -101,6 +102,19 @@ function leavingOut(provider: ProviderInfo): string {
     return provider.id === 'youtube' ? 'channels you subscribe to' : 'artists you follow';
   }
   return 'nothing on these lists';
+}
+
+/**
+ * Whether leaving this one out would change anything.
+ *
+ * The panel governs the Friends and Following lists and nothing else, so a
+ * provider contributing to neither gets a box that does *precisely nothing* when
+ * ticked — with a line underneath admitting as much. That was tolerable while
+ * every provider fed one of the two lists; Canvas feeds neither, and a control
+ * whose own label says it has no effect is worse than no control.
+ */
+function canBeLeftOut(provider: ProviderInfo): boolean {
+  return Boolean(provider.capabilities.friends ?? provider.capabilities.follows);
 }
 
 /**
@@ -165,7 +179,7 @@ function LeaveOut({
         so someone you know from both League and Discord stays.
       </div>
 
-      {providers.map((provider) => (
+      {providers.filter(canBeLeftOut).map((provider) => (
         <label
           key={provider.id}
           className="row"
@@ -205,6 +219,8 @@ function ProviderCard({
   const [outcomes, setOutcomes] = useState<SyncOutcome[]>([]);
   const [steamKey, setSteamKey] = useState('');
   const [steamProfile, setSteamProfile] = useState('');
+  const [canvasHost, setCanvasHost] = useState('');
+  const [canvasToken, setCanvasToken] = useState('');
   const [problem, setProblem] = useState('');
 
   /**
@@ -258,6 +274,18 @@ function ProviderCard({
        * tab to do it would mean coming back to a cold start every time.
        */
       window.open(url, '_blank', 'noopener');
+    });
+
+  const connectCanvas = () =>
+    guard('canvas', async () => {
+      await api.integrations.connectCanvas(canvasHost.trim(), canvasToken.trim());
+      // Cleared on success only. `guard` throws before this on failure, so a
+      // rejected token stays in the box to be corrected — and a Canvas token is
+      // shown once and never again, which makes retyping it from memory
+      // impossible rather than merely irritating.
+      setCanvasHost('');
+      setCanvasToken('');
+      reload();
     });
 
   const connectSteam = () =>
@@ -503,7 +531,7 @@ function ProviderCard({
         set in the environment, which meant it was dead until you had already
         done the hard half somewhere else.
       */}
-      {provider.auth === 'api-key' && !provider.connected && local && (
+      {provider.id === 'steam' && !provider.connected && local && (
         <form
           style={{ marginTop: '.75rem', display: 'grid', gap: '.5rem' }}
           onSubmit={(e) => {
@@ -571,9 +599,83 @@ function ProviderCard({
         </form>
       )}
 
+      {/*
+        ---- Canvas: the school's address, and the token ----
+
+        Its own form rather than the api-key one above, which was Steam's alone
+        while Steam was the only provider of that kind. Gating on `auth` there
+        was correct exactly until it stopped being — a second api-key provider
+        would have been shown a box asking for a Steam profile.
+
+        The address is not a convenience field. Every school runs its own Canvas,
+        so without it there is nowhere to send the token.
+      */}
+      {provider.id === 'canvas' && !provider.connected && local && (
+        <form
+          style={{ marginTop: '.75rem', display: 'grid', gap: '.5rem' }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void connectCanvas();
+          }}
+        >
+          <label style={{ display: 'grid', gap: '.25rem' }}>
+            <span className="meta">
+              Your school's Canvas address — whatever is in the address bar. A full course URL is fine;
+              only the host is kept.
+            </span>
+            <input
+              value={canvasHost}
+              onChange={(e) => setCanvasHost(e.target.value)}
+              placeholder="canvas.yourschool.edu"
+              aria-label="Canvas address"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+
+          <label style={{ display: 'grid', gap: '.25rem' }}>
+            <span className="meta">
+              Your access token — Account → Settings → <strong>+ New Access Token</strong>. Canvas shows
+              it once, so copy it before leaving the page.
+            </span>
+            {/*
+              `type="password"`, unlike Steam's key box. This one is the whole
+              account rather than a read-only API key, and it is pasted from a
+              page that is very likely still open on the screen behind this one.
+            */}
+            <input
+              type="password"
+              value={canvasToken}
+              onChange={(e) => setCanvasToken(e.target.value)}
+              placeholder="Paste the token"
+              aria-label="Canvas access token"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </label>
+
+          <div className="row wrap row-actions">
+            <button
+              type="submit"
+              className="btn primary"
+              disabled={canvasHost.trim() === '' || canvasToken.trim() === '' || busy !== ''}
+            >
+              {busy === 'canvas' ? 'Checking with Canvas…' : 'Connect'}
+            </button>
+          </div>
+
+          <div className="meta">
+            Worth knowing: a Canvas token is your whole account — grades, submissions, everything — and
+            there is no read-only kind to ask for. It is stored in this app's database in the clear, like
+            every other token here. Coursework with a due date becomes a task; nothing is ever written
+            back to Canvas.
+          </div>
+        </form>
+      )}
+
       {provider.auth === 'api-key' && !provider.connected && !local && (
         <div className="meta" style={{ marginTop: '.75rem' }}>
-          Steam is connected from the PC running the server.
+          {provider.label} is connected from the PC running the server.
         </div>
       )}
 

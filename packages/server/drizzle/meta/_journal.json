@@ -225,6 +225,41 @@
             "when": 1786063100000,
             "tag": "0031_tidy_lone_person_ids",
             "breakpoints": true
+        },
+        {
+            "idx": 32,
+            "version": "6",
+            "when": 1786063200000,
+            "tag": "0032_sound_tones",
+            "breakpoints": true
+        },
+        {
+            "idx": 33,
+            "version": "6",
+            "when": 1786063300000,
+            "tag": "0033_canvas",
+            "breakpoints": true
+        },
+        {
+            "idx": 34,
+            "version": "6",
+            "when": 1786063400000,
+            "tag": "0034_dashboard_panel",
+            "breakpoints": true
+        },
+        {
+            "idx": 35,
+            "version": "6",
+            "when": 1786063500000,
+            "tag": "0035_habit_modes",
+            "breakpoints": true
+        },
+        {
+            "idx": 36,
+            "version": "6",
+            "when": 1786063600000,
+            "tag": "0036_gauge_remind_at",
+            "breakpoints": true
         }
     ]
 }

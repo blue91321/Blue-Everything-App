@@ -21,6 +21,16 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 export interface FeatureViewProps {
   /** Whether this browser is on the PC running the server. */
   local: boolean;
+  /**
+   * Text to put in this screen's search box, sent by something elsewhere in the
+   * app — the Dashboard panel's "find this person" button, today.
+   *
+   * Optional on both sides: core has no idea whether a given feature *has* a
+   * search box, and a feature that does not simply ignores it.
+   */
+  search?: string | null;
+  /** Called once the hint above has been acted on, so it is not applied twice. */
+  onFocused?: () => void;
 }
 
 export interface FeatureMeta {
@@ -34,10 +44,46 @@ export interface FeatureMeta {
 
 export interface WebFeature extends FeatureMeta {
   View: LazyExoticComponent<ComponentType<FeatureViewProps>>;
+  /** What this feature offers to put in the Dashboard's side column. */
+  panels: PanelMeta[];
+  Panel: LazyExoticComponent<ComponentType<PanelProps>> | null;
 }
 
-const metaModules = import.meta.glob<{ meta: FeatureMeta }>('./*/meta.ts', { eager: true });
+/**
+ * One thing a feature offers to show beside the Dashboard.
+ *
+ * A list rather than a single panel per feature, because a feature genuinely
+ * may have more than one worth putting there — integrations could offer both
+ * who is online and what you follow — and discovering that after picking the
+ * one-per-feature shape would mean changing every feature that had adopted it.
+ */
+export interface PanelMeta {
+  /**
+   * Globally unique. By convention `<feature>:<what>`, which is not enforced —
+   * it is stored as an opaque string in `settings.dashboard_panel` and core
+   * never parses it.
+   */
+  id: string;
+  label: string;
+  /** One line under the picker, saying what you would actually see. */
+  hint?: string;
+}
+
+export interface PanelProps {
+  /** The id being asked for, since one module may serve several panels. */
+  panelId: string;
+}
+
+const metaModules = import.meta.glob<{ meta: FeatureMeta; panels?: PanelMeta[] }>('./*/meta.ts', {
+  eager: true,
+});
 const viewModules = import.meta.glob<{ default: ComponentType<FeatureViewProps> }>('./*/view.tsx');
+/**
+ * Lazy like the views, and for a stronger reason: a panel that is not the one
+ * you chose must not be downloaded at all, and the Dashboard is the screen that
+ * has to open fastest.
+ */
+const panelModules = import.meta.glob<{ default: ComponentType<PanelProps> }>('./*/panel.tsx');
 
 /** './vault/meta.ts' -> 'vault' */
 const folderOf = (path: string) => path.split('/')[1];
@@ -49,13 +95,52 @@ export const webFeatures: WebFeature[] = Object.entries(metaModules)
     // A meta with no view is a half-deleted feature. Dropping it is kinder than
     // rendering a tab that throws the moment it is clicked.
     if (!load) return null;
-    return { ...mod.meta, View: lazy(load) };
+    /*
+     * Typed as possibly absent, which `import.meta.glob` does not do for you:
+     * its record type makes every lookup look defined, so a plain truthiness
+     * check on a missing key is flagged as always true while being exactly the
+     * check that is needed. A feature with no `panel.tsx` is the normal case.
+     */
+    const loadPanel: (typeof panelModules)[string] | undefined = panelModules[`./${folder}/panel.tsx`];
+    return {
+      ...mod.meta,
+      View: lazy(load),
+      // Panels declared with no module behind them are dropped for the same
+      // reason a meta with no view is: an option in a picker that renders
+      // nothing when chosen is worse than an option that is not offered.
+      panels: loadPanel === undefined ? [] : mod.panels ?? [],
+      Panel: loadPanel === undefined ? null : lazy(loadPanel),
+    };
   })
   .filter((f): f is WebFeature => f !== null)
   .sort((a, b) => a.order - b.order);
 
 /** Present in this build. Being *enabled* is the server's call, not ours. */
 export const installedFeatureIds: string[] = webFeatures.map((f) => f.id);
+
+/**
+ * Every panel this build can draw, from features that are switched on.
+ *
+ * Filtered by `featureEnabled` rather than only by what is on disk, because the
+ * two are genuinely different states here as everywhere else: a panel from a
+ * feature you switched off should stop being *offered*, while the stored
+ * setting is left alone so switching the feature back on restores what you had.
+ */
+export function availablePanels(): Array<PanelMeta & { featureId: string }> {
+  return webFeatures
+    .filter((f) => featureEnabled(f.id))
+    .flatMap((f) => f.panels.map((panel) => ({ ...panel, featureId: f.id })));
+}
+
+/** The lazy component for a chosen panel id, or null if nothing answers to it. */
+export function panelComponent(
+  panelId: string
+): LazyExoticComponent<ComponentType<PanelProps>> | null {
+  const owner = webFeatures.find(
+    (f) => featureEnabled(f.id) && f.panels.some((p) => p.id === panelId)
+  );
+  return owner?.Panel ?? null;
+}
 
 /* ------------------------------------------------------------------ */
 /* What the server says is on                                          */

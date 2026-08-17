@@ -403,6 +403,77 @@ check('a snoozed nudge stays quiet', !snoozedFired);
  * which drains whatever is still queued from the sections above. Nothing after
  * this could assume a queue it had left full.
  */
+/*
+ * A held nudge must still be true when it finally lands.
+ *
+ * The queue exists to wait for a good moment, so a nudge routinely sits for an
+ * hour — and in that hour the thing it is about can be done. Delivering a stale
+ * count afterwards is worse than delivering nothing: it is confidently wrong,
+ * and the whole point of waiting was spent saying something untrue.
+ */
+console.log('\na nudge held through a game is re-checked before it lands');
+{
+  const { sweepHabitReminders } = await import('../nudge-engine.js');
+  const { db } = await import('../db/client.js');
+  const { nudges: nudgeTable } = await import('../db/schema.js');
+  const { eq: whereEq } = await import('drizzle-orm');
+
+  const habit = (await post('/api/habits', { name: 'Stretch', cadence: 'daily', targetPerPeriod: 4 })).json();
+  await app.inject({ method: 'PATCH', url: `/api/habits/${habit.id}`, payload: { reminderEveryMinutes: 30 } });
+
+  await sweepHabitReminders(Date.now());
+  const raised = (await app.inject({ method: 'GET', url: '/api/nudges/queue' })).json();
+  const mine = raised.find((n: { habitId: string }) => n.habitId === habit.id);
+  check('the reminder is raised with the count at the time', mine?.body === '0 of 4 so far today', mine?.body);
+
+  // Two of them done while the nudge waits — exactly what a match is long
+  // enough for.
+  await post(`/api/habits/${habit.id}/check`);
+  await post(`/api/habits/${habit.id}/check`);
+
+  const landed = await post('/api/attention', report({ reason: 'match over', idleMs: 0 }));
+  const shown = landed.json().deliver.find((n: { habitId: string }) => n.habitId === habit.id);
+  check('it arrives with the count as it is *now*', shown?.body === '2 of 4 so far today', shown?.body);
+
+  // And the interval runs from when it was said, not from when it was written
+  // down — otherwise a long session is rewarded with two reminders in a minute.
+  check('another is not due straight after', (await sweepHabitReminders(Date.now())) === 0);
+  const [row] = await db.select().from(nudgeTable).where(whereEq(nudgeTable.habitId, habit.id));
+  check('and it was stamped with a delivery time to count from', typeof row.deliveredAt === 'number');
+}
+
+console.log('\n…and one whose reason has gone is dropped, not shown');
+{
+  const { sweepHabitReminders, sweepDueTasks } = await import('../nudge-engine.js');
+
+  // Finished entirely while the nudge waited.
+  const done = (await post('/api/habits', { name: 'Vitamins', cadence: 'daily', targetPerPeriod: 1 })).json();
+  await app.inject({ method: 'PATCH', url: `/api/habits/${done.id}`, payload: { reminderEveryMinutes: 30 } });
+  await sweepHabitReminders(Date.now());
+  await post(`/api/habits/${done.id}/check`);
+
+  const afterHabit = await post('/api/attention', report({ reason: 'back at the desk', idleMs: 0 }));
+  check(
+    'a habit finished while it waited is not nagged about',
+    !afterHabit.json().deliver.some((n: { habitId: string }) => n.habitId === done.id)
+  );
+
+  // Same shape for a task: nothing clears its nudge when it is completed.
+  const task = (await post('/api/tasks', { title: 'Post the letter', dueAt: Date.now() + 20 * 60_000, priority: 3 })).json();
+  await sweepDueTasks(Date.now());
+  await app.inject({ method: 'PATCH', url: `/api/tasks/${task.id}`, payload: { status: 'done' } });
+
+  const afterTask = await post(
+    '/api/attention',
+    report({ reason: 'a good break', idleMs: 0, stoppingPoint: { quality: 'prime', reason: 'match ended' } })
+  );
+  check(
+    'a task completed while it waited is not nagged about',
+    !afterTask.json().deliver.some((n: { taskId: string }) => n.taskId === task.id),
+    titles(afterTask).join(', ')
+  );
+}
+
 console.log('\nper-item phone push');
 {
   const { resolvePush } = await import('@everything/shared');
@@ -482,6 +553,397 @@ console.log('\nper-item phone push');
   check('and toasts at the next good break', titles(back).includes('Desk only'), titles(back).join(', '));
 
   resetPushPort();
+}
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
+
+{
+  const { gaugeAfterFill, gaugeAfterUndo, gaugeLevelAt, gaugeReachesInMs, habitIsFinished, habitWantsDoing } =
+    await import('@everything/shared');
+  const { db } = await import('../db/client.js');
+  const { habits: habitTable } = await import('../db/schema.js');
+  const { eq } = await import('drizzle-orm');
+
+  const DAY = 86_400_000;
+  const t0 = Date.parse('2026-08-16T09:00:00Z');
+
+  /* ---- the maths, before anything touches a database ---- */
+
+  const half = { gaugeLevel: 100, gaugeLevelAt: t0, gaugeDrainPerDay: 50, gaugeFillPercent: 25 };
+  check('a gauge starts where it was stored', gaugeLevelAt(half, t0) === 100);
+  check('and drains at its own rate', gaugeLevelAt(half, t0 + DAY) === 50, String(gaugeLevelAt(half, t0 + DAY)));
+  check('never below empty', gaugeLevelAt(half, t0 + 10 * DAY) === 0);
+
+  /*
+   * **The reason the level is stored rather than derived.** Two ticks an hour
+   * apart must leave it fuller than one — which a "time since the last tick"
+   * gauge cannot express, because both have the same last tick.
+   */
+  const once = gaugeAfterFill(half, t0 + DAY);
+  const twice = gaugeAfterFill({ ...half, ...once }, t0 + DAY);
+  check('one top-up adds the fill amount', once.gaugeLevel === 75, String(once.gaugeLevel));
+  check('and a second one stacks on it', twice.gaugeLevel === 100, String(twice.gaugeLevel));
+
+  check(
+    'a full gauge does not overflow',
+    gaugeAfterFill({ ...half, gaugeLevel: 100, gaugeFillPercent: 60 }, t0).gaugeLevel === 100
+  );
+  check('undoing takes the fill back off', gaugeAfterUndo({ ...half, ...once }, t0 + DAY).gaugeLevel === 50);
+
+  /*
+   * A clock that goes backwards — a resumed laptop, a corrected timezone —
+   * must not *fill* the gauge by draining a negative number of days.
+   */
+  check('a backwards clock does not refill it', gaugeLevelAt(half, t0 - DAY) === 100);
+
+  /* ---- which mode wants doing when ---- */
+
+  const base = { targetPerPeriod: 3, intervalMinutes: null, gaugeLevel: 0, gaugeLevelAt: t0, gaugeDrainPerDay: 100 };
+  check(
+    'a target habit wants doing until the target is met',
+    habitWantsDoing({ ...base, mode: 'target' }, { doneThisPeriod: 2, lastDoneAt: t0 }, t0) &&
+      !habitWantsDoing({ ...base, mode: 'target' }, { doneThisPeriod: 3, lastDoneAt: t0 }, t0)
+  );
+  check(
+    'an interval habit waits out its interval',
+    !habitWantsDoing(
+      { ...base, mode: 'interval', intervalMinutes: 60 },
+      { doneThisPeriod: 0, lastDoneAt: t0 },
+      t0 + 30 * 60_000
+    ) &&
+      habitWantsDoing(
+        { ...base, mode: 'interval', intervalMinutes: 60 },
+        { doneThisPeriod: 0, lastDoneAt: t0 },
+        t0 + 61 * 60_000
+      )
+  );
+  check(
+    'one never done is due immediately',
+    habitWantsDoing({ ...base, mode: 'interval', intervalMinutes: 60 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+  /*
+   * A half-configured habit is not an always-due one. Reading a missing
+   * interval as "due now" would nag forever about something nobody finished
+   * setting up.
+   */
+  check(
+    'and one with no interval set never is',
+    !habitWantsDoing({ ...base, mode: 'interval' }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+  check(
+    'a gauge wants doing only when it is empty',
+    habitWantsDoing({ ...base, mode: 'gauge', gaugeLevel: 0 }, { doneThisPeriod: 0, lastDoneAt: null }, t0) &&
+      !habitWantsDoing({ ...base, mode: 'gauge', gaugeLevel: 100 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+
+  /*
+   * ...unless a threshold moves that line up. Empty-only is the wrong moment for
+   * anything that takes a while to act on — a plant would ask once it was
+   * already dead — and 0 keeps the original behaviour exactly.
+   */
+  const warned = { ...base, mode: 'gauge' as const, gaugeRemindAt: 30 };
+  check(
+    'a threshold brings the asking forward',
+    habitWantsDoing({ ...warned, gaugeLevel: 25 }, { doneThisPeriod: 0, lastDoneAt: null }, t0),
+    'at 25% with a 30% threshold'
+  );
+  check(
+    'and it is quiet above the line',
+    !habitWantsDoing({ ...warned, gaugeLevel: 35 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+  check(
+    'exactly on the line counts as due',
+    habitWantsDoing({ ...warned, gaugeLevel: 30 }, { doneThisPeriod: 0, lastDoneAt: null }, t0)
+  );
+  /* Still never *finished*, however that line is drawn. */
+  check(
+    'a threshold does not make it finishable',
+    !habitIsFinished({ ...warned, gaugeLevel: 100 }, { doneThisPeriod: 0, lastDoneAt: null, startOfToday: t0 }, t0)
+  );
+
+  /* ---- the two countdowns ---- */
+
+  const counting = { gaugeLevel: 100, gaugeLevelAt: t0, gaugeDrainPerDay: 50 };
+  check('empty is a full two days away at 50% a day', gaugeReachesInMs(counting, 0, t0) === 2 * DAY);
+  const toThirty = gaugeReachesInMs(counting, 30, t0);
+  check('and the 30% line is a day and a half', toThirty === 1.4 * DAY, `${(toThirty ?? 0) / DAY} days`);
+  check('already past the line is now, not a negative', gaugeReachesInMs(counting, 100, t0) === 0);
+  // A gauge that does not drain never reaches anything, and saying "in 0" would
+  // be a countdown to a moment that is not coming.
+  check('one that never drains never gets there', gaugeReachesInMs({ ...counting, gaugeDrainPerDay: 0 }, 0, t0) === null);
+
+  /* ---- and now through the real API ---- */
+
+  const madeGauge = await post('/api/habits', { name: 'Water the plant', mode: 'gauge' });
+  check('a gauge habit is created', madeGauge.statusCode === 201);
+  const gaugeId = madeGauge.json().id;
+
+  await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${gaugeId}`,
+    payload: { gaugeDrainPerDay: 50, gaugeFillPercent: 25 },
+  });
+
+  const listOf = async (id: string) =>
+    (await app.inject({ method: 'GET', url: '/api/habits' })).json().find((h: { id: string }) => h.id === id);
+
+  check('it starts full', (await listOf(gaugeId)).gaugeNow === 100);
+
+  // Wind the anchor back a day and a half rather than waiting for one. The read
+  // path is what is under test, and it is the arithmetic that has to be right.
+  await db
+    .update(habitTable)
+    .set({ gaugeLevelAt: Date.now() - 1.5 * DAY })
+    .where(eq(habitTable.id, gaugeId));
+
+  const drained = await listOf(gaugeId);
+  check('and drains as time passes', drained.gaugeNow === 25, `got ${drained.gaugeNow}`);
+  check('and says when it will be empty', Math.round(drained.gaugeEmptyInMs / 3_600_000) === 12, String(drained.gaugeEmptyInMs));
+  /*
+   * **A gauge is never finished, however full it is.** It was reported from the
+   * Dashboard: a water gauge at 20% sitting under *Finished today*, which is a
+   * heading claiming you are done with something that is visibly draining. The
+   * cause was one field answering two questions — see `habitIsFinished`.
+   */
+  check('a gauge is never finished, even part full', drained.met === false, `met=${drained.met}`);
+  check('but it does not want doing yet either', drained.wantsDoing === false);
+
+  await post(`/api/habits/${gaugeId}/check`);
+  const topped = await listOf(gaugeId);
+  check('ticking it off tops it up rather than jumping to full', topped.gaugeNow === 50, `got ${topped.gaugeNow}`);
+
+  await post(`/api/habits/${gaugeId}/check`);
+  check('and a second tick stacks', (await listOf(gaugeId)).gaugeNow === 75);
+
+  /*
+   * The threshold over HTTP, and the countdown the Dashboard shows beside the
+   * empty one. The gauge is at 75% here, draining 50% a day: the 25% line is a
+   * day off and empty is a day and a half, and the two are deliberately
+   * different numbers so a swapped pair would show up.
+   */
+  await app.inject({ method: 'PATCH', url: `/api/habits/${gaugeId}`, payload: { gaugeRemindAt: 25 } });
+  const withLine = await listOf(gaugeId);
+  check('it counts down to the threshold', Math.round(withLine.gaugeRemindInMs / 3_600_000) === 24, String(withLine.gaugeRemindInMs));
+  check('and separately to empty', Math.round(withLine.gaugeEmptyInMs / 3_600_000) === 36, String(withLine.gaugeEmptyInMs));
+  check('and is not asking yet, well above the line', withLine.wantsDoing === false);
+  await app.inject({ method: 'PATCH', url: `/api/habits/${gaugeId}`, payload: { gaugeRemindAt: 80 } });
+  check('raising the line past the level starts it asking', (await listOf(gaugeId)).wantsDoing === true);
+  check('and it is still never finished', (await listOf(gaugeId)).met === false);
+  await app.inject({ method: 'PATCH', url: `/api/habits/${gaugeId}`, payload: { gaugeRemindAt: 0 } });
+
+  await post(`/api/habits/${gaugeId}/uncheck`);
+  check('undoing one takes it back off', (await listOf(gaugeId)).gaugeNow === 50);
+
+  /*
+   * **And it keeps working once the period's entries are used up.** Undo
+   * originally returned early on "no entry today", which is a true statement
+   * about a counted habit and a wrong one about a gauge — the level is the
+   * state and it was very likely last filled yesterday. The symptom was a −
+   * button that worked exactly once and then silently did nothing, found by
+   * pressing it three times and watching the level stop.
+   */
+  await post(`/api/habits/${gaugeId}/uncheck`);
+  await post(`/api/habits/${gaugeId}/uncheck`);
+  check(
+    'and keeps working with no entry left in this period',
+    (await listOf(gaugeId)).gaugeNow === 0,
+    `got ${(await listOf(gaugeId)).gaugeNow}`
+  );
+  check('an empty gauge wants doing', (await listOf(gaugeId)).wantsDoing === true);
+  check('and is still not "finished"', (await listOf(gaugeId)).met === false);
+
+  await post(`/api/habits/${gaugeId}/check`);
+  check('and topping it up does not finish it either', (await listOf(gaugeId)).met === false);
+
+  /* ---- a picture of your own ---- */
+
+  /*
+   * A 1x1 PNG is enough: what is under test is the round trip and the guards,
+   * not the decoding — nothing here decodes it, the browser does.
+   */
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  check('no picture to begin with', (await listOf(gaugeId)).hasImage === false);
+  /*
+   * The same guard the app logo has: `image` with nothing uploaded draws the
+   * fallback, which looks exactly like the upload having failed.
+   */
+  const tooEarly = await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${gaugeId}`,
+    payload: { gaugeShape: 'image' },
+  });
+  check('and it refuses to point at one that is not there', tooEarly.statusCode === 400, String(tooEarly.statusCode));
+
+  const uploaded = await app.inject({
+    method: 'PUT',
+    url: `/api/habits/${gaugeId}/image`,
+    payload: { data: PNG, type: 'image/png' },
+  });
+  check('a picture uploads', uploaded.statusCode === 200, uploaded.body);
+  const afterUpload = await listOf(gaugeId);
+  check('and the habit knows it has one', afterUpload.hasImage === true);
+  // Uploading points the gauge at it — the reason you uploaded it.
+  check('and the gauge is pointed at it', afterUpload.gaugeShape === 'image');
+
+  const served = await app.inject({ method: 'GET', url: `/api/habits/${gaugeId}/image` });
+  check('it reads back as an image', served.statusCode === 200 && served.headers['content-type'] === 'image/png');
+  check('with the bytes that went in', served.rawPayload.equals(Buffer.from(PNG, 'base64')));
+
+  /*
+   * Switching to a shape must not delete the file. Somebody who uploads a photo,
+   * tries a triangle and comes back should find the photo still there — the same
+   * rule the app logo follows.
+   */
+  await app.inject({ method: 'PATCH', url: `/api/habits/${gaugeId}`, payload: { gaugeShape: 'triangle' } });
+  check('changing shape keeps the picture', (await listOf(gaugeId)).hasImage === true);
+
+  await app.inject({ method: 'DELETE', url: `/api/habits/${gaugeId}/image` });
+  check('removing it takes the file', (await listOf(gaugeId)).hasImage === false);
+  check(
+    'and leaves a shape that was not pointing at it alone',
+    (await listOf(gaugeId)).gaugeShape === 'triangle'
+  );
+  check(
+    'and it is gone from the read route too',
+    (await app.inject({ method: 'GET', url: `/api/habits/${gaugeId}/image` })).statusCode === 404
+  );
+
+  /* ---- an interval habit reaches the queue, and only when it is due ---- */
+
+  const madeInterval = await post('/api/habits', { name: 'Change the filter', mode: 'interval' });
+  const intervalId = madeInterval.json().id;
+  await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${intervalId}`,
+    // No `reminderEveryMinutes`: the whole point is that "every 6 hours" is one
+    // number, not two. `habitNagMinutes` falls back to the interval.
+    payload: { intervalMinutes: 6 * 60 },
+  });
+
+  /*
+   * An interval habit is finished only if it was done *today* and is not due
+   * again. Both halves matter: without the first, one done last Tuesday would
+   * sit under "Finished today" every day for a week; without the second, a
+   * four-hour habit done at nine would still read as finished at two.
+   */
+  const intervalNow = await listOf(intervalId);
+  check('a never-done interval habit is not finished', intervalNow.met === false);
+  check('and it wants doing', intervalNow.wantsDoing === true);
+
+  await post(`/api/habits/${intervalId}/check`);
+  const justDone = await listOf(intervalId);
+  check('doing it finishes it for today', justDone.met === true);
+  check('and it stops wanting doing', justDone.wantsDoing === false);
+
+  // Wind the tick back a week: no longer today, and due again.
+  const { habitEntries: entryTable } = await import('../db/schema.js');
+  await db
+    .update(entryTable)
+    .set({ doneAt: Date.now() - 8 * DAY })
+    .where(eq(entryTable.habitId, intervalId));
+  const staleInterval = await listOf(intervalId);
+  check('one done last week is not "finished today"', staleInterval.met === false);
+  check('and wants doing again', staleInterval.wantsDoing === true);
+
+  const { sweepHabitReminders } = await import('../nudge-engine.js');
+  await sweepHabitReminders(Date.now());
+
+  const queuedNow = (await app.inject({ method: 'GET', url: '/api/nudges/queue' })).json();
+  check(
+    'a never-done interval habit reaches the queue',
+    queuedNow.some((n: { title: string }) => n.title === 'Change the filter'),
+    queuedNow.map((n: { title: string }) => n.title).join(', ')
+  );
+  /*
+   * The line reports the *gap*, not a count against a target it does not have.
+   * By this point the habit has been ticked and the entry wound back a week, so
+   * the honest sentence is how long ago — "0 of 1 so far today" would be a
+   * statement about a kind of habit this is not.
+   */
+  const intervalBody = queuedNow.find((n: { title: string }) => n.title === 'Change the filter')?.body;
+  check('and its line reports the gap, not a target', intervalBody === 'last done 8 days ago', intervalBody);
+
+  /* ---- and the voice path is the same path ---- */
+
+  /*
+   * **The bug this exists for.** The voice feature inserted a habit entry
+   * itself, which was identical to the HTTP route right up until gauge mode
+   * arrived — the fill went into the route, so saying "I drank water" logged an
+   * entry and left the gauge exactly where it was. Reported as the voice command
+   * not updating it, which is precisely what half a write looks like.
+   *
+   * Driven over HTTP rather than by importing the feature, because `smoke` is
+   * core and must not reach into a folder that can be deleted.
+   */
+  const madeVoiceGauge = await post('/api/habits', { name: 'Sip water', mode: 'gauge' });
+  const voiceGaugeId = madeVoiceGauge.json().id;
+  await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${voiceGaugeId}`,
+    payload: { gaugeDrainPerDay: 100, gaugeFillPercent: 20 },
+  });
+  // Empty it, so a fill is visible rather than clamped at full.
+  for (let i = 0; i < 6; i++) await post(`/api/habits/${voiceGaugeId}/uncheck`);
+  check('the voice gauge starts empty', (await listOf(voiceGaugeId)).gaugeNow === 0);
+
+  /*
+   * Voice is off by default — it is the only feature that opens a microphone, so
+   * it is something you switched on rather than something you find running. The
+   * command endpoint answers `disabled` until it is, which is correct and is not
+   * what is being tested here.
+   */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceEnabled: true } });
+  await post('/api/voice/commands', { kind: 'habit', target: voiceGaugeId, phrases: ['sip water'] });
+
+  const spoken = await post('/api/voice/command', { text: 'hey everything i sipped water', speakerScore: null });
+  const outcome = spoken.json();
+  check('a spoken phrase reaches the habit', outcome.outcome === 'habit-checked', JSON.stringify(outcome));
+  check(
+    'and it actually moves the gauge',
+    (await listOf(voiceGaugeId)).gaugeNow === 20,
+    `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}%`
+  );
+  /*
+   * And says something true about it. The reply was hard-coded to "N of
+   * target", which for a gauge is a sentence about a target it does not have.
+   */
+  check('and says the level rather than a target', outcome.say === 'Sip water — 20% full', outcome.say);
+
+  // "two waters" is two fills, not one — the count has to survive the trip.
+  const twoSips = await post('/api/voice/command', { text: 'hey everything i sipped two waters', speakerScore: null });
+  check(
+    'a spoken count fills that many times',
+    (await listOf(voiceGaugeId)).gaugeNow === 60,
+    `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}% after "${twoSips.json().text}"`
+  );
+
+  /*
+   * And "to max" fills it the rest of the way, whatever that is — the whole
+   * point being that at 60% with a 20% fill you would otherwise have to notice
+   * it needed exactly two more.
+   */
+  const maxed = await post('/api/voice/command', { text: 'hey everything i sipped water to max', speakerScore: null });
+  check('"to max" fills it the rest of the way', (await listOf(voiceGaugeId)).gaugeNow === 100, `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}%`);
+  check('and says so', maxed.json().say === 'Sip water — 100% full', maxed.json().say);
+  // Saying it must always record something, or a full gauge answers "done"
+  // having done nothing at all.
+  const again = await post('/api/voice/command', { text: 'hey everything i sipped water to max', speakerScore: null });
+  check('saying it again on a full gauge is still an answer', again.json().outcome === 'habit-checked');
+  check('and leaves it full rather than overflowing', (await listOf(voiceGaugeId)).gaugeNow === 100);
+
+  /*
+   * A gauge with no reminder interval is purely something to look at. Nagging
+   * about one nobody asked to be nagged about would make the mode unusable as
+   * decoration, which is a legitimate way to use it.
+   */
+  check(
+    'a gauge with no reminder set stays out of the queue',
+    !queuedNow.some((n: { title: string }) => n.title === 'Water the plant'),
+    queuedNow.map((n: { title: string }) => n.title).join(', ')
+  );
 }
 
 await app.close();

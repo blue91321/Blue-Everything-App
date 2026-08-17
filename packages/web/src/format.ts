@@ -71,3 +71,32 @@ export function dueLabel(at: number, allDay: boolean): string {
   if (days < 0) return `${Math.abs(days)} days ago`;
   return day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
+
+/**
+ * A span of time in the unit that suits its size.
+ *
+ * Written because the habit editor was reporting everything in days: a gauge
+ * draining 400% a day read "empty after 0.3 days", which is a number you have to
+ * multiply by 24 in your head to understand, and one draining 5% a day read
+ * "20.0 days" where "3 weeks" is the thought. The rule is the obvious one —
+ * under an hour say minutes, under a day say hours, then days — and the
+ * fractional digit only appears when it changes the answer.
+ */
+export function spanLabel(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return 'no time at all';
+
+  const minutes = ms / 60_000;
+  if (minutes < 60) return `${Math.max(1, Math.round(minutes))} min`;
+
+  const hours = minutes / 60;
+  if (hours < 24) return `${trim(hours)} hour${trim(hours) === '1' ? '' : 's'}`;
+
+  const days = hours / 24;
+  return `${trim(days)} day${trim(days) === '1' ? '' : 's'}`;
+}
+
+/** One decimal, and only when it says something — "2" rather than "2.0". */
+function trim(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}

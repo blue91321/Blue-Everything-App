@@ -1130,3 +1130,263 @@ button {
   opacity: 0.8;
   border-style: dashed;
 }
+
+/* ---------- the Dashboard's side column ---------- */
+
+/*
+ * One column until a panel is chosen, and two only when there is room for both.
+ *
+ * The breakpoint is 1100px rather than the 900px the drawer uses, and they are
+ * deliberately different numbers: 900 is "is there room for a drawer beside the
+ * content", while this is "is there room for a second column of content without
+ * squeezing the first". At 900 with the drawer showing, the task list would be
+ * left with about 320px, which is narrower than the phone layout it was
+ * designed for.
+ */
+.dash {
+  display: grid;
+  gap: var(--gap);
+}
+
+.dash-main {
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .dash.has-panel {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    /* Or a short panel would stretch to the height of the task list and float
+       its cards in the middle of a very tall box. */
+    align-items: start;
+  }
+}
+
+/*
+ * The container widens only when the Dashboard says it needs to.
+ *
+ * `:has()` rather than a class on `.app` set from `App`, because `App` does not
+ * read settings and the child already knows the answer. Unsupported `:has()`
+ * leaves `.app` at its reading width and the panel stacked underneath, which is
+ * the narrow-screen layout — a real fallback, not a broken one.
+ */
+.app:has(.dash.has-panel) {
+  max-width: 1140px;
+}
+
+.dash-panel > .card {
+  /* Tighter than the main column: this is a glance, not a list to work through. */
+  padding: 8px 10px;
+}
+
+.dash-panel h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  margin: 0 0 6px;
+}
+
+/* Long names and note titles must not widen the grid column they sit in —
+   `min-width: 0` on the flex parent is what lets this actually clip. */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- the draining gauge ---------- */
+
+.gauge {
+  flex: none;
+  display: block;
+}
+
+/* Whole even when empty, so the shape is still a shape rather than a gap. */
+.gauge-track {
+  fill: var(--card);
+}
+
+.gauge-fill {
+  fill: var(--accent);
+  /* The level only ever changes on a tick or a reload, so this animates the
+     one moment worth animating — the shape filling as you tick it off. */
+  transition: y 240ms ease, height 240ms ease;
+}
+
+.gauge-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+/*
+ * An emoji cannot be clipped by an SVG path, so it is drawn twice and the top
+ * copy is revealed by a wrapper with a height and `overflow: hidden`.
+ */
+.gauge-emoji {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  line-height: 1;
+}
+
+.gauge-emoji-empty {
+  position: absolute;
+  inset: 0;
+  /* Drained, not gone: the outline of the picture stays readable so an empty
+     gauge still says which habit it belongs to. */
+  filter: grayscale(1);
+  opacity: 0.28;
+}
+
+.gauge-emoji-full {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  transition: height 240ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge-fill,
+  .gauge-emoji-full {
+    transition: none;
+  }
+}
+
+/* The gauge is the button, so the button gets out of its way. */
+.check.gauge-button {
+  background: none;
+  border: none;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* An uploaded picture fills the same two-layer wrapper the emoji uses. */
+.gauge-emoji img {
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+/* ---------- the right-click menu ---------- */
+
+/*
+ * `position: fixed` because it is placed from `clientX/clientY`, which are
+ * viewport coordinates — an absolutely positioned copy inside a scrolled card
+ * would land somewhere else entirely.
+ */
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 150px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.context-menu button {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.context-menu button:hover:not(:disabled),
+.context-menu button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.context-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-menu button.danger {
+  color: var(--urgent, #e5484d);
+}
+
+.context-menu button.danger:hover:not(:disabled) {
+  background: var(--urgent, #e5484d);
+  color: #fff;
+}
+
+/* A whole panel row that is a button. Resets what <button> assumes. */
+.panel-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.panel-row:hover,
+.panel-row:focus-visible {
+  border-color: var(--accent);
+}
+
+.panel-settings {
+  width: 100%;
+  margin-top: 8px;
+}
+
+/*
+ * "We brought you here." Without it, arriving at a settings section is
+ * indistinguishable from the tab you clicked happening to open on it.
+ */
+.flash {
+  animation: flash 1.4s ease-out;
+}
+
+@keyframes flash {
+  0%, 60% { box-shadow: 0 0 0 2px var(--accent); border-radius: 10px; }
+  100% { box-shadow: 0 0 0 2px transparent; border-radius: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash { animation: none; outline: 2px solid var(--accent); }
+}
+
+/* ---------- a friend row that does not squash ---------- */
+
+/*
+ * The chip and the buttons were holding their width while the name and status
+ * column shrank around them, so at a narrow width the text broke into two or
+ * three ragged lines beside a full-width "steam + discord".
+ *
+ * Two rules do it: the text column refuses to go below a readable width, and the
+ * row is allowed to wrap — so the trailing controls drop underneath rather than
+ * squeezing what is worth reading. Nothing is hidden, which the alternative
+ * (hiding the chip below a breakpoint) would have done to the one place that
+ * says which services a merged row came from.
+ */
+.friend-row {
+  flex-wrap: wrap;
+}
+
+.friend-text {
+  /* `min-width: 0` is what actually lets the ellipsis happen: a flex child
+     defaults to `min-width: auto`, which refuses to shrink below its content. */
+  min-width: 0;
+  flex-basis: 12rem;
+}
+
+/* Once wrapped, the controls sit under the text rather than under the avatar. */
+.friend-row > .chip,
+.friend-row > .btn,
+.friend-row > a.btn {
+  flex: none;
+}

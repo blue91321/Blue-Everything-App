@@ -18,7 +18,7 @@
  * rows whose entire content explained why they could do nothing, and they have
  * been removed rather than kept as a monument to the research.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../../api';
 import { Connections } from './Connections';
 import { Following } from './Following';
@@ -38,8 +38,35 @@ const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'connections', label: 'Services' },
 ];
 
-export function Integrations({ local }: { local: boolean }) {
+export function Integrations({
+  local,
+  search,
+  onFocused,
+}: {
+  local: boolean;
+  /** A name to look up, sent by the Dashboard panel. */
+  search?: string | null;
+  onFocused?: () => void;
+}) {
   const [tab, setTab] = useState<Tab>('friends');
+  const [seeded, setSeeded] = useState<string | null>(null);
+
+  /*
+   * Arrived here from "find this person".
+   *
+   * The tab is forced to Friends as well as the box being filled, because the
+   * search only exists there — landing on whichever tab was last open with a
+   * name typed into a box you cannot see would look like nothing happened.
+   *
+   * `seeded` is passed down as the *initial* value rather than as a controlled
+   * one, so typing over it works normally afterwards.
+   */
+  useEffect(() => {
+    if (!search) return;
+    setTab('friends');
+    setSeeded(search);
+    onFocused?.();
+  }, [search, onFocused]);
 
   return (
     <section>
@@ -59,7 +86,7 @@ export function Integrations({ local }: { local: boolean }) {
         ))}
       </div>
 
-      {tab === 'friends' && <Friends />}
+      {tab === 'friends' && <Friends seed={seeded} />}
       {tab === 'following' && <Following />}
       {tab === 'music' && <Music local={local} />}
       {tab === 'connections' && <Connections local={local} />}

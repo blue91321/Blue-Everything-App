@@ -8,6 +8,9 @@
  */
 import { and, desc, eq, inArray, isNotNull, isNull, lt, lte, or } from 'drizzle-orm';
 import {
+  gaugeLevelAt,
+  habitNagMinutes,
+  habitWantsDoing,
   isAwayFromPc,
   quietReason,
   qualityRank,
@@ -126,6 +129,156 @@ export interface DeliveryResult {
   awayFromPc: boolean;
 }
 
+interface Winner {
+  nudge: DeliverableNudge;
+  escalated: boolean;
+  mayPush: boolean;
+}
+
+/** "4 days", "3 hours", "20 minutes" — enough to judge by, no more. */
+function roughly(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${Math.max(1, minutes)} minute${minutes === 1 ? '' : 's'}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  return `${Math.round(hours / 24)} days`;
+}
+
+/**
+ * How a habit reminder describes its own progress.
+ *
+ * One function across all three modes, because it is called from two places —
+ * the sweep that raises the nudge and the re-check just before it is delivered —
+ * and the whole point of that re-check is that the line it produces is *current*.
+ * Two implementations would eventually disagree, and the symptom would be a
+ * nudge whose text changed for no reason on the way out.
+ */
+function progressLine(
+  habit: {
+    mode: string;
+    cadence: string;
+    targetPerPeriod: number;
+    gaugeLevel: number;
+    gaugeLevelAt: number;
+    gaugeDrainPerDay: number;
+    gaugeRemindAt: number;
+  },
+  context: { done: number; lastDoneAt: number | null },
+  now: number
+): string {
+  if (habit.mode === 'gauge') {
+    const level = Math.round(gaugeLevelAt(habit, now));
+    // Says which way it is going, not just where it is. "Empty" alone reads as
+    // a fault; "down to 20%, draining 50% a day" reads as the thing working.
+    // And it must not claim "empty" when a threshold raised it at 30%.
+    return level <= 0
+      ? `empty — it drains ${habit.gaugeDrainPerDay}% a day`
+      : `down to ${level}% — it drains ${habit.gaugeDrainPerDay}% a day`;
+  }
+
+  if (habit.mode === 'interval') {
+    return context.lastDoneAt === null
+      ? 'not done yet'
+      : `last done ${roughly(now - context.lastDoneAt)} ago`;
+  }
+
+  return `${context.done} of ${habit.targetPerPeriod} so far ${habit.cadence === 'weekly' ? 'this week' : 'today'}`;
+}
+
+/** The last time this habit was ticked off, ever — not just this period. */
+async function lastDoneAtOf(habitId: string): Promise<number | null> {
+  const [latest] = await db
+    .select({ doneAt: habitEntries.doneAt })
+    .from(habitEntries)
+    .where(eq(habitEntries.habitId, habitId))
+    .orderBy(desc(habitEntries.doneAt))
+    .limit(1);
+  return latest?.doneAt ?? null;
+}
+
+/**
+ * Re-check a nudge against the world in the instant before it goes out.
+ *
+ * A nudge can sit in the queue for hours — that is the whole point of the
+ * engine — and in that time the thing it is about may have been done. Habit
+ * counts are the obvious case: `"3 of 8 so far today"` is baked in when the
+ * reminder is raised, and a two-hour session is plenty of time to drink five
+ * more glasses. Delivering that afterwards is worse than delivering nothing,
+ * because it is *confidently wrong*, and the whole value of waiting for a good
+ * moment is spent saying something untrue.
+ *
+ * The same applies to a task finished while its nudge was held. Nothing clears
+ * a queued nudge when the underlying row changes — deliberately, since the
+ * queue is the record of what was asked for — so the check belongs here, at the
+ * one point where it is about to matter.
+ *
+ * Anything whose reason for existing has gone is marked `expired`: it was
+ * dropped unfired, which is exactly what that state means. It is not
+ * `acknowledged` (you never saw it) and not `dismissed` (you never chose).
+ */
+async function freshenForDelivery(winners: Winner[], now: number): Promise<Winner[]> {
+  const drop = (id: string) => db.update(nudges).set({ state: 'expired' }).where(eq(nudges.id, id));
+  const kept: Winner[] = [];
+
+  for (const winner of winners) {
+    const { id, habitId, taskId } = winner.nudge;
+
+    if (habitId) {
+      const [habit] = await db.select().from(habits).where(eq(habits.id, habitId));
+      // Paused or deleted between raising and delivering.
+      if (!habit || !habit.active) {
+        await drop(id);
+        continue;
+      }
+
+      const periodKey = periodKeyFor(habit.cadence as 'daily' | 'weekly', new Date(now));
+      const entries = await db
+        .select()
+        .from(habitEntries)
+        .where(and(eq(habitEntries.habitId, habitId), eq(habitEntries.periodKey, periodKey)));
+      const done = entries.reduce((sum, entry) => sum + entry.count, 0);
+      const lastDoneAt = await lastDoneAtOf(habitId);
+
+      /*
+       * Dealt with while it waited. Nagging now would be the reminder arriving
+       * after the thing it was reminding you about.
+       *
+       * `habitWantsDoing` rather than a target comparison, so this covers a
+       * gauge topped up during the match and an interval habit done on the
+       * phone — both of which the old check would have delivered anyway,
+       * confidently and wrongly, which is the exact failure this function
+       * exists to prevent.
+       */
+      if (!habitWantsDoing(habit, { doneThisPeriod: done, lastDoneAt }, now)) {
+        await drop(id);
+        continue;
+      }
+
+      const body = progressLine(habit, { done, lastDoneAt }, now);
+      if (body !== winner.nudge.body) {
+        // Written back as well as corrected in flight, so the queue view and
+        // the history agree with what was actually shown.
+        await db.update(nudges).set({ body }).where(eq(nudges.id, id));
+        winner.nudge.body = body;
+      }
+    }
+
+    if (taskId) {
+      const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+      // A deleted task cascades its nudges away, so absent here is a race
+      // rather than a normal state — and either way there is nothing to say.
+      if (!task || task.status === 'done' || task.status === 'dropped') {
+        await drop(id);
+        continue;
+      }
+    }
+
+    kept.push(winner);
+  }
+
+  return kept;
+}
+
 export async function collectDeliverable(
   report: AttentionReport,
   deviceId: string | null
@@ -203,6 +356,13 @@ export async function collectDeliverable(
     return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
   }
 
+  // Everything above decided *whether the moment is good*. This decides whether
+  // the nudge is still **true** — see `freshenForDelivery`.
+  const live = await freshenForDelivery(winners, now);
+  if (live.length === 0) {
+    return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
+  }
+
   /**
    * On the phone leg, drop the ones that asked not to buzz a pocket.
    *
@@ -211,7 +371,7 @@ export async function collectDeliverable(
    * point of the setting: "not worth a phone" and "not worth telling me" are
    * different claims, and only the first is being made here.
    */
-  const going = toPhone ? winners.filter((w) => w.mayPush) : winners;
+  const going = toPhone ? live.filter((w) => w.mayPush) : live;
   // Checked before the send so a queue of desk-only nudges cannot spend the
   // ten-minute push cooldown on a notification that was never going out.
   if (going.length === 0) return { deliver: [], pushed: 0, channel: 'none', awayFromPc };
@@ -287,10 +447,16 @@ export function reminderWindowOpen(startMinute: number, at: Date): boolean {
 }
 
 export async function sweepHabitReminders(now = Date.now()): Promise<number> {
-  const due = await db
-    .select()
-    .from(habits)
-    .where(and(eq(habits.active, 1), isNotNull(habits.reminderEveryMinutes)));
+  /*
+   * Every active habit, not only those with a reminder interval set.
+   *
+   * `interval` mode falls back to its own interval for nag spacing, so "water
+   * the plants every four days" needs no separate reminder field — filtering on
+   * `reminder_every_minutes IS NOT NULL` here would have made that habit
+   * silent, which is the one thing it is for. `habitNagMinutes` returning null
+   * is what now means "never interrupt", and it is checked per habit below.
+   */
+  const due = await db.select().from(habits).where(eq(habits.active, 1));
 
   if (due.length === 0) return 0;
 
@@ -308,7 +474,11 @@ export async function sweepHabitReminders(now = Date.now()): Promise<number> {
   for (const habit of due) {
     if (alreadyQueued.has(habit.id)) continue;
 
-    const intervalMs = (habit.reminderEveryMinutes ?? 0) * 60_000;
+    const nagMinutes = habitNagMinutes(habit);
+    // Null is "appears in lists, never interrupts", which is the default and the
+    // right one for most habits.
+    if (nagMinutes === null) continue;
+    const intervalMs = nagMinutes * 60_000;
     if (intervalMs <= 0) continue;
 
     // Not yet the time of day this habit wants to be raised at.
@@ -316,39 +486,56 @@ export async function sweepHabitReminders(now = Date.now()): Promise<number> {
       continue;
     }
 
-    // Already hit the target for this period — nothing to nag about.
     const periodKey = periodKeyFor(habit.cadence as 'daily' | 'weekly', new Date(now));
     const entries = await db
       .select()
       .from(habitEntries)
       .where(and(eq(habitEntries.habitId, habit.id), eq(habitEntries.periodKey, periodKey)));
     const done = entries.reduce((sum, e) => sum + e.count, 0);
-    if (done >= habit.targetPerPeriod) continue;
+    /*
+     * The last tick *ever*, which is not the same as the last one this period.
+     * `interval` and `gauge` both span periods by definition — "every four days"
+     * has nothing to do with a day or a week — so reading it out of the period's
+     * entries would reset the timer at midnight.
+     */
+    const lastDoneAt = await lastDoneAtOf(habit.id);
+
+    // Nothing wanted right now: the target is met, the interval has not elapsed,
+    // or the gauge still has something in it.
+    if (!habitWantsDoing(habit, { doneThisPeriod: done, lastDoneAt }, now)) continue;
 
     const [previous] = await db
-      .select({ createdAt: nudges.createdAt })
+      .select({ createdAt: nudges.createdAt, deliveredAt: nudges.deliveredAt })
       .from(nudges)
       .where(eq(nudges.habitId, habit.id))
       .orderBy(desc(nudges.createdAt))
       .limit(1);
 
-    const lastTick = entries.reduce((latest, entry) => Math.max(latest, entry.doneAt), 0);
+    const lastTick = lastDoneAt ?? 0;
 
     /**
-     * Space reminders from whichever happened later: the last reminder raised,
-     * or the last time the habit was actually ticked off.
+     * Space reminders from whichever happened later: the last reminder that
+     * actually reached you, or the last time the habit was ticked off.
      *
      * Counting only from the reminder means drinking a glass of water two
      * minutes after being nudged still gets you nudged again on the original
      * schedule — which is exactly when it feels like nagging rather than
      * helping. Doing the thing should buy you the full interval.
+     *
+     * **`deliveredAt`, not `createdAt`**, and that is the difference between a
+     * reminder and a queue. A nudge raised at ten and held through a match
+     * until eleven has only just been *said*; measuring from when it was
+     * written down would make the next one due immediately, so the reward for
+     * a long session was two reminders in a minute. A reminder you never saw
+     * did not remind you, so an undelivered one still counts from when it was
+     * raised — the fallback below is doing real work, not defending a null.
      */
-    const since = Math.max(previous?.createdAt ?? 0, lastTick);
+    const since = Math.max(previous?.deliveredAt ?? previous?.createdAt ?? 0, lastTick);
     if (since > now - intervalMs) continue;
 
     await db.insert(nudges).values({
       title: habit.name,
-      body: `${done} of ${habit.targetPerPeriod} so far today`,
+      body: progressLine(habit, { done, lastDoneAt }, now),
       habitId: habit.id,
       earliestAt: now,
       expiresAt: now + intervalMs,

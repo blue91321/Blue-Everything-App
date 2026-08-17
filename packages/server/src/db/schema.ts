@@ -66,6 +66,23 @@ export const tasks = sqliteTable(
     scheduledAt: integer('scheduled_at'),
     estimateMinutes: integer('estimate_minutes'),
     sortOrder: integer('sort_order').notNull().default(0),
+    /**
+     * Where this task came from, when it was not typed here. An opaque slug.
+     *
+     * Core, deliberately, and deliberately *not* validated against the
+     * integrations feature's provider list — that folder is deletable, and core
+     * checking a value against it would be core depending on a feature. The same
+     * arrangement `settings.hidden_providers` uses, for the same reason. All
+     * core does with this is render it, so an id that no longer means anything
+     * shows a label nobody clicks rather than failing to load.
+     *
+     * It exists because a task appearing on your Dashboard that you did not
+     * write is confusing without a word saying who wrote it — and "can I delete
+     * this, will it come back" is a fair question that the chip answers.
+     */
+    source: text('source'),
+    /** The thing itself, at the service it came from. Rendered as a link. */
+    sourceUrl: text('source_url'),
     createdAt: now(),
     updatedAt: touched(),
     completedAt: integer('completed_at'),
@@ -81,8 +98,46 @@ export const habits = sqliteTable('habits', {
   id: id(),
   name: text('name').notNull(),
   notes: text('notes'),
+  /**
+   * `target`, `interval` or `gauge` — see `habitModes` in shared.
+   *
+   * They differ in exactly one thing: when the habit wants doing. Entries,
+   * reminders, voice phrases and the nudge queue are identical across all
+   * three, which is why this is a column rather than three tables.
+   */
+  mode: text('mode').notNull().default('target'),
   cadence: text('cadence').notNull().default('daily'),
   targetPerPeriod: integer('target_per_period').notNull().default(1),
+  /** `interval` mode: due again this long after the last time it was done. */
+  intervalMinutes: integer('interval_minutes'),
+  /**
+   * `gauge` mode: the level, and the moment that level was true.
+   *
+   * **An anchor, not a running total.** Everything between anchors is computed
+   * by `gaugeLevelAt` in shared, so a draining gauge costs no timer and no
+   * writes — this project requires anything that would otherwise tick to
+   * justify itself, and a gauge that wrote a row a minute could not.
+   *
+   * Storing the level rather than deriving it from the last entry is the point:
+   * derived, it could not express a gauge topped up twice in a morning, nor one
+   * neglected for a fortnight and then filled halfway.
+   */
+  gaugeLevel: integer('gauge_level').notNull().default(100),
+  gaugeLevelAt: integer('gauge_level_at').notNull().$defaultFn(() => Date.now()),
+  /** How much drains away in a day, and how much one tick puts back. */
+  gaugeDrainPerDay: integer('gauge_drain_per_day').notNull().default(100),
+  gaugeFillPercent: integer('gauge_fill_percent').notNull().default(100),
+  /**
+   * The level at or below which it starts asking to be done.
+   *
+   * 0 means "when it is empty", which is where this started and is still the
+   * default. Empty-only is the wrong moment for anything that takes a while to
+   * act on — a plant that reminds you when it is dead — so this is the warning
+   * line, and the Dashboard counts down to it as well as to empty.
+   */
+  gaugeRemindAt: integer('gauge_remind_at').notNull().default(0),
+  /** A shape name or an emoji. Opaque — anything unrecognised is drawn as text. */
+  gaugeShape: text('gauge_shape').notNull().default('circle'),
   active: integer('active').notNull().default(1),
   /** Hand-ordered in the Habits tab; ties fall back to name. */
   sortOrder: integer('sort_order').notNull().default(0),
@@ -310,6 +365,24 @@ export const settings = sqliteTable('settings', {
   soundEnabled: integer('sound_enabled').notNull().default(1),
 
   /**
+   * Which tone each moment gets, by name from the agent's palette.
+   *
+   * Four columns rather than one JSON blob, because there are exactly four
+   * moments worth a sound and they are a fixed list — the same reasoning that
+   * makes every other preference here a column. A blob would be one migration
+   * cheaper and would give up the typing, the defaults and the greppability.
+   *
+   * Empty means "the agent's default for that event". Storing the default name
+   * instead would freeze today's choice: change `DEFAULT_TONE` later and every
+   * install that never touched the setting would keep the old sound, with
+   * nothing on screen to say why.
+   */
+  soundWake: text('sound_wake').notNull().default(''),
+  soundOk: text('sound_ok').notNull().default(''),
+  soundMiss: text('sound_miss').notNull().default(''),
+  soundNudge: text('sound_nudge').notNull().default(''),
+
+  /**
    * How the app looks. Stored server-side rather than in the browser so the
    * phone and the PC agree — picking a colour on one and finding the other
    * still amber would read as the setting not having saved.
@@ -444,6 +517,23 @@ export const settings = sqliteTable('settings', {
    */
   hiddenProviders: text('hidden_providers').notNull().default('[]'),
 
+  /**
+   * What sits in the Dashboard's side column, if anything.
+   *
+   * An **opaque id**, not validated against anything, for the same reason
+   * `hidden_providers` is not: the interesting panels come from features that
+   * can be deleted, and core checking the value against a list of them would be
+   * core depending on a feature. An id nothing answers to renders no panel,
+   * which is also the right behaviour when a feature is switched off — the
+   * setting goes quiet and comes back when the feature does, rather than being
+   * silently rewritten to empty behind your back.
+   *
+   * Empty is the default: the Dashboard is one column until you ask for two.
+   * Server-side rather than `localStorage` like the theme and the accent, so
+   * choosing a panel on the PC does not leave the phone showing the old one.
+   */
+  dashboardPanel: text('dashboard_panel').notNull().default(''),
+
   updatedAt: touched(),
 });
 
@@ -546,6 +636,21 @@ export const integrationAccounts = sqliteTable('integration_accounts', {
   /** For `api-key` providers: the key, and whatever identifies you to them. */
   apiKey: text('api_key'),
   externalId: text('external_id'),
+
+  /**
+   * Which installation of the service to talk to, for the ones that are not a
+   * single address.
+   *
+   * Every provider here but Canvas has exactly one host, hard-coded beside the
+   * fetch where it belongs. Canvas is per-school, so the address is half the
+   * credential — and it is a *column* rather than being folded into
+   * `external_id` because that field means "who you are to them" and a hostname
+   * is not that. Storing it there would have worked and read as a mistake
+   * forever after.
+   *
+   * Generic on purpose: anything self-hosted joins by filling this in.
+   */
+  baseUrl: text('base_url'),
 
   /**
    * The OAuth application's own id and secret, when they were typed into the
@@ -836,6 +941,51 @@ export const follows = sqliteTable(
   ]
 );
 
+/**
+ * "This item from a service has already been turned into a task."
+ *
+ * A separate table rather than a `(source, source_id)` pair on `tasks`, and the
+ * reason is the row that has to survive its task: **deleting a synced task must
+ * be permanent.** Dedupe by looking for the task itself would recreate it on the
+ * next sync — you throw away an assignment you have already dealt with, and it
+ * is back within the minute with nothing on screen to explain why. Whichever way
+ * that argument is had, the user loses it.
+ *
+ * So the link is the memory. `task_id` goes null when the task goes, and a null
+ * one means "we made this once and it is gone" — which is a decision, not a gap,
+ * and is never acted on again. It is also what lets an assignment you had
+ * already submitted before connecting be recorded without making a task at all.
+ *
+ * Lives with the integrations feature. Like `vault_entries` and
+ * `voice_commands`, the table is created whatever is switched on — migrations
+ * are a linear journal and skipping one breaks every later hash — and simply
+ * sits empty when nothing is writing to it.
+ */
+export const integrationTaskLinks = sqliteTable(
+  'integration_task_links',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    /** The service's own id for the thing: a Canvas assignment id, say. */
+    externalId: text('external_id').notNull(),
+    /**
+     * Null once the task is gone — see above. Not a foreign key with a cascade,
+     * because a cascade would delete the row that has to outlive the task.
+     */
+    taskId: text('task_id'),
+    /** What the service last said the deadline was, so a change is detectable. */
+    lastDueAt: integer('last_due_at'),
+    /** Set when the service reported it handed in, so it is only ticked once. */
+    completedAt: integer('completed_at'),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [
+    uniqueIndex('integration_task_links_idx').on(t.provider, t.externalId),
+    index('integration_task_links_task_idx').on(t.taskId),
+  ]
+);
+
 export const schema = {
   projects,
   tasks,
@@ -855,6 +1005,7 @@ export const schema = {
   mediaCollectionItems,
   friends,
   follows,
+  integrationTaskLinks,
 };
 
 /** Used by the health check to prove the database is actually reachable. */

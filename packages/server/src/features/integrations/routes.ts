@@ -23,6 +23,7 @@ import {
   PROVIDERS,
   PROVIDER_LIST,
   FOLLOW_PROVIDERS,
+  connectCanvasSchema,
   connectSteamSchema,
   credentialsSchema,
   IDENTITY_PREFERENCE,
@@ -51,6 +52,7 @@ import {
   optionalScopesRefused,
   redirectUri,
 } from './oauth.js';
+import * as canvas from './providers/canvas.js';
 import { localStatusOf, recordLocalPresence } from './providers/local.js';
 import * as spotify from './providers/spotify.js';
 import * as steam from './providers/steam.js';
@@ -61,6 +63,7 @@ import {
   categoryBreakdown,
   collectionsFor,
   forgetAccount,
+  forgetTaskLinks,
   getAccount,
   itemsInCollection,
   linkFollows,
@@ -376,10 +379,54 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     return { connected: true, accountName: me.name, steamId: me.id };
   });
 
+  /**
+   * Canvas: the school's address and an access token, in one submission.
+   *
+   * Same shape as Steam's route and for the same reason — both halves are
+   * personal rather than an application registration, so neither belongs in an
+   * environment variable and both are typed into one form. The difference is
+   * that Canvas has no fixed host, so the address is not a convenience field:
+   * without it there is nothing to send the token to.
+   *
+   * Verified before either is stored. A mistyped host and a revoked token store
+   * perfectly happily and then fail on every sync afterwards, at which point the
+   * message is about a failed sync rather than about the thing that was typed.
+   */
+  app.post('/api/integrations/canvas/connect', async (request) => {
+    localOnly(request);
+    const { host, token } = connectCanvasSchema.parse(request.body);
+
+    const me = await canvas.verify(host, token);
+
+    await saveAccount('canvas', {
+      apiKey: token,
+      baseUrl: me.base,
+      // Both, as Steam does: `externalId` is what the rest of this module reads
+      // to decide a provider is connected, and `accountId` is the service's id
+      // for you. They are the same value here and mean different things.
+      externalId: me.id,
+      accountId: me.id,
+      accountName: me.name,
+      lastError: null,
+    });
+
+    return { connected: true, accountName: me.name, host: me.base };
+  });
+
   app.delete('/api/integrations/:provider', async (request, reply) => {
     localOnly(request);
     const provider = parseProvider((request.params as { provider: string }).provider);
     await forgetAccount(provider);
+    /*
+     * The tasks it made stay; the memory of having made them goes.
+     *
+     * Deleting a fortnight of deadlines because a token was revoked would be
+     * the worst possible reading of "disconnect" — they are ordinary tasks by
+     * now, and may have your own notes on them. What has to go is the link
+     * table, or reconnecting later would find every assignment already
+     * accounted for and import nothing at all.
+     */
+    await forgetTaskLinks(provider);
     // The friends stay until the next refresh writes over them, which is the
     // wrong answer for a disconnected provider — so they go with the account.
     const { replaceFriends } = await import('./store.js');
@@ -468,7 +515,19 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
         /** Named when the status came from a different account than the name. */
         statusFrom: knows && knows.provider !== identity.provider ? knows.provider : null,
         /** Every service this person is on, for the row and for unlinking. */
-        accounts: group.map((r) => ({ id: r.id, provider: r.provider, name: r.name })),
+        accounts: group.map((r) => ({
+          id: r.id,
+          provider: r.provider,
+          name: r.name,
+          /*
+           * The service's own id, which is what a deep link needs — the `id`
+           * beside it is this app's row key and means nothing to Discord.
+           * Carried for every provider rather than only the one that uses it
+           * today, since it is already in hand and a second provider with a
+           * "message them" link would otherwise be a second change here.
+           */
+          providerUserId: r.providerUserId,
+        })),
       };
     });
 
@@ -767,4 +826,65 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * is the part that was ever a fact rather than an inference.
    */
   app.get('/api/integrations/music', async () => ({ breakdown: await categoryBreakdown() }));
+
+  /* ---- the one thing here on a timer ----------------------------- */
+
+  /**
+   * Coursework, brought in without being asked.
+   *
+   * **The only background timer in this module, and it needs the argument this
+   * project asks of anything on a clock.** Everything else here is
+   * refresh-on-read: a friends list nobody is looking at does not need to be
+   * right, so a 60-second poller was refused at 1,440 requests a day.
+   *
+   * Coursework is the opposite case, and the difference is what the data is
+   * *for*. A friends list is something you go and look at, so reading it is the
+   * moment it has to be true. A deadline's whole job is to reach the nudge
+   * queue while you are thinking about something else — an assignment set on
+   * Monday has to be in the queue on Thursday whether or not you have opened
+   * the Services tab since. A "Sync now" button as the only route in would mean
+   * the one feature that exists to remember things for you had to be
+   * remembered.
+   *
+   * The number: **48 requests a day while connected, none at all otherwise**,
+   * against a friends poller that was refused at 1,440 and an attention loop
+   * budgeted at ~1,500 database rows a day. Half an hour is chosen against the
+   * sweep, which queues a task within an hour of its due time — so the worst
+   * case is that something set half an hour ago is half an hour late into a
+   * queue it was never going to fire from yet.
+   *
+   * Owned by the feature rather than hung off the attention heartbeat, so it
+   * goes away with the folder and core never learns it exists.
+   */
+  const COURSEWORK_EVERY_MS = 30 * 60_000;
+
+  const sweepCoursework = async () => {
+    // Costs one row read when nothing is connected, which is the ordinary case
+    // for anybody who has not set Canvas up. No account, no request.
+    const account = await getAccount('canvas');
+    if (!account?.apiKey || !account.baseUrl) return;
+
+    try {
+      await syncProvider('canvas', ['assignments']);
+    } catch (error) {
+      // Never allowed to escape: this runs on a timer with nobody waiting on
+      // it, and an unhandled rejection here would take the server down over a
+      // school VPN being off. `syncProvider` has already recorded the failure
+      // against the account, which is where the screen reads it from.
+      app.log.warn({ err: error }, 'canvas sweep failed');
+    }
+  };
+
+  // Shortly after boot as well as on the interval, or a restart means half an
+  // hour of not knowing about anything set while the machine was off.
+  const firstRun = setTimeout(() => void sweepCoursework(), 30_000);
+  const repeat = setInterval(() => void sweepCoursework(), COURSEWORK_EVERY_MS);
+  // Neither may hold the process open — `smoke` and `features-check` build an
+  // app, assert, and close it, and a live interval would leave them hanging.
+  firstRun.unref();
+  repeat.unref();
+  app.addHook('onClose', () => {
+    clearTimeout(firstRun);
+    clearInterval(repeat);
+  });
 }
