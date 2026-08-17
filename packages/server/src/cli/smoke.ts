@@ -761,6 +761,60 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   const intervalBody = queuedNow.find((n: { title: string }) => n.title === 'Change the filter')?.body;
   check('and its line reports the gap, not a target', intervalBody === 'last done 8 days ago', intervalBody);
 
+  /* ---- and the voice path is the same path ---- */
+
+  /*
+   * **The bug this exists for.** The voice feature inserted a habit entry
+   * itself, which was identical to the HTTP route right up until gauge mode
+   * arrived — the fill went into the route, so saying "I drank water" logged an
+   * entry and left the gauge exactly where it was. Reported as the voice command
+   * not updating it, which is precisely what half a write looks like.
+   *
+   * Driven over HTTP rather than by importing the feature, because `smoke` is
+   * core and must not reach into a folder that can be deleted.
+   */
+  const madeVoiceGauge = await post('/api/habits', { name: 'Sip water', mode: 'gauge' });
+  const voiceGaugeId = madeVoiceGauge.json().id;
+  await app.inject({
+    method: 'PATCH',
+    url: `/api/habits/${voiceGaugeId}`,
+    payload: { gaugeDrainPerDay: 100, gaugeFillPercent: 20 },
+  });
+  // Empty it, so a fill is visible rather than clamped at full.
+  for (let i = 0; i < 6; i++) await post(`/api/habits/${voiceGaugeId}/uncheck`);
+  check('the voice gauge starts empty', (await listOf(voiceGaugeId)).gaugeNow === 0);
+
+  /*
+   * Voice is off by default — it is the only feature that opens a microphone, so
+   * it is something you switched on rather than something you find running. The
+   * command endpoint answers `disabled` until it is, which is correct and is not
+   * what is being tested here.
+   */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceEnabled: true } });
+  await post('/api/voice/commands', { kind: 'habit', target: voiceGaugeId, phrases: ['sip water'] });
+
+  const spoken = await post('/api/voice/command', { text: 'hey everything i sipped water', speakerScore: null });
+  const outcome = spoken.json();
+  check('a spoken phrase reaches the habit', outcome.outcome === 'habit-checked', JSON.stringify(outcome));
+  check(
+    'and it actually moves the gauge',
+    (await listOf(voiceGaugeId)).gaugeNow === 20,
+    `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}%`
+  );
+  /*
+   * And says something true about it. The reply was hard-coded to "N of
+   * target", which for a gauge is a sentence about a target it does not have.
+   */
+  check('and says the level rather than a target', outcome.say === 'Sip water — 20% full', outcome.say);
+
+  // "two waters" is two fills, not one — the count has to survive the trip.
+  const twoSips = await post('/api/voice/command', { text: 'hey everything i sipped two waters', speakerScore: null });
+  check(
+    'a spoken count fills that many times',
+    (await listOf(voiceGaugeId)).gaugeNow === 60,
+    `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}% after "${twoSips.json().text}"`
+  );
+
   /*
    * A gauge with no reminder interval is purely something to look at. Nagging
    * about one nobody asked to be nagged about would make the mode unusable as

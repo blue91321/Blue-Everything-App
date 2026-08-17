@@ -116,11 +116,36 @@ check('…but still offers "went"', spokenVariants('go').includes('went'), true)
 // itself: the stem is an internal token ("take" and "taking" both become "tak"),
 // and asserting it equals the spelling would be testing the stemmer's output
 // format rather than the property that matters — that the two sides agree.
-for (const word of ['drink', 'coffee', 'water', 'brush', 'walk', 'read', 'book', 'take', 'go', 'box', 'pause']) {
+for (const word of [
+  'drink', 'coffee', 'water', 'brush', 'walk', 'read', 'book', 'take', 'go', 'box', 'pause',
+  /*
+   * Short verbs that double their final consonant, and words that simply end in
+   * one. Both classes were broken and in opposite directions: "sip" offered the
+   * grammar "siped" — a spelling nobody says and Vosk drops — while "sipped"
+   * stemmed to "sipp" and matched nothing, and "press" reduced to "pres" while
+   * "pressed" reduced to "press". `jog`, `plan`, `stop`, `nap`, `log` and `trim`
+   * all failed the first way; `pass` and `floss` the second.
+   */
+  'sip', 'jog', 'plan', 'stop', 'nap', 'log', 'trim', 'run',
+  'press', 'pass', 'floss', 'fall', 'call', 'row', 'play', 'stretch',
+]) {
   const target = voiceTokens(word);
   for (const form of spokenVariants(word)) {
     check(`"${form}" agrees with "${word}"`, voiceTokens(form), target);
   }
+}
+
+/*
+ * And the forms people actually say reach the stored word, which is the point of
+ * all of the above. `spokenVariants` generating the right spelling and the
+ * stemmer folding it back are two halves of one property, and only this
+ * direction is the one a user would notice.
+ */
+for (const [stored, said] of [
+  ['sip', 'sipped'], ['jog', 'jogged'], ['plan', 'planned'], ['stop', 'stopping'],
+  ['press', 'pressed'], ['floss', 'flossed'], ['take', 'taking'], ['drink', 'drank'],
+] as const) {
+  check(`saying "${said}" reaches a stored "${stored}"`, voiceTokens(said), voiceTokens(stored));
 }
 
 // `spokenCount` reads these out of a transcript, so the grammar has to carry

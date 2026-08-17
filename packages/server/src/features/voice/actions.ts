@@ -28,9 +28,8 @@ import {
   type VoiceCommandKind,
 } from '@everything/shared';
 import { db } from '../../db/client.js';
-import { habitEntries, habits, notes, settings, voiceCommands } from '../../db/schema.js';
-import { periodKeyFor } from '../../routes/habits.js';
-import type { Cadence } from '@everything/shared';
+import { habits, notes, settings, voiceCommands } from '../../db/schema.js';
+import { recordHabitDone } from '../../routes/habits.js';
 
 /** Something for the agent to do on the machine you are sitting at. */
 export type VoiceAction =
@@ -428,28 +427,29 @@ export async function runCommand(
 ): Promise<VoiceOutcome> {
   switch (command.kind) {
     case 'habit': {
-      const [habit] = await db.select().from(habits).where(eq(habits.id, command.target ?? ''));
-      if (!habit) return { outcome: 'no-match', text, say: 'That habit has been deleted' };
-
-      const count = spokenCount(text);
-      const periodKey = periodKeyFor(habit.cadence as Cadence);
-      await db.insert(habitEntries).values({ habitId: habit.id, periodKey, count });
-
-      const entries = await db
-        .select()
-        .from(habitEntries)
-        .where(and(eq(habitEntries.habitId, habit.id), eq(habitEntries.periodKey, periodKey)));
-      const done = entries.reduce((sum, e) => sum + e.count, 0);
+      /*
+       * **Through `recordHabitDone`, not a second implementation.** This case
+       * used to insert the entry itself and count the period up by hand, which
+       * was identical to the HTTP route right up until gauge mode arrived — the
+       * fill was added to the route and saying "I drank water" quietly logged an
+       * entry and left the gauge exactly where it was. Reported as the voice
+       * command not updating it, and that is what a half-done write looks like.
+       *
+       * The spoken line comes back from there too, because "3 of 8" is a
+       * sentence about a target a gauge does not have.
+       */
+      const progress = await recordHabitDone(command.target ?? '', spokenCount(text));
+      if (!progress) return { outcome: 'no-match', text, say: 'That habit has been deleted' };
 
       return {
         outcome: 'habit-checked',
         text,
-        habitId: habit.id,
-        habitName: habit.name,
-        doneThisPeriod: done,
-        target: habit.targetPerPeriod,
-        met: done >= habit.targetPerPeriod,
-        say: `${habit.name} — ${done} of ${habit.targetPerPeriod}`,
+        habitId: progress.habit.id,
+        habitName: progress.habit.name,
+        doneThisPeriod: progress.doneThisPeriod,
+        target: progress.habit.targetPerPeriod,
+        met: progress.met,
+        say: progress.say,
       };
     }
 

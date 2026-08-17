@@ -1273,6 +1273,22 @@ three times and watching the level stop at 75%. The Habits screen's stepper had
 the matching bug: it disabled − on `doneThisPeriod` and showed the number of
 top-ups today where the level belonged.
 
+### Recording a completion is one function, and briefly was two
+
+`recordHabitDone()` in `routes/habits.ts` is the only thing that writes a habit
+entry, and `undoHabitDone()` the only thing that removes one. The voice feature
+had its own copy — it inserted the entry and counted the period up by hand —
+which was *identical* to the HTTP route right until gauge mode arrived. The fill
+went into the route, so saying "I drank water" logged an entry and left the
+gauge exactly where it was. Reported as the voice command not working, and it
+had not: it had done half the write, silently.
+
+The spoken reply came back from the same place for the same reason. It was
+hard-coded to `${name} — ${done} of ${target}`, which for a gauge is a sentence
+about a target it does not have; it now says "Drink water — 56% full".
+
+A spoken count fills that many times, so "I drank two waters" is two ticks.
+
 ### Drawn, not a progress bar
 
 `Gauge.tsx` renders four shapes as SVG with the fill clipped to the path, so a
@@ -2152,6 +2168,22 @@ elsewhere**, in ways that silently lost common sentences:
   which costs nothing in a vocabulary of phrases you wrote yourself.
 - The irregular table returned early and bypassed all of it, so `took` gave
   `take` against a stored `tak`.
+
+**Doubling before `-ed` and `-ing` was the third case, and it broke a whole
+class of ordinary short verbs.** "sip" gives "sipped", so stripping `ed` left
+`sipp` while the stored `sip` reduced to `sip` — and the generator was no help
+either, offering the grammar `siped` and `siping`, spellings nobody says and
+Vosk drops as absent from its lexicon. So the recogniser could not emit the word
+and the matcher could not have folded it back if it had. `jog`, `plan`, `stop`,
+`nap`, `log` and `trim` all failed the same way. `undouble()` and
+`doublesFinal()` are the two halves, and `l`, `s` and `z` are excluded from the
+first because plenty of words simply end in those doubled — collapsing "pressed"
+to "pres" would trade one broken class for another.
+
+**A lone `-s` is never the plural of a word ending `-ss`**, which was a separate
+pre-existing bug found by the round-trip check the above added: `press` reduced
+to `pres` while `pressed` reduced to `press`, so the two halves of one word
+stopped matching. `pass` and `floss` failed identically.
 
 `voiceTokens` also filters filler **before** stemming as well as after, because
 `FILLER` is spelled the way people write these words and `have` had already

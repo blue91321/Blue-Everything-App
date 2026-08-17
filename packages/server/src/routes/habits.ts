@@ -38,6 +38,133 @@ export function periodKeyFor(cadence: Cadence, at = new Date()): string {
   return `${thursday.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
+/** Local midnight — a habit ticked at 11pm belongs to that day as you lived it. */
+function startOfTodayAt(now: number): number {
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  return midnight.getTime();
+}
+
+/** What a caller needs to know after ticking something off. */
+export interface HabitProgress {
+  habit: typeof habits.$inferSelect;
+  doneThisPeriod: number;
+  lastDoneAt: number | null;
+  /** 0–100 for a gauge, null otherwise. */
+  gaugeNow: number | null;
+  /** Finished — see `habitIsFinished`. Not the negation of `wantsDoing`. */
+  met: boolean;
+  wantsDoing: boolean;
+  /** One line to say out loud, right for whichever mode this is. */
+  say: string;
+}
+
+/**
+ * Record that a habit was done, whoever asked.
+ *
+ * **Exported because there are two callers and there were nearly two
+ * implementations.** The HTTP route had one and the voice feature had another —
+ * it inserted an entry itself — so when gauge mode arrived and the fill was
+ * added to the route, saying "I drank water" logged the entry and left the gauge
+ * exactly where it was. Reported as the voice command not updating it, and it
+ * was not: it did half the job silently.
+ *
+ * Anything that records a completion goes through here now. Living beside
+ * `periodKeyFor`, which the engine and the voice feature already both import
+ * from this module for the same reason.
+ */
+export async function recordHabitDone(
+  habitId: string,
+  count = 1,
+  now = Date.now()
+): Promise<HabitProgress | null> {
+  const [habit] = await db.select().from(habits).where(eq(habits.id, habitId));
+  if (!habit) return null;
+
+  await db
+    .insert(habitEntries)
+    .values({ habitId, periodKey: periodKeyFor(habit.cadence as Cadence, new Date(now)), count });
+
+  /*
+   * The gauge additionally moves its anchor, because the level is not derivable
+   * from the entries — two ticks an hour apart leave a different level than two
+   * a week apart. `count` fills that many times, so "two waters" is two.
+   */
+  const moved = habit.mode === 'gauge' ? gaugeAfterFill(habit, now, count) : null;
+  if (moved) await db.update(habits).set(moved).where(eq(habits.id, habitId));
+
+  return describeProgress({ ...habit, ...(moved ?? {}) }, now);
+}
+
+/** Undo one. See the route below for why a gauge is not gated on an entry. */
+export async function undoHabitDone(habitId: string, now = Date.now()): Promise<HabitProgress | null> {
+  const [habit] = await db.select().from(habits).where(eq(habits.id, habitId));
+  if (!habit) return null;
+
+  const key = periodKeyFor(habit.cadence as Cadence, new Date(now));
+  const [latest] = await db
+    .select()
+    .from(habitEntries)
+    .where(and(eq(habitEntries.habitId, habitId), eq(habitEntries.periodKey, key)))
+    .orderBy(desc(habitEntries.doneAt))
+    .limit(1);
+
+  if (latest) await db.delete(habitEntries).where(eq(habitEntries.id, latest.id));
+
+  const moved = habit.mode === 'gauge' ? gaugeAfterUndo(habit, now) : null;
+  if (moved) await db.update(habits).set(moved).where(eq(habits.id, habitId));
+
+  return { ...(await describeProgress({ ...habit, ...(moved ?? {}) }, now))!, removed: latest ? 1 : 0 } as
+    HabitProgress & { removed: number };
+}
+
+/** The state of one habit, in the vocabulary every caller wants. */
+async function describeProgress(
+  habit: typeof habits.$inferSelect,
+  now: number
+): Promise<HabitProgress> {
+  const periodKey = periodKeyFor(habit.cadence as Cadence, new Date(now));
+  const entries = await db
+    .select()
+    .from(habitEntries)
+    .where(and(eq(habitEntries.habitId, habit.id), eq(habitEntries.periodKey, periodKey)));
+  const doneThisPeriod = entries.reduce((sum, e) => sum + e.count, 0);
+
+  const [latest] = await db
+    .select({ doneAt: habitEntries.doneAt })
+    .from(habitEntries)
+    .where(eq(habitEntries.habitId, habit.id))
+    .orderBy(desc(habitEntries.doneAt))
+    .limit(1);
+  const lastDoneAt = latest?.doneAt ?? null;
+
+  const context = { doneThisPeriod, lastDoneAt, startOfToday: startOfTodayAt(now) };
+  const gaugeNow = habit.mode === 'gauge' ? Math.round(gaugeLevelAt(habit, now)) : null;
+
+  /*
+   * The spoken line, per mode. It was hard-coded to "3 of 8" wherever a habit
+   * was ticked off, which for a gauge is a sentence about a target it does not
+   * have — the voice reply said "Drink water — 1 of 16" for something whose
+   * whole state is a percentage.
+   */
+  const say =
+    habit.mode === 'gauge'
+      ? `${habit.name} — ${gaugeNow}% full`
+      : habit.mode === 'interval'
+        ? `${habit.name} — done`
+        : `${habit.name} — ${doneThisPeriod} of ${habit.targetPerPeriod}`;
+
+  return {
+    habit,
+    doneThisPeriod,
+    lastDoneAt,
+    gaugeNow,
+    met: habitIsFinished(habit, context, now),
+    wantsDoing: habitWantsDoing(habit, context, now),
+    say,
+  };
+}
+
 /**
  * `voice_phrases` is a JSON column, so it crosses the API boundary as a real
  * array and never leaks its storage format to the PWA. A malformed value —
@@ -62,13 +189,7 @@ function normalisePush(body: { pushToPhone?: boolean | null }) {
 export async function habitRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/habits', async () => {
     const now = Date.now();
-    /*
-     * Local midnight, like `periodKeyFor` — a habit ticked off at 11pm belongs
-     * to that day as you experienced it, not as UTC saw it.
-     */
-    const midnight = new Date(now);
-    midnight.setHours(0, 0, 0, 0);
-    const startOfToday = midnight.getTime();
+    const startOfToday = startOfTodayAt(now);
     const all = await db
       .select()
       .from(habits)
@@ -221,25 +342,18 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
   /** Record a completion for the current period. */
   app.post('/api/habits/:id/check', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const [habit] = await db.select().from(habits).where(eq(habits.id, id));
-    if (!habit) return reply.code(404).send({ error: 'no such habit' });
+    // Everything is in `recordHabitDone`, which the voice feature calls too —
+    // the two used to have their own copies and only one of them grew a gauge.
+    const progress = await recordHabitDone(id);
+    if (!progress) return reply.code(404).send({ error: 'no such habit' });
 
-    const [entry] = await db
-      .insert(habitEntries)
-      .values({ habitId: id, periodKey: periodKeyFor(habit.cadence as Cadence) })
-      .returning();
-
-    /*
-     * An entry is recorded in every mode — that is the history, and `interval`
-     * mode reads it to know when you last did the thing. A gauge *additionally*
-     * moves its anchor, because the level is not derivable from the entries: two
-     * ticks an hour apart leave a different level than two a week apart.
-     */
-    if (habit.mode === 'gauge') {
-      await db.update(habits).set(gaugeAfterFill(habit)).where(eq(habits.id, id));
-    }
-
-    return reply.code(201).send(entry);
+    return reply.code(201).send({
+      habitId: id,
+      doneThisPeriod: progress.doneThisPeriod,
+      gaugeNow: progress.gaugeNow,
+      met: progress.met,
+      wantsDoing: progress.wantsDoing,
+    });
   });
 
   /**
@@ -258,29 +372,14 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post('/api/habits/:id/uncheck', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const [habit] = await db.select().from(habits).where(eq(habits.id, id));
-    if (!habit) return reply.code(404).send({ error: 'no such habit' });
+    const progress = await undoHabitDone(id);
+    if (!progress) return reply.code(404).send({ error: 'no such habit' });
 
-    const key = periodKeyFor(habit.cadence as Cadence);
-    const [latest] = await db
-      .select()
-      .from(habitEntries)
-      .where(and(eq(habitEntries.habitId, id), eq(habitEntries.periodKey, key)))
-      .orderBy(desc(habitEntries.doneAt))
-      .limit(1);
-
-    // Removed when there is one to remove, in every mode: the entry log is the
-    // history and a mis-tap should not stay in it.
-    if (latest) await db.delete(habitEntries).where(eq(habitEntries.id, latest.id));
-
-    if (habit.mode === 'gauge') {
-      // See `gaugeAfterUndo`: not a true inverse where the fill had clamped, and
-      // deliberately not made into one.
-      await db.update(habits).set(gaugeAfterUndo(habit)).where(eq(habits.id, id));
-      return { removed: latest ? 1 : 0, gaugeAdjusted: true };
-    }
-
-    return { removed: latest ? 1 : 0 };
+    return {
+      removed: (progress as HabitProgress & { removed: number }).removed,
+      doneThisPeriod: progress.doneThisPeriod,
+      gaugeNow: progress.gaugeNow,
+    };
   });
 
   app.get('/api/habits/:id/entries', async (request) => {

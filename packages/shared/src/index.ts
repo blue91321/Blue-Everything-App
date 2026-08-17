@@ -176,9 +176,11 @@ export function gaugeLevelAt(
  */
 export function gaugeAfterFill(
   habit: { gaugeLevel: number; gaugeLevelAt: number; gaugeDrainPerDay: number; gaugeFillPercent: number },
-  now = Date.now()
+  now = Date.now(),
+  /** How many ticks at once — "I drank two waters" is two fills, not one. */
+  times = 1
 ): { gaugeLevel: number; gaugeLevelAt: number } {
-  const level = Math.min(GAUGE_FULL, gaugeLevelAt(habit, now) + habit.gaugeFillPercent);
+  const level = Math.min(GAUGE_FULL, gaugeLevelAt(habit, now) + habit.gaugeFillPercent * Math.max(1, times));
   return { gaugeLevel: level, gaugeLevelAt: now };
 }
 
@@ -801,6 +803,17 @@ function stem(word: string): string {
      */
     if (suffix === 'es' && !/(s|x|z|ch|sh)$/.test(word.slice(0, -2))) continue;
 
+    /*
+     * A lone `-s` is never the plural of a word already ending `-ss`.
+     *
+     * English pluralises those with `-es` — "press" gives "presses", not
+     * "presss" — so stripping the single `s` turned "press" into "pres" while
+     * "pressed" reduced to "press", and the two halves of the same word stopped
+     * matching. Predates the doubled-consonant work below and was found by the
+     * round-trip check that work added: "floss" and "pass" fail identically.
+     */
+    if (suffix === 's' && word.endsWith('ss')) continue;
+
     const base = word.slice(0, -suffix.length);
     /*
      * `-ing` and `-ed` attach to a stem that has *already* lost its silent `e`
@@ -811,7 +824,7 @@ function stem(word: string): string {
      *
      * The plural endings are the other way round; they leave the `e` in place.
      */
-    return suffix === 'ing' || suffix === 'ed' ? base : dropSilentE(base);
+    return suffix === 'ing' || suffix === 'ed' ? undouble(base) : dropSilentE(base);
   }
   return dropSilentE(word);
 }
@@ -838,6 +851,42 @@ function stem(word: string): string {
  */
 function dropSilentE(word: string): string {
   return word.length > 3 && word.endsWith('e') ? word.slice(0, -1) : word;
+}
+
+/**
+ * Undo the consonant English doubles before `-ed` and `-ing`.
+ *
+ * "sip" gives "sipped", so stripping `ed` leaves "sipp" — which matched nothing,
+ * because the stored "sip" reduces to "sip". Exactly the same shape of failure
+ * as "taking" reducing to "tak" while "take" stayed "take", and it hits a whole
+ * class of ordinary short verbs: sip, jog, plan, stop, nap, chat, log, trim.
+ *
+ * **`l`, `s` and `z` are excluded, and that is not a detail.** Plenty of words
+ * simply end in those doubled — "press", "fall", "buzz" — and collapsing them
+ * would turn "pressed" into "pres" while "press" stayed "press", trading one
+ * broken class for another. It is Porter's own condition, for the same reason.
+ */
+function undouble(word: string): string {
+  const last = word.at(-1) ?? '';
+  if (word.length > 3 && last === word.at(-2) && !'lsz'.includes(last) && !/[aeiou]/.test(last)) {
+    return word.slice(0, -1);
+  }
+  return word;
+}
+
+/**
+ * ...and the generator has to double it, or the recogniser can never say it.
+ *
+ * The two halves are useless apart. Without this, `spokenVariants('sip')` offers
+ * the grammar "siped" and "siping" — spellings nobody says, which Vosk drops as
+ * not being in its lexicon — so the recogniser has no way to emit "sipped" at
+ * all and the stemmer fix above never gets a chance to fold it back.
+ *
+ * The condition is the usual one: a short word ending consonant-vowel-consonant,
+ * where that last consonant is not w, x or y ("row" is not "rowwed").
+ */
+function doublesFinal(word: string): boolean {
+  return /^[a-z]*[^aeiou][aeiou][^aeiouwxy]$/.test(word) && word.length <= 5;
 }
 
 /**
@@ -870,8 +919,9 @@ export function spokenVariants(word: string): string[] {
   // Too short to inflect sensibly — "go" would give "goed".
   if (base.length > 2) {
     forms.add(/(s|x|z|ch|sh)$/.test(base) ? `${base}es` : `${base}s`);
-    forms.add(base.endsWith('e') ? `${base}d` : `${base}ed`);
-    forms.add(base.endsWith('e') ? `${base.slice(0, -1)}ing` : `${base}ing`);
+    const stemForSuffix = doublesFinal(base) ? `${base}${base.at(-1)}` : base;
+    forms.add(base.endsWith('e') ? `${base}d` : `${stemForSuffix}ed`);
+    forms.add(base.endsWith('e') ? `${base.slice(0, -1)}ing` : `${stemForSuffix}ing`);
   }
 
   return [...forms];
