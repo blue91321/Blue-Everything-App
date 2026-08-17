@@ -2840,6 +2840,49 @@ movable and has no business assuming League is installed on the same box.
   and they are waiting on players. Fourteen people read as in-game where seven
   did.
 
+### A friend row that does not squash, and a way to message them
+
+The chip and the buttons were holding their width while the name and status
+column shrank around them, so at 375px the text broke into ragged lines beside a
+full-width "steam + discord". Measured on the real list before and after:
+
+| | before | after |
+| --- | --- | --- |
+| narrowest text column | **32px** | 214px |
+| names broken over more than one line | **13 of 40** | 0 |
+| worst status line | **8 lines** | 2 |
+
+Two rules, and neither hides anything. `flex-basis` plus `min-width: 0` on the
+text column is what actually lets it ellipsis — a flex child defaults to
+`min-width: auto` and refuses to shrink below its content — and `flex-wrap` lets
+the trailing controls drop underneath instead of squeezing what is worth
+reading. Hiding the chip below a breakpoint was the alternative and costs the one
+place that says which services a merged row came from. At 1280 nothing wraps, so
+the wide layout is exactly as it was.
+
+**Message opens Discord**, via `discord://-/users/<id>`. One link covers both
+ends: the desktop client claims the scheme on this PC and the Discord app claims
+it on a phone, so there is no platform sniffing. A real `<a href>` rather than a
+click handler, for the reason `everything://` needs one — Chromium gates handing
+a URL to an external program on a user gesture and treats an anchor navigation as
+one far more readily than a scripted assignment.
+
+That needed `providerUserId` on each account in the friends payload: the `id`
+beside it is this app's row key and means nothing to Discord. It is carried for
+every provider rather than only the one using it today, since it is already in
+hand.
+
+**Like the `everything://` button, the handoff itself is not verified here.** The
+automation browser refuses external-protocol launches outright, so a click
+produces no launch and no error — which is what that policy looks like and also
+what a broken link looks like. The href is asserted to be a well-formed
+`discord://-/users/<snowflake>` on 104 of 113 rows; whether Discord opens needs
+one press in a real window.
+
+Steam has an equivalent — `steam://friends/message/<id>` — and is deliberately
+not there yet: Discord is where the messaging happens, and a second button per
+row costs width on the screen this change was about.
+
 ### Switching whole statuses off
 
 A second row of chips under the services one, one per status with its count and

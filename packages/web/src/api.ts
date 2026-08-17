@@ -761,7 +761,13 @@ export interface FriendRow {
   seenAt: number;
   /** Set when the status came from a different account than the name. */
   statusFrom: string | null;
-  accounts: Array<{ id: string; provider: string; name: string }>;
+  accounts: Array<{
+    id: string;
+    provider: string;
+    name: string;
+    /** The service's own id for them, for deep links. Absent on an older server. */
+    providerUserId?: string;
+  }>;
 }
 
 export interface LinkSuggestion {

@@ -515,7 +515,19 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
         /** Named when the status came from a different account than the name. */
         statusFrom: knows && knows.provider !== identity.provider ? knows.provider : null,
         /** Every service this person is on, for the row and for unlinking. */
-        accounts: group.map((r) => ({ id: r.id, provider: r.provider, name: r.name })),
+        accounts: group.map((r) => ({
+          id: r.id,
+          provider: r.provider,
+          name: r.name,
+          /*
+           * The service's own id, which is what a deep link needs — the `id`
+           * beside it is this app's row key and means nothing to Discord.
+           * Carried for every provider rather than only the one that uses it
+           * today, since it is already in hand and a second provider with a
+           * "message them" link would otherwise be a second change here.
+           */
+          providerUserId: r.providerUserId,
+        })),
       };
     });
 

@@ -1359,3 +1359,34 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .flash { animation: none; outline: 2px solid var(--accent); }
 }
+
+/* ---------- a friend row that does not squash ---------- */
+
+/*
+ * The chip and the buttons were holding their width while the name and status
+ * column shrank around them, so at a narrow width the text broke into two or
+ * three ragged lines beside a full-width "steam + discord".
+ *
+ * Two rules do it: the text column refuses to go below a readable width, and the
+ * row is allowed to wrap — so the trailing controls drop underneath rather than
+ * squeezing what is worth reading. Nothing is hidden, which the alternative
+ * (hiding the chip below a breakpoint) would have done to the one place that
+ * says which services a merged row came from.
+ */
+.friend-row {
+  flex-wrap: wrap;
+}
+
+.friend-text {
+  /* `min-width: 0` is what actually lets the ellipsis happen: a flex child
+     defaults to `min-width: auto`, which refuses to shrink below its content. */
+  min-width: 0;
+  flex-basis: 12rem;
+}
+
+/* Once wrapped, the controls sit under the text rather than under the avatar. */
+.friend-row > .chip,
+.friend-row > .btn,
+.friend-row > a.btn {
+  flex: none;
+}
