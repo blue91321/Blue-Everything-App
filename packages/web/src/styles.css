@@ -1271,3 +1271,54 @@ button {
   border-radius: 5px;
   object-fit: cover;
 }
+
+/* ---------- the right-click menu ---------- */
+
+/*
+ * `position: fixed` because it is placed from `clientX/clientY`, which are
+ * viewport coordinates — an absolutely positioned copy inside a scrolled card
+ * would land somewhere else entirely.
+ */
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 150px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.context-menu button {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.context-menu button:hover:not(:disabled),
+.context-menu button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.context-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-menu button.danger {
+  color: var(--urgent, #e5484d);
+}
+
+.context-menu button.danger:hover:not(:disabled) {
+  background: var(--urgent, #e5484d);
+  color: #fff;
+}

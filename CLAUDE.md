@@ -222,6 +222,47 @@ of the due time. Showing "Nothing queued" while a task is due in two hours is
 false, so the Dashboard also lists what *will* queue, marked `later` with the
 time it'll fire.
 
+### Right-click to get to the thing that edits it
+
+A task or habit on the Dashboard opens its own editor from a context menu, on
+the screen that owns it. One item today — the menu is a list because it is going
+to grow, and one item is the honest amount to ship.
+
+**It replaces the browser's menu, so it makes two concessions.** A non-empty text
+selection passes straight through, so copying a task title never stops working —
+that is the one thing the native menu is genuinely used for here. And only rows
+that offer something intercept the event; the rest of the page behaves exactly as
+it did.
+
+**There is no long-press.** Touch has no right-click, so this is a desktop
+affordance and is stated as one rather than half-built. Nothing lives *only*
+here: the phone reaches the same editors through the tab and the `edit` button.
+
+**Navigation goes through a port, not a prop.** `nav.ts` holds one listener that
+`App` registers, because the thing asking is a row three components below the
+only component that knows what a view is, and none of the components in between
+have any business carrying a navigate function. It is deliberately not a router:
+the whole navigation model here is one `useState` holding a string, and adding a
+router to satisfy one menu item would be a dependency and a concept for something
+a callback already does.
+
+Three things there are worth knowing:
+
+- **The hooks sit above `App`'s early returns**, and that is not style. React
+  counts hooks per render, so a `useEffect` written after `if (checking) return
+  …` is called on some renders and not others — it took the whole app down with
+  error #310 on the pairing screen, which is exactly the render where those
+  returns fire. The values the listener needs are fed to a ref further down,
+  where they exist.
+- **The focus request survives a render or two.** `App` holds the id and the
+  target screen clears it once honoured, because that screen mounts and fetches
+  at the same moment — firing once on mount would find an empty list and open
+  nothing. Clearing it on use is what stops closing the editor reopening it.
+- **The menu is measured, then clamped.** Its width depends on its longest label,
+  which will change as items are added, so a hard-coded estimate is a thing that
+  silently stops being true. `useLayoutEffect`, so the correction lands before
+  paint rather than as a visible jump.
+
 ### Navigation
 
 One left drawer, two behaviours, decided by a single `(min-width: 900px)` query:

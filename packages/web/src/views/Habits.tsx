@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type Habit, type HabitMode } from '../api';
 import { HabitGauge } from '../Gauge';
 import { spanLabel } from '../format';
@@ -21,7 +21,7 @@ const formatInterval = (minutes: number): string =>
  * The Habits tab is for *managing* habits — reorder, edit, delete, and correct
  * a mis-tap. Ticking one off day to day belongs on the Dashboard.
  */
-export function Habits() {
+export function Habits({ focus, onFocused }: { focus?: string | null; onFocused?: () => void } = {}) {
   const list = useAsync(() => api.habits.list(), [], ['habits']);
   const [name, setName] = useState('');
   const [cadence, setCadence] = useState<'daily' | 'weekly'>('daily');
@@ -29,6 +29,19 @@ export function Habits() {
 
   const habits = (list.data ?? []).filter((h) => h.active);
   const archived = (list.data ?? []).filter((h) => !h.active);
+
+  /*
+   * Sent here by a right-click. Unlike the task screen this only needs the id,
+   * so it does not have to wait for the list — but it still waits, because
+   * opening an editor for a habit that has since been deleted would render an
+   * empty card with no way to tell why.
+   */
+  useEffect(() => {
+    if (!focus) return;
+    if (!(list.data ?? []).some((habit) => habit.id === focus)) return;
+    setEditingId(focus);
+    onFocused?.();
+  }, [focus, list.data, onFocused]);
 
   async function add(event: React.FormEvent) {
     event.preventDefault();

@@ -1,6 +1,9 @@
 import { api, type Habit, type Task } from './api';
 import { dueLabel, isOverdue, relative } from './format';
+import { useCallback } from 'react';
 import { HabitGauge } from './Gauge';
+import { useContextMenu } from './ContextMenu';
+import { goTo } from './nav';
 import type { Settling } from './useSettling';
 
 /**
@@ -61,6 +64,17 @@ export function TaskRow({
   const done = task.status === 'done';
   const isSettling = settling?.has(task.id) ?? false;
 
+  /*
+   * Right-click goes to the screen that edits this, with its editor open.
+   *
+   * A list because it is going to grow; one item is what is honest today.
+   * `useCallback` so the row does not rebuild the array on every render of a
+   * Dashboard that may be holding twenty of them.
+   */
+  const { onContextMenu, menu } = useContextMenu(
+    useCallback(() => [{ label: 'Edit task…', onSelect: () => goTo('tasks', task.id) }], [task.id])
+  );
+
   async function toggle() {
     settling?.hold(task.id);
     await api.tasks.update(task.id, { status: done ? 'todo' : 'done' });
@@ -68,7 +82,8 @@ export function TaskRow({
   }
 
   return (
-    <div className={`card${isSettling ? ' settling' : ''}`}>
+    <div className={`card${isSettling ? ' settling' : ''}`} onContextMenu={onContextMenu}>
+      {menu}
       <div className="row">
         <button
           className={`check ${done ? 'done' : ''}`}
@@ -163,6 +178,10 @@ export function HabitRow({
   const isSettling = settling?.has(habit.id) ?? false;
   const isGauge = habit.mode === 'gauge';
 
+  const { onContextMenu, menu } = useContextMenu(
+    useCallback(() => [{ label: 'Edit habit…', onSelect: () => goTo('habits', habit.id) }], [habit.id])
+  );
+
   async function check() {
     /*
      * Settling pins a just-ticked row in place for a beat before it drops to
@@ -176,7 +195,8 @@ export function HabitRow({
   }
 
   return (
-    <div className={`card${isSettling ? ' settling' : ''}`}>
+    <div className={`card${isSettling ? ' settling' : ''}`} onContextMenu={onContextMenu}>
+      {menu}
       <div className="row">
         {/*
           The gauge *is* the button, rather than sitting beside a tick box.
