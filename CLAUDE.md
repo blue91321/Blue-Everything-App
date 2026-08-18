@@ -2704,6 +2704,20 @@ works and is what Twitch documents. The setup steps say both, because somebody
 hitting that message needs to check the boring cause before believing the
 interesting one.
 
+**`scope` is a string in RFC 6749 and an array at Twitch.** Spotify, Google and
+Discord all answer `"a b c"`; Twitch answers `["user:read:follows"]`, so
+`token.scope.split(' ')` threw `token.scope.split is not a function` — **after
+the token had been issued**, which is the worst place for it: the handshake had
+succeeded, the connection failed at the last step, and the message named a string
+method rather than the provider that broke the assumption. `TokenResponse.scope`
+is now the union and `grantedFrom` normalises it, so the next provider with an
+opinion is a compile error rather than a runtime one three lines later.
+
+An absent or empty `scope` falls back to what was *asked* for, deliberately:
+several providers omit it on a refresh, and reading that as "nothing granted"
+would report a working connection as having lost its permissions. An empty
+*array* is taken at its word, since that is a provider saying something.
+
 **Twitch is the first provider here that genuinely needs a client secret.** PKCE
 has never shipped for their authorization code flow — the request has sat open on
 their forums for years — so `pkce: false` is a declaration rather than an

@@ -47,6 +47,12 @@ second step `npm version` does not do for you.
   what the Twitch console says for a blank row in the redirect list. Which means
   it is unproven whether the IP literal was ever really the problem — only that
   `localhost` works and is documented.
+- **`scope` is a string in RFC 6749 and an array at Twitch**, so
+  `token.scope.split(' ')` threw after the token had already been issued — the
+  connection failing at the last step with an error naming a string method.
+  `TokenResponse.scope` is the union now and one helper normalises it; an absent
+  or empty value falls back to what was asked for, since several providers omit
+  it on a refresh.
 - Migration `0037`.
 
 ## 0.2.2

@@ -801,5 +801,47 @@ check(
 );
 
 
+/* ------------------------------------------------------------------ */
+
+console.log('\nWhat a token response says it granted');
+
+const { grantedFrom } = await import('../features/integrations/oauth.js');
+
+/*
+ * **`scope` is a string in RFC 6749 and an array at Twitch.**
+ *
+ * Spotify, Google and Discord all send `"a b c"`. Twitch sends
+ * `["user:read:follows"]`, so `token.scope.split(' ')` threw
+ * `token.scope.split is not a function` — and it threw *after* the token had
+ * been issued, so the connection failed at the last step with an error naming a
+ * string method. Checked here because the failure needs a real handshake to
+ * reproduce and nobody is going to do that on purpose twice.
+ */
+const twitchSpec = PROVIDERS.twitch;
+check(
+  'an array of scopes is read as a list',
+  grantedFrom({ access_token: 'x', scope: ['user:read:follows'] }, twitchSpec).join(' ') === 'user:read:follows'
+);
+check(
+  'a space-delimited string still splits',
+  grantedFrom({ access_token: 'x', scope: 'playlist-read-private user-follow-read' }, PROVIDERS.spotify).join(',') ===
+    'playlist-read-private,user-follow-read'
+);
+/*
+ * Absent means "the provider did not say", which several omit on a refresh —
+ * reading that as "nothing granted" would report a working connection as having
+ * lost its permissions.
+ */
+check(
+  'nothing said falls back to what was asked for',
+  grantedFrom({ access_token: 'x' }, twitchSpec).join(' ') === 'user:read:follows'
+);
+check(
+  'and so does an empty string',
+  grantedFrom({ access_token: 'x', scope: '' }, twitchSpec).join(' ') === 'user:read:follows'
+);
+check('an empty array is taken at its word', grantedFrom({ access_token: 'x', scope: [] }, twitchSpec).length === 0);
+
+
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

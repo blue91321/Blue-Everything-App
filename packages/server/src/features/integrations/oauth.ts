@@ -246,12 +246,39 @@ export async function beginAuthorization(provider: ProviderId): Promise<{ url: s
   return { url: `${spec.oauth.authorizeUrl}?${params}`, state };
 }
 
-interface TokenResponse {
+export interface TokenResponse {
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
-  scope?: string;
+  /**
+   * What was actually granted — **a space-delimited string, or an array.**
+   *
+   * RFC 6749 says string, and Spotify, Google and Discord all send one. Twitch
+   * sends `["user:read:follows"]`, so `token.scope.split(' ')` threw
+   * `token.scope.split is not a function` and the whole connection failed after
+   * the token had already been issued — the worst place for it, because the
+   * handshake had succeeded and the error named a string method.
+   *
+   * Typed as the union rather than normalised at the fetch, so the next provider
+   * with an opinion about this is a compile error here rather than a runtime one
+   * three lines later.
+   */
+  scope?: string | string[];
   token_type?: string;
+}
+
+/**
+ * The scopes a token response says it carries, whichever shape it said it in.
+ *
+ * Falls back to what was *asked for* when the provider says nothing, which is a
+ * guess and a deliberate one: several of these omit `scope` on a refresh, and
+ * treating that as "no scopes granted" would make the screen report a working
+ * connection as having lost its permissions.
+ */
+export function grantedFrom(token: TokenResponse, spec: ProviderSpec): string[] {
+  if (Array.isArray(token.scope)) return token.scope;
+  if (typeof token.scope === 'string' && token.scope.trim() !== '') return token.scope.split(' ');
+  return spec.oauth?.scopes ?? [];
 }
 
 async function postToken(spec: ProviderSpec, provider: ProviderId, body: URLSearchParams): Promise<TokenResponse> {
@@ -315,7 +342,7 @@ export async function completeAuthorization(state: string, code: string): Promis
     // with undefined is how a working connection quietly becomes unrefreshable.
     ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
     expiresAt: token.expires_in ? Date.now() + token.expires_in * 1000 : null,
-    scopes: JSON.stringify(token.scope ? token.scope.split(' ') : spec.oauth?.scopes ?? []),
+    scopes: JSON.stringify(grantedFrom(token, spec)),
     lastError: null,
   });
 
