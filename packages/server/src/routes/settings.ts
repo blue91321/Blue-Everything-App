@@ -19,6 +19,22 @@ import { currentWindowsDnd } from './attention.js';
  * able to empty the friends list, which is the failure that would look most
  * like the integration itself having broken.
  */
+/**
+ * The panel list out of the JSON it is stored as.
+ *
+ * Shares `parseHiddenProviders`' rule that anything unparseable reads as empty:
+ * a corrupt setting must not be able to take the Dashboard down, and one column
+ * is the state this app spent most of its life in.
+ */
+export function parsePanelList(stored: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(stored || '[]');
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 export function parseHiddenProviders(stored: string): string[] {
   try {
     const parsed: unknown = JSON.parse(stored || '[]');
@@ -60,6 +76,7 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     // Stored as whole percent; the shared threshold constants are fractions.
     speakerThreshold: row.speakerThreshold / 100,
     hiddenProviders: parseHiddenProviders(row.hiddenProviders),
+    dashboardPanels: parsePanelList(row.dashboardPanels),
   };
 }
 
@@ -127,6 +144,25 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
           body.hiddenProviders === undefined ? undefined : JSON.stringify(body.hiddenProviders),
         dashboardPanel: body.dashboardPanel,
         livePanelScope: body.livePanelScope,
+        /*
+         * Deduplicated on the way in. The same panel twice would draw twice and
+         * hand React two children with one key, and there is no reading of "show
+         * me who is online, then who is online" worth supporting.
+         */
+        ...(body.dashboardPanels === undefined
+          ? {}
+          : (() => {
+              const panels = [...new Set(body.dashboardPanels)];
+              return {
+                dashboardPanels: JSON.stringify(panels),
+                /*
+                 * Kept in step for a PWA older than this column, which reads the
+                 * single field and would otherwise show an empty side column
+                 * with nothing saying why.
+                 */
+                dashboardPanel: panels[0] ?? '',
+              };
+            })()),
       })
       .where(eq(settings.id, current.id))
       .returning();

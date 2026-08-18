@@ -1456,3 +1456,12 @@ button {
   background: var(--card);
   color: var(--accent);
 }
+
+/* Stacked panels need a gap between them, and a rule to read as separate. */
+.dash-panel > :not(:first-child) {
+  margin-top: 18px;
+}
+
+.dash-panel > .panel-settings {
+  margin-top: 12px;
+}

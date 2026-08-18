@@ -65,7 +65,14 @@ second step `npm version` does not do for you.
   changing the scope left an open Dashboard on the old filter.
 - Two empty states, since a narrowed panel showing nothing while four people are
   live is not a quiet evening — it says which of the two it is.
-- Migrations `0037` and `0038`.
+- **The side column holds several panels now**, one under the other, in an order
+  you set with ↑/↓ — the same idiom the Habits screen reorders with. Backfilled
+  from the single choice, and `dashboard_panel` is still written as the first
+  entry so a PWA older than the column still draws something.
+- Each panel gets its own Suspense boundary rather than one around the column:
+  they are separate chunks and a shared boundary would hold all of them back
+  until the slowest arrived.
+- Migrations `0037`–`0039`.
 
 ## 0.2.2
 

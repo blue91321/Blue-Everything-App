@@ -371,6 +371,14 @@ export interface AppSettings {
    */
   dashboardPanel?: string;
   /**
+   * What the side column holds, in the order they are drawn.
+   *
+   * Optional for the usual reason: the PWA and the server update independently,
+   * and a bundle newer than the process serving it must read an absent list as
+   * "fall back to the single panel" rather than as "no panels".
+   */
+  dashboardPanels?: string[];
+  /**
    * What the live panel narrows to — `all` or `favourites`.
    *
    * A real pair rather than an opaque string, unlike `dashboardPanel`: these two
@@ -1073,8 +1081,10 @@ export const api = {
       overlayScreen?: string | null;
       overlayAvatar?: string;
       hiddenProviders?: string[];
-      /** Opaque panel id, or '' for one column. */
+      /** Opaque panel id, or '' for one column. Kept in step with the list. */
       dashboardPanel?: string;
+      /** The side column's panels, in order. Deduplicated by the server. */
+      dashboardPanels?: string[];
       /** What the live panel narrows to. The Live tab always shows everything. */
       livePanelScope?: 'all' | 'favourites';
     }) => patch<AppSettings>('/api/settings', payload),

@@ -106,9 +106,30 @@ dependencies, which is 66KB gzipped and nearly all of it framework.
 
 ### The Dashboard's side column
 
-A second column on a wide screen, holding one thing worth having in the corner
-of your eye — who is online, by default nothing. `settings.dashboard_panel`
-holds the choice, server-side like the theme so the PC and the phone agree.
+A second column on a wide screen, holding **as many panels as you like, one
+under the other, in an order you choose** — who is online, who is live, recent
+notes; by default nothing. `settings.dashboard_panels` is a JSON array of opaque
+ids, server-side like the theme so the PC and the phone agree.
+
+**`dashboard_panel` is still written, as the first entry.** It is not dead
+weight: the PWA and the server update independently, so a browser holding an
+older bundle reads that field and draws one panel rather than an empty column.
+Migration `0039` backfills the list from it, so nobody loses what they had.
+
+Reordering is **↑/↓ and a whole-list write**, the same idiom the Habits screen
+uses. Drag and drop is the one interaction that has to be built twice — once for
+the mouse and once for touch — and a list of three does not need it. A panel is
+appended when added rather than inserted, because the bottom is predictable and
+anywhere else is a guess about intent.
+
+Each panel gets **its own Suspense boundary**, not one around the column: they
+are separate chunks that arrive independently, and a shared boundary would hold
+every panel back until the slowest had landed.
+
+A chosen panel whose feature is switched off **keeps its place in the list** and
+says so on the settings screen, rather than being dropped — the stored order is
+left alone so turning the feature back on restores it, and the Dashboard simply
+draws one fewer meanwhile.
 
 **Core cannot import the panel it most wants.** The Dashboard is core and the
 friends list lives in `features/integrations`, which is deletable. That is the

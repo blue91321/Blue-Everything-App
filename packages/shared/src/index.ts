@@ -1785,6 +1785,15 @@ export const updateSettingsSchema = z.object({
    */
   dashboardPanel: z.string().max(64).optional(),
   /**
+   * What the side column holds, in the order they are drawn.
+   *
+   * Shape only — the ids come from features that can be deleted, so core
+   * validates the length and the count and never the values, exactly as it does
+   * for `hiddenProviders`. Capped because a column is a column: past a handful
+   * you are scrolling a sidebar to read a sidebar.
+   */
+  dashboardPanels: z.array(z.string().max(64)).max(8).optional(),
+  /**
    * Whether the live panel shows everyone or only the starred ones.
    *
    * A real enum rather than an opaque string, unlike `dashboardPanel` — the

@@ -543,6 +543,21 @@ export const settings = sqliteTable('settings', {
    * in the column, core owns the slot and how it is filtered.
    */
   livePanelScope: text('live_panel_scope').notNull().default('all'),
+  /**
+   * What the Dashboard's side column holds, in order, as a JSON array.
+   *
+   * Stored as JSON text for the same reason `hidden_providers` is: SQLite has no
+   * array type, and this is only ever read and written whole. The ids are opaque
+   * — they come from features that can be deleted, so core validates the shape
+   * and never the values.
+   *
+   * **`dashboard_panel` above is kept in step as the first entry**, and is not
+   * dead weight: the PWA and the server update independently, so a browser
+   * holding an older bundle still reads a single panel and shows something
+   * sensible rather than an empty column. It is written by the same route and
+   * never read back by anything current.
+   */
+  dashboardPanels: text('dashboard_panels').notNull().default('[]'),
 
   updatedAt: touched(),
 });

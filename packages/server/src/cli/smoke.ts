@@ -1044,6 +1044,52 @@ console.log('\nstarred live channels, and narrowing the panel to them');
   check('and the sync did land', (await db.select().from(followsTable).where(eq(followsTable.providerAccountId, '1')))[0].name === 'alfa renamed');
 }
 
+/* ------------------------------------------------------------------ */
+
+console.log('\nthe side column holds a list, in order');
+
+{
+  const settingsNow = async () => (await app.inject({ method: 'GET', url: '/api/settings' })).json();
+  const setPanels = async (dashboardPanels: string[]) =>
+    app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardPanels } });
+
+  await setPanels(['notes:recent', 'integrations:live']);
+  const two = await settingsNow();
+  check('a list is stored in the order given', two.dashboardPanels.join(',') === 'notes:recent,integrations:live', two.dashboardPanels.join(','));
+
+  /*
+   * The single field is kept in step with the first entry. A PWA older than the
+   * list column reads only that, and would otherwise draw an empty side column
+   * with nothing saying why.
+   */
+  check('the legacy single field follows the first', two.dashboardPanel === 'notes:recent', two.dashboardPanel);
+
+  await setPanels(['integrations:live', 'notes:recent']);
+  const swapped = await settingsNow();
+  check('reordering is stored', swapped.dashboardPanels.join(',') === 'integrations:live,notes:recent');
+  check('and the legacy field follows it', swapped.dashboardPanel === 'integrations:live');
+
+  /*
+   * The same panel twice would draw twice and hand React two children with one
+   * key, and there is no reading of "who is online, then who is online" worth
+   * supporting.
+   */
+  await setPanels(['notes:recent', 'notes:recent', 'integrations:friends']);
+  const deduped = await settingsNow();
+  check('duplicates are dropped', deduped.dashboardPanels.join(',') === 'notes:recent,integrations:friends', deduped.dashboardPanels.join(','));
+
+  await setPanels([]);
+  const empty = await settingsNow();
+  check('an empty list is a real choice', empty.dashboardPanels.length === 0);
+  check('and empties the legacy field with it', empty.dashboardPanel === '');
+
+  /* Opaque, like every other panel id — core never validates the values. */
+  await setPanels(['something:nobody-has']);
+  check('an unknown id is stored rather than refused', (await settingsNow()).dashboardPanels[0] === 'something:nobody-has');
+
+  await setPanels(['integrations:friends']);
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);
