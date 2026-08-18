@@ -751,7 +751,13 @@ check('twitch is not a presence provider', !PRESENCE_PROVIDERS.includes('twitch'
  * completeness" is exactly the change somebody would make.
  */
 check('youtube does not claim live', PROVIDERS.youtube.capabilities.live === undefined);
-check('so only one provider answers it', LIVE_PROVIDERS.length === 1, LIVE_PROVIDERS.join(', '));
+/*
+ * Not a count. `LIVE_PROVIDERS.length === 1` was the first version and it is
+ * the wrong assertion: it fails the day a second service that *can* answer this
+ * is added, which is a change to welcome rather than to block. What must stay
+ * true is that YouTube is not among them.
+ */
+check('…so it is not a live provider', !LIVE_PROVIDERS.includes('youtube'), LIVE_PROVIDERS.join(', '));
 
 /*
  * Twitch is the first provider here that genuinely needs a client secret —

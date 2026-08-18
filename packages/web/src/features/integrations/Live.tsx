@@ -3,22 +3,25 @@
  *
  * ### One tab for a question, not one tab per service
  *
- * Twitch and YouTube are different companies and the same question — "is anyone
- * I follow streaming right now" — so they belong on one screen sorted together
- * rather than in two lists you compare by eye. That is the same reasoning the
- * Friends tab merges Steam, Discord and Riot.
+ * "Is anyone I follow streaming right now" is one question, so it gets one
+ * screen with everything sorted together — the same reasoning that has the
+ * Friends tab merge Steam, Discord and Riot rather than giving each a list you
+ * compare by eye. Twitch is the only service on it today; the list and the
+ * `provider` chip on each row are built for the second one, not retrofitted for
+ * it.
  *
- * ### YouTube is not here, and the tab says why rather than showing nothing
+ * ### Only the services that can actually answer appear here
  *
- * This is the honest half. YouTube has no "which of my subscriptions are live"
- * endpoint at all; the only route is a `search.list` per channel at 100 quota
- * units against a 10,000/day default. At the subscription counts this app
- * actually holds that is several times the whole day's allowance for a single
- * refresh — and spending it would break the playlist and Following syncs too.
+ * `sources` is built from `LIVE_PROVIDERS`, which is derived from the manifest —
+ * so a service that does not declare the capability is not listed and not
+ * apologised for. YouTube is the one that costs explaining, and the explanation
+ * lives in CLAUDE.md rather than on the screen: there is no endpoint for "which
+ * of my subscriptions are live", and the per-channel route costs several times a
+ * day's quota for one refresh. That is worth recording and was not worth a
+ * permanent block on a tab about Twitch.
  *
- * Saying so where you would look for it is this module's whole design rule. An
- * empty list with no explanation sends somebody hunting for a setting that was
- * never there.
+ * The same call the Battle.net and Epic rows got — the research is in the
+ * document, the row is gone.
  */
 import { api, type LiveSource, type LiveStreamRow } from '../../api';
 import { useAsync } from '../../useAsync';
@@ -64,7 +67,7 @@ export function Live() {
 
       {streams.length === 0 && (
         <div className="empty">
-          Nothing on air right now — or nothing that can be asked. The services below say which.
+          Nobody you follow is streaming.
         </div>
       )}
 
@@ -140,33 +143,6 @@ function Sources({ sources }: { sources: LiveSource[] }) {
         </div>
       ))}
 
-      {/*
-        The absence, stated. YouTube is not in `sources` because it does not
-        declare the capability — so without this the tab would simply never
-        mention the service you most expected to see, which reads as an
-        oversight rather than as a limit somebody measured.
-      */}
-      <div style={{ marginTop: '.75rem' }}>
-        <div className="title">
-          YouTube <span className="meta">— cannot be asked</span>
-        </div>
-        <div className="meta">
-          There is no endpoint for "which of my subscriptions are live". The only route is a search per
-          channel at 100 quota units against a 10,000-a-day allowance, so one sweep of a few hundred
-          subscriptions would cost several times the whole day — and take the playlist and Following syncs
-          down with it. Twitch answers the same question in a single request, which is why it is here and
-          YouTube is not.
-        </div>
-        <div className="meta" style={{ marginTop: 2, opacity: 0.7 }}>
-          <a
-            href="https://developers.google.com/youtube/v3/determine_quota_cost"
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            YouTube Data API quota costs ↗
-          </a>
-        </div>
-      </div>
     </details>
   );
 }

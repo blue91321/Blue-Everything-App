@@ -2666,9 +2666,17 @@ syncs down with it. So YouTube does not declare the capability, and
 `integrations-check` asserts `LIVE_PROVIDERS` has exactly one member: "add it for
 completeness" is precisely the change somebody would make.
 
-The Live tab states that arithmetic where you would look for it, under a heading
-naming YouTube. A service that is simply absent from a screen you expected it on
-reads as an oversight; the limit is not one, and it is not going to change.
+That arithmetic was on the Live tab for a while, under a heading naming YouTube,
+on the reasoning that a service absent from a screen you expected it on reads as
+an oversight. It has been taken off: a permanent block of explanation about a
+service that will never appear is a tax on every future visit to a tab that is
+about Twitch. **The research is recorded here and the row is gone** — the same
+call the Battle.net and Epic providers got, and for the same reason.
+
+`integrations-check` still asserts YouTube does not declare the capability, since
+that is the part a future change could get wrong. It asserts YouTube's absence
+rather than a count of one: a second service that genuinely can answer this is a
+change to welcome, not to block.
 
 **`live` is not a flavour of `follows`.** Following somebody is a standing fact
 about you; being live is a fact about them that is true for three hours on a

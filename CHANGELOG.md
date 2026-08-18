@@ -15,12 +15,15 @@ second step `npm version` does not do for you.
   panel for the Dashboard's side column alongside it.
 - `GET /helix/streams/followed` answers the whole question in one request, which
   is what makes any of this affordable.
-- **YouTube is not on that tab, and the tab says why.** There is no endpoint for
-  "which of my subscriptions are live"; the only route is `search.list` per
-  channel at 100 quota units against a 10,000/day default, so one sweep of 408
-  subscriptions costs 40,800 units — four times the day, for one refresh, and it
-  would take the playlist and Following syncs with it. `integrations-check`
-  asserts `LIVE_PROVIDERS` stays at one member.
+- **YouTube is not on that tab.** There is no endpoint for "which of my
+  subscriptions are live"; the only route is `search.list` per channel at 100
+  quota units against a 10,000/day default, so one sweep of 408 subscriptions
+  costs 40,800 units — four times the day, for one refresh, and it would take the
+  playlist and Following syncs with it. The reasoning is in `CLAUDE.md` rather
+  than on the screen: a permanent block explaining a service that will never
+  appear is a tax on every visit to a tab about Twitch. `integrations-check`
+  asserts YouTube's absence, not a count of one — a second service that can
+  genuinely answer this is a change to welcome.
 - **`live` is deliberately not a flavour of `follows`.** Following is a standing
   fact about you; being live is a fact about them that is true for an evening.
   So `replaceLive` deletes and re-inserts where `replaceFriends` upserts and
