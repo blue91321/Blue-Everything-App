@@ -19,4 +19,14 @@ export const panels: PanelMeta[] = [
     label: 'Who is online',
     hint: 'friends in a game or around, from Steam, Discord and Riot',
   },
+  /*
+   * The second panel, and the reason `panels` was a list from the start rather
+   * than one entry per feature: this is a different question from the friends
+   * one and wants its own column, not a section inside it.
+   */
+  {
+    id: 'integrations:live',
+    label: 'Who is live',
+    hint: 'followed channels currently streaming, from Twitch',
+  },
 ];

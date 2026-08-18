@@ -1390,3 +1390,37 @@ button {
 .friend-row > a.btn {
   flex: none;
 }
+
+/* ---------- who is on air ---------- */
+
+.live-card {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.live-card:hover,
+.live-card:focus-visible {
+  border-color: var(--accent);
+}
+
+.live-thumb {
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--card);
+}
+
+/*
+ * Red, and deliberately not `var(--accent)` — the same argument the presence
+ * dots make. "Live" is a colour people have already learned from every service
+ * that has ever had one, and re-teaching it per accent would make the one mark
+ * on the row that carries meaning the one you cannot read at a glance.
+ */
+.live-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e5484d;
+}

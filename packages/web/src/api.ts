@@ -770,6 +770,45 @@ export interface FriendRow {
   }>;
 }
 
+/** One channel that is on air. Mirrors `live_streams`. */
+export interface LiveStreamRow {
+  id: string;
+  provider: string;
+  providerAccountId: string;
+  streamId: string;
+  channelName: string;
+  title: string;
+  category: string | null;
+  viewers: number | null;
+  startedAt: number | null;
+  thumbnailUrl: string | null;
+  url: string;
+  seenAt: number;
+}
+
+/**
+ * Why a live list might be empty, per service.
+ *
+ * The same job `FriendSource` does and for a sharper reason: "nobody is live",
+ * "Twitch is not connected" and "YouTube cannot answer this" all render as
+ * nothing, and only the first is about the people you follow.
+ */
+export interface LiveSource {
+  provider: string;
+  label: string;
+  why: string;
+  connected: boolean;
+  missingConfig: string[];
+  lastError: string | null;
+}
+
+export interface LiveView {
+  streams: LiveStreamRow[];
+  sources: LiveSource[];
+  hiddenCount?: number;
+  refreshed: SyncOutcome[];
+}
+
 export interface LinkSuggestion {
   a: { id: string; provider: string; name: string };
   b: { id: string; provider: string; name: string };
@@ -1169,6 +1208,7 @@ export const api = {
       post<{ outcomes: SyncOutcome[] }>(`/api/integrations/${provider}/sync`, { capabilities }),
     /** `force` is the refresh button; without it the read only refetches if stale. */
     friends: (force = false) => request<FriendsView>(`/api/integrations/friends${force ? '?force=1' : ''}`),
+    live: (force = false) => request<LiveView>(`/api/integrations/live${force ? '?force=1' : ''}`),
     /** Accounts that look like the same person. Proposals, not links. */
     linkSuggestions: () => request<{ suggestions: LinkSuggestion[] }>('/api/integrations/friends/suggestions'),
     linkFriends: (a: string, b: string) => post<{ personId: string }>('/api/integrations/friends/link', { a, b }),

@@ -34,7 +34,91 @@ import type { PanelProps } from '../index';
 const AROUND: FriendRow['state'][] = ['in-game', 'online', 'away', 'dnd'];
 const RANK = new Map(AROUND.map((state, i) => [state, i]));
 
-export default function FriendsPanel(_props: PanelProps) {
+/**
+ * One module, two panels, chosen by the id.
+ *
+ * `panel.tsx` is what the glob in `features/index.ts` looks for, so a feature
+ * gets exactly one lazy chunk however many panels it declares — which is the
+ * right trade here: both of these are a short list of rows and share their
+ * styling, and splitting them would mean two chunks to save under a kilobyte.
+ */
+export default function IntegrationsPanel({ panelId }: PanelProps) {
+  return panelId === 'integrations:live' ? <LivePanel /> : <FriendsPanel />;
+}
+
+/**
+ * Followed channels that are on air.
+ *
+ * Reads the same endpoint the Live tab does, which refreshes anything staler
+ * than thirty seconds as a side effect of being read — so having the panel open
+ * *is* the poll, and closing it costs nothing. The same arrangement the friends
+ * panel has, with a shorter window because a stream that ended is a link to a
+ * channel that is not on.
+ */
+function LivePanel() {
+  const state = useAsync(() => api.integrations.live(), [], ['integrations']);
+
+  if (state.loading) return <div className="empty">loading…</div>;
+  if (state.error) return <div className="empty">Could not load: {state.error.message}</div>;
+
+  const streams = state.data?.streams ?? [];
+  const connected = (state.data?.sources ?? []).some((source) => source.connected);
+
+  return (
+    <>
+      <div className="row between" style={{ alignItems: 'baseline' }}>
+        <h2 style={{ margin: 0 }}>Live</h2>
+        {streams.length > 0 && <span className="meta">{streams.length}</span>}
+      </div>
+
+      {streams.length === 0 && (
+        <div className="empty">
+          {/*
+            The same two-sentence split the friends panel makes, for the same
+            reason: "nobody is streaming" from an install with nothing connected
+            reads as a broken integration.
+          */}
+          {connected ? 'Nobody is live.' : 'Connect Twitch on the Connections tab.'}
+        </div>
+      )}
+
+      {streams.map((stream) => (
+        /*
+         * A link rather than a button, unlike the friends panel — there the row
+         * takes you somewhere inside the app, and here it takes you to the
+         * stream, which is the only thing anybody wants from it. `<a>` so
+         * middle-click and "open in new tab" behave.
+         */
+        <a
+          className="card panel-row"
+          key={stream.id}
+          href={stream.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          title={`${stream.channelName} — ${stream.title}`}
+        >
+          <div className="row" style={{ alignItems: 'center', gap: '.5rem' }}>
+            <span className="live-dot" role="img" aria-label="live" />
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="title truncate">{stream.channelName}</div>
+              {/* The category, not the title: in a 320px column "Just Chatting"
+                  is the word that tells you whether to click, where a stream
+                  title is a sentence that will not fit. */}
+              <div className="meta truncate">{stream.category ?? stream.title}</div>
+            </div>
+            {stream.viewers !== null && (
+              <span className="meta" style={{ flex: 'none' }}>
+                {stream.viewers >= 1000 ? `${(stream.viewers / 1000).toFixed(1)}k` : stream.viewers}
+              </span>
+            )}
+          </div>
+        </a>
+      ))}
+    </>
+  );
+}
+
+function FriendsPanel() {
   /*
    * The same request the Friends screen makes, which refreshes anything staler
    * than 60 seconds as a side effect of being read. That is why this needs no

@@ -260,6 +260,13 @@
             "when": 1786063600000,
             "tag": "0036_gauge_remind_at",
             "breakpoints": true
+        },
+        {
+            "idx": 37,
+            "version": "6",
+            "when": 1786063700000,
+            "tag": "0037_live_streams",
+            "breakpoints": true
         }
     ]
 }

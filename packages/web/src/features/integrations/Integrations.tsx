@@ -23,14 +23,21 @@ import { api } from '../../api';
 import { Connections } from './Connections';
 import { Following } from './Following';
 import { Friends } from './Friends';
+import { Live } from './Live';
 import { Music } from './Music';
 
-type Tab = 'friends' | 'following' | 'connections' | 'music';
+type Tab = 'friends' | 'live' | 'following' | 'connections' | 'music';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   // Friends first, and deliberately: it is the one you open repeatedly, while
   // connections is a screen you visit twice a year.
   { id: 'friends', label: 'Friends' },
+  /*
+   * Beside Friends because it is the same shape of question — who is available
+   * to me right now — and above Following because being live is news while
+   * following is a standing fact you rarely re-read.
+   */
+  { id: 'live', label: 'Live' },
   // Next to Friends because they answer neighbouring questions — who do I know,
   // and who do I follow — but separate because only one of them has a status.
   { id: 'following', label: 'Following' },
@@ -87,6 +94,7 @@ export function Integrations({
       </div>
 
       {tab === 'friends' && <Friends seed={seeded} />}
+      {tab === 'live' && <Live />}
       {tab === 'following' && <Following />}
       {tab === 'music' && <Music local={local} />}
       {tab === 'connections' && <Connections local={local} />}

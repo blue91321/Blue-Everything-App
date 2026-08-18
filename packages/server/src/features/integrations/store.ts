@@ -13,6 +13,7 @@ import {
   type FollowedAccount,
   type CollectionKind,
   type MediaKind,
+  type LiveStream,
   type ProviderId,
   type ReportedFriend,
 } from '@everything/shared/integrations';
@@ -22,6 +23,7 @@ import {
   friends,
   integrationAccounts,
   integrationTaskLinks,
+  liveStreams,
   mediaCollectionItems,
   mediaCollections,
   mediaItems,
@@ -1034,4 +1036,67 @@ export async function forgetTaskLinks(provider: ProviderId): Promise<number> {
     .where(eq(integrationTaskLinks.provider, provider))
     .returning({ id: integrationTaskLinks.id });
   return gone.length;
+}
+
+/* ------------------------------------------------------------------ */
+/* Who is on air                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Replace everything we know about one provider's live channels.
+ *
+ * **Delete-then-insert, unlike `replaceFriends`, and the difference is what the
+ * row means.** A friend is a lasting relationship, so their row is upserted and
+ * kept — handing somebody a fresh primary key every minute would break the
+ * `person_id` links that join their accounts together. A live stream is the
+ * opposite: it exists for three hours and then does not, nothing links to it,
+ * and a channel that has gone offline must *leave* rather than linger with a
+ * stale viewer count.
+ *
+ * The same asymmetry says why this is safe here and was a bug there: pruning on
+ * an errored snapshot destroyed friend links. Nothing points at a live row, so
+ * the worst an empty write can cost is one refresh — and the caller still does
+ * not write at all when the fetch failed.
+ */
+export async function replaceLive(provider: ProviderId, streams: LiveStream[]): Promise<number> {
+  const now = Date.now();
+
+  await db.delete(liveStreams).where(eq(liveStreams.provider, provider));
+  if (streams.length === 0) return 0;
+
+  await db.insert(liveStreams).values(
+    streams.map((stream) => ({
+      provider,
+      providerAccountId: stream.providerAccountId,
+      streamId: stream.streamId,
+      channelName: stream.channelName,
+      title: stream.title,
+      category: stream.category ?? null,
+      viewers: stream.viewers ?? null,
+      startedAt: stream.startedAt ?? null,
+      thumbnailUrl: stream.thumbnailUrl ?? null,
+      url: stream.url,
+      seenAt: now,
+    }))
+  );
+
+  return streams.length;
+}
+
+export type LiveRow = typeof liveStreams.$inferSelect;
+
+/** Everyone on air, busiest first — the order the services themselves use. */
+export async function allLive(): Promise<LiveRow[]> {
+  return db.select().from(liveStreams).orderBy(desc(liveStreams.viewers));
+}
+
+/** When each provider's live list was last written, for the staleness check. */
+export async function liveFreshness(): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ provider: liveStreams.provider, seenAt: liveStreams.seenAt })
+    .from(liveStreams);
+
+  const seen = new Map<string, number>();
+  for (const row of rows) seen.set(row.provider, Math.max(seen.get(row.provider) ?? 0, row.seenAt));
+  return seen;
 }

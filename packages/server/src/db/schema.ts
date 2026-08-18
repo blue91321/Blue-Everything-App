@@ -986,6 +986,42 @@ export const integrationTaskLinks = sqliteTable(
   ]
 );
 
+/**
+ * Channels that are on air right now.
+ *
+ * A table rather than a cache in memory, for the reason the friends list is one:
+ * the phone and the PC both read it, and a process restart should not blank a
+ * screen. It is nonetheless **entirely disposable** — every sync replaces the
+ * provider's rows wholesale, because "live" is not a fact that accumulates.
+ *
+ * Keyed by `(provider, provider_account_id)`: a channel is live once or not at
+ * all, so the channel is the natural identity. `stream_id` changes each time
+ * they go live and is kept for the thumbnail URL and for telling a new broadcast
+ * from a continuing one, not for finding the row.
+ */
+export const liveStreams = sqliteTable(
+  'live_streams',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    /** The channel, which is what joins this up with `follows`. */
+    providerAccountId: text('provider_account_id').notNull(),
+    /** The broadcast. New every time they go live. */
+    streamId: text('stream_id').notNull(),
+    channelName: text('channel_name').notNull(),
+    title: text('title').notNull(),
+    /** Game, or whatever the service calls the category. */
+    category: text('category'),
+    viewers: integer('viewers'),
+    /** When the broadcast started, so the row can say how long they have been on. */
+    startedAt: integer('started_at'),
+    thumbnailUrl: text('thumbnail_url'),
+    url: text('url').notNull(),
+    seenAt: integer('seen_at').notNull().$defaultFn(() => Date.now()),
+  },
+  (t) => [uniqueIndex('live_streams_channel_idx').on(t.provider, t.providerAccountId)]
+);
+
 export const schema = {
   projects,
   tasks,
@@ -1006,6 +1042,7 @@ export const schema = {
   friends,
   follows,
   integrationTaskLinks,
+  liveStreams,
 };
 
 /** Used by the health check to prove the database is actually reachable. */

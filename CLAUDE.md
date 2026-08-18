@@ -2468,7 +2468,7 @@ a protection it was not providing.
 ## App integrations
 
 Canvas for coursework; Spotify and YouTube for what you listen to and watch;
-Steam, Discord and Riot for who is around. `npm run integrations-check -w
+Steam, Discord and Riot for who is around; Twitch for who is on air. `npm run integrations-check -w
 @everything/server` proves the parts with no network in them — run it before
 trusting a change to the categoriser, the Takeout reader, or the rules that
 decide what happens to a synced task.
@@ -2486,14 +2486,15 @@ that shows an empty list — is the expensive way to learn it. So a capability i
 `shared/src/integrations.ts` is not a boolean. It carries a `status` and a
 `why`, and the screen renders the `why` next to the thing it explains.
 
-| | playlists | following | who's online | coursework |
-| --- | --- | --- | --- | --- |
-| **Spotify** | yes* | artists you follow | — | — |
-| **YouTube** | yes | subscriptions | — | — |
-| **Steam** | — | — | **yes, properly** | — |
-| **Discord** | — | — | needs their approval | — |
-| **Riot** | — | — | local client only | — |
-| **Canvas** | — | — | — | **yes, properly** |
+| | playlists | following | who's online | coursework | who's live |
+| --- | --- | --- | --- | --- | --- |
+| **Spotify** | yes* | artists you follow | — | — | — |
+| **YouTube** | yes | subscriptions | — | — | **quota says no** |
+| **Steam** | — | — | **yes, properly** | — | — |
+| **Discord** | — | — | needs their approval | — | — |
+| **Riot** | — | — | local client only | — | — |
+| **Canvas** | — | — | — | **yes, properly** | — |
+| **Twitch** | — | channels you follow | — | — | **yes, properly** |
 
 \* **Spotify needs Premium.** Since February 2026 a Development Mode app stops
 working the moment the owner's subscription lapses — it answers
@@ -2650,6 +2651,44 @@ The four that hurt, and why they are stated rather than worked around:
   to look" has to be visible. The other route people use is a user token lifted
   out of the desktop client, which is against Discord's terms and is not
   implemented.
+### Who is live, and why that is one service and not two
+
+`GET /helix/streams/followed` takes your Twitch user id and returns every
+followed channel currently broadcasting, sorted by viewers — **one request, no
+per-channel fan-out**. That is the whole reason a Live tab is possible.
+
+**YouTube cannot be asked, and the number is why.** There is no "which of my
+subscriptions are live" endpoint. The only route is `search.list` per channel at
+**100 quota units** against a **10,000/day** default, so at the 408
+subscriptions on this install a single sweep costs 40,800 units — four times the
+day's allowance, for one refresh, and it would take the playlist and Following
+syncs down with it. So YouTube does not declare the capability, and
+`integrations-check` asserts `LIVE_PROVIDERS` has exactly one member: "add it for
+completeness" is precisely the change somebody would make.
+
+The Live tab states that arithmetic where you would look for it, under a heading
+naming YouTube. A service that is simply absent from a screen you expected it on
+reads as an oversight; the limit is not one, and it is not going to change.
+
+**`live` is not a flavour of `follows`.** Following somebody is a standing fact
+about you; being live is a fact about them that is true for three hours on a
+Tuesday. One list you curate, the other empties itself — which is also why
+`replaceLive` deletes and re-inserts where `replaceFriends` upserts and prunes.
+Nothing points at a live row, so churning its primary key costs nothing, whereas
+doing that to a friend destroyed the `person_id` links that join their accounts.
+
+**Twitch is the first provider here that genuinely needs a client secret.** PKCE
+has never shipped for their authorization code flow — the request has sat open on
+their forums for years — so `pkce: false` is a declaration rather than an
+omission, and there is a second box on the card. `integrations-check` asserts
+both halves, since a `pkce: true` here would send a verifier and no secret and
+the token endpoint would refuse every login with nothing on screen but a 400.
+
+Refresh-on-read like the friends list, at a **30-second** staleness window rather
+than 60: a friend who came online a minute ago is the same news either way, while
+a stream that ended three minutes ago is a link to a channel that is not on.
+Still nothing at all while the tab is closed.
+
 ### Canvas: the one capability that writes into core
 
 Everything else in this module ends up on a screen the module owns. A Canvas

@@ -121,6 +121,10 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().default(''),
   DISCORD_CLIENT_ID: z.string().default(''),
   DISCORD_CLIENT_SECRET: z.string().default(''),
+  // Twitch has never shipped PKCE for the authorization code flow, so the
+  // secret is not optional here the way Spotify's is.
+  TWITCH_CLIENT_ID: z.string().default(''),
+  TWITCH_CLIENT_SECRET: z.string().default(''),
   STEAM_API_KEY: z.string().default(''),
 
   /**

@@ -8,6 +8,8 @@
  * screen*, attached to the provider it belongs to, rather than in a log.
  */
 import {
+  LIVE_PROVIDERS,
+  LIVE_STALE_MS,
   PRESENCE_PROVIDERS,
   PRESENCE_STALE_MS,
   PROVIDERS,
@@ -16,11 +18,12 @@ import {
 } from '@everything/shared/integrations';
 import { changes } from '../../events.js';
 import { missingCredentials } from './oauth.js';
-import { friendsFreshness, getAccount, markFailed, markSynced } from './store.js';
+import { friendsFreshness, getAccount, liveFreshness, markFailed, markSynced } from './store.js';
 import * as canvas from './providers/canvas.js';
 import * as discord from './providers/discord.js';
 import * as spotify from './providers/spotify.js';
 import * as steam from './providers/steam.js';
+import * as twitch from './providers/twitch.js';
 import * as youtube from './providers/youtube.js';
 
 export interface SyncOutcome {
@@ -66,6 +69,22 @@ const RUNNERS: Partial<Record<ProviderId, Partial<Record<Capability, Runner>>>> 
     friends: async () => {
       const { count, online } = await discord.syncFriends();
       return { notes: [`${count} friends, ${online} online`] };
+    },
+  },
+  twitch: {
+    live: async () => {
+      const { count } = await twitch.syncLive();
+      return {
+        notes: [
+          count === 0
+            ? 'Nobody you follow is live right now.'
+            : `${count} ${count === 1 ? 'channel is' : 'channels are'} live`,
+        ],
+      };
+    },
+    follows: async () => {
+      const { count } = await twitch.syncFollows();
+      return { notes: [`${count} channels followed`] };
     },
   },
   canvas: {
@@ -193,6 +212,42 @@ export async function refreshPresence(force = false): Promise<SyncOutcome[]> {
       const message = (error as Error).message;
       await markFailed(provider, message);
       outcomes.push({ provider, capability: 'friends', ok: false, note: message });
+    }
+  }
+
+  return outcomes;
+}
+
+/**
+ * Bring the live list up to date, for the providers that can answer.
+ *
+ * Refresh-on-read with a staleness check, like `refreshPresence` and for the
+ * same reason — but with a shorter window, because the two lists go stale at
+ * different speeds. Presence is checked against a minute; a stream that started
+ * four minutes ago is still news, and one that ended four minutes ago is a link
+ * to a channel that is no longer on. Thirty seconds is the compromise, and it
+ * still costs nothing while nobody is looking at the tab.
+ */
+export async function refreshLive(force = false): Promise<SyncOutcome[]> {
+  const freshness = await liveFreshness();
+  const outcomes: SyncOutcome[] = [];
+
+  for (const provider of LIVE_PROVIDERS) {
+    if (!RUNNERS[provider]?.live) continue;
+
+    const account = await getAccount(provider);
+    if (!account?.accessToken) continue;
+
+    const lastSeen = freshness.get(provider) ?? 0;
+    if (!force && Date.now() - lastSeen < LIVE_STALE_MS) continue;
+
+    try {
+      const result = await RUNNERS[provider]!.live!();
+      outcomes.push({ provider, capability: 'live', ok: true, note: result.notes.join('; ') });
+    } catch (error) {
+      const message = (error as Error).message;
+      await markFailed(provider, message);
+      outcomes.push({ provider, capability: 'live', ok: false, note: message });
     }
   }
 

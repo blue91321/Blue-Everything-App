@@ -368,9 +368,23 @@ async function refresh(provider: ProviderId, account: Account): Promise<string> 
  * revoked the moment you change your password, and without this every sync after
  * that fails until somebody notices and reconnects by hand.
  */
-export async function apiGet<T>(provider: ProviderId, url: string): Promise<T> {
+export async function apiGet<T>(
+  provider: ProviderId,
+  url: string,
+  /**
+   * Anything the provider wants beyond the bearer token.
+   *
+   * Twitch is the reason this exists: every Helix call must carry `Client-Id`
+   * alongside the token, and a provider writing its own fetch to add one header
+   * would lose the refresh-on-401 and the `Retry-After` handling below — the two
+   * parts that are genuinely hard to get right and easy to forget.
+   */
+  extraHeaders: Record<string, string> = {}
+): Promise<T> {
   const attempt = async (token: string) =>
-    fetch(url, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' } });
+    fetch(url, {
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json', ...extraHeaders },
+    });
 
   let response = await attempt(await accessTokenFor(provider));
 

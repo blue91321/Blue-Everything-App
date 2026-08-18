@@ -31,6 +31,7 @@ rmSync('./data/integrations-check.db', { force: true });
 import { rmSync } from 'node:fs';
 import {
   FOLLOW_PROVIDERS,
+  LIVE_PROVIDERS,
   MUSIC_CATEGORIES,
   PRESENCE_PROVIDERS,
   PROVIDERS,
@@ -722,6 +723,62 @@ const clash = await syncTasksFromService('canvas', [
   { externalId: 'quiz:9', title: 'Quiz nine', dueAt: DUE, done: false },
 ]);
 check('assignment 9 and quiz 9 are not the same row', clash.created === 2, JSON.stringify(clash));
+
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nWho is on air');
+
+/*
+ * `live` is not a flavour of `follows`, and the tempting mistake is the one
+ * `friends` and `follows` already suffered: following somebody is a standing
+ * fact about you, while being live is a fact about them that is true for three
+ * hours on a Tuesday. One list you curate, one empties itself.
+ */
+check('twitch declares live', PROVIDERS.twitch.capabilities.live !== undefined);
+check('…and follows, which is a different list', PROVIDERS.twitch.capabilities.follows !== undefined);
+check('twitch is a live provider', LIVE_PROVIDERS.includes('twitch'));
+check('twitch is a follow provider', FOLLOW_PROVIDERS.includes('twitch'));
+check('twitch is not a presence provider', !PRESENCE_PROVIDERS.includes('twitch'));
+
+/*
+ * **YouTube must not declare `live`, and that is a number rather than a
+ * preference.** There is no "which of my subscriptions are live" endpoint; the
+ * only route is `search.list` per channel at 100 quota units against a
+ * 10,000/day default, so a few hundred subscriptions cost several times the
+ * whole day's allowance for one refresh — and would take the playlist and
+ * Following syncs down with it. The assertion exists because "add it for
+ * completeness" is exactly the change somebody would make.
+ */
+check('youtube does not claim live', PROVIDERS.youtube.capabilities.live === undefined);
+check('so only one provider answers it', LIVE_PROVIDERS.length === 1, LIVE_PROVIDERS.join(', '));
+
+/*
+ * Twitch is the first provider here that genuinely needs a client secret —
+ * PKCE has never shipped for their authorization code flow. Declaring `pkce:
+ * true` would send a code verifier and no secret, and the token endpoint would
+ * refuse every login with nothing on screen but "400".
+ */
+check('twitch does not claim PKCE', PROVIDERS.twitch.oauth?.pkce === false);
+check(
+  '…and therefore offers a secret field',
+  PROVIDERS.twitch.credentials.some((field) => field.key === 'clientSecret' && field.required)
+);
+check(
+  'a PKCE provider still offers no secret',
+  !PROVIDERS.spotify.credentials.some((field) => field.key === 'clientSecret')
+);
+
+/* The live scope is the same one the followed-channels list needs. */
+check('twitch asks for the follows scope', PROVIDERS.twitch.oauth?.scopes.includes('user:read:follows') === true);
+
+/*
+ * The glyph is how a provider row is picked out of seven at a glance, so two
+ * sharing one costs exactly the thing it is there for. Twitch shipped wearing
+ * YouTube's television for about ten minutes.
+ */
+const glyphs = PROVIDER_LIST.map((p) => p.glyph);
+check('every provider has its own glyph', new Set(glyphs).size === glyphs.length, glyphs.join(' '));
 
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);

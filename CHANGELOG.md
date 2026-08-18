@@ -4,6 +4,38 @@ All six packages carry the same version and move together — they are one app
 released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 second step `npm version` does not do for you.
 
+## Unreleased
+
+### Twitch, and a Live tab
+
+- **Twitch connects**, bringing two things: the channels you follow, which join
+  the Following tab, and which of them is on air.
+- **A Live tab** on Connections, between Friends and Following — the same shape
+  of question as Friends, and news in a way Following is not. A **Who is live**
+  panel for the Dashboard's side column alongside it.
+- `GET /helix/streams/followed` answers the whole question in one request, which
+  is what makes any of this affordable.
+- **YouTube is not on that tab, and the tab says why.** There is no endpoint for
+  "which of my subscriptions are live"; the only route is `search.list` per
+  channel at 100 quota units against a 10,000/day default, so one sweep of 408
+  subscriptions costs 40,800 units — four times the day, for one refresh, and it
+  would take the playlist and Following syncs with it. `integrations-check`
+  asserts `LIVE_PROVIDERS` stays at one member.
+- **`live` is deliberately not a flavour of `follows`.** Following is a standing
+  fact about you; being live is a fact about them that is true for an evening.
+  So `replaceLive` deletes and re-inserts where `replaceFriends` upserts and
+  prunes — nothing points at a live row, while churning a friend's key once
+  destroyed the links joining their accounts.
+- **The first provider here that genuinely needs a client secret.** Twitch has
+  never shipped PKCE for the authorization code flow, so `pkce: false` is a
+  declaration rather than an omission and the card has a second box.
+- Refreshed on read at a 30-second window rather than the friends list's 60: a
+  stream that ended three minutes ago is a link to a channel that is not on.
+- Twitch shipped wearing YouTube's 📺 for about ten minutes. The glyph is how a
+  row is picked out of seven at a glance, so `integrations-check` now asserts
+  they are all distinct.
+- Migration `0037`.
+
 ## 0.2.2
 
 Coursework arrives on its own, habits stopped being only a counter, and the

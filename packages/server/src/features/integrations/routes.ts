@@ -27,6 +27,7 @@ import {
   connectSteamSchema,
   credentialsSchema,
   IDENTITY_PREFERENCE,
+  LIVE_PROVIDERS,
   isHiddenByProviders,
   isProviderId,
   linkFriendsSchema,
@@ -60,6 +61,7 @@ import * as youtube from './providers/youtube.js';
 import {
   allFollows,
   allFriends,
+  allLive,
   categoryBreakdown,
   collectionsFor,
   forgetAccount,
@@ -80,7 +82,7 @@ import {
   followsFreshness,
   syncedAtOf,
 } from './store.js';
-import { refreshPresence, runnableCapabilities, syncProvider } from './sync.js';
+import { refreshLive, refreshPresence, runnableCapabilities, syncProvider } from './sync.js';
 
 /** Everything the connections screen needs about one provider, in one object. */
 async function providerState(id: ProviderId) {
@@ -323,7 +325,15 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
               ? await youtube.whoAmI()
               : provider === 'discord'
                 ? await (await import('./providers/discord.js')).whoAmI()
-                : null;
+                : /*
+                   * Twitch matters more than a display name here: both of its
+                   * endpoints take a `user_id` query parameter, so without this
+                   * the first sync would have to identify before it could ask
+                   * anything. `identify` saves the id as well as the name.
+                   */
+                  provider === 'twitch'
+                  ? await (await import('./providers/twitch.js')).identify()
+                  : null;
         if (who) await saveAccount(provider, { accountId: who.id, accountName: who.name });
       } catch {
         // Left unnamed on the screen rather than failing the connection.
@@ -693,6 +703,51 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * minute. Refreshing this on every open would spend YouTube quota to confirm
    * what it said yesterday, so it is synced on demand like a playlist.
    */
+  /* ---- who is on air --------------------------------------------- */
+
+  /**
+   * The live list, refreshed if it has gone stale.
+   *
+   * Same shape as `/friends` — refresh inside the read, no background poller —
+   * with a shorter staleness window, because a stream that ended three minutes
+   * ago is a link to a channel that is not on.
+   *
+   * **`sources` explains an empty list**, which matters more here than anywhere
+   * else on this screen: "nobody is live" and "Twitch is not connected" and
+   * "YouTube cannot answer this at all" are three different situations that all
+   * render as nothing, and only one of them is about your friends' habits.
+   */
+  app.get('/api/integrations/live', async (request) => {
+    const { force } = request.query as { force?: string };
+    const refreshed = await refreshLive(force === '1');
+
+    const hidden = parseHiddenProviders((await getSettings()).hiddenProviders);
+    const all = await allLive();
+    const streams = all.filter((row) => !hidden.includes(row.provider));
+
+    const sources = await Promise.all(
+      LIVE_PROVIDERS.map(async (provider) => {
+        const account = await getAccount(provider);
+        const spec = PROVIDERS[provider];
+        return {
+          provider,
+          label: spec.label,
+          why: spec.capabilities.live?.why ?? '',
+          connected: Boolean(account?.accessToken),
+          missingConfig: await missingCredentials(provider),
+          lastError: account?.lastError ?? null,
+        };
+      })
+    );
+
+    return {
+      streams,
+      sources,
+      hiddenCount: all.length - streams.length,
+      refreshed,
+    };
+  });
+
   app.get('/api/integrations/follows', async () => {
     const freshness = await followsFreshness();
     const counts = await followPlaylistCounts();
