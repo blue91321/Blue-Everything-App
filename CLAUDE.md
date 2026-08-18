@@ -2685,6 +2685,43 @@ Tuesday. One list you curate, the other empties itself — which is also why
 Nothing points at a live row, so churning its primary key costs nothing, whereas
 doing that to a friend destroyed the `person_id` links that join their accounts.
 
+**Starring a channel is a flag on `follows`, not its own table.** A favourite is
+a property of a channel you follow, and unfollowing should take it with you —
+which the prune-by-`seen_at` in `replaceFollows` does for free. The star survives
+an ordinary sync because that upsert names the columns it overwrites explicitly,
+the same protection `group_id` already relies on.
+
+That home cost one thing, and it showed up immediately on real data: **the star
+needs a `follows` row to exist, and the live list is what people open while the
+followed list is only fetched by a "Sync now" nobody has a reason to press.** The
+symptom was 21 live channels and a star that refused every one of them with a
+message telling you to go and press a button. `syncLive` now syncs the followed
+list once when it has never synced — same permission, same account, one extra
+request the first time, which is a far better answer than a feature that depends
+on somebody reading an error.
+
+**The panel narrows, the tab does not.** `/api/integrations/live` always returns
+everything and carries the scope alongside; the panel filters. Filtering
+server-side would have meant a second endpoint or a query parameter to tell the
+two callers apart, when the tab is precisely where you go to see everybody and
+press the stars.
+
+The panel subscribes to `settings` as well as `integrations`, because the scope
+it filters by is a setting. Subscribed to only `integrations`, changing "Starred
+only" left an open Dashboard showing the old filter until something unrelated
+changed — which reads as the setting not having saved.
+
+Two empty states, because a narrowed panel showing nothing while four people are
+live is not the same as a quiet evening, and "Nobody is live" would be a lie in
+the first case. It says *"None of your starred channels are live — 21 others
+are"*, and the count in the header reads "2 of 21" while the filter is hiding
+something.
+
+**Two buttons, not a slider.** A slider is right for a number on a continuum —
+the gauge drain and fill both earn one. This is a pair of named alternatives,
+where a slider would have two positions, no labels at the stops and no way to
+show which is live except by where the handle sat.
+
 **The redirect URI default had to become per-provider.** `OAUTH_REDIRECT_BASE`
 was one global string defaulting to the loopback IP, because Spotify and Google
 stopped accepting `http://localhost` and require `http://127.0.0.1`. Twitch is

@@ -370,6 +370,13 @@ export interface AppSettings {
    * process serving it is the ordinary case right after an edit.
    */
   dashboardPanel?: string;
+  /**
+   * What the live panel narrows to — `all` or `favourites`.
+   *
+   * A real pair rather than an opaque string, unlike `dashboardPanel`: these two
+   * values are core's own, so an unknown one would silently mean "all".
+   */
+  livePanelScope?: 'all' | 'favourites';
   updatedAt?: number;
 }
 
@@ -784,6 +791,8 @@ export interface LiveStreamRow {
   thumbnailUrl: string | null;
   url: string;
   seenAt: number;
+  /** Starred. False when the followed-channels list has not synced them yet. */
+  favourite: boolean;
 }
 
 /**
@@ -806,6 +815,13 @@ export interface LiveView {
   streams: LiveStreamRow[];
   sources: LiveSource[];
   hiddenCount?: number;
+  /**
+   * What the *panel* should narrow itself to. The tab always shows everything.
+   *
+   * Carried on this response so the panel needs no second request for settings.
+   * Optional because the server and the PWA update independently.
+   */
+  scope?: 'all' | 'favourites';
   refreshed: SyncOutcome[];
 }
 
@@ -1059,6 +1075,8 @@ export const api = {
       hiddenProviders?: string[];
       /** Opaque panel id, or '' for one column. */
       dashboardPanel?: string;
+      /** What the live panel narrows to. The Live tab always shows everything. */
+      livePanelScope?: 'all' | 'favourites';
     }) => patch<AppSettings>('/api/settings', payload),
   },
 
@@ -1209,6 +1227,19 @@ export const api = {
     /** `force` is the refresh button; without it the read only refetches if stale. */
     friends: (force = false) => request<FriendsView>(`/api/integrations/friends${force ? '?force=1' : ''}`),
     live: (force = false) => request<LiveView>(`/api/integrations/live${force ? '?force=1' : ''}`),
+    /**
+     * Star a channel, by the pair a live row already carries.
+     *
+     * Answers 409 when the followed-channels list has not synced that channel
+     * yet: there is no row to flag, and a silent success would spring the star
+     * back on the next reload with nothing said.
+     */
+    favouriteFollow: (provider: string, providerAccountId: string, favourite: boolean) =>
+      post<{ favourite: boolean }>('/api/integrations/follows/favourite', {
+        provider,
+        providerAccountId,
+        favourite,
+      }),
     /** Accounts that look like the same person. Proposals, not links. */
     linkSuggestions: () => request<{ suggestions: LinkSuggestion[] }>('/api/integrations/friends/suggestions'),
     linkFriends: (a: string, b: string) => post<{ personId: string }>('/api/integrations/friends/link', { a, b }),

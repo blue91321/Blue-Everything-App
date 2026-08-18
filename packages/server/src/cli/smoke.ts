@@ -946,6 +946,104 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   );
 }
 
+/* ------------------------------------------------------------------ */
+
+console.log('\nstarred live channels, and narrowing the panel to them');
+
+{
+  const { db } = await import('../db/client.js');
+  const { follows: followsTable, liveStreams } = await import('../db/schema.js');
+  const { eq } = await import('drizzle-orm');
+
+  /*
+   * Seeded rather than fetched. What is under test is the join, the star and the
+   * narrowing — all of which are this app's own rules — and a test that stood up
+   * a fake Twitch would only prove the fake matched the code.
+   */
+  const channel = (id: string, name: string, viewers: number) => ({
+    provider: 'twitch',
+    providerAccountId: id,
+    streamId: `s-${id}`,
+    channelName: name,
+    title: `${name} streaming`,
+    category: 'Just Chatting',
+    viewers,
+    startedAt: Date.now() - 3_600_000,
+    thumbnailUrl: null,
+    url: `https://twitch.tv/${name}`,
+    seenAt: Date.now(),
+  });
+
+  await db.insert(liveStreams).values([channel('1', 'alfa', 900), channel('2', 'bravo', 300)]);
+  // Only one of the two is in the followed list, on purpose — see below.
+  await db.insert(followsTable).values({
+    provider: 'twitch',
+    providerAccountId: '1',
+    kind: 'channel',
+    name: 'alfa',
+    seenAt: Date.now(),
+  });
+
+  const live = async () => (await app.inject({ method: 'GET', url: '/api/integrations/live' })).json();
+
+  const first = await live();
+  check('both live channels are listed', first.streams.length === 2, `${first.streams.length}`);
+  /*
+   * **A left join, and this is why.** `bravo` is live but not in the followed
+   * list — the ordinary case before that list has synced — and an inner join
+   * would have dropped it off the screen entirely rather than merely showing it
+   * unstarred.
+   */
+  check('one not in the followed list still appears', first.streams.some((s: { channelName: string }) => s.channelName === 'bravo'));
+  check('and busiest is first', first.streams[0].channelName === 'alfa');
+  check('nothing is starred to begin with', first.streams.every((s: { favourite: boolean }) => !s.favourite));
+
+  const starred = await post('/api/integrations/follows/favourite', {
+    provider: 'twitch',
+    providerAccountId: '1',
+    favourite: true,
+  });
+  check('a followed channel can be starred', starred.statusCode === 200, starred.body);
+  const after = await live();
+  check('and the star comes back on the row', after.streams.find((s: { channelName: string }) => s.channelName === 'alfa').favourite === true);
+  check('without starring anybody else', after.streams.find((s: { channelName: string }) => s.channelName === 'bravo').favourite === false);
+
+  /*
+   * A live channel with no followed row has nothing to flag. A silent 200 would
+   * spring the star back on the next reload with nothing said, so it refuses.
+   */
+  const cannot = await post('/api/integrations/follows/favourite', {
+    provider: 'twitch',
+    providerAccountId: '2',
+    favourite: true,
+  });
+  check('one that is not followed yet is refused, not silently dropped', cannot.statusCode === 409, `${cannot.statusCode}`);
+
+  /* The scope rides on the live response so the panel needs no second request. */
+  check('the scope defaults to everyone', (await live()).scope === 'all');
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { livePanelScope: 'favourites' } });
+  check('and follows the setting', (await live()).scope === 'favourites');
+  /*
+   * The endpoint keeps returning everything either way — the *panel* narrows.
+   * Filtering here would have meant a second endpoint or a query parameter to
+   * tell the tab and the panel apart.
+   */
+  check('while the endpoint still returns them all', (await live()).streams.length === 2);
+
+  /* A star survives a sync, because `replaceFollows` names the columns it writes. */
+  const { replaceFollows } = await import('../features/integrations/store.js');
+  await replaceFollows('twitch', [
+    { provider: 'twitch', providerAccountId: '1', kind: 'channel', name: 'alfa renamed' },
+    { provider: 'twitch', providerAccountId: '2', kind: 'channel', name: 'bravo' },
+  ]);
+  const synced = await live();
+  check(
+    'a star survives the followed list syncing',
+    synced.streams.find((s: { providerAccountId: string }) => s.providerAccountId === '1').favourite === true
+  );
+  check('and the sync did land', (await db.select().from(followsTable).where(eq(followsTable.providerAccountId, '1')))[0].name === 'alfa renamed');
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

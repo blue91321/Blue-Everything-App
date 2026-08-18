@@ -71,6 +71,7 @@ import {
   linkFollows,
   linkFriends,
   setCollectionIgnored,
+  setFollowFavourite,
   setPrimaryFollow,
   suggestFriendLinks,
   unlinkFollow,
@@ -744,8 +745,56 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
       streams,
       sources,
       hiddenCount: all.length - streams.length,
+      /*
+       * Sent so the panel can narrow itself without a second request for
+       * settings. The *panel* applies it rather than this route: the Live tab
+       * always shows everything, and filtering here would mean two endpoints or
+       * a query parameter to tell them apart.
+       */
+      scope: (await getSettings()).livePanelScope,
       refreshed,
     };
+  });
+
+  /**
+   * Star a channel, or take the star off.
+   *
+   * Keyed by `(provider, providerAccountId)` rather than a `follows` row id,
+   * because the caller is a row on the Live tab: it has the channel in hand and
+   * no business knowing this app's own primary keys.
+   *
+   * **Not local-only.** A star is your data, like a habit — editable from the
+   * phone, unlike anything that changes a connection.
+   */
+  app.post('/api/integrations/follows/favourite', async (request, reply) => {
+    const body = z
+      .object({
+        provider: z.string().min(1).max(40),
+        providerAccountId: z.string().min(1).max(200),
+        favourite: z.boolean(),
+      })
+      .parse(request.body);
+
+    const written = await setFollowFavourite(
+      body.provider as ProviderId,
+      body.providerAccountId,
+      body.favourite
+    );
+
+    /*
+     * A live channel with no followed-channels row yet cannot be starred, and
+     * saying so is better than a silent 200 that changes nothing — the star
+     * would spring back on the next reload with no explanation.
+     */
+    if (!written) {
+      return reply.code(409).send({
+        error:
+          'that channel is not in the followed list yet — press Sync on the Twitch card and try again',
+      });
+    }
+
+    changes.emitChange('integrations');
+    return { favourite: body.favourite };
   });
 
   app.get('/api/integrations/follows', async () => {

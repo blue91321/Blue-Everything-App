@@ -126,6 +126,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         hiddenProviders:
           body.hiddenProviders === undefined ? undefined : JSON.stringify(body.hiddenProviders),
         dashboardPanel: body.dashboardPanel,
+        livePanelScope: body.livePanelScope,
       })
       .where(eq(settings.id, current.id))
       .returning();

@@ -1083,11 +1083,66 @@ export async function replaceLive(provider: ProviderId, streams: LiveStream[]): 
   return streams.length;
 }
 
-export type LiveRow = typeof liveStreams.$inferSelect;
+export type LiveRow = typeof liveStreams.$inferSelect & { favourite: boolean };
 
-/** Everyone on air, busiest first — the order the services themselves use. */
+/**
+ * Everyone on air, busiest first — the order the services themselves use.
+ *
+ * The star comes from `follows`, joined on `(provider, provider_account_id)`,
+ * which is the same pair both tables key on. A **left** join, deliberately: a
+ * channel can be live before the followed-channels list has synced, and an inner
+ * join would silently drop it from the screen rather than merely showing it
+ * unstarred. Unstarrable-for-now is a much better failure than absent.
+ */
 export async function allLive(): Promise<LiveRow[]> {
-  return db.select().from(liveStreams).orderBy(desc(liveStreams.viewers));
+  const rows = await db
+    .select({ stream: liveStreams, favourite: follows.favourite })
+    .from(liveStreams)
+    .leftJoin(
+      follows,
+      and(
+        eq(follows.provider, liveStreams.provider),
+        eq(follows.providerAccountId, liveStreams.providerAccountId)
+      )
+    )
+    .orderBy(desc(liveStreams.viewers));
+
+  return rows.map((row) => ({ ...row.stream, favourite: row.favourite === 1 }));
+}
+
+/** Whether this provider's followed list has ever synced. */
+export async function hasFollows(provider: ProviderId): Promise<boolean> {
+  const [row] = await db
+    .select({ id: follows.id })
+    .from(follows)
+    .where(eq(follows.provider, provider))
+    .limit(1);
+  return row !== undefined;
+}
+
+/**
+ * Star or unstar a followed channel, by the pair the live row already carries.
+ *
+ * Keyed on `(provider, providerAccountId)` rather than the `follows` row id, so
+ * the caller is a live stream rather than a lookup — the star is pressed on the
+ * Live tab, which has the channel in hand and no reason to know this app's own
+ * primary keys.
+ *
+ * Returns whether anything was written. Nothing is, when the followed-channels
+ * list has not synced yet, and the caller says so rather than pretending.
+ */
+export async function setFollowFavourite(
+  provider: ProviderId,
+  providerAccountId: string,
+  favourite: boolean
+): Promise<boolean> {
+  const written = await db
+    .update(follows)
+    .set({ favourite: favourite ? 1 : 0 })
+    .where(and(eq(follows.provider, provider), eq(follows.providerAccountId, providerAccountId)))
+    .returning({ id: follows.id });
+
+  return written.length > 0;
 }
 
 /** When each provider's live list was last written, for the staleness check. */

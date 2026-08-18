@@ -23,6 +23,7 @@
  * The same call the Battle.net and Epic rows got — the research is in the
  * document, the row is gone.
  */
+import { useState } from 'react';
 import { api, type LiveSource, type LiveStreamRow } from '../../api';
 import { useAsync } from '../../useAsync';
 
@@ -62,7 +63,7 @@ export function Live() {
       </div>
 
       {streams.map((stream) => (
-        <LiveCard key={stream.id} stream={stream} />
+        <LiveCard key={stream.id} stream={stream} onChanged={state.reload} />
       ))}
 
       {streams.length === 0 && (
@@ -76,19 +77,48 @@ export function Live() {
   );
 }
 
-function LiveCard({ stream }: { stream: LiveStreamRow }) {
+function LiveCard({ stream, onChanged }: { stream: LiveStreamRow; onChanged: () => void }) {
+  const [problem, setProblem] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const star = async () => {
+    setBusy(true);
+    setProblem('');
+    try {
+      await api.integrations.favouriteFollow(stream.provider, stream.providerAccountId, !stream.favourite);
+      onChanged();
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const detail = [stream.category, viewerLabel(stream.viewers), liveFor(stream.startedAt) && `live ${liveFor(stream.startedAt)}`]
     .filter(Boolean)
     .join(' · ');
 
   return (
     /*
-     * The whole card opens the stream, the way a friend row is entirely a
-     * button. A real `<a>` rather than a click handler so middle-click and
-     * "open in new tab" work, which is exactly what you want from a list of
-     * things to go and watch.
+     * The card is a link and the star is a button *beside* it, not inside — a
+     * `<button>` nested in an `<a>` is invalid HTML and behaves differently in
+     * every browser, and the one thing that must not happen here is starring a
+     * channel and having the page navigate away to the stream.
      */
-    <a className="card live-card" href={stream.url} target="_blank" rel="noreferrer noopener">
+    <div className="card live-card-wrap">
+      <div className="row" style={{ alignItems: 'center', gap: '.5rem' }}>
+        <button
+          className={`star${stream.favourite ? ' on' : ''}`}
+          disabled={busy}
+          aria-pressed={stream.favourite}
+          title={stream.favourite ? `Unstar ${stream.channelName}` : `Star ${stream.channelName}`}
+          aria-label={stream.favourite ? `Unstar ${stream.channelName}` : `Star ${stream.channelName}`}
+          onClick={() => void star()}
+        >
+          {stream.favourite ? '★' : '☆'}
+        </button>
+
+        <a className="live-card grow" href={stream.url} target="_blank" rel="noreferrer noopener">
       <div className="row" style={{ alignItems: 'center', gap: '.75rem' }}>
         {stream.thumbnailUrl && (
           // Decorative: the title beside it says everything this shows.
@@ -109,7 +139,16 @@ function LiveCard({ stream }: { stream: LiveStreamRow }) {
 
         <span className="chip">{stream.provider}</span>
       </div>
-    </a>
+        </a>
+      </div>
+
+      {/*
+        The one failure worth showing on the row: a channel that is live but not
+        yet in the followed list has nothing to flag, and a silent success would
+        spring the star back on the next reload with nothing said.
+      */}
+      {problem && <div className="banner">{problem}</div>}
+    </div>
   );
 }
 

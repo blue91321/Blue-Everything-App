@@ -1784,6 +1784,14 @@ export const updateSettingsSchema = z.object({
    * ids would be core depending on a folder that can be deleted.
    */
   dashboardPanel: z.string().max(64).optional(),
+  /**
+   * Whether the live panel shows everyone or only the starred ones.
+   *
+   * A real enum rather than an opaque string, unlike `dashboardPanel` — the
+   * values are core's own and there are two of them, so validating costs nothing
+   * and an unknown one would silently mean "all".
+   */
+  livePanelScope: z.enum(['all', 'favourites']).optional(),
 });
 
 /**

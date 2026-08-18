@@ -1408,5 +1408,15 @@ export const PRESENCE_STALE_MS = 60_000;
  */
 export const LIVE_STALE_MS = 30_000;
 
+/**
+ * What the Dashboard's live panel shows.
+ *
+ * `all` is the default because a panel that starts empty until you have gone and
+ * starred something looks broken — the same reasoning that has `favourite`
+ * default to 0 rather than 1.
+ */
+export const LIVE_SCOPES = ['all', 'favourites'] as const;
+export type LiveScope = (typeof LIVE_SCOPES)[number];
+
 /** How long a `local` provider's snapshot stays believable once the agent stops reporting. */
 export const LOCAL_PRESENCE_STALE_MS = 5 * 60_000;

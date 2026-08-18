@@ -533,6 +533,16 @@ export const settings = sqliteTable('settings', {
    * choosing a panel on the PC does not leave the phone showing the old one.
    */
   dashboardPanel: text('dashboard_panel').notNull().default(''),
+  /**
+   * Whether the live panel shows everyone or only the starred ones.
+   *
+   * `all` or `favourites`, and `all` is the default because a panel that starts
+   * empty until you have gone and starred something looks broken. In core
+   * `settings` for the same reason `hidden_providers` is: it is a preference
+   * about a *panel*, and panels are a core concept — the feature owns what goes
+   * in the column, core owns the slot and how it is filtered.
+   */
+  livePanelScope: text('live_panel_scope').notNull().default('all'),
 
   updatedAt: touched(),
 });
@@ -908,6 +918,22 @@ export const follows = sqliteTable(
     category: text('category').notNull().default('unknown'),
     categoryBecause: text('category_because'),
     followerCount: integer('follower_count'),
+    /**
+     * Starred, so the Dashboard panel can be narrowed to the handful you care
+     * about rather than everyone you have ever followed.
+     *
+     * **On `follows` rather than in its own table**, and it survives a sync
+     * because `replaceFollows` lists the columns it overwrites explicitly — the
+     * same protection `group_id` and `is_primary` already rely on. What does
+     * take it away is unfollowing: the prune-by-`seen_at` at the end of that
+     * function removes the row, which is the right answer rather than keeping a
+     * favourite for somebody you no longer follow.
+     *
+     * Generic on purpose. The Live tab is the only place that stars anything
+     * today, but a favourite artist or subscription is the same idea and needs
+     * no second column.
+     */
+    favourite: integer('favourite').notNull().default(0),
     /**
      * Accounts that are the same creator, the way `friends.person_id` groups
      * accounts that are the same person. Null means it stands alone.

@@ -53,7 +53,19 @@ second step `npm version` does not do for you.
   `TokenResponse.scope` is the union now and one helper normalises it; an absent
   or empty value falls back to what was asked for, since several providers omit
   it on a refresh.
-- Migration `0037`.
+- **Star a live channel**, and a control in Settings to narrow the Dashboard
+  panel to starred ones. The Connections tab always lists everybody; only the
+  panel filters, so the endpoint returns everything and carries the scope.
+- The star is a flag on `follows`, so unfollowing takes it away and an ordinary
+  sync does not. Found on real data: it needs a `follows` row to exist, and the
+  live list is what people open while the followed list waits for a manual sync
+  — so 21 live channels had a star that refused all of them. `syncLive` now
+  syncs the followed list once when it has never synced.
+- The panel subscribes to `settings` as well as `integrations`; without it,
+  changing the scope left an open Dashboard on the old filter.
+- Two empty states, since a narrowed panel showing nothing while four people are
+  live is not a quiet evening — it says which of the two it is.
+- Migrations `0037` and `0038`.
 
 ## 0.2.2
 

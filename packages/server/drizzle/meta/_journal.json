@@ -267,6 +267,13 @@
             "when": 1786063700000,
             "tag": "0037_live_streams",
             "breakpoints": true
+        },
+        {
+            "idx": 38,
+            "version": "6",
+            "when": 1786063800000,
+            "tag": "0038_live_favourites",
+            "breakpoints": true
         }
     ]
 }

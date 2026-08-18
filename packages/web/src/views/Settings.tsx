@@ -437,11 +437,18 @@ function DashboardPanel() {
   // field the server drops is worse than no picker at all.
   if (settings.data && settings.data.dashboardPanel === undefined) return null;
 
-  const choose = async (id: string) => {
+  /**
+   * One writer for both controls.
+   *
+   * The panel choice and its scope are two fields of one settings row, and
+   * `PATCH /api/settings` takes both — so a second saver would be a second copy
+   * of the busy flag, the error handling and the reload.
+   */
+  const choose = async (id: string, scope?: 'all' | 'favourites') => {
     setSaving(true);
     setProblem('');
     try {
-      await api.settings.update({ dashboardPanel: id });
+      await api.settings.update({ dashboardPanel: id, ...(scope ? { livePanelScope: scope } : {}) });
       settings.reload();
     } catch (error) {
       setProblem((error as Error).message);
@@ -503,11 +510,53 @@ function DashboardPanel() {
           </div>
         )}
 
+        {/*
+          Only while the live panel is the one chosen. A scope control for a panel
+          you are not showing is a setting for nothing — and worse, it invites the
+          reading that it governs the Live *tab*, which always shows everybody.
+        */}
+        {chosen === 'integrations:live' && settings.data?.livePanelScope !== undefined && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <div className="title">Which live channels</div>
+            <div className="meta" style={{ marginTop: 4, marginBottom: 8 }}>
+              The Connections tab always lists everyone on air; this is only the column on the Dashboard.
+              Star a channel there to add it here.
+            </div>
+
+            <div className="row wrap" style={{ gap: '.35rem' }}>
+              {LIVE_SCOPES.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={(settings.data?.livePanelScope ?? 'all') === option.id ? 'btn primary' : 'btn subtle'}
+                  disabled={saving}
+                  onClick={() => void choose(chosen, option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {problem && <div className="banner">{problem}</div>}
       </div>
     </section>
   );
 }
+
+/**
+ * Two choices, so two buttons rather than a range input.
+ *
+ * A slider is the right control for a number on a continuum — the gauge drain
+ * and fill both earn one. This is a pair of named alternatives, where a slider
+ * would have two positions, no labels at the stops, and no way to show which is
+ * live except by where the handle sat.
+ */
+const LIVE_SCOPES: { id: 'all' | 'favourites'; label: string }[] = [
+  { id: 'all', label: 'Everyone I follow' },
+  { id: 'favourites', label: 'Starred only' },
+];
 
 function NotificationsTab({ session }: { session: Session }) {
   // An older server sends no feature list; absent means everything, not nothing.

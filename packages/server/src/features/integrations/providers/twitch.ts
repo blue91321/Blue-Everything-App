@@ -14,7 +14,7 @@
  */
 import { type LiveStream } from '@everything/shared/integrations';
 import { apiGet, clientId } from '../oauth.js';
-import { getAccount, replaceFollows, replaceLive, saveAccount } from '../store.js';
+import { getAccount, hasFollows, replaceFollows, replaceLive, saveAccount } from '../store.js';
 
 const API = 'https://api.twitch.tv/helix';
 
@@ -88,6 +88,22 @@ async function userId(): Promise<string> {
  */
 export async function syncLive(): Promise<{ count: number }> {
   const id = await userId();
+
+  /*
+   * **The followed list, once, if it has never synced.**
+   *
+   * A star lives on the `follows` row, so starring a channel needs one to exist
+   * — and the live list is what people actually open, while the followed list is
+   * only fetched by a manual "Sync now" nobody has a reason to press. The
+   * symptom was 21 live channels and a star that refused every one of them with
+   * a message telling you to go and press a button.
+   *
+   * These two lists are the same permission and the same account, so one extra
+   * request the first time is a much better answer than making the feature
+   * depend on somebody reading an error. Guarded on emptiness rather than on
+   * staleness: after this it is the ordinary sync's job, not the live path's.
+   */
+  if (!(await hasFollows('twitch'))) await syncFollows();
 
   const streams: LiveStream[] = [];
   let cursor = '';
