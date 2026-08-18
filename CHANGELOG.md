@@ -72,6 +72,14 @@ second step `npm version` does not do for you.
 - Each panel gets its own Suspense boundary rather than one around the column:
   they are separate chunks and a shared boundary would hold all of them back
   until the slowest arrived.
+- **A state for playing but away.** Steam and Riot both report "in a game" and
+  "idle" separately, and both were collapsing them — the game was checked first
+  and the availability discarded, so somebody AFK mid-match showed the same blue
+  dot as somebody at the keyboard. Reported the only way it could be: a friend
+  was mistaken for available. Two of four apparently-available people on the live
+  list turned out to be AFK the moment it was fixed.
+- Drawn as the away yellow with a ring of the in-game blue: the fill is the half
+  that matters, since reading blue as "available" was the whole mistake.
 - Migrations `0037`–`0039`.
 
 ## 0.2.2

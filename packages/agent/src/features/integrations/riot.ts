@@ -27,7 +27,7 @@ export interface RiotFriend {
   providerUserId: string;
   name: string;
   avatarUrl?: string;
-  state: 'offline' | 'online' | 'away' | 'in-game' | 'dnd';
+  state: 'offline' | 'online' | 'away' | 'in-game' | 'in-game-away' | 'dnd';
   game?: string;
   detail?: string;
 }
@@ -365,7 +365,19 @@ export async function readFriends(lock: Lock): Promise<RiotFriend[]> {
       providerUserId: friend.puuid ?? friend.id ?? String(friend.summonerId ?? friend.name ?? 'unknown'),
       name: friend.gameName ? `${friend.gameName}${friend.gameTag ? `#${friend.gameTag}` : ''}` : friend.name ?? 'Unknown',
       avatarUrl: iconUrl(friend.icon),
-      state: playing ? 'in-game' : state,
+      /*
+       * Playing and available are two facts, and this used to keep one.
+       *
+       * `playing ? 'in-game' : state` discarded an `away` the client had just
+       * told us, so somebody idle in champion select or sitting in a finished
+       * lobby showed the same blue "playing" dot as somebody actually there —
+       * and got mistaken for available, which is how this was found.
+       *
+       * The demotion above already refuses to *promote* on thin evidence; this
+       * is the same rule one step further on. A game beats `online`, which is
+       * the weaker half of what the client said, and never beats `away`.
+       */
+      state: playing ? (state === 'away' ? 'in-game-away' : state === 'dnd' ? 'dnd' : 'in-game') : state,
       game: playing ? gameLabel(friend, queues) : undefined,
       // The personal note people set on themselves. Shown as detail, never as
       // the game — it is free text and frequently a joke.

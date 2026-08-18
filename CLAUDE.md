@@ -3057,6 +3057,33 @@ somebody looking for a problem that is a button they pressed.
 A dot on the corner of each avatar: **blue in-game, green online, yellow away,
 red busy, grey offline**, with "I cannot tell" drawn as a hollow ring.
 
+**`in-game-away` exists because a friend was mistaken for available.** Steam and
+Riot each report "in a game" and "idle" as *separate* facts, and both providers
+were collapsing them: `gameextrainfo ? 'in-game' : …` and
+`playing ? 'in-game' : state` each checked the game first and threw the
+availability away. So somebody AFK mid-match showed the same blue dot as
+somebody actually at the keyboard. That is worse than missing information — it
+is a confident claim in the wrong direction, which is the failure this whole
+screen exists to avoid. On the live list the moment it was fixed: **two of four
+people who looked available were not**.
+
+A game still beats `online`, which is the weaker half of what the provider said,
+and no longer beats `away`. `dnd` is deliberately untouched: busy while playing
+is a choice somebody made rather than idle time accruing.
+
+**The dot is the away yellow carrying a ring of the in-game blue**, and the fill
+is the load-bearing half — the mistake was reading blue as "available", so it has
+to belong to the away family at a glance. The ring adds the second fact rather
+than replacing the first, composing two colours already learned instead of
+inventing a seventh. It sits in the away group, whose heading was *"signed in,
+but not in a game"* and is now *"not answering"*, because the old wording became
+false for exactly these rows.
+
+`STATUS_ORDER` on the Friends screen is a hand-written list, so a new state has
+no filter chip until it is added there — `in-game-away` had none for one build,
+which is a filter you cannot switch off. `integrations-check` now walks every
+state.
+
 **`dnd` had to become a real state to draw it.** Riot and Steam both publish it
 and both were folded into `away`, which loses the only thing it says — the
 person is *there* and has asked not to be disturbed, where away is the opposite

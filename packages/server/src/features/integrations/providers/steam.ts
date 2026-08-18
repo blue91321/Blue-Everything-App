@@ -134,12 +134,28 @@ export async function syncFriends(): Promise<{ count: number; online: number }> 
     );
 
     for (const player of summaries.response.players) {
-      // In a game beats every persona state. Someone playing Deep Rock
-      // Galactic reports `personastate: 1`, and "online" is the less useful
-      // half of what Steam just told us.
+      /*
+       * A game and a persona state are two facts, and this used to keep one.
+       *
+       * `gameextrainfo ? 'in-game' : …` threw the persona state away, so a
+       * friend Steam was reporting as *away with a game running* — which is
+       * exactly what AFK in a match looks like, `personastate` 3 or 4 — showed
+       * the same blue "playing" dot as somebody actually at the keyboard. It was
+       * reported the only way it could be: somebody was mistaken for available.
+       *
+       * So the game still beats `online`, which is the less useful half of what
+       * Steam said, and no longer beats `away`. `dnd` is deliberately left
+       * alone: busy while playing is a choice somebody made rather than idle
+       * time accruing, and it already reads as its own thing.
+       */
+      const persona = PERSONA_STATES[player.personastate ?? 0] ?? 'offline';
       const state: PresenceState = player.gameextrainfo
-        ? 'in-game'
-        : PERSONA_STATES[player.personastate ?? 0] ?? 'offline';
+        ? persona === 'away'
+          ? 'in-game-away'
+          : persona === 'dnd'
+            ? 'dnd'
+            : 'in-game'
+        : persona;
 
       friends.push({
         provider: 'steam',

@@ -31,7 +31,7 @@ import type { PanelProps } from '../index';
  * somebody who is *there* and has asked to be left alone, which is worth seeing
  * next to the person you were about to message.
  */
-const AROUND: FriendRow['state'][] = ['in-game', 'online', 'away', 'dnd'];
+const AROUND: FriendRow['state'][] = ['in-game', 'online', 'dnd', 'in-game-away', 'away'];
 const RANK = new Map(AROUND.map((state, i) => [state, i]));
 
 /**

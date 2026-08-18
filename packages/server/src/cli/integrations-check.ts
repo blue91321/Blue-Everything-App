@@ -34,6 +34,8 @@ import {
   LIVE_PROVIDERS,
   MUSIC_CATEGORIES,
   PRESENCE_PROVIDERS,
+  PRESENCE_STATES,
+  presenceRank,
   PROVIDERS,
   PROVIDER_LIST,
   canvasHostInput,
@@ -841,6 +843,51 @@ check(
   grantedFrom({ access_token: 'x', scope: '' }, twitchSpec).join(' ') === 'user:read:follows'
 );
 check('an empty array is taken at its word', grantedFrom({ access_token: 'x', scope: [] }, twitchSpec).length === 0);
+
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nPlaying, but away');
+
+/*
+ * **Both facts, kept.** Steam and Riot each report "in a game" and "idle" as
+ * separate things and both were collapsing them into `in-game` — the game was
+ * checked first and the availability discarded. A friend AFK in a match then
+ * showed the same blue dot as one actually at the keyboard, and was mistaken
+ * for available. That is worse than missing information: it is a confident
+ * claim in the wrong direction, which is the failure this whole screen is
+ * against.
+ */
+check('there is a state for it', PRESENCE_STATES.includes('in-game-away'));
+
+/*
+ * Ranked below everything you could actually talk to — that is the entire
+ * point — and above plain `away`, because a game is running and somebody idle
+ * mid-match is likelier to come back than somebody idle on the desktop.
+ */
+check('it ranks below online', presenceRank['in-game-away'] > presenceRank.online);
+check('…and below in-game', presenceRank['in-game-away'] > presenceRank['in-game']);
+check('…and below busy, who is at least at the keyboard', presenceRank['in-game-away'] > presenceRank.dnd);
+check('…but above plain away', presenceRank['in-game-away'] < presenceRank.away);
+check('…and well above offline', presenceRank['in-game-away'] < presenceRank.offline);
+
+/*
+ * A hand-written list that must not fall behind the states. The Friends screen
+ * orders its filter chips from one, fixed rather than derived so the buttons do
+ * not reshuffle as people come and go — and a state missing from it has no chip
+ * at all, which is a filter you cannot switch off. `in-game-away` was missing
+ * for exactly one build.
+ */
+check(
+  'every state can be filtered',
+  PRESENCE_STATES.every((state) => presenceRank[state] !== undefined),
+  PRESENCE_STATES.join(',')
+);
+
+/* Every state still has exactly one rank, which is easy to break by hand. */
+const ranks = PRESENCE_STATES.map((state) => presenceRank[state]);
+check('every state is ranked', ranks.every((r) => typeof r === 'number'));
+check('and no two share a rank', new Set(ranks).size === ranks.length, ranks.join(','));
 
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);

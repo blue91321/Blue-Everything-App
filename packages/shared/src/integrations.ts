@@ -900,7 +900,25 @@ export function capabilityIsUsable(spec: CapabilitySpec | undefined): boolean {
  * asked not to be disturbed. Away is the opposite claim — present but not
  * paying attention — and they want opposite things done about them.
  */
-export const PRESENCE_STATES = ['offline', 'online', 'away', 'in-game', 'dnd', 'unknown'] as const;
+/**
+ * `in-game-away` is the one that had to be added on evidence.
+ *
+ * Both Steam and Riot report "playing something" and "idle" as *separate*
+ * facts, and both were being collapsed into `in-game` — the game was checked
+ * first and the availability thrown away. So a friend AFK in a match showed the
+ * same blue dot as one who was actually there, and got mistaken for available.
+ * That is the worst kind of wrong for this screen: not missing information but a
+ * confident claim in the wrong direction.
+ */
+export const PRESENCE_STATES = [
+  'offline',
+  'online',
+  'away',
+  'in-game',
+  'in-game-away',
+  'dnd',
+  'unknown',
+] as const;
 export const presenceStateSchema = z.enum(PRESENCE_STATES);
 export type PresenceState = (typeof PRESENCE_STATES)[number];
 
@@ -947,13 +965,21 @@ export const presenceRank: Record<PresenceState, number> = {
   // Above `away`, because they are at the keyboard — busy is a choice somebody
   // made, idle is what happens when they walk off.
   dnd: 2,
-  away: 3,
-  offline: 4,
+  /*
+   * Below everything you could actually talk to, and above plain `away`.
+   *
+   * Below, because that is the entire point of the state existing: they are not
+   * answering. Above `away`, because a game is running and somebody idle mid-match
+   * is far likelier to come back than somebody idle on the desktop.
+   */
+  'in-game-away': 3,
+  away: 4,
+  offline: 5,
   // Last. It briefly sat above `offline`, on the reasoning that "I cannot tell"
   // might hide somebody who is around — but there are a hundred of them and
   // eighteen of everything else, so it buried the list that answers the
   // question under the list that cannot.
-  unknown: 5,
+  unknown: 6,
 };
 
 export const friendSchema = z.object({
