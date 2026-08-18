@@ -2685,6 +2685,25 @@ Tuesday. One list you curate, the other empties itself — which is also why
 Nothing points at a live row, so churning its primary key costs nothing, whereas
 doing that to a friend destroyed the `person_id` links that join their accounts.
 
+**The redirect URI default had to become per-provider.** `OAUTH_REDIRECT_BASE`
+was one global string defaulting to the loopback IP, because Spotify and Google
+stopped accepting `http://localhost` and require `http://127.0.0.1`. Twitch is
+the other way round: it documents `http://localhost:PORT`, and the numeric form
+is what its console refused. No single value serves both, so
+`oauth.loopbackHost` says which spelling a provider wants and `redirectUri`
+applies it — while a base somebody actually set is used exactly as typed, since
+rewriting a deliberate value would work everywhere except the place it was chosen
+for. `integrations-check` asserts both providers' opposite rules.
+
+**And the error message that sent us here may not have meant what it said.**
+"Redirect URIs must use HTTPS protocol" is also what the Twitch console shows for
+a *blank row* left in the redirect list, where the fix is to delete the empty
+field and press Save rather than only Add. So it is genuinely unproven whether
+the IP literal would have been accepted; what is settled is that `localhost`
+works and is what Twitch documents. The setup steps say both, because somebody
+hitting that message needs to check the boring cause before believing the
+interesting one.
+
 **Twitch is the first provider here that genuinely needs a client secret.** PKCE
 has never shipped for their authorization code flow — the request has sat open on
 their forums for years — so `pkce: false` is a declaration rather than an

@@ -136,7 +136,23 @@ export async function clientSecret(provider: ProviderId): Promise<string> {
  * window, and worthless to anybody who did not start the handshake here.
  */
 export function redirectUri(provider: ProviderId): string {
-  return `${config.OAUTH_REDIRECT_BASE}/oauth/callback/${provider}`;
+  /*
+   * The loopback default is spelled differently per provider, and that is not
+   * fussiness — it is two services with opposite rules. Spotify and Google
+   * stopped accepting `http://localhost` and require `http://127.0.0.1`; Twitch
+   * documents `http://localhost:PORT`, and the numeric form is what its console
+   * refused here.
+   *
+   * A base somebody actually set is used exactly as typed. Rewriting a
+   * deliberate value would be the worst kind of help: it would work everywhere
+   * except the one place the value was chosen for.
+   */
+  const base =
+    !config.OAUTH_REDIRECT_BASE_EXPLICIT && PROVIDERS[provider].oauth?.loopbackHost === 'name'
+      ? config.OAUTH_REDIRECT_BASE.replace('//127.0.0.1', '//localhost')
+      : config.OAUTH_REDIRECT_BASE;
+
+  return `${base}/oauth/callback/${provider}`;
 }
 
 /* ------------------------------------------------------------------ */

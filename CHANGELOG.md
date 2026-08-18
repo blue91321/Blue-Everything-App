@@ -37,6 +37,16 @@ second step `npm version` does not do for you.
 - Twitch shipped wearing YouTube's 📺 for about ten minutes. The glyph is how a
   row is picked out of seven at a glance, so `integrations-check` now asserts
   they are all distinct.
+- **The redirect URI default is per-provider now.** `OAUTH_REDIRECT_BASE` was one
+  global string defaulting to the loopback IP, because Spotify and Google stopped
+  accepting `http://localhost`. Twitch is the other way round — it documents
+  `http://localhost:PORT` and its console refused the numeric form — so no single
+  value served both. `oauth.loopbackHost` says which spelling a provider wants; a
+  base set by hand is still used exactly as typed.
+- The setup steps warn that "Redirect URIs must use HTTPS protocol" is *also*
+  what the Twitch console says for a blank row in the redirect list. Which means
+  it is unproven whether the IP literal was ever really the problem — only that
+  `localhost` works and is documented.
 - Migration `0037`.
 
 ## 0.2.2

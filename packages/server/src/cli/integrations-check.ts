@@ -786,6 +786,20 @@ check('twitch asks for the follows scope', PROVIDERS.twitch.oauth?.scopes.includ
 const glyphs = PROVIDER_LIST.map((p) => p.glyph);
 check('every provider has its own glyph', new Set(glyphs).size === glyphs.length, glyphs.join(' '));
 
+/*
+ * **The two loopback spellings, and they are opposite rules.** Spotify and
+ * Google stopped accepting `http://localhost` and require the IP literal;
+ * Twitch's console refuses the IP literal with "Redirect URIs must use HTTPS
+ * protocol" and takes the name. One global base could not serve both, so the
+ * spelling is declared per provider — and the failure mode of getting it wrong
+ * is a registration form that will not accept what the card told you to paste.
+ */
+check('twitch wants the loopback name', PROVIDERS.twitch.oauth?.loopbackHost === 'name');
+check(
+  'spotify and google keep the IP literal',
+  PROVIDERS.spotify.oauth?.loopbackHost === undefined && PROVIDERS.youtube.oauth?.loopbackHost === undefined
+);
+
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

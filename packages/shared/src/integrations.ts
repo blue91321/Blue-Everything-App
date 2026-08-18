@@ -164,6 +164,30 @@ export interface ProviderSpec {
     optionalScopes?: string[];
     pkce: boolean;
     /**
+     * Which spelling of loopback this provider accepts in a redirect URI.
+     *
+     * They are the same machine and not the same string, and the providers do
+     * not agree. Spotify and Google **stopped accepting** `http://localhost` and
+     * require `http://127.0.0.1`. Twitch is the other way round: every example in
+     * its own documentation and console uses `http://localhost:PORT`, and that
+     * form is confirmed working, while the numeric form is what produced
+     * "Redirect URIs must use HTTPS protocol" here.
+     *
+     * **That message is not proof the numeric form is refused**, and it is worth
+     * being precise: the same wording is also produced by an unrelated console
+     * validation bug — a blank row left in the redirect list — so it may have
+     * been complaining about something else entirely. What is settled is that
+     * `localhost` works and is what Twitch documents, so that is what this
+     * offers; whether the IP literal would also have been accepted is unproven
+     * either way.
+     *
+     * So there is no single right default, which is exactly why this sits in the
+     * manifest beside the URLs rather than being one environment variable. `ip`
+     * is assumed when absent, because most of them want it; an explicitly
+     * configured `OAUTH_REDIRECT_BASE` overrides this entirely.
+     */
+    loopbackHost?: 'ip' | 'name';
+    /**
      * Some providers hand back a refresh token only when asked, and asking
      * looks different at each one. Extra authorize-time parameters go here so
      * the flow itself stays one function.
@@ -676,6 +700,14 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
        */
       scopes: ['user:read:follows'],
       pkce: false,
+      /*
+       * `http://localhost:PORT` is what Twitch's own docs and console examples
+       * use, and it is confirmed working. The numeric form is what produced
+       * "Redirect URIs must use HTTPS protocol" here — the opposite of what
+       * Spotify and Google accept, which is why this became a per-provider field
+       * rather than one global base.
+       */
+      loopbackHost: 'name',
     },
     credentials: [
       {
@@ -719,7 +751,20 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       {
         text:
           'Paste the redirect URL shown below into the application\u2019s OAuth Redirect URLs. It has to match ' +
-          'character for character, and Twitch rejects the login rather than explaining if it does not.',
+          'character for character, and Twitch rejects the login rather than explaining if it does not. ' +
+          'Note it says localhost, not 127.0.0.1 — that is the form Twitch documents, and the opposite ' +
+          'of what Spotify and Google accept, so this app offers each service its own spelling.',
+      },
+      {
+        text:
+          'If it answers "Redirect URIs must use HTTPS protocol", check for an empty redirect row before ' +
+          'you believe it. That message is also what the console shows for a blank field, and the fix is ' +
+          'to delete the empty row and press Save rather than only Add — the complaint names the wrong ' +
+          'problem.',
+        link: {
+          url: 'https://discuss.dev.twitch.com/t/unable-to-use-localhost-are-redirect-url-for-oauth-implicit-grant-flow/61951',
+          label: 'the thread where somebody hit exactly this',
+        },
       },
       {
         text: 'Copy the Client ID, press "New Secret", and paste both below. Twitch shows the secret once.',
