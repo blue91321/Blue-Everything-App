@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./features": "./src/features.ts",
     "./integrations": "./src/integrations.ts",
+    "./modules": "./src/modules.ts",
     "./sound": "./src/sound.ts"
   },
   "dependencies": {

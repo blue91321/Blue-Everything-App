@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type AppSettings, type Device, type Session } from '../api';
+import { InstalledPackages } from './InstalledPackages';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
 import { panelChoices } from '../panels';
@@ -904,6 +905,19 @@ function PackagesTab({ session }: { session: Session }) {
 
       {error && <div className="banner">{error}</div>}
 
+      {/*
+        Two kinds of package, and the split is honest rather than decorative.
+        These ship inside the repo across up to three workspaces — the vault
+        owns a server folder, a web folder and the whole extension — so there is
+        no single folder to open or delete, which is exactly why the buttons
+        below this list do not appear on these rows.
+      */}
+      <h3 className="pkg-head">Built in</h3>
+      <div className="meta" style={{ marginBottom: 8 }}>
+        Part of the app itself. They switch off, and some can be deleted from disk by hand, but they are
+        not installed or removed from this screen.
+      </div>
+
       {data.features.map((feature) => (
         <div className="card" key={feature.id}>
           <div className="row between">
@@ -968,6 +982,8 @@ function PackagesTab({ session }: { session: Session }) {
           )}
         </div>
       ))}
+
+      <InstalledPackages session={session} />
     </section>
   );
 }

@@ -4,6 +4,54 @@ All six packages carry the same version and move together — they are one app
 released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 second step `npm version` does not do for you.
 
+## Unreleased
+
+### Install a package the way you would a texture pack
+
+- **`modules/` at the repo root**, one folder per package, listed under
+  **Settings → Packages → Installed**. Drop a `.zip` on the page, open the
+  folder in Explorer, switch one on, delete one from disk.
+- **A built-in feature could never work this way.** `FeatureSpec.owns` shows one
+  is up to three folders across three workspaces — the vault owns a server
+  folder, a web folder and the whole extension — so there is no single directory
+  to open or delete. A module is *defined* as one folder; that constraint is the
+  whole feature. The screen says **Built in** and **Installed** rather than
+  putting a "Remove" button against the vault that could not work.
+- **The texture-pack comparison breaks in one place, and the screen says so.** A
+  resource pack is data; a package here may be code, imported into the server
+  process with the database and the machine. There is no sandbox. The warning is
+  above the drop zone rather than in a README, and a package arrives switched
+  off — running code that came from outside should be a decision.
+- **A hand-rolled zip reader**, no dependency, the same call the PNG encoder and
+  the WAV writer make. It reads the central directory rather than the local
+  headers, which are allowed to carry zeros when the streaming bit is set.
+  Refuses zip slip in both spellings, checks declared sizes before inflating so
+  a decompression bomb cannot expand, verifies the CRC, and refuses ZIP64 and
+  encryption by name. A wrapping folder is stripped when every entry shares one,
+  since archives are made both ways.
+- **A broken package is listed with its problems, never hidden.** Dropping a bad
+  zip and seeing nothing happen is indistinguishable from the drag not working.
+- **Installing, switching, removing and opening the folder are local-only**, and
+  the gate was proved over a real socket with hand-written HTTP — `Host` is a
+  forbidden header for `fetch`, which drops it silently, and the smoke suite
+  disables auth entirely, so neither could test the vector that matters.
+- `npm run modules-check -w @everything/server`, including a zip built by
+  `Compress-Archive` — a hand-rolled parser tested only against a hand-rolled
+  writer proves the two agree, which is worth much less than it looks.
+
+### Two Windows details, each found by hitting it
+
+- **A byte-order mark is now stripped before every hand-edited JSON parse.**
+  PowerShell's `Out-File -Encoding utf8` writes one and `JSON.parse` refuses it,
+  reporting `Unexpected token '﻿'` — an invisible character. This covers
+  `features.json` too, where a BOM stopped the server booting.
+- **A `.js` file under `modules/` is CommonJS**, because Node resolves
+  module-ness from the nearest `package.json` upward and the nearest above
+  `modules/` is the repo root. A package written the obvious way died on its own
+  first `export` with an error naming neither the package nor the cause.
+  Installing now writes `{"type":"module"}` when a package ships no
+  `package.json`, and never overwrites one that does.
+
 ## 0.2.3
 
 Twitch and a Live tab, a side column that stacks, a presence state that stops a

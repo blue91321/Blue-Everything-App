@@ -34,6 +34,7 @@ export type ChangeScope =
   | 'time'
   | 'vault'
   | 'integrations'
+  | 'packages'
   | 'all';
 
 type Listener = (scope: ChangeScope) => void;

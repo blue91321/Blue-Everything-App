@@ -1494,3 +1494,47 @@ button {
 .dash-panel > .panel-settings {
   margin-top: 12px;
 }
+
+/* ---- Packages ---------------------------------------------------------- */
+
+/*
+ * The two halves of the Packages tab. An `h3` rather than another `h2`, because
+ * the tab already has one and these sit under it — the built-ins and the ones
+ * you installed are two groups of the same thing, not two screens.
+ */
+.pkg-head {
+  margin: 20px 0 2px;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pkg-head:first-of-type {
+  margin-top: 4px;
+}
+
+/*
+ * Drop a zip here.
+ *
+ * Dashed, because a dashed border is the one shape that reads as "put something
+ * in me" without a word of explanation — the same convention every upload
+ * target on the web has taught. Centred text, since the whole box is the
+ * target and left-aligning it would suggest the words were the control.
+ */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 18px 14px;
+  text-align: center;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+/*
+ * While a file is over it. The accent, so the feedback is unmissable — a drag
+ * is held rather than clicked, and a target that does not visibly arm leaves
+ * you unsure whether letting go will do anything.
+ */
+.dropzone.dragging {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}

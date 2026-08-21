@@ -235,6 +235,141 @@ it even when set, because the format does not exist — declaring the setting no
 is what makes turning it on a small change rather than a new concept. A button
 that fails when pressed would be worse than one that says why it cannot.
 
+### Installing a package, the way you would a texture pack
+
+`modules/` at the repo root, one folder per package, gitignored. **Settings →
+Packages → Installed** lists them, takes a `.zip` dropped on the page, opens the
+folder in Explorer, and deletes one from disk.
+`npm run modules-check -w @everything/server` proves the zip reader, the
+manifest rules and a real install/remove round trip.
+
+**A built-in feature could never work this way, and that is what forced a second
+concept.** `FeatureSpec.owns` shows a feature is up to *three* folders across
+three workspaces — the vault owns a server folder, a web folder and the whole
+extension — so there is no single directory to open, drag into, or delete. A
+module is *defined* as exactly one folder. That constraint is the feature; the
+rest follows from it.
+
+So the screen has two headings. **Built in** is the seven that ship in the repo:
+switchable, deletable by hand, never installed from here. **Installed** is what
+you added. Collapsing them would put "Remove" against the vault, which is a lie
+about what the button can do.
+
+**The comparison to a texture pack breaks in exactly one place, and it is the
+important one.** A resource pack is *data*; a package here may be *code* — one
+with a `server` entry is imported into the server process and handed the Fastify
+instance, with the database, the filesystem and the network. There is no sandbox
+and none is pretended. The warning sits **above the drop zone**, not in the
+README, because the person about to drag a file in is the person who needs it.
+It is nearer to installing a mod than a texture pack, and it says so.
+
+That is also why a package arrives **switched off**. A built-in's default is a
+decision this repo made about code it ships; a module is code from somewhere
+else, and running it should be a thing you chose rather than a consequence of
+dropping a file in a folder.
+
+#### The zip reader is hand-rolled, and reads the central directory
+
+`zip.ts` — no dependency, the same call the PNG encoder and the WAV writer make:
+the format we need is two structs and one `zlib.inflateRawSync`. A zip library
+would be third-party code sitting directly in the path of untrusted input.
+
+It reads the **central directory**, never the local headers. Both describe every
+entry and the local one is tempting because it sits against the bytes — but with
+the streaming bit set (anything that zipped to a pipe) its sizes and CRC are
+zero and the real values trail the data. The central directory is always
+complete.
+
+Guards, all of which `modules-check` fires at it:
+
+- **Zip slip.** An entry named `../x`, or the backslash spelling — treated as a
+  separator *because this is Windows*, where a name containing one is a single
+  segment to the spec and two to the filesystem, and the filesystem creates the
+  file. Checked in the reader **and** again as each file is written: the first is
+  about the archive, the second about the disk, and they are the same check only
+  while both are right.
+- **Declared size before inflating**, so a decompression bomb is refused rather
+  than expanded and then measured.
+- **The CRC**, which is in the archive already — so a half-downloaded zip is a
+  clear message instead of a package that installs and then will not parse.
+- ZIP64 and encryption are refused **by name**, since half-extracting one leaves
+  a broken package behind.
+
+**A wrapping folder is stripped when every entry shares it.** Archives are made
+both ways depending on whether the author zipped the folder or its contents, and
+requiring one spelling would reject half of all correct packages for a reason
+invisible from outside.
+
+#### Two Windows details that cost a debugging session each
+
+- **A BOM is stripped before every hand-edited JSON parse.** `Out-File -Encoding
+  utf8` in Windows PowerShell writes one, Notepad wrote one for years, and
+  `JSON.parse` refuses it — the error prints as `Unexpected token '﻿'`, an
+  invisible character. Found building a test package with `Out-File`. `json.ts`
+  now serves `module.json`, `modules.json` **and `features.json`**, which is the
+  one that mattered most: it is documented as hand-editable and a BOM in it
+  stopped the server booting.
+- **A `.js` file under `modules/` is CommonJS.** Node resolves module-ness from
+  the nearest `package.json` going *up*, and the nearest above `modules/` is the
+  repo root, which has no `type`. So a package written the obvious way died on
+  its own first `export`, with `Cannot require() ES Module … in a cycle` —
+  naming neither the package nor the problem. `installFromZip` writes
+  `{"type":"module"}` when the package ships no `package.json` of its own, and
+  never overwrites one that does, since an author who included it has said what
+  they meant.
+
+#### Loading is deliberately unlike `registerFeature`
+
+The import is a genuine dynamic `import()` of a file URL rather than a static
+`() => import(...)`, which works only because the server runs through `tsx`
+rather than a bundle.
+
+And a failure is **caught rather than rethrown**, which is the opposite call.
+`registerFeature` rethrows anything that is not a missing module, because a
+broken feature is a bug in this repo and should stop the app. A broken *module*
+is somebody else's bug, and taking the app down over it would mean a bad package
+could stop you reaching the screen that uninstalls it. The reason is kept and
+shown on that package's row.
+
+Packages load **after every built-in route**, so one registering a conflicting
+path loses to the app rather than shadowing it.
+
+#### What the screen refuses to hide
+
+A folder whose manifest will not parse is **listed, with its problems named by
+field**. Dropping a bad zip and seeing nothing happen is indistinguishable from
+the drag not having worked, which is the most confusing outcome available here.
+Its toggle is disabled and the API refuses to enable it — a switch reading "on"
+against something that cannot load is the same lie the `EVERYTHING_FEATURES`
+lock is disabled to avoid.
+
+#### Everything that changes anything is local-only
+
+Installing runs someone else's code on this machine and removing deletes a
+folder from it, so both sit with minting a device token and writing
+`features.json`. **Proved over a real socket**, not with `app.inject()`: the
+smoke suite sets `AUTH_REQUIRED=false`, which short-circuits `isLocal` to true
+before `isTrustedLocal` is consulted, so an injected cross-site request is
+allowed there — which looks exactly like a broken gate and is a disabled one.
+Smoke says so rather than asserting either way.
+
+The gate was instead driven with **hand-written HTTP over `node:net`**, because
+`Host` is a forbidden header name for `fetch`, which drops it silently — a probe
+built on fetch reports the most important vector here as passing when it was
+never sent. All five module routes refuse a tailnet `Host`, a cross-site
+`Sec-Fetch-Site`, an `X-Forwarded-For` and a foreign `Origin`, and `localhost`
+by name is still allowed.
+
+**Opening the folder is the server's job, not the agent's**, which is the one
+place this departs from the division voice draws. A hotkey or a browser acts on
+whatever machine you are sitting at; this opens a folder on the *server's own*
+filesystem, so routing it through the agent would open the wrong machine's
+folder the day the server moves.
+
+**The upload has its own `bodyLimit`.** Fastify defaults to 1MB globally, and
+raising *that* to accept a package would widen how much memory any request can
+ask the process to buffer, for one endpoint that is already local-only.
+
 ### Finishing something takes a moment to move
 
 `useSettling.ts` pins a just-ticked row in place for 1.8s before it drops to the
@@ -641,7 +776,7 @@ that is invisible until it isn't, and the server had no net under it.
 ## Ground rules
 
 - **Never commit real data.** `data/`, `*.db`, `.env`, `agent.config.json`,
-  `features.json`, the avatar and `logs/` are gitignored. The database is
+  `features.json`, `modules/`, `modules.json`, the avatar and `logs/` are gitignored. The database is
   personal; treat it as such. `npm run publish-check` is the gate — run it
   before any push, and never loosen a rule to make it pass.
 
@@ -980,6 +1115,7 @@ npm run integrations-check -w @everything/server  # the categoriser, the Takeout
 
 npm run features         # what is switched on, and what is actually on disk
 npm run features-check   # prove each one can be switched off and deleted
+npm run modules-check -w @everything/server  # the zip reader, and installing a package
 npm run publish-check    # is this repo safe to make public?
 npm run typecheck        # all three TypeScript packages, server included
 ```

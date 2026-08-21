@@ -48,6 +48,13 @@ agent.config.json
 # features.json is per-install; features.example.json is the checked-in one.
 features.json
 
+# Installed packages, and which of them are switched on. Third-party code that
+# arrived from outside this repo — emphatically not ours to commit. Matched at
+# any depth for the same reason the voice models are: a rule naming one exact
+# path silently stops matching the day the folder moves.
+modules/
+modules.json
+
 # ---- Personal artefacts --------------------------------------------------
 # The overlay avatar and the app logo are your own pictures, written beside
 # the database. `data/` already covers them; named too, so moving the folder

@@ -18,6 +18,7 @@ import { dirname, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { FEATURES, isFeatureId, resolveFeatures, type FeatureId } from '@everything/shared/features';
 import { config } from './config.js';
+import { parseJsonText } from './json.js';
 
 /**
  * Anchored to this file, never to the working directory — the same rule the
@@ -42,7 +43,7 @@ function readFeaturesFile(): Partial<Record<string, boolean>> | undefined {
   if (!existsSync(featuresFilePath)) return undefined;
 
   try {
-    const parsed = JSON.parse(readFileSync(featuresFilePath, 'utf8')) as Record<string, unknown>;
+    const parsed = parseJsonText(readFileSync(featuresFilePath, 'utf8')) as Record<string, unknown>;
     const out: Partial<Record<string, boolean>> = {};
     for (const [key, value] of Object.entries(parsed)) {
       // The example file carries a "$comment" array to explain itself. Skipping

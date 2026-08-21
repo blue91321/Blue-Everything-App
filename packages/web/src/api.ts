@@ -628,6 +628,58 @@ export interface FeatureState {
   features: FeatureInfo[];
 }
 
+/* ------------------------------------------------------------------ */
+/* Installed packages                                                  */
+/* ------------------------------------------------------------------ */
+
+/** What is wrong with a package, named field by field. */
+export interface ModuleProblem {
+  field: string;
+  message: string;
+}
+
+/**
+ * One folder under `modules/`.
+ *
+ * Unlike a `FeatureInfo`, most of this is nullable — a package whose manifest
+ * will not parse is still *listed*, with its problems, because a bad zip that
+ * produced no row at all would be indistinguishable from a drag that never
+ * worked. `usable` is the one field that says whether it can run.
+ */
+export interface ModuleInfo {
+  id: string;
+  label: string;
+  blurb: string | null;
+  version: string | null;
+  author: string | null;
+  notes: string | null;
+  /** It has a server entry point, which means installing it runs code. */
+  code: boolean;
+  bytes: number;
+  enabled: boolean;
+  /** Loaded into the running process — false until a restart. */
+  running: boolean;
+  pendingRestart: boolean;
+  problems: ModuleProblem[];
+  usable: boolean;
+}
+
+export interface ModuleState {
+  /** Absolute path, or null when the caller is not on the server's machine. */
+  folder: string | null;
+  canInstall: boolean;
+  modules: ModuleInfo[];
+}
+
+export interface InstalledPackage {
+  ok: boolean;
+  id: string;
+  label: string;
+  version: string;
+  replaced: boolean;
+  files: number;
+}
+
 export interface Device {
   id: string;
   name: string;
@@ -1049,6 +1101,38 @@ export const api = {
         id,
         enabled,
       }),
+  },
+
+  modules: {
+    get: () => request<ModuleState>('/api/modules'),
+    /**
+     * Send a `.zip` to be unpacked into `modules/`.
+     *
+     * Base64 in JSON rather than multipart, like the habit picture and the
+     * logo — the server registers no multipart parser, and adding one for a
+     * screen visited twice a year is a dependency for nothing.
+     */
+    install: (file: File) =>
+      new Promise<InstalledPackage>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('could not read that file'));
+        reader.onload = () => {
+          const result = String(reader.result);
+          // Strip the `data:application/zip;base64,` prefix the reader adds.
+          const data = result.slice(result.indexOf(',') + 1);
+          post<InstalledPackage>('/api/modules', { data, filename: file.name }).then(resolve, reject);
+        };
+        reader.readAsDataURL(file);
+      }),
+    set: (id: string, enabled: boolean) =>
+      patch2<{ ok: boolean; id: string; enabled: boolean; pendingRestart: boolean }>(
+        `/api/modules/${encodeURIComponent(id)}`,
+        { enabled }
+      ),
+    remove: (id: string) =>
+      request<{ ok: boolean; id: string }>(`/api/modules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    /** Local-only: a file manager can only open on the machine it runs on. */
+    openFolder: () => post<{ ok: boolean; folder: string }>('/api/modules/folder'),
   },
 
   settings: {

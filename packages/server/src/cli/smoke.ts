@@ -1138,6 +1138,105 @@ console.log('\nthings that must stay shut');
   await app.inject({ method: 'DELETE', url: `/api/habits/${guardId}` });
 }
 
+console.log('');
+console.log('packages (installing, switching, removing)');
+{
+  /*
+   * The disk work and the zip parser are proved by `modules-check`; this is the
+   * HTTP skin around them — the part that decides who is allowed to run any of
+   * it. Installing runs somebody else's code on this machine and removing
+   * deletes a folder from it, so the local-only gate is the check that matters
+   * most here.
+   */
+  const { modulesDir } = await import('../modules.js');
+  const { existsSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+
+  const ID = 'smoke-probe-package';
+  const manifest = JSON.stringify({ id: ID, label: 'Smoke probe', blurb: 'Installed by the smoke suite.', version: '0.0.1' });
+
+  /* A stored (uncompressed) one-entry zip, built by hand so the suite needs no fixture file. */
+  const { crc32 } = await import('node:zlib');
+  const name = Buffer.from('module.json', 'utf8');
+  const body = Buffer.from(manifest, 'utf8');
+  const sum = crc32(body);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt32LE(sum, 14);
+  local.writeUInt32LE(body.length, 18);
+  local.writeUInt32LE(body.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt32LE(sum, 16);
+  central.writeUInt32LE(body.length, 20);
+  central.writeUInt32LE(body.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt32LE(0, 42);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length + name.length, 12);
+  eocd.writeUInt32LE(local.length + name.length + body.length, 16);
+  const zip = Buffer.concat([local, name, body, central, name, eocd]).toString('base64');
+
+  try {
+    const listed = await app.inject({ method: 'GET', url: '/api/modules' });
+    check('the list answers', listed.statusCode === 200);
+    check('  ...and names the folder to a local caller', typeof listed.json().folder === 'string');
+
+    const installed = await app.inject({ method: 'POST', url: '/api/modules', payload: { data: zip, filename: 'probe.zip' } });
+    check('a zip installs', installed.statusCode === 200 && installed.json().id === ID, `${installed.statusCode} ${installed.body.slice(0, 120)}`);
+    check('  ...and lands in modules/', existsSync(join(modulesDir, ID, 'module.json')));
+
+    const after = (await app.inject({ method: 'GET', url: '/api/modules' })).json();
+    const row = (after.modules as { id: string; enabled: boolean; usable: boolean }[]).find((m) => m.id === ID);
+    check('it appears in the list', row !== undefined && row.usable);
+    check('  ...switched off, because it is code that arrived from outside', row?.enabled === false);
+
+    const on = await app.inject({ method: 'PATCH', url: `/api/modules/${ID}`, payload: { enabled: true } });
+    check('it can be switched on', on.statusCode === 200 && on.json().enabled === true);
+    check('  ...and says a restart is owed', on.json().pendingRestart === true);
+
+    /*
+     * The local-only gate is **not** tested here, and the reason is worth
+     * writing down rather than discovering twice.
+     *
+     * This file sets `AUTH_REQUIRED=false` at the top so the whole suite can
+     * run without minting a device, and `auth.ts` short-circuits on that by
+     * setting `isLocal = true` for every request before `isTrustedLocal` is
+     * ever consulted. So an injected request carrying a tailnet Host and
+     * `Sec-Fetch-Site: cross-site` is allowed in here — which looks exactly
+     * like a broken gate and is in fact a disabled one.
+     *
+     * Asserting a 403 here would therefore have been a test that could only
+     * fail, and asserting a 200 would enshrine the harness's own bypass as
+     * though it were the app's behaviour. The gate is exercised against a real
+     * socket instead, with auth on, where the header checks actually run.
+     */
+
+    /* An id that is not a package name must never reach the filesystem. */
+    for (const nasty of ['..', '..%2F..%2Fpackages', 'vault']) {
+      const escaped = await app.inject({ method: 'DELETE', url: `/api/modules/${nasty}` });
+      check(`a crafted package id deletes nothing (${decodeURIComponent(nasty)})`, escaped.statusCode === 400 || escaped.statusCode === 404, `${escaped.statusCode}`);
+    }
+
+    const gone = await app.inject({ method: 'DELETE', url: `/api/modules/${ID}` });
+    check('it removes', gone.statusCode === 200 && !existsSync(join(modulesDir, ID)));
+
+    const junk = await app.inject({ method: 'POST', url: '/api/modules', payload: { data: Buffer.from('not a zip').toString('base64') } });
+    check('a file that is not a zip is refused', junk.statusCode === 400);
+    check('  ...with a reason worth reading', /not a zip/.test(junk.json().error ?? ''), junk.body.slice(0, 120));
+  } finally {
+    // Never leave a package behind: the next run would test a different app.
+    if (existsSync(join(modulesDir, ID))) rmSync(join(modulesDir, ID), { recursive: true, force: true });
+  }
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

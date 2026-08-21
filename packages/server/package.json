@@ -18,7 +18,8 @@
     "voice-check": "tsx src/cli/voice-check.ts",
     "integrations-check": "tsx src/cli/integrations-check.ts",
     "features": "tsx src/cli/features.ts",
-    "features-check": "tsx src/cli/features-check.ts"
+    "features-check": "tsx src/cli/features-check.ts",
+    "modules-check": "node --import tsx src/cli/modules-check.ts"
   },
   "dependencies": {
     "@everything/shared": "*",
