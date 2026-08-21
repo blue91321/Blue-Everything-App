@@ -4,7 +4,11 @@ All six packages carry the same version and move together — they are one app
 released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 second step `npm version` does not do for you.
 
-## Unreleased
+## 0.2.3
+
+Twitch and a Live tab, a side column that stacks, a presence state that stops a
+friend being mistaken for available — and two vulnerabilities found by auditing
+this release rather than by anything going wrong.
 
 ### Security
 
