@@ -167,6 +167,28 @@ function parseProvider(value: string): ProviderId {
   return value;
 }
 
+/**
+ * Anything from outside, made safe to put in HTML.
+ *
+ * **The callback page is the one place this app builds HTML by hand**, and it
+ * interpolated the provider's `error` and `error_description` straight in. Those
+ * come off the query string of an unauthenticated route, so
+ * `/oauth/callback/spotify?error=<script>…` was reflected verbatim — on the same
+ * origin that holds the device bearer token in `localStorage`. Confirmed with a
+ * real request before this existed: HTTP 200, `text/html`, script tag intact.
+ *
+ * The `'` and `"` cases matter as much as the angle brackets: without them a
+ * value landing inside an attribute escapes it without needing a tag at all.
+ */
+function esc(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /** A tiny page for the OAuth redirect to land on, since it is a real navigation. */
 function callbackPage(title: string, body: string): string {
   return `<!doctype html><meta charset="utf-8"><title>${title}</title>
@@ -301,10 +323,16 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
         );
       }
 
-      // Their words, not ours. `access_denied` is what pressing Cancel sends.
+      /*
+       * Their words, not ours — `access_denied` is what pressing Cancel sends —
+       * and therefore escaped. This is a query string on an unauthenticated
+       * route, so "their words" means anybody's words.
+       */
       return callbackPage(
-        `${spec.label} refused`,
-        `It said: <code>${query.error}</code>${query.error_description ? ` — ${query.error_description}` : ''}`
+        `${esc(spec.label)} refused`,
+        `It said: <code>${esc(query.error)}</code>${
+          query.error_description ? ` — ${esc(query.error_description)}` : ''
+        }`
       );
     }
 
@@ -345,7 +373,13 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     } catch (error) {
       return reply
         .code(400)
-        .send(callbackPage(`${PROVIDERS[provider].label} could not be connected`, (error as Error).message));
+        .send(
+          callbackPage(
+            `${esc(PROVIDERS[provider].label)} could not be connected`,
+            // A provider's token endpoint reply reaches this message verbatim.
+            esc((error as Error).message)
+          )
+        );
     }
   });
 

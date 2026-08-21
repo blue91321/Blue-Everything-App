@@ -1090,6 +1090,43 @@ whatever earned the right to interrupt. Clients stay dumb; all judgement is
 server-side so the phone and the PC can never disagree about what a good moment
 is.
 
+### Two holes found by auditing, and what they teach
+
+Both were in code this project wrote by hand, and both were confirmed by
+actually firing them at the running server rather than by reading.
+
+**Reflected XSS on the OAuth callback.** `/oauth/callback/:provider` builds HTML
+by hand — it has to, being a real navigation rather than a fetch — and dropped
+the provider's `error` and `error_description` straight in. Those come off the
+query string of an *unauthenticated* route, so
+`?error=<script>…` came back at HTTP 200 as `text/html` with the tag intact, on
+the same origin that holds the device bearer token in `localStorage`. `esc()`
+now escapes `&`, `<`, `>`, `"` and `'` — the quotes matter as much as the angle
+brackets, since a value landing inside an attribute escapes it without needing a
+tag at all.
+
+The general lesson is narrow and worth keeping: **this is the only place the app
+builds HTML by hand.** Everywhere else React escapes by construction, which is
+exactly why the one exception went unexamined.
+
+**Path traversal on the habit picture.** The id goes into a filename as
+`habit-${id}.png`, and `habit-` is *its own path segment* — so a `..` after it
+pops that segment and every further `..` climbs out. `..%2F..%2Favatar` returned
+`data/avatar.png` byte-for-byte, and four levels up read a file outside `data/`
+altogether. The read route was the one that leaked because it had no `habits`
+lookup at all; the upload route happened to be safe only because it looked the
+habit up first.
+
+Two things bounded it and neither excuses it: the extension is fixed by the
+caller, so only `.png/.jpg/.gif/.webp` were ever reachable and the database never
+was, and `/api/` requires a token. The guard is a `^[A-Za-z0-9-]{1,64}$` test
+inside `imagePath` and `storedImage` rather than in the route, so a second caller
+cannot reintroduce it.
+
+`smoke` now fires both, plus backslash and mixed forms, and asserts an ordinary
+id still reads its own picture — a guard that merely says no to everything is
+not a fixed feature.
+
 ### Auth: this machine is trusted, everything else needs a token
 
 Requests arriving from loopback are allowed without a token. Making you paste

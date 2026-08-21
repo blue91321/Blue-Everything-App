@@ -1090,6 +1090,54 @@ console.log('\nthe side column holds a list, in order');
   await setPanels(['integrations:friends']);
 }
 
+/* ------------------------------------------------------------------ */
+
+console.log('\nthings that must stay shut');
+
+{
+  /*
+   * **Reflected XSS on the OAuth callback.** `error` and `error_description`
+   * were interpolated straight into hand-built HTML on an unauthenticated
+   * route — same origin as the device bearer token in `localStorage`. Confirmed
+   * against the running server before the fix: 200, text/html, script intact.
+   */
+  const reflected = await app.inject({
+    method: 'GET',
+    url: '/oauth/callback/spotify?error=%3Cscript%3EPWNED%3C/script%3E&error_description=%22%3E%3Cimg%20onerror%3Dx%3E',
+  });
+  check('the callback still answers', reflected.statusCode === 200);
+  check('but no tag survives it', !reflected.body.includes('<script>'), reflected.body.slice(0, 160));
+  check('nor an attribute break', !reflected.body.includes('"><img'), reflected.body.slice(0, 160));
+  check('and the text is still readable', reflected.body.includes('&lt;script&gt;PWNED'));
+
+  /*
+   * **Path traversal on the habit picture.** The id goes straight into
+   * `habit-${id}.png`, and the `habit-` prefix is its own path segment — so the
+   * `..` after it pops that segment and every further `..` climbs out. It read
+   * `data/avatar.png`, then a file outside `data/` entirely. The fixed
+   * extension list was the only thing keeping the database out of reach, which
+   * bounded it rather than excusing it.
+   */
+  for (const nasty of [
+    '..%2F..%2Favatar',
+    '..%2F..%2F..%2F..%2Fweb%2Fpublic%2Ficon-192',
+    '..%5C..%5Cavatar',
+    'a%2F..%2F..%2F..%2Favatar',
+  ]) {
+    const escaped = await app.inject({ method: 'GET', url: `/api/habits/${nasty}/image` });
+    check(`a crafted id reads nothing (${decodeURIComponent(nasty)})`, escaped.statusCode === 404, `${escaped.statusCode}`);
+  }
+
+  /* And a real habit's picture still works, so the guard is not simply "no". */
+  const made = await post('/api/habits', { name: 'Picture guard', mode: 'gauge' });
+  const guardId = made.json().id;
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  await app.inject({ method: 'PUT', url: `/api/habits/${guardId}/image`, payload: { data: PNG, type: 'image/png' } });
+  const ok = await app.inject({ method: 'GET', url: `/api/habits/${guardId}/image` });
+  check('an ordinary id still reads its own picture', ok.statusCode === 200 && ok.headers['content-type'] === 'image/png');
+  await app.inject({ method: 'DELETE', url: `/api/habits/${guardId}` });
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

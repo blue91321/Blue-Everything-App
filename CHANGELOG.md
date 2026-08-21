@@ -6,6 +6,19 @@ second step `npm version` does not do for you.
 
 ## Unreleased
 
+### Security
+
+- **Reflected XSS on the OAuth callback, fixed.** The provider's `error` and
+  `error_description` were interpolated into hand-built HTML on an
+  unauthenticated route — same origin as the device bearer token in
+  `localStorage`. Confirmed live before the fix: 200, `text/html`, script intact.
+- **Path traversal on the habit picture, fixed.** `habit-${id}.png` put the id
+  in a filename, and the `habit-` prefix is its own path segment, so `..` after
+  it climbed out of `data/`. It read `data/avatar.png` and then a file outside
+  `data/`. Guarded at the path helper, not the route.
+- Both are covered by `smoke` now, along with an assertion that an ordinary id
+  still reads its own picture.
+
 ### Twitch, and a Live tab
 
 - **Twitch connects**, bringing two things: the channels you follow, which join
