@@ -318,6 +318,64 @@ invisible from outside.
   never overwrites one that does, since an author who included it has said what
   they meant.
 
+#### A package can draw, not just serve
+
+`import.meta.glob` resolves at **build time** — that is what makes deleting a
+feature folder a supported operation, and it is exactly why it can never see a
+package installed afterwards. So a package's browser half is loaded the only way
+a browser can load code it did not know about: **fetched with the token, then
+imported as a blob URL.**
+
+`<script src>` and a bare `import('/api/…')` send no Authorization header — the
+constraint that put the icons and the tones *outside* `/api/`. That escape is not
+available here: those are a colour and a sine wave, this is code from a package
+you installed, on a server that binds `0.0.0.0`. So it is fetched like any other
+API call and turned into a blob, the same move the habit pictures make with their
+bytes.
+
+**The cost is that a blob has no base URL**, so a relative `import './x.js'`
+inside a package cannot resolve. A browser half must be **one self-contained
+file** — which is also why React is *handed to it* rather than imported.
+
+**One React, passed in.** A package importing its own would ship a second copy
+and, far worse, hooks from one React inside a tree rendered by another throw in
+ways that read as the package being broken. `register(host)` receives the app's
+React, its API client, `useAsync` and `goTo`, so a package bundles nothing at
+all. Verified: a package's button held state across clicks and left no React
+global behind.
+
+**The manifest declares, the code draws.** `tab` and `panels` are static in
+`module.json` so the drawer and the panel picker can be built without loading
+every package's code — the same split `meta.ts` and the lazy `panel.tsx` already
+make for features. A `tab` or `panels` without a `web` entry is **refused rather
+than ignored**, because the alternative is a drawer entry that opens an empty
+screen with nothing anywhere saying why.
+
+**Panel ids are prefixed by the server, not by the author.** A package declares
+`now` and the app stores `weather:now`, so two packages cannot collide however
+carelessly they are named and nobody can get the convention wrong. An author who
+prefixes it themselves is refused.
+
+**Tab ids are namespaced as `package:<id>`** in the drawer, so a package cannot
+take over a core screen by calling itself `settings`.
+
+**A glyph is one grapheme, not one code point.** `[...glyph][0]` was the first
+version and silently truncated 👨‍💻 to 👨 — three code points joined by a
+zero-width joiner. `Intl.Segmenter`, guarded, since this file is also read while
+deciding how much of the app exists.
+
+**A broken package must not take the app down, and this is the case that
+matters most:** if it did, a bad package would be one you could not reach the
+screen to uninstall. `lazy` rejects into the nearest error boundary and this app
+has none, so a load failure is turned into a component that renders it — naming
+the package, quoting the error, and pointing at Settings → Packages. Verified by
+installing a package whose entry throws on purpose: the drawer stayed intact and
+the banner appeared where the screen would be.
+
+**Only *running* packages reach `/api/session`.** The browser half alone would
+need no restart — it is fetched at runtime — but a tab that appeared instantly
+while its endpoints waited for a restart is worse than one rule applied evenly.
+
 #### Loading is deliberately unlike `registerFeature`
 
 The import is a genuine dynamic `import()` of a file URL rather than a static

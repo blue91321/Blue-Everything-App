@@ -7,6 +7,7 @@ import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
 import { activeFeatures, isEnabled, missingFeatures } from '../features.js';
 import { VERSION } from '../version.js';
+import { runningPackages } from '../modules.js';
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -28,6 +29,17 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     // Switched on but absent from disk. Named separately so the app can say
     // "the folder is gone" rather than "you turned it off" — different fixes.
     featuresMissing: missingFeatures(),
+    /*
+     * Installed packages that contribute a tab or a panel, for the same reason
+     * the feature list rides along: the drawer has to be drawn once, correctly,
+     * rather than redrawn a round trip later with an extra entry appearing.
+     *
+     * Only the *chrome* — a label, a glyph, an order, the panels offered. The
+     * code behind them is fetched lazily from `/api/modules/:id/web` when the
+     * tab is first opened, so a package you never look at costs one line of
+     * JSON here and nothing else.
+     */
+    packages: runningPackages(),
   }));
 
   /**

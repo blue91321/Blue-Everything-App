@@ -19,7 +19,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isSafeEntryName, readZip, stripCommonPrefix, ZipError, type ZipEntry } from '../zip.js';
-import { validateModuleManifest } from '@everything/shared/modules';
+import { fullPanelId, validateModuleManifest } from '@everything/shared/modules';
 import { installFromZip, modulesDir, removeModule, scanModules, setModuleEnabled } from '../modules.js';
 
 let failures = 0;
@@ -225,7 +225,62 @@ check('a non-object manifest is refused', validateModuleManifest('nope').manifes
 check('an array manifest is refused', validateModuleManifest([]).manifest === null);
 check('null is refused', validateModuleManifest(null).manifest === null);
 
-console.log('\nInstalling and removing, for real\n');
+console.log('');
+console.log('The browser half');
+console.log('');
+
+const base = { id: 'w-x', label: 'X', blurb: 'b', version: '1' };
+
+const withUi = validateModuleManifest({ ...base, web: 'web/ui.js', tab: { label: 'Weather', glyph: '\u{1F326}' } });
+check('a web entry and a tab are accepted', withUi.manifest !== null);
+check('  ...and a tab with no order lands after the built-ins', withUi.manifest?.tab?.order === 50);
+
+const tsEntry = validateModuleManifest({ ...base, web: 'web/ui.ts' });
+check('a .ts browser entry is refused - nothing strips types on that side', tsEntry.manifest === null);
+
+const webEscaping = validateModuleManifest({ ...base, web: '../../packages/web/src/api.js' });
+check('a browser entry climbing out is refused', webEscaping.manifest === null);
+
+const tabAlone = validateModuleManifest({ ...base, tab: { label: 'Nothing' } });
+check('a tab without a web entry is refused, not ignored', tabAlone.manifest === null);
+check('  ...and says why', /nothing to show/.test(tabAlone.problems[0]?.message ?? ''));
+
+const panelsAlone = validateModuleManifest({ ...base, panels: [{ id: 'now', label: 'Now' }] });
+check('panels without a web entry are refused too', panelsAlone.manifest === null);
+
+const panels = validateModuleManifest({ ...base, web: 'ui.js', panels: [{ id: 'now', label: 'Now', hint: 'h' }] });
+check('a panel is accepted', panels.manifest?.panels?.length === 1);
+
+const dupePanels = validateModuleManifest({ ...base, web: 'ui.js', panels: [{ id: 'now', label: 'A' }, { id: 'now', label: 'B' }] });
+check('two panels with one id are refused', dupePanels.manifest === null);
+
+const shoutyPanel = validateModuleManifest({ ...base, web: 'ui.js', panels: [{ id: 'Now', label: 'A' }] });
+check('an uppercase panel id is refused', shoutyPanel.manifest === null);
+
+const prefixedPanel = validateModuleManifest({ ...base, web: 'ui.js', panels: [{ id: 'w-x:now', label: 'A' }] });
+check('an author cannot prefix the panel id themselves', prefixedPanel.manifest === null);
+
+check('the prefix is added for them', fullPanelId('weather', 'now') === 'weather:now');
+
+/*
+ * A glyph is one grapheme, not one code point. `[...glyph][0]` was the first
+ * version and quietly truncated every joined emoji to its first half.
+ */
+for (const [what, glyph] of [
+  ['a plain emoji', '\u{1F44B}'],
+  ['a joined emoji', '\u{1F468}\u200D\u{1F4BB}'],
+  ['a flag', '\u{1F3F3}\uFE0F\u200D\u{1F308}'],
+] as const) {
+  const got = validateModuleManifest({ ...base, web: 'ui.js', tab: { label: 'T', glyph } }).manifest?.tab?.glyph;
+  check(`${what} survives whole (${[...glyph].length} code points)`, got === glyph);
+}
+
+const longGlyph = validateModuleManifest({ ...base, web: 'ui.js', tab: { label: 'T', glyph: 'abc' } });
+check('a multi-character glyph is cut to one', longGlyph.manifest?.tab?.glyph === 'a');
+
+console.log('');
+console.log('Installing and removing, for real');
+console.log('');
 
 /*
  * A genuine round trip through the disk, using an id nothing else could want.

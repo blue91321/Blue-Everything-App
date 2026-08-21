@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { ServerUnreachable, api, clearToken, setToken, type Session } from './api';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
 import { setEnabledFeatures, webFeatures } from './features';
+import { installedPackages, packageScreen, setInstalledPackages } from './packages';
 import {
   applyFavicon,
   applyLook,
@@ -262,18 +263,45 @@ export function App() {
   // Published before anything renders, for the screens too deep to be given it
   // as a prop — see the note in ./features.
   setEnabledFeatures(enabled);
+  /*
+   * Published the same way and at the same moment, for the same reason: the
+   * drawer and the panel picker are built during this render, and a package
+   * list arriving a round trip later would draw the menu twice.
+   */
+  setInstalledPackages(session.packages, { version: session.version ?? '', local: session.local });
 
   // Widened to NavItem so a discovered feature and a core screen are the same
   // shape here; features never pin, but the drawer should not have to care.
   const nav: NavItem[] = [
     ...CORE_NAV.filter((item) => item.always || isOn(item.id)),
     ...webFeatures.filter((f) => isOn(f.id)).map((f) => ({ ...f, always: false })),
+    /*
+     * Installed packages sit in the same list, sorted by the same `order`, so a
+     * package chooses where its tab goes exactly as a built-in feature does.
+     * The server only lists the ones actually running, so there is no filter to
+     * apply here — being switched off means never reaching this list at all.
+     */
+    ...installedPackages()
+      .filter((pkg) => pkg.tab !== null)
+      .map((pkg) => ({
+        id: `package:${pkg.id}`,
+        label: pkg.tab!.label,
+        glyph: pkg.tab!.glyph,
+        order: pkg.tab!.order,
+        always: false,
+      })),
   ].sort((a, b) => a.order - b.order);
 
   // Whatever was open may have just been switched off from another device —
   // the SSE stream reloads every client, so this can change under a live page.
   const current = nav.find((n) => n.id === view) ?? nav[0];
   const feature = webFeatures.find((f) => f.id === current.id);
+  /*
+   * Namespaced so a package can never take over a core tab by choosing the id
+   * `settings`. The prefix is added here rather than by the server, because it
+   * is a fact about this app's navigation rather than about the package.
+   */
+  const packageId = current.id.startsWith('package:') ? current.id.slice('package:'.length) : null;
 
   const shown = isDesktop || drawer.open || drawer.dragX !== null;
   const offset = drawer.dragX ?? (drawer.open ? DRAWER_WIDTH : 0);
@@ -363,6 +391,21 @@ export function App() {
         {feature && (
           <Suspense fallback={<div className="empty">loading…</div>}>
             <feature.View local={session.local} search={search} onFocused={clearFocus} />
+          </Suspense>
+        )}
+
+        {/*
+          A package's screen, fetched the first time its tab is opened — same
+          shape as a feature's, one level more indirect. `key` matters: without
+          it, switching between two package tabs would reuse the component
+          instance and show the previous package's state under the new name.
+        */}
+        {packageId && (
+          <Suspense fallback={<div className="empty">loading…</div>}>
+            {(() => {
+              const Screen = packageScreen(packageId);
+              return <Screen key={packageId} local={session.local} search={search} onFocused={clearFocus} />;
+            })()}
           </Suspense>
         )}
       </div>

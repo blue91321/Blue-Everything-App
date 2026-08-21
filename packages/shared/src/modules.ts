@@ -57,8 +57,54 @@ export interface ModuleManifest {
    * pretend to offer one.
    */
   server?: string;
+  /**
+   * Entry point for its browser-side half, relative to the module folder.
+   *
+   * **One self-contained ES module.** The PWA fetches it with the device token
+   * and imports it as a blob URL — which it must, because `<script src>` and a
+   * bare `import()` of a path send no Authorization header, and this app keeps
+   * everything personal behind one. A blob has no base URL, so a relative
+   * `import './other.js'` inside it cannot resolve: whatever the package needs
+   * has to be in this one file.
+   *
+   * It gets React and the API client *passed in* rather than importing them, so
+   * a package bundles neither and there is exactly one React on the page.
+   */
+  web?: string;
+  /** A tab in the drawer. Only meaningful alongside `web`. */
+  tab?: ModuleTab;
+  /** What it offers to put in the Dashboard's side column. */
+  panels?: ModulePanel[];
   /** Free text shown under the row, for anything the blurb cannot hold. */
   notes?: string;
+}
+
+export interface ModuleTab {
+  label: string;
+  /** One character in the drawer, like the built-in tabs. */
+  glyph?: string;
+  /**
+   * Where it sits. Core screens occupy 10–40 and Settings pins to the foot, so
+   * a package with no opinion lands after everything built in and before it.
+   */
+  order?: number;
+}
+
+export interface ModulePanel {
+  /**
+   * Local to the module — `now`, not `weather:now`. The full id is made by
+   * prefixing the module's own, so two packages cannot collide however
+   * carelessly they are named, and an author cannot get the convention wrong.
+   */
+  id: string;
+  label: string;
+  /** One line under the picker, saying what you would actually see. */
+  hint?: string;
+}
+
+/** `now` in the weather module becomes `weather:now` everywhere outside it. */
+export function fullPanelId(moduleId: string, panelId: string): string {
+  return `${moduleId}:${panelId}`;
 }
 
 export interface ModuleProblem {
@@ -139,6 +185,23 @@ export function validateModuleManifest(raw: unknown): { manifest: ModuleManifest
     }
   }
 
+  /* The browser entry gets the same path rule as the server one. */
+  const web = text('web', false, 200);
+  if (web !== undefined) {
+    if (web.startsWith('/') || web.startsWith('\\') || /^[A-Za-z]:/.test(web)) {
+      problems.push({ field: 'web', message: 'must be a path inside the module, not an absolute one' });
+    } else if (web.split(/[/\\]/).includes('..')) {
+      problems.push({ field: 'web', message: 'must not climb outside the module folder' });
+    } else if (!/\.(js|mjs)$/.test(web)) {
+      // No `.ts` here, unlike the server entry: the browser gets this file
+      // verbatim and nothing on that side strips types.
+      problems.push({ field: 'web', message: 'must point at a built .js or .mjs file' });
+    }
+  }
+
+  const tab = readTab(value.tab, web, problems);
+  const panels = readPanels(value.panels, web, problems);
+
   if (problems.length > 0) return { manifest: null, problems };
 
   return {
@@ -149,10 +212,122 @@ export function validateModuleManifest(raw: unknown): { manifest: ModuleManifest
       version: version!,
       ...(author === undefined ? {} : { author }),
       ...(server === undefined ? {} : { server }),
+      ...(web === undefined ? {} : { web }),
+      ...(tab === undefined ? {} : { tab }),
+      ...(panels === undefined ? {} : { panels }),
       ...(notes === undefined ? {} : { notes }),
     },
     problems: [],
   };
+}
+
+/**
+ * A tab is refused without a `web` entry rather than ignored.
+ *
+ * A manifest asking for a tab it cannot draw is a mistake somebody made, and
+ * the failure it produces otherwise is the worst kind: a drawer entry that
+ * opens an empty screen, with nothing anywhere saying why.
+ */
+function readTab(raw: unknown, web: string | undefined, problems: ModuleProblem[]): ModuleTab | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    problems.push({ field: 'tab', message: 'must be an object' });
+    return undefined;
+  }
+  if (web === undefined) {
+    problems.push({ field: 'tab', message: 'needs a "web" entry point — there would be nothing to show' });
+    return undefined;
+  }
+
+  const value = raw as Record<string, unknown>;
+  const label = typeof value.label === 'string' ? value.label.trim() : '';
+  if (label === '' || label.length > 32) {
+    problems.push({ field: 'tab.label', message: 'must be 1–32 characters' });
+    return undefined;
+  }
+
+  const glyph = typeof value.glyph === 'string' ? value.glyph.trim() : '';
+  const order = typeof value.order === 'number' && Number.isFinite(value.order) ? value.order : 50;
+
+  return { label, order, ...(glyph === '' ? {} : { glyph: firstGrapheme(glyph) }) };
+}
+
+/**
+ * One character as a person would count them, not as the string does.
+ *
+ * `[...glyph][0]` takes the first **code point**, which is right for 👋 and
+ * wrong for every emoji built out of several — 👨‍💻 is three code points joined
+ * by a zero-width joiner, and slicing it yields a lone 👨. A package author
+ * picking one of those would get a tab icon that was silently not the one they
+ * chose.
+ *
+ * `Intl.Segmenter` is built into Node 24 and every browser this app runs in, so
+ * it costs no dependency — but it is guarded anyway, because this file is also
+ * read by `npm run features`-style scripts on whatever Node happens to be
+ * installed, and a missing Intl API should cost a mangled glyph rather than a
+ * crash while deciding which parts of the app exist.
+ */
+function firstGrapheme(text: string): string {
+  const segmenter = (Intl as { Segmenter?: new (locale?: string, options?: { granularity: string }) => { segment(input: string): Iterable<{ segment: string }> } }).Segmenter;
+  if (segmenter) {
+    for (const { segment } of new segmenter(undefined, { granularity: 'grapheme' }).segment(text)) return segment;
+    return '';
+  }
+  return [...text][0] ?? '';
+}
+
+function readPanels(raw: unknown, web: string | undefined, problems: ModuleProblem[]): ModulePanel[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    problems.push({ field: 'panels', message: 'must be an array' });
+    return undefined;
+  }
+  if (raw.length === 0) return undefined;
+  if (web === undefined) {
+    problems.push({ field: 'panels', message: 'need a "web" entry point — there would be nothing to draw' });
+    return undefined;
+  }
+  if (raw.length > 8) {
+    problems.push({ field: 'panels', message: 'more than eight is not a side column, it is a second app' });
+    return undefined;
+  }
+
+  const out: ModulePanel[] = [];
+  const seen = new Set<string>();
+
+  for (const [index, entry] of raw.entries()) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      problems.push({ field: `panels[${index}]`, message: 'must be an object' });
+      continue;
+    }
+    const value = entry as Record<string, unknown>;
+    const id = typeof value.id === 'string' ? value.id.trim() : '';
+    const label = typeof value.label === 'string' ? value.label.trim() : '';
+    const hint = typeof value.hint === 'string' ? value.hint.trim() : '';
+
+    /*
+     * The same rule as a module id, minus the reserved-word check: this half is
+     * namespaced by the module's own id, so `weather:notes` is nobody else's
+     * business. The shape still matters — it ends up in a stored settings list.
+     */
+    if (!/^[a-z][a-z0-9-]{0,31}$/.test(id)) {
+      problems.push({ field: `panels[${index}].id`, message: 'must be lowercase letters, digits and hyphens' });
+      continue;
+    }
+    if (seen.has(id)) {
+      problems.push({ field: `panels[${index}].id`, message: `"${id}" appears twice` });
+      continue;
+    }
+    if (label === '' || label.length > 48) {
+      problems.push({ field: `panels[${index}].label`, message: 'must be 1–48 characters' });
+      continue;
+    }
+
+    seen.add(id);
+    out.push({ id, label, ...(hint === '' ? {} : { hint }) });
+  }
+
+  return out.length > 0 ? out : undefined;
 }
 
 /** Is this a name we are willing to use as a folder under `modules/`? */

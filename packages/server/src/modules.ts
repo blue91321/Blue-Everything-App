@@ -32,6 +32,7 @@ import type { FastifyInstance } from 'fastify';
 import {
   MODULES_STATE_FILE,
   MODULE_MANIFEST,
+  fullPanelId,
   isModuleId,
   validateModuleManifest,
   type ModuleManifest,
@@ -222,6 +223,73 @@ export function scanModules(): InstalledModule[] {
   }
 
   return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** What a running package contributes to the app's own chrome. */
+export interface PackageUi {
+  id: string;
+  label: string;
+  tab: { label: string; glyph: string; order: number } | null;
+  /** Full ids — `weather:now` — because that is what a settings row stores. */
+  panels: { id: string; label: string; hint?: string }[];
+}
+
+/**
+ * Packages with a browser half, for `/api/session`.
+ *
+ * **Running, not merely enabled**, so there is one rule on this screen rather
+ * than two: switching a package on takes a restart, exactly as a feature does.
+ * The browser half alone would not need one — it is fetched at runtime — but a
+ * tab that appears immediately while the endpoints behind it wait for a restart
+ * is a worse experience than a tab that appears when everything else does.
+ */
+export function runningPackages(): PackageUi[] {
+  return scanModules()
+    .filter((mod) => mod.running && mod.manifest?.web)
+    .map((mod) => {
+      const manifest = mod.manifest!;
+      return {
+        id: mod.id,
+        label: manifest.label,
+        tab: manifest.tab
+          ? {
+              label: manifest.tab.label,
+              // The drawer wants a character; a package that offered none gets
+              // one rather than a hole where every other tab has a glyph.
+              glyph: manifest.tab.glyph ?? '◆',
+              order: manifest.tab.order ?? 50,
+            }
+          : null,
+        panels: (manifest.panels ?? []).map((panel) => ({
+          id: fullPanelId(mod.id, panel.id),
+          label: panel.label,
+          ...(panel.hint === undefined ? {} : { hint: panel.hint }),
+        })),
+      };
+    });
+}
+
+/**
+ * The text of a package's browser entry, or null.
+ *
+ * Only for a **running** package, which matters more than it looks: it means a
+ * package cannot serve script to the page from the moment it lands on disk, but
+ * only once it has been switched on deliberately and the app restarted.
+ */
+export function readWebEntry(id: string): string | null {
+  if (!isModuleId(id)) return null;
+
+  const mod = scanModules().find((entry) => entry.id === id);
+  if (!mod?.manifest?.web || !mod.running) return null;
+
+  const file = resolve(mod.dir, mod.manifest.web);
+  const rel = relative(mod.dir, file);
+  // Third check on this path, after the manifest validator and the installer.
+  // The file is handed to a browser to execute, so it is the last place to be
+  // clever about trusting an earlier check.
+  if (rel.startsWith('..') || !existsSync(file)) return null;
+
+  return readFileSync(file, 'utf8');
 }
 
 /**

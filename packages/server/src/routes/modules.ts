@@ -22,6 +22,7 @@ import {
   installFromZip,
   modulesDir,
   openModulesFolder,
+  readWebEntry,
   removeModule,
   scanModules,
   setModuleEnabled,
@@ -129,6 +130,44 @@ export async function moduleRoutes(app: FastifyInstance): Promise<void> {
       }
     }
   );
+
+  /**
+   * A package's browser half, as JavaScript.
+   *
+   * Served as text under `/api/` rather than as a script the page could link,
+   * and that is the whole design. `<script src>` and a bare `import()` of a URL
+   * send no Authorization header, so serving this where a browser could fetch
+   * it directly would mean putting an installed package's code outside auth on
+   * a server that binds `0.0.0.0`. Instead the PWA fetches it *with* the token
+   * and imports the result as a blob — the same move the habit pictures make,
+   * for the same reason.
+   *
+   * Readable from the phone, unlike everything else here that touches packages:
+   * this is what the app is *made of* on that device, and a phone that could
+   * not load it would simply show a broken tab.
+   */
+  app.get('/api/modules/:id/web', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const source = readWebEntry(id);
+    /*
+     * One 404 for every reason — not installed, not switched on, no browser
+     * half, entry missing. The caller does nothing different with any of them,
+     * and the Packages screen is where a package's problems are explained
+     * properly, with the manifest in hand.
+     */
+    if (source === null) return reply.code(404).send({ error: 'no browser half for that package' });
+
+    return reply
+      .header('content-type', 'text/javascript; charset=utf-8')
+      /*
+       * Never cached. A package is replaced in place by reinstalling, and a
+       * cached copy would leave the old screen running behind a version number
+       * that had already changed — the one bug that would look like the install
+       * silently failing.
+       */
+      .header('cache-control', 'no-store')
+      .send(source);
+  });
 
   /** Switch one on or off. Takes a restart, like a feature. */
   app.patch('/api/modules/:id', async (request, reply) => {

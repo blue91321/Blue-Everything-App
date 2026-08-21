@@ -564,6 +564,14 @@ export interface TimeEntry {
 
 /* ---------- endpoints ---------- */
 
+/** A package's contribution to the app's chrome, from `/api/session`. */
+export interface SessionPackage {
+  id: string;
+  label: string;
+  tab: { label: string; glyph: string; order: number } | null;
+  panels: { id: string; label: string; hint?: string }[];
+}
+
 export interface Session {
   ok: boolean;
   /** True when running on the PC hosting the server — no token needed. */
@@ -572,6 +580,12 @@ export interface Session {
   deviceKind: string | null;
   /** What the server is running. Absent on a server older than this field. */
   version?: string;
+  /**
+   * Installed packages that draw something. Absent on a server that predates
+   * them, which is read as "none" rather than as an error — the same treatment
+   * `features` gets, and for the same reason.
+   */
+  packages?: SessionPackage[];
   /**
    * Which optional features this server runs, e.g. `['vault', 'voice']`.
    *
@@ -1133,6 +1147,27 @@ export const api = {
       request<{ ok: boolean; id: string }>(`/api/modules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     /** Local-only: a file manager can only open on the machine it runs on. */
     openFolder: () => post<{ ok: boolean; folder: string }>('/api/modules/folder'),
+    /**
+     * A package's browser half, as source text.
+     *
+     * Its own fetch rather than `request`, which parses JSON — this is
+     * JavaScript, and it is deliberately fetched *with the token* so the route
+     * can stay behind auth. `packages.tsx` turns it into a blob and imports it;
+     * see the note there on why a URL import would not do.
+     */
+    web: async (id: string): Promise<string> => {
+      let response: Response;
+      try {
+        response = await fetch(`/api/modules/${encodeURIComponent(id)}/web`, {
+          headers: { authorization: `Bearer ${getToken()}` },
+        });
+      } catch (cause) {
+        throw new ServerUnreachable(cause instanceof Error ? cause.message : 'could not reach the server');
+      }
+      if (response.status === 401) throw new Unauthorized('this device is not paired');
+      if (!response.ok) throw new Error(await errorMessage(response, 'GET', `/api/modules/${id}/web`));
+      return response.text();
+    },
   },
 
   settings: {

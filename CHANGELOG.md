@@ -39,6 +39,22 @@ second step `npm version` does not do for you.
   `Compress-Archive` — a hand-rolled parser tested only against a hand-rolled
   writer proves the two agree, which is worth much less than it looks.
 
+### A package can draw its own screens
+
+- **A package can add a tab and Dashboard panels**, not just endpoints. Declared
+  in `module.json`, drawn by one self-contained JS file the app fetches and
+  imports at runtime.
+- **Fetched with the device token and imported as a blob**, because neither
+  `<script src>` nor a URL import sends an Authorization header — and unlike the
+  icons and the tones, a package's code is not something to put outside auth on
+  a server that binds `0.0.0.0`.
+- **React is handed to the package rather than imported by it**, so there is one
+  copy on the page and hooks work. A package bundles nothing.
+- **A broken package cannot take the app down** — which is the case that matters,
+  since it would otherwise be one you could not reach the screen to uninstall.
+  The failure renders as a banner naming the package and quoting the error.
+- A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
+
 ### Two Windows details, each found by hitting it
 
 - **A byte-order mark is now stripped before every hand-edited JSON parse.**
