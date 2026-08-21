@@ -1015,6 +1015,25 @@ button {
 .presence-dot.presence-offline { background: var(--presence-offline); }
 
 /*
+ * Playing, but away — the away colour, carrying a ring of the in-game one.
+ *
+ * **The fill is yellow and that is the load-bearing half.** The whole reason
+ * this state exists is that a blue dot was read as "available" for somebody
+ * sitting AFK in a match, so it must belong to the away family at a glance;
+ * anything else reintroduces the mistake. The ring adds the second fact rather
+ * than replacing the first — a game is running — and composes two colours that
+ * are already learned instead of inventing a seventh nobody could read.
+ *
+ * Drawn with an inset shadow rather than a border, because the border is
+ * already spoken for: it is the surface-coloured outline that keeps every dot
+ * legible against a busy avatar.
+ */
+.presence-dot.presence-in-game-away {
+  background: var(--presence-away);
+  box-shadow: inset 0 0 0 2px var(--presence-in-game);
+}
+
+/*
  * "I cannot tell" is drawn hollow rather than in a sixth colour.
  *
  * Discord returns its friends list with no presence on it at all, and any
@@ -1324,12 +1343,22 @@ button {
 }
 
 /* A whole panel row that is a button. Resets what <button> assumes. */
+/*
+ * A whole panel row that is a button — or, for the live panel, a link.
+ *
+ * Resets what each element type assumes: `font`, `color`, `width` and
+ * `text-align` for the button, and `text-decoration` for the anchor. That last
+ * one only became necessary when the live panel arrived: these rules were
+ * written for the friends panel, where a `<button>` is never underlined, so a
+ * link inheriting the browser's default underlined every title in the column.
+ */
 .panel-row {
   display: block;
   width: 100%;
   text-align: left;
   font: inherit;
   color: inherit;
+  text-decoration: none;
   cursor: pointer;
 }
 
@@ -1389,4 +1418,79 @@ button {
 .friend-row > .btn,
 .friend-row > a.btn {
   flex: none;
+}
+
+/* ---------- who is on air ---------- */
+
+.live-card {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.live-card:hover,
+.live-card:focus-visible {
+  border-color: var(--accent);
+}
+
+.live-thumb {
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--card);
+}
+
+/*
+ * Red, and deliberately not `var(--accent)` — the same argument the presence
+ * dots make. "Live" is a colour people have already learned from every service
+ * that has ever had one, and re-teaching it per accent would make the one mark
+ * on the row that carries meaning the one you cannot read at a glance.
+ */
+.live-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e5484d;
+}
+
+/* The star beside a live row. A sibling of the link, never nested inside it. */
+.live-card-wrap .live-card {
+  border: none;
+  padding: 0;
+  background: none;
+  min-width: 0;
+}
+
+.star {
+  flex: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 5px;
+  color: var(--muted, #8b90a0);
+}
+
+.star.on {
+  /* The accent, unlike the live dot — nothing is learned about the colour of a
+     favourite, so it may as well match whatever the app is set to. */
+  color: var(--accent);
+}
+
+.star:hover:not(:disabled),
+.star:focus-visible {
+  background: var(--card);
+  color: var(--accent);
+}
+
+/* Stacked panels need a gap between them, and a rule to read as separate. */
+.dash-panel > :not(:first-child) {
+  margin-top: 18px;
+}
+
+.dash-panel > .panel-settings {
+  margin-top: 12px;
 }

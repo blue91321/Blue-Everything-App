@@ -946,6 +946,198 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   );
 }
 
+/* ------------------------------------------------------------------ */
+
+console.log('\nstarred live channels, and narrowing the panel to them');
+
+{
+  const { db } = await import('../db/client.js');
+  const { follows: followsTable, liveStreams } = await import('../db/schema.js');
+  const { eq } = await import('drizzle-orm');
+
+  /*
+   * Seeded rather than fetched. What is under test is the join, the star and the
+   * narrowing — all of which are this app's own rules — and a test that stood up
+   * a fake Twitch would only prove the fake matched the code.
+   */
+  const channel = (id: string, name: string, viewers: number) => ({
+    provider: 'twitch',
+    providerAccountId: id,
+    streamId: `s-${id}`,
+    channelName: name,
+    title: `${name} streaming`,
+    category: 'Just Chatting',
+    viewers,
+    startedAt: Date.now() - 3_600_000,
+    thumbnailUrl: null,
+    url: `https://twitch.tv/${name}`,
+    seenAt: Date.now(),
+  });
+
+  await db.insert(liveStreams).values([channel('1', 'alfa', 900), channel('2', 'bravo', 300)]);
+  // Only one of the two is in the followed list, on purpose — see below.
+  await db.insert(followsTable).values({
+    provider: 'twitch',
+    providerAccountId: '1',
+    kind: 'channel',
+    name: 'alfa',
+    seenAt: Date.now(),
+  });
+
+  const live = async () => (await app.inject({ method: 'GET', url: '/api/integrations/live' })).json();
+
+  const first = await live();
+  check('both live channels are listed', first.streams.length === 2, `${first.streams.length}`);
+  /*
+   * **A left join, and this is why.** `bravo` is live but not in the followed
+   * list — the ordinary case before that list has synced — and an inner join
+   * would have dropped it off the screen entirely rather than merely showing it
+   * unstarred.
+   */
+  check('one not in the followed list still appears', first.streams.some((s: { channelName: string }) => s.channelName === 'bravo'));
+  check('and busiest is first', first.streams[0].channelName === 'alfa');
+  check('nothing is starred to begin with', first.streams.every((s: { favourite: boolean }) => !s.favourite));
+
+  const starred = await post('/api/integrations/follows/favourite', {
+    provider: 'twitch',
+    providerAccountId: '1',
+    favourite: true,
+  });
+  check('a followed channel can be starred', starred.statusCode === 200, starred.body);
+  const after = await live();
+  check('and the star comes back on the row', after.streams.find((s: { channelName: string }) => s.channelName === 'alfa').favourite === true);
+  check('without starring anybody else', after.streams.find((s: { channelName: string }) => s.channelName === 'bravo').favourite === false);
+
+  /*
+   * A live channel with no followed row has nothing to flag. A silent 200 would
+   * spring the star back on the next reload with nothing said, so it refuses.
+   */
+  const cannot = await post('/api/integrations/follows/favourite', {
+    provider: 'twitch',
+    providerAccountId: '2',
+    favourite: true,
+  });
+  check('one that is not followed yet is refused, not silently dropped', cannot.statusCode === 409, `${cannot.statusCode}`);
+
+  /* The scope rides on the live response so the panel needs no second request. */
+  check('the scope defaults to everyone', (await live()).scope === 'all');
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { livePanelScope: 'favourites' } });
+  check('and follows the setting', (await live()).scope === 'favourites');
+  /*
+   * The endpoint keeps returning everything either way — the *panel* narrows.
+   * Filtering here would have meant a second endpoint or a query parameter to
+   * tell the tab and the panel apart.
+   */
+  check('while the endpoint still returns them all', (await live()).streams.length === 2);
+
+  /* A star survives a sync, because `replaceFollows` names the columns it writes. */
+  const { replaceFollows } = await import('../features/integrations/store.js');
+  await replaceFollows('twitch', [
+    { provider: 'twitch', providerAccountId: '1', kind: 'channel', name: 'alfa renamed' },
+    { provider: 'twitch', providerAccountId: '2', kind: 'channel', name: 'bravo' },
+  ]);
+  const synced = await live();
+  check(
+    'a star survives the followed list syncing',
+    synced.streams.find((s: { providerAccountId: string }) => s.providerAccountId === '1').favourite === true
+  );
+  check('and the sync did land', (await db.select().from(followsTable).where(eq(followsTable.providerAccountId, '1')))[0].name === 'alfa renamed');
+}
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nthe side column holds a list, in order');
+
+{
+  const settingsNow = async () => (await app.inject({ method: 'GET', url: '/api/settings' })).json();
+  const setPanels = async (dashboardPanels: string[]) =>
+    app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardPanels } });
+
+  await setPanels(['notes:recent', 'integrations:live']);
+  const two = await settingsNow();
+  check('a list is stored in the order given', two.dashboardPanels.join(',') === 'notes:recent,integrations:live', two.dashboardPanels.join(','));
+
+  /*
+   * The single field is kept in step with the first entry. A PWA older than the
+   * list column reads only that, and would otherwise draw an empty side column
+   * with nothing saying why.
+   */
+  check('the legacy single field follows the first', two.dashboardPanel === 'notes:recent', two.dashboardPanel);
+
+  await setPanels(['integrations:live', 'notes:recent']);
+  const swapped = await settingsNow();
+  check('reordering is stored', swapped.dashboardPanels.join(',') === 'integrations:live,notes:recent');
+  check('and the legacy field follows it', swapped.dashboardPanel === 'integrations:live');
+
+  /*
+   * The same panel twice would draw twice and hand React two children with one
+   * key, and there is no reading of "who is online, then who is online" worth
+   * supporting.
+   */
+  await setPanels(['notes:recent', 'notes:recent', 'integrations:friends']);
+  const deduped = await settingsNow();
+  check('duplicates are dropped', deduped.dashboardPanels.join(',') === 'notes:recent,integrations:friends', deduped.dashboardPanels.join(','));
+
+  await setPanels([]);
+  const empty = await settingsNow();
+  check('an empty list is a real choice', empty.dashboardPanels.length === 0);
+  check('and empties the legacy field with it', empty.dashboardPanel === '');
+
+  /* Opaque, like every other panel id — core never validates the values. */
+  await setPanels(['something:nobody-has']);
+  check('an unknown id is stored rather than refused', (await settingsNow()).dashboardPanels[0] === 'something:nobody-has');
+
+  await setPanels(['integrations:friends']);
+}
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nthings that must stay shut');
+
+{
+  /*
+   * **Reflected XSS on the OAuth callback.** `error` and `error_description`
+   * were interpolated straight into hand-built HTML on an unauthenticated
+   * route — same origin as the device bearer token in `localStorage`. Confirmed
+   * against the running server before the fix: 200, text/html, script intact.
+   */
+  const reflected = await app.inject({
+    method: 'GET',
+    url: '/oauth/callback/spotify?error=%3Cscript%3EPWNED%3C/script%3E&error_description=%22%3E%3Cimg%20onerror%3Dx%3E',
+  });
+  check('the callback still answers', reflected.statusCode === 200);
+  check('but no tag survives it', !reflected.body.includes('<script>'), reflected.body.slice(0, 160));
+  check('nor an attribute break', !reflected.body.includes('"><img'), reflected.body.slice(0, 160));
+  check('and the text is still readable', reflected.body.includes('&lt;script&gt;PWNED'));
+
+  /*
+   * **Path traversal on the habit picture.** The id goes straight into
+   * `habit-${id}.png`, and the `habit-` prefix is its own path segment — so the
+   * `..` after it pops that segment and every further `..` climbs out. It read
+   * `data/avatar.png`, then a file outside `data/` entirely. The fixed
+   * extension list was the only thing keeping the database out of reach, which
+   * bounded it rather than excusing it.
+   */
+  for (const nasty of [
+    '..%2F..%2Favatar',
+    '..%2F..%2F..%2F..%2Fweb%2Fpublic%2Ficon-192',
+    '..%5C..%5Cavatar',
+    'a%2F..%2F..%2F..%2Favatar',
+  ]) {
+    const escaped = await app.inject({ method: 'GET', url: `/api/habits/${nasty}/image` });
+    check(`a crafted id reads nothing (${decodeURIComponent(nasty)})`, escaped.statusCode === 404, `${escaped.statusCode}`);
+  }
+
+  /* And a real habit's picture still works, so the guard is not simply "no". */
+  const made = await post('/api/habits', { name: 'Picture guard', mode: 'gauge' });
+  const guardId = made.json().id;
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  await app.inject({ method: 'PUT', url: `/api/habits/${guardId}/image`, payload: { data: PNG, type: 'image/png' } });
+  const ok = await app.inject({ method: 'GET', url: `/api/habits/${guardId}/image` });
+  check('an ordinary id still reads its own picture', ok.statusCode === 200 && ok.headers['content-type'] === 'image/png');
+  await app.inject({ method: 'DELETE', url: `/api/habits/${guardId}` });
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

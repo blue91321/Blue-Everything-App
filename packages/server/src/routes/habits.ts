@@ -69,10 +69,35 @@ const CONTENT_TYPE: Record<string, string> = {
   webp: 'image/webp',
 };
 
-const imagePath = (habitId: string, extension: string): string =>
-  resolve(dirname(fileURLToPath(import.meta.url)), '../../data', `habit-${habitId}.${extension}`);
+/**
+ * A habit id that is safe to put in a filename.
+ *
+ * **This is a path traversal guard and it is not optional.** The id arrives
+ * straight off the URL, and `habit-${id}.png` with an id of `../../avatar`
+ * normalises to a file two directories up — the `habit-` prefix is its own path
+ * segment, so the `..` that follows pops it and every further `..` climbs out of
+ * `data/` entirely. Confirmed by reading `data/avatar.png` and then a file
+ * outside `data/` through the read route before this existed.
+ *
+ * The extension is fixed by the caller, so only images were ever reachable and
+ * the database never was. That bounded it; it did not make it acceptable.
+ *
+ * Checked here rather than in the route, so a second caller cannot reintroduce
+ * it — the read route had no `habits` lookup at all, which is what made it the
+ * one that leaked.
+ */
+const SAFE_ID = /^[A-Za-z0-9-]{1,64}$/;
+
+const imagePath = (habitId: string, extension: string): string => {
+  if (!SAFE_ID.test(habitId)) throw new Error('unsafe habit id');
+  return resolve(dirname(fileURLToPath(import.meta.url)), '../../data', `habit-${habitId}.${extension}`);
+};
 
 function storedImage(habitId: string): { path: string; extension: string } | null {
+  // An id that could never name a habit is "no picture", not an error page —
+  // the caller's 404 is the right answer and says nothing about the disk.
+  if (!SAFE_ID.test(habitId)) return null;
+
   for (const extension of Object.values(IMAGE_TYPES)) {
     const path = imagePath(habitId, extension);
     if (existsSync(path)) return { path, extension };

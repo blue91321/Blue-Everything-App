@@ -13,6 +13,7 @@ import {
   type FollowedAccount,
   type CollectionKind,
   type MediaKind,
+  type LiveStream,
   type ProviderId,
   type ReportedFriend,
 } from '@everything/shared/integrations';
@@ -22,6 +23,7 @@ import {
   friends,
   integrationAccounts,
   integrationTaskLinks,
+  liveStreams,
   mediaCollectionItems,
   mediaCollections,
   mediaItems,
@@ -1034,4 +1036,122 @@ export async function forgetTaskLinks(provider: ProviderId): Promise<number> {
     .where(eq(integrationTaskLinks.provider, provider))
     .returning({ id: integrationTaskLinks.id });
   return gone.length;
+}
+
+/* ------------------------------------------------------------------ */
+/* Who is on air                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Replace everything we know about one provider's live channels.
+ *
+ * **Delete-then-insert, unlike `replaceFriends`, and the difference is what the
+ * row means.** A friend is a lasting relationship, so their row is upserted and
+ * kept — handing somebody a fresh primary key every minute would break the
+ * `person_id` links that join their accounts together. A live stream is the
+ * opposite: it exists for three hours and then does not, nothing links to it,
+ * and a channel that has gone offline must *leave* rather than linger with a
+ * stale viewer count.
+ *
+ * The same asymmetry says why this is safe here and was a bug there: pruning on
+ * an errored snapshot destroyed friend links. Nothing points at a live row, so
+ * the worst an empty write can cost is one refresh — and the caller still does
+ * not write at all when the fetch failed.
+ */
+export async function replaceLive(provider: ProviderId, streams: LiveStream[]): Promise<number> {
+  const now = Date.now();
+
+  await db.delete(liveStreams).where(eq(liveStreams.provider, provider));
+  if (streams.length === 0) return 0;
+
+  await db.insert(liveStreams).values(
+    streams.map((stream) => ({
+      provider,
+      providerAccountId: stream.providerAccountId,
+      streamId: stream.streamId,
+      channelName: stream.channelName,
+      title: stream.title,
+      category: stream.category ?? null,
+      viewers: stream.viewers ?? null,
+      startedAt: stream.startedAt ?? null,
+      thumbnailUrl: stream.thumbnailUrl ?? null,
+      url: stream.url,
+      seenAt: now,
+    }))
+  );
+
+  return streams.length;
+}
+
+export type LiveRow = typeof liveStreams.$inferSelect & { favourite: boolean };
+
+/**
+ * Everyone on air, busiest first — the order the services themselves use.
+ *
+ * The star comes from `follows`, joined on `(provider, provider_account_id)`,
+ * which is the same pair both tables key on. A **left** join, deliberately: a
+ * channel can be live before the followed-channels list has synced, and an inner
+ * join would silently drop it from the screen rather than merely showing it
+ * unstarred. Unstarrable-for-now is a much better failure than absent.
+ */
+export async function allLive(): Promise<LiveRow[]> {
+  const rows = await db
+    .select({ stream: liveStreams, favourite: follows.favourite })
+    .from(liveStreams)
+    .leftJoin(
+      follows,
+      and(
+        eq(follows.provider, liveStreams.provider),
+        eq(follows.providerAccountId, liveStreams.providerAccountId)
+      )
+    )
+    .orderBy(desc(liveStreams.viewers));
+
+  return rows.map((row) => ({ ...row.stream, favourite: row.favourite === 1 }));
+}
+
+/** Whether this provider's followed list has ever synced. */
+export async function hasFollows(provider: ProviderId): Promise<boolean> {
+  const [row] = await db
+    .select({ id: follows.id })
+    .from(follows)
+    .where(eq(follows.provider, provider))
+    .limit(1);
+  return row !== undefined;
+}
+
+/**
+ * Star or unstar a followed channel, by the pair the live row already carries.
+ *
+ * Keyed on `(provider, providerAccountId)` rather than the `follows` row id, so
+ * the caller is a live stream rather than a lookup — the star is pressed on the
+ * Live tab, which has the channel in hand and no reason to know this app's own
+ * primary keys.
+ *
+ * Returns whether anything was written. Nothing is, when the followed-channels
+ * list has not synced yet, and the caller says so rather than pretending.
+ */
+export async function setFollowFavourite(
+  provider: ProviderId,
+  providerAccountId: string,
+  favourite: boolean
+): Promise<boolean> {
+  const written = await db
+    .update(follows)
+    .set({ favourite: favourite ? 1 : 0 })
+    .where(and(eq(follows.provider, provider), eq(follows.providerAccountId, providerAccountId)))
+    .returning({ id: follows.id });
+
+  return written.length > 0;
+}
+
+/** When each provider's live list was last written, for the staleness check. */
+export async function liveFreshness(): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ provider: liveStreams.provider, seenAt: liveStreams.seenAt })
+    .from(liveStreams);
+
+  const seen = new Map<string, number>();
+  for (const row of rows) seen.set(row.provider, Math.max(seen.get(row.provider) ?? 0, row.seenAt));
+  return seen;
 }

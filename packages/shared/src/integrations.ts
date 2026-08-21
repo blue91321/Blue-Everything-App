@@ -33,6 +33,7 @@ export const PROVIDER_IDS = [
   'discord',
   'riot',
   'canvas',
+  'twitch',
 ] as const;
 
 export type ProviderId = (typeof PROVIDER_IDS)[number];
@@ -80,13 +81,18 @@ export type AuthKind = (typeof AUTH_KINDS)[number];
  * under the first put "Spotify — friends: not possible" on a screen about who is
  * online, which answers a question nobody asked and buries the one they did.
  *
+ * `live` is deliberately not a flavour of `follows`, for the same reason those
+ * two are apart: following somebody is a standing fact about you, while being
+ * live is a fact about them that is true for three hours on a Tuesday. One is a
+ * list you curate and the other is a list that empties itself.
+ *
  * `assignments` is the first one that writes into *core* rather than into this
  * module's own tables. Everything else here ends up on a screen the integrations
  * feature owns; a Canvas deadline ends up as a task, which the nudge engine then
  * treats exactly like one you typed. That is the point of it — the engine is the
  * app, and a due date it cannot see is a due date it cannot hold for you.
  */
-export const CAPABILITIES = ['playlists', 'taste', 'follows', 'friends', 'assignments'] as const;
+export const CAPABILITIES = ['playlists', 'taste', 'follows', 'friends', 'assignments', 'live'] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
@@ -157,6 +163,30 @@ export interface ProviderSpec {
      */
     optionalScopes?: string[];
     pkce: boolean;
+    /**
+     * Which spelling of loopback this provider accepts in a redirect URI.
+     *
+     * They are the same machine and not the same string, and the providers do
+     * not agree. Spotify and Google **stopped accepting** `http://localhost` and
+     * require `http://127.0.0.1`. Twitch is the other way round: every example in
+     * its own documentation and console uses `http://localhost:PORT`, and that
+     * form is confirmed working, while the numeric form is what produced
+     * "Redirect URIs must use HTTPS protocol" here.
+     *
+     * **That message is not proof the numeric form is refused**, and it is worth
+     * being precise: the same wording is also produced by an unrelated console
+     * validation bug — a blank row left in the redirect list — so it may have
+     * been complaining about something else entirely. What is settled is that
+     * `localhost` works and is what Twitch documents, so that is what this
+     * offers; whether the IP literal would also have been accepted is unproven
+     * either way.
+     *
+     * So there is no single right default, which is exactly why this sits in the
+     * manifest beside the URLs rather than being one environment variable. `ip`
+     * is assumed when absent, because most of them want it; an explicitly
+     * configured `OAUTH_REDIRECT_BASE` overrides this entirely.
+     */
+    loopbackHost?: 'ip' | 'name';
     /**
      * Some providers hand back a refresh token only when asked, and asking
      * looks different at each one. Extra authorize-time parameters go here so
@@ -637,6 +667,111 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
    * **It is the only capability that writes into core.** Assignments become
    * ordinary tasks, which is the whole reason to want it.
    */
+  /**
+   * Twitch: who you follow, and which of them is on air.
+   *
+   * The one service here that answers "which of the people I follow are live"
+   * in a single request. `GET /helix/streams/followed` takes your user id and
+   * returns exactly that, sorted by viewers — no per-channel fan-out, no quota
+   * arithmetic, which is what makes the Live tab possible at all.
+   *
+   * **It needs a client secret**, unlike Spotify and Google. Twitch has never
+   * shipped PKCE for the authorization code flow — the request has been open on
+   * their forums for years — so the token exchange sends `client_secret` and
+   * there is a second box to fill in. `pkce: false` is the honest declaration
+   * rather than an omission.
+   */
+  twitch: {
+    id: 'twitch',
+    label: 'Twitch',
+    // Not the television, which YouTube already wears. The glyph is how a row is
+    // picked out of seven at a glance, so two providers sharing one costs
+    // exactly the thing it is there for.
+    glyph: '🟣',
+    blurb: 'Who you follow, and which of them is live right now.',
+    reach: 'web',
+    auth: 'oauth2',
+    oauth: {
+      authorizeUrl: 'https://id.twitch.tv/oauth2/authorize',
+      tokenUrl: 'https://id.twitch.tv/oauth2/token',
+      /*
+       * One scope covers both capabilities: the followed-channels list and the
+       * followed-streams list are the same permission at Twitch's end.
+       */
+      scopes: ['user:read:follows'],
+      pkce: false,
+      /*
+       * `http://localhost:PORT` is what Twitch's own docs and console examples
+       * use, and it is confirmed working. The numeric form is what produced
+       * "Redirect URIs must use HTTPS protocol" here — the opposite of what
+       * Spotify and Google accept, which is why this became a per-provider field
+       * rather than one global base.
+       */
+      loopbackHost: 'name',
+    },
+    credentials: [
+      {
+        key: 'clientId',
+        label: 'Client ID',
+        required: true,
+        envVar: 'TWITCH_CLIENT_ID',
+        help: 'On your application\u2019s page in the Twitch developer console.',
+      },
+      {
+        key: 'clientSecret',
+        label: 'Client Secret',
+        required: true,
+        secret: true,
+        envVar: 'TWITCH_CLIENT_SECRET',
+        help: 'Press "New Secret" on the same page. Twitch shows it once.',
+      },
+    ],
+    capabilities: {
+      live: {
+        status: 'works',
+        why:
+          'Every followed channel that is on air, in one request \u2014 title, category, viewers and how ' +
+          'long they have been going. The only service here that can answer this without asking about ' +
+          'each channel in turn, which is why the Live tab exists.',
+        source: 'GET /helix/streams/followed',
+        sourceUrl: 'https://dev.twitch.tv/docs/api/reference/#get-followed-streams',
+      },
+      follows: {
+        status: 'works',
+        why: 'The channels you follow, so they appear on the Following tab beside your artists and subscriptions.',
+        source: 'GET /helix/channels/followed',
+        sourceUrl: 'https://dev.twitch.tv/docs/api/reference/#get-followed-channels',
+      },
+    },
+    setup: [
+      {
+        text: 'Register an application in the Twitch developer console. Any name; category "Application Integration".',
+        link: { url: 'https://dev.twitch.tv/console/apps/create', label: 'dev.twitch.tv/console/apps/create' },
+      },
+      {
+        text:
+          'Paste the redirect URL shown below into the application\u2019s OAuth Redirect URLs. It has to match ' +
+          'character for character, and Twitch rejects the login rather than explaining if it does not. ' +
+          'Note it says localhost, not 127.0.0.1 — that is the form Twitch documents, and the opposite ' +
+          'of what Spotify and Google accept, so this app offers each service its own spelling.',
+      },
+      {
+        text:
+          'If it answers "Redirect URIs must use HTTPS protocol", check for an empty redirect row before ' +
+          'you believe it. That message is also what the console shows for a blank field, and the fix is ' +
+          'to delete the empty row and press Save rather than only Add — the complaint names the wrong ' +
+          'problem.',
+        link: {
+          url: 'https://discuss.dev.twitch.com/t/unable-to-use-localhost-are-redirect-url-for-oauth-implicit-grant-flow/61951',
+          label: 'the thread where somebody hit exactly this',
+        },
+      },
+      {
+        text: 'Copy the Client ID, press "New Secret", and paste both below. Twitch shows the secret once.',
+      },
+    ],
+  },
+
   canvas: {
     id: 'canvas',
     label: 'Canvas',
@@ -709,6 +844,23 @@ export const FOLLOW_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter(
 export const LOCAL_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter((p) => p.reach === 'local').map((p) => p.id);
 
 /**
+ * Providers that can say who is on air.
+ *
+ * Derived like `PRESENCE_PROVIDERS` rather than written out, so a second one
+ * joins the Live tab by declaring the capability and nothing here changes.
+ *
+ * **YouTube is deliberately not among them, and that is a number rather than an
+ * opinion.** There is no "which of my subscriptions are live" endpoint; the only
+ * route is `search.list` per channel at 100 quota units against a 10,000/day
+ * default. At 408 subscriptions one sweep costs 40,800 units — four times the
+ * whole day's allowance — so declaring the capability would mean a control that
+ * exhausts your quota and then fails for everything else Google does here.
+ */
+export const LIVE_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter(
+  (p) => p.capabilities.live && p.capabilities.live.status !== 'unavailable'
+).map((p) => p.id);
+
+/**
  * Whether a capability is worth showing a control for.
  *
  * `unavailable` still gets rendered — as an explanation, not a button. Hiding it
@@ -748,7 +900,25 @@ export function capabilityIsUsable(spec: CapabilitySpec | undefined): boolean {
  * asked not to be disturbed. Away is the opposite claim — present but not
  * paying attention — and they want opposite things done about them.
  */
-export const PRESENCE_STATES = ['offline', 'online', 'away', 'in-game', 'dnd', 'unknown'] as const;
+/**
+ * `in-game-away` is the one that had to be added on evidence.
+ *
+ * Both Steam and Riot report "playing something" and "idle" as *separate*
+ * facts, and both were being collapsed into `in-game` — the game was checked
+ * first and the availability thrown away. So a friend AFK in a match showed the
+ * same blue dot as one who was actually there, and got mistaken for available.
+ * That is the worst kind of wrong for this screen: not missing information but a
+ * confident claim in the wrong direction.
+ */
+export const PRESENCE_STATES = [
+  'offline',
+  'online',
+  'away',
+  'in-game',
+  'in-game-away',
+  'dnd',
+  'unknown',
+] as const;
 export const presenceStateSchema = z.enum(PRESENCE_STATES);
 export type PresenceState = (typeof PRESENCE_STATES)[number];
 
@@ -795,13 +965,21 @@ export const presenceRank: Record<PresenceState, number> = {
   // Above `away`, because they are at the keyboard — busy is a choice somebody
   // made, idle is what happens when they walk off.
   dnd: 2,
-  away: 3,
-  offline: 4,
+  /*
+   * Below everything you could actually talk to, and above plain `away`.
+   *
+   * Below, because that is the entire point of the state existing: they are not
+   * answering. Above `away`, because a game is running and somebody idle mid-match
+   * is far likelier to come back than somebody idle on the desktop.
+   */
+  'in-game-away': 3,
+  away: 4,
+  offline: 5,
   // Last. It briefly sat above `offline`, on the reasoning that "I cannot tell"
   // might hide somebody who is around — but there are a hundred of them and
   // eighteen of everything else, so it buried the list that answers the
   // question under the list that cannot.
-  unknown: 5,
+  unknown: 6,
 };
 
 export const friendSchema = z.object({
@@ -921,6 +1099,23 @@ export interface FollowedAccount {
   genres?: string[];
   /** How many other people follow them, when the provider says. */
   followerCount?: number;
+}
+
+/** One channel that is on air right now. */
+export interface LiveStream {
+  provider: ProviderId;
+  /** The service's own id for the channel, so it joins up with `follows`. */
+  providerAccountId: string;
+  /** The service's id for this broadcast, which changes each time they go live. */
+  streamId: string;
+  channelName: string;
+  title: string;
+  /** Game, or whatever the service calls the category. */
+  category?: string | null;
+  viewers?: number | null;
+  startedAt?: number | null;
+  thumbnailUrl?: string | null;
+  url: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1228,6 +1423,26 @@ export const syncRequestSchema = z.object({
  * and a list nobody is looking at does not need to be right.
  */
 export const PRESENCE_STALE_MS = 60_000;
+
+/**
+ * And how stale a live list may be.
+ *
+ * Shorter than presence, because the two go off at different speeds. A friend
+ * who came online a minute ago is the same news either way; a stream that ended
+ * three minutes ago is a link to a channel that is not on, which is worse than
+ * being told nothing. Still nothing at all while the tab is closed.
+ */
+export const LIVE_STALE_MS = 30_000;
+
+/**
+ * What the Dashboard's live panel shows.
+ *
+ * `all` is the default because a panel that starts empty until you have gone and
+ * starred something looks broken — the same reasoning that has `favourite`
+ * default to 0 rather than 1.
+ */
+export const LIVE_SCOPES = ['all', 'favourites'] as const;
+export type LiveScope = (typeof LIVE_SCOPES)[number];
 
 /** How long a `local` provider's snapshot stays believable once the agent stops reporting. */
 export const LOCAL_PRESENCE_STALE_MS = 5 * 60_000;

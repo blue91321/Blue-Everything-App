@@ -27,6 +27,7 @@ import {
   connectSteamSchema,
   credentialsSchema,
   IDENTITY_PREFERENCE,
+  LIVE_PROVIDERS,
   isHiddenByProviders,
   isProviderId,
   linkFriendsSchema,
@@ -60,6 +61,7 @@ import * as youtube from './providers/youtube.js';
 import {
   allFollows,
   allFriends,
+  allLive,
   categoryBreakdown,
   collectionsFor,
   forgetAccount,
@@ -69,6 +71,7 @@ import {
   linkFollows,
   linkFriends,
   setCollectionIgnored,
+  setFollowFavourite,
   setPrimaryFollow,
   suggestFriendLinks,
   unlinkFollow,
@@ -80,7 +83,7 @@ import {
   followsFreshness,
   syncedAtOf,
 } from './store.js';
-import { refreshPresence, runnableCapabilities, syncProvider } from './sync.js';
+import { refreshLive, refreshPresence, runnableCapabilities, syncProvider } from './sync.js';
 
 /** Everything the connections screen needs about one provider, in one object. */
 async function providerState(id: ProviderId) {
@@ -162,6 +165,28 @@ async function providerState(id: ProviderId) {
 function parseProvider(value: string): ProviderId {
   if (!isProviderId(value)) throw Object.assign(new Error('no such provider'), { statusCode: 404 });
   return value;
+}
+
+/**
+ * Anything from outside, made safe to put in HTML.
+ *
+ * **The callback page is the one place this app builds HTML by hand**, and it
+ * interpolated the provider's `error` and `error_description` straight in. Those
+ * come off the query string of an unauthenticated route, so
+ * `/oauth/callback/spotify?error=<script>…` was reflected verbatim — on the same
+ * origin that holds the device bearer token in `localStorage`. Confirmed with a
+ * real request before this existed: HTTP 200, `text/html`, script tag intact.
+ *
+ * The `'` and `"` cases matter as much as the angle brackets: without them a
+ * value landing inside an attribute escapes it without needing a tag at all.
+ */
+function esc(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /** A tiny page for the OAuth redirect to land on, since it is a real navigation. */
@@ -298,10 +323,16 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
         );
       }
 
-      // Their words, not ours. `access_denied` is what pressing Cancel sends.
+      /*
+       * Their words, not ours — `access_denied` is what pressing Cancel sends —
+       * and therefore escaped. This is a query string on an unauthenticated
+       * route, so "their words" means anybody's words.
+       */
       return callbackPage(
-        `${spec.label} refused`,
-        `It said: <code>${query.error}</code>${query.error_description ? ` — ${query.error_description}` : ''}`
+        `${esc(spec.label)} refused`,
+        `It said: <code>${esc(query.error)}</code>${
+          query.error_description ? ` — ${esc(query.error_description)}` : ''
+        }`
       );
     }
 
@@ -323,7 +354,15 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
               ? await youtube.whoAmI()
               : provider === 'discord'
                 ? await (await import('./providers/discord.js')).whoAmI()
-                : null;
+                : /*
+                   * Twitch matters more than a display name here: both of its
+                   * endpoints take a `user_id` query parameter, so without this
+                   * the first sync would have to identify before it could ask
+                   * anything. `identify` saves the id as well as the name.
+                   */
+                  provider === 'twitch'
+                  ? await (await import('./providers/twitch.js')).identify()
+                  : null;
         if (who) await saveAccount(provider, { accountId: who.id, accountName: who.name });
       } catch {
         // Left unnamed on the screen rather than failing the connection.
@@ -334,7 +373,13 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     } catch (error) {
       return reply
         .code(400)
-        .send(callbackPage(`${PROVIDERS[provider].label} could not be connected`, (error as Error).message));
+        .send(
+          callbackPage(
+            `${esc(PROVIDERS[provider].label)} could not be connected`,
+            // A provider's token endpoint reply reaches this message verbatim.
+            esc((error as Error).message)
+          )
+        );
     }
   });
 
@@ -693,6 +738,99 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * minute. Refreshing this on every open would spend YouTube quota to confirm
    * what it said yesterday, so it is synced on demand like a playlist.
    */
+  /* ---- who is on air --------------------------------------------- */
+
+  /**
+   * The live list, refreshed if it has gone stale.
+   *
+   * Same shape as `/friends` — refresh inside the read, no background poller —
+   * with a shorter staleness window, because a stream that ended three minutes
+   * ago is a link to a channel that is not on.
+   *
+   * **`sources` explains an empty list**, which matters more here than anywhere
+   * else on this screen: "nobody is live" and "Twitch is not connected" and
+   * "YouTube cannot answer this at all" are three different situations that all
+   * render as nothing, and only one of them is about your friends' habits.
+   */
+  app.get('/api/integrations/live', async (request) => {
+    const { force } = request.query as { force?: string };
+    const refreshed = await refreshLive(force === '1');
+
+    const hidden = parseHiddenProviders((await getSettings()).hiddenProviders);
+    const all = await allLive();
+    const streams = all.filter((row) => !hidden.includes(row.provider));
+
+    const sources = await Promise.all(
+      LIVE_PROVIDERS.map(async (provider) => {
+        const account = await getAccount(provider);
+        const spec = PROVIDERS[provider];
+        return {
+          provider,
+          label: spec.label,
+          why: spec.capabilities.live?.why ?? '',
+          connected: Boolean(account?.accessToken),
+          missingConfig: await missingCredentials(provider),
+          lastError: account?.lastError ?? null,
+        };
+      })
+    );
+
+    return {
+      streams,
+      sources,
+      hiddenCount: all.length - streams.length,
+      /*
+       * Sent so the panel can narrow itself without a second request for
+       * settings. The *panel* applies it rather than this route: the Live tab
+       * always shows everything, and filtering here would mean two endpoints or
+       * a query parameter to tell them apart.
+       */
+      scope: (await getSettings()).livePanelScope,
+      refreshed,
+    };
+  });
+
+  /**
+   * Star a channel, or take the star off.
+   *
+   * Keyed by `(provider, providerAccountId)` rather than a `follows` row id,
+   * because the caller is a row on the Live tab: it has the channel in hand and
+   * no business knowing this app's own primary keys.
+   *
+   * **Not local-only.** A star is your data, like a habit — editable from the
+   * phone, unlike anything that changes a connection.
+   */
+  app.post('/api/integrations/follows/favourite', async (request, reply) => {
+    const body = z
+      .object({
+        provider: z.string().min(1).max(40),
+        providerAccountId: z.string().min(1).max(200),
+        favourite: z.boolean(),
+      })
+      .parse(request.body);
+
+    const written = await setFollowFavourite(
+      body.provider as ProviderId,
+      body.providerAccountId,
+      body.favourite
+    );
+
+    /*
+     * A live channel with no followed-channels row yet cannot be starred, and
+     * saying so is better than a silent 200 that changes nothing — the star
+     * would spring back on the next reload with no explanation.
+     */
+    if (!written) {
+      return reply.code(409).send({
+        error:
+          'that channel is not in the followed list yet — press Sync on the Twitch card and try again',
+      });
+    }
+
+    changes.emitChange('integrations');
+    return { favourite: body.favourite };
+  });
+
   app.get('/api/integrations/follows', async () => {
     const freshness = await followsFreshness();
     const counts = await followPlaylistCounts();

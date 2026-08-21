@@ -31,10 +31,127 @@ import type { PanelProps } from '../index';
  * somebody who is *there* and has asked to be left alone, which is worth seeing
  * next to the person you were about to message.
  */
-const AROUND: FriendRow['state'][] = ['in-game', 'online', 'away', 'dnd'];
+const AROUND: FriendRow['state'][] = ['in-game', 'online', 'dnd', 'in-game-away', 'away'];
 const RANK = new Map(AROUND.map((state, i) => [state, i]));
 
-export default function FriendsPanel(_props: PanelProps) {
+/**
+ * One module, two panels, chosen by the id.
+ *
+ * `panel.tsx` is what the glob in `features/index.ts` looks for, so a feature
+ * gets exactly one lazy chunk however many panels it declares — which is the
+ * right trade here: both of these are a short list of rows and share their
+ * styling, and splitting them would mean two chunks to save under a kilobyte.
+ */
+export default function IntegrationsPanel({ panelId }: PanelProps) {
+  return panelId === 'integrations:live' ? <LivePanel /> : <FriendsPanel />;
+}
+
+/**
+ * Followed channels that are on air.
+ *
+ * Reads the same endpoint the Live tab does, which refreshes anything staler
+ * than thirty seconds as a side effect of being read — so having the panel open
+ * *is* the poll, and closing it costs nothing. The same arrangement the friends
+ * panel has, with a shorter window because a stream that ended is a link to a
+ * channel that is not on.
+ */
+function LivePanel() {
+  /*
+   * `settings` as well as `integrations`, because the scope this panel narrows
+   * by is a *setting* and rides on the live response. Subscribed to only
+   * `integrations`, changing "Starred only" in Settings left an open Dashboard
+   * showing the old filter until something unrelated happened to change — which
+   * reads as the setting not having saved.
+   */
+  const state = useAsync(() => api.integrations.live(), [], ['integrations', 'settings']);
+
+  if (state.loading) return <div className="empty">loading…</div>;
+  if (state.error) return <div className="empty">Could not load: {state.error.message}</div>;
+
+  const all = state.data?.streams ?? [];
+  const connected = (state.data?.sources ?? []).some((source) => source.connected);
+
+  /*
+   * Narrowed here rather than by the endpoint, because the Live tab and this
+   * panel read the same one and want different things: the tab is where you go
+   * to see everybody and press the stars, and the panel is the shortlist you
+   * glance at. Filtering server-side would have meant a second endpoint or a
+   * query parameter to tell the two callers apart.
+   *
+   * An unrecognised scope — an older server, a hand-edited row — falls through
+   * to everything, which is the honest default: a panel that hides rows because
+   * it did not understand a setting is worse than one that shows too many.
+   */
+  const favouritesOnly = state.data?.scope === 'favourites';
+  const streams = favouritesOnly ? all.filter((stream) => stream.favourite) : all;
+
+  return (
+    <>
+      <div className="row between" style={{ alignItems: 'baseline' }}>
+        <h2 style={{ margin: 0 }}>Live</h2>
+        {streams.length > 0 && (
+          <span className="meta">
+            {streams.length}
+            {/* Says the filter is on while it is hiding something, so a short
+                list is never mistaken for a quiet evening. */}
+            {favouritesOnly && all.length > streams.length ? ` of ${all.length}` : ''}
+          </span>
+        )}
+      </div>
+
+      {streams.length === 0 && (
+        <div className="empty">
+          {/*
+            Three situations, three sentences. "Nobody is streaming" from an
+            install with nothing connected reads as a broken integration — and
+            with the panel narrowed to favourites it reads as one even when four
+            people are live, so that case has to name the filter doing it.
+          */}
+          {!connected
+            ? 'Connect Twitch on the Connections tab.'
+            : favouritesOnly && all.length > 0
+              ? `None of your starred channels are live — ${all.length} ${all.length === 1 ? 'other is' : 'others are'}.`
+              : 'Nobody is live.'}
+        </div>
+      )}
+
+      {streams.map((stream) => (
+        /*
+         * A link rather than a button, unlike the friends panel — there the row
+         * takes you somewhere inside the app, and here it takes you to the
+         * stream, which is the only thing anybody wants from it. `<a>` so
+         * middle-click and "open in new tab" behave.
+         */
+        <a
+          className="card panel-row"
+          key={stream.id}
+          href={stream.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          title={`${stream.channelName} — ${stream.title}`}
+        >
+          <div className="row" style={{ alignItems: 'center', gap: '.5rem' }}>
+            <span className="live-dot" role="img" aria-label="live" />
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="title truncate">{stream.channelName}</div>
+              {/* The category, not the title: in a 320px column "Just Chatting"
+                  is the word that tells you whether to click, where a stream
+                  title is a sentence that will not fit. */}
+              <div className="meta truncate">{stream.category ?? stream.title}</div>
+            </div>
+            {stream.viewers !== null && (
+              <span className="meta" style={{ flex: 'none' }}>
+                {stream.viewers >= 1000 ? `${(stream.viewers / 1000).toFixed(1)}k` : stream.viewers}
+              </span>
+            )}
+          </div>
+        </a>
+      ))}
+    </>
+  );
+}
+
+function FriendsPanel() {
   /*
    * The same request the Friends screen makes, which refreshes anything staler
    * than 60 seconds as a side effect of being read. That is why this needs no

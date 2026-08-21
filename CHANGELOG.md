@@ -4,6 +4,101 @@ All six packages carry the same version and move together — they are one app
 released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 second step `npm version` does not do for you.
 
+## 0.2.3
+
+Twitch and a Live tab, a side column that stacks, a presence state that stops a
+friend being mistaken for available — and two vulnerabilities found by auditing
+this release rather than by anything going wrong.
+
+### Security
+
+- **Reflected XSS on the OAuth callback, fixed.** The provider's `error` and
+  `error_description` were interpolated into hand-built HTML on an
+  unauthenticated route — same origin as the device bearer token in
+  `localStorage`. Confirmed live before the fix: 200, `text/html`, script intact.
+- **Path traversal on the habit picture, fixed.** `habit-${id}.png` put the id
+  in a filename, and the `habit-` prefix is its own path segment, so `..` after
+  it climbed out of `data/`. It read `data/avatar.png` and then a file outside
+  `data/`. Guarded at the path helper, not the route.
+- Both are covered by `smoke` now, along with an assertion that an ordinary id
+  still reads its own picture.
+
+### Twitch, and a Live tab
+
+- **Twitch connects**, bringing two things: the channels you follow, which join
+  the Following tab, and which of them is on air.
+- **A Live tab** on Connections, between Friends and Following — the same shape
+  of question as Friends, and news in a way Following is not. A **Who is live**
+  panel for the Dashboard's side column alongside it.
+- `GET /helix/streams/followed` answers the whole question in one request, which
+  is what makes any of this affordable.
+- **YouTube is not on that tab.** There is no endpoint for "which of my
+  subscriptions are live"; the only route is `search.list` per channel at 100
+  quota units against a 10,000/day default, so one sweep of 408 subscriptions
+  costs 40,800 units — four times the day, for one refresh, and it would take the
+  playlist and Following syncs with it. The reasoning is in `CLAUDE.md` rather
+  than on the screen: a permanent block explaining a service that will never
+  appear is a tax on every visit to a tab about Twitch. `integrations-check`
+  asserts YouTube's absence, not a count of one — a second service that can
+  genuinely answer this is a change to welcome.
+- **`live` is deliberately not a flavour of `follows`.** Following is a standing
+  fact about you; being live is a fact about them that is true for an evening.
+  So `replaceLive` deletes and re-inserts where `replaceFriends` upserts and
+  prunes — nothing points at a live row, while churning a friend's key once
+  destroyed the links joining their accounts.
+- **The first provider here that genuinely needs a client secret.** Twitch has
+  never shipped PKCE for the authorization code flow, so `pkce: false` is a
+  declaration rather than an omission and the card has a second box.
+- Refreshed on read at a 30-second window rather than the friends list's 60: a
+  stream that ended three minutes ago is a link to a channel that is not on.
+- Twitch shipped wearing YouTube's 📺 for about ten minutes. The glyph is how a
+  row is picked out of seven at a glance, so `integrations-check` now asserts
+  they are all distinct.
+- **The redirect URI default is per-provider now.** `OAUTH_REDIRECT_BASE` was one
+  global string defaulting to the loopback IP, because Spotify and Google stopped
+  accepting `http://localhost`. Twitch is the other way round — it documents
+  `http://localhost:PORT` and its console refused the numeric form — so no single
+  value served both. `oauth.loopbackHost` says which spelling a provider wants; a
+  base set by hand is still used exactly as typed.
+- The setup steps warn that "Redirect URIs must use HTTPS protocol" is *also*
+  what the Twitch console says for a blank row in the redirect list. Which means
+  it is unproven whether the IP literal was ever really the problem — only that
+  `localhost` works and is documented.
+- **`scope` is a string in RFC 6749 and an array at Twitch**, so
+  `token.scope.split(' ')` threw after the token had already been issued — the
+  connection failing at the last step with an error naming a string method.
+  `TokenResponse.scope` is the union now and one helper normalises it; an absent
+  or empty value falls back to what was asked for, since several providers omit
+  it on a refresh.
+- **Star a live channel**, and a control in Settings to narrow the Dashboard
+  panel to starred ones. The Connections tab always lists everybody; only the
+  panel filters, so the endpoint returns everything and carries the scope.
+- The star is a flag on `follows`, so unfollowing takes it away and an ordinary
+  sync does not. Found on real data: it needs a `follows` row to exist, and the
+  live list is what people open while the followed list waits for a manual sync
+  — so 21 live channels had a star that refused all of them. `syncLive` now
+  syncs the followed list once when it has never synced.
+- The panel subscribes to `settings` as well as `integrations`; without it,
+  changing the scope left an open Dashboard on the old filter.
+- Two empty states, since a narrowed panel showing nothing while four people are
+  live is not a quiet evening — it says which of the two it is.
+- **The side column holds several panels now**, one under the other, in an order
+  you set with ↑/↓ — the same idiom the Habits screen reorders with. Backfilled
+  from the single choice, and `dashboard_panel` is still written as the first
+  entry so a PWA older than the column still draws something.
+- Each panel gets its own Suspense boundary rather than one around the column:
+  they are separate chunks and a shared boundary would hold all of them back
+  until the slowest arrived.
+- **A state for playing but away.** Steam and Riot both report "in a game" and
+  "idle" separately, and both were collapsing them — the game was checked first
+  and the availability discarded, so somebody AFK mid-match showed the same blue
+  dot as somebody at the keyboard. Reported the only way it could be: a friend
+  was mistaken for available. Two of four apparently-available people on the live
+  list turned out to be AFK the moment it was fixed.
+- Drawn as the away yellow with a ring of the in-game blue: the fill is the half
+  that matters, since reading blue as "available" was the whole mistake.
+- Migrations `0037`–`0039`.
+
 ## 0.2.2
 
 Coursework arrives on its own, habits stopped being only a counter, and the

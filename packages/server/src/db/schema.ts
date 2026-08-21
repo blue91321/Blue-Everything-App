@@ -533,6 +533,31 @@ export const settings = sqliteTable('settings', {
    * choosing a panel on the PC does not leave the phone showing the old one.
    */
   dashboardPanel: text('dashboard_panel').notNull().default(''),
+  /**
+   * Whether the live panel shows everyone or only the starred ones.
+   *
+   * `all` or `favourites`, and `all` is the default because a panel that starts
+   * empty until you have gone and starred something looks broken. In core
+   * `settings` for the same reason `hidden_providers` is: it is a preference
+   * about a *panel*, and panels are a core concept — the feature owns what goes
+   * in the column, core owns the slot and how it is filtered.
+   */
+  livePanelScope: text('live_panel_scope').notNull().default('all'),
+  /**
+   * What the Dashboard's side column holds, in order, as a JSON array.
+   *
+   * Stored as JSON text for the same reason `hidden_providers` is: SQLite has no
+   * array type, and this is only ever read and written whole. The ids are opaque
+   * — they come from features that can be deleted, so core validates the shape
+   * and never the values.
+   *
+   * **`dashboard_panel` above is kept in step as the first entry**, and is not
+   * dead weight: the PWA and the server update independently, so a browser
+   * holding an older bundle still reads a single panel and shows something
+   * sensible rather than an empty column. It is written by the same route and
+   * never read back by anything current.
+   */
+  dashboardPanels: text('dashboard_panels').notNull().default('[]'),
 
   updatedAt: touched(),
 });
@@ -909,6 +934,22 @@ export const follows = sqliteTable(
     categoryBecause: text('category_because'),
     followerCount: integer('follower_count'),
     /**
+     * Starred, so the Dashboard panel can be narrowed to the handful you care
+     * about rather than everyone you have ever followed.
+     *
+     * **On `follows` rather than in its own table**, and it survives a sync
+     * because `replaceFollows` lists the columns it overwrites explicitly — the
+     * same protection `group_id` and `is_primary` already rely on. What does
+     * take it away is unfollowing: the prune-by-`seen_at` at the end of that
+     * function removes the row, which is the right answer rather than keeping a
+     * favourite for somebody you no longer follow.
+     *
+     * Generic on purpose. The Live tab is the only place that stars anything
+     * today, but a favourite artist or subscription is the same idea and needs
+     * no second column.
+     */
+    favourite: integer('favourite').notNull().default(0),
+    /**
      * Accounts that are the same creator, the way `friends.person_id` groups
      * accounts that are the same person. Null means it stands alone.
      *
@@ -986,6 +1027,42 @@ export const integrationTaskLinks = sqliteTable(
   ]
 );
 
+/**
+ * Channels that are on air right now.
+ *
+ * A table rather than a cache in memory, for the reason the friends list is one:
+ * the phone and the PC both read it, and a process restart should not blank a
+ * screen. It is nonetheless **entirely disposable** — every sync replaces the
+ * provider's rows wholesale, because "live" is not a fact that accumulates.
+ *
+ * Keyed by `(provider, provider_account_id)`: a channel is live once or not at
+ * all, so the channel is the natural identity. `stream_id` changes each time
+ * they go live and is kept for the thumbnail URL and for telling a new broadcast
+ * from a continuing one, not for finding the row.
+ */
+export const liveStreams = sqliteTable(
+  'live_streams',
+  {
+    id: id(),
+    provider: text('provider').notNull(),
+    /** The channel, which is what joins this up with `follows`. */
+    providerAccountId: text('provider_account_id').notNull(),
+    /** The broadcast. New every time they go live. */
+    streamId: text('stream_id').notNull(),
+    channelName: text('channel_name').notNull(),
+    title: text('title').notNull(),
+    /** Game, or whatever the service calls the category. */
+    category: text('category'),
+    viewers: integer('viewers'),
+    /** When the broadcast started, so the row can say how long they have been on. */
+    startedAt: integer('started_at'),
+    thumbnailUrl: text('thumbnail_url'),
+    url: text('url').notNull(),
+    seenAt: integer('seen_at').notNull().$defaultFn(() => Date.now()),
+  },
+  (t) => [uniqueIndex('live_streams_channel_idx').on(t.provider, t.providerAccountId)]
+);
+
 export const schema = {
   projects,
   tasks,
@@ -1006,6 +1083,7 @@ export const schema = {
   friends,
   follows,
   integrationTaskLinks,
+  liveStreams,
 };
 
 /** Used by the health check to prove the database is actually reachable. */

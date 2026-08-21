@@ -4,7 +4,7 @@ import { useAsync } from '../useAsync';
 import { useSettling } from '../useSettling';
 import { clockTime, endOfToday, relative, startOfToday } from '../format';
 import { goTo } from '../nav';
-import { resolvePanel } from '../panels';
+import { chosenPanels } from '../panels';
 import { TaskRow, HabitRow } from '../rows';
 import { Capture } from './Capture';
 
@@ -56,8 +56,7 @@ export function Dashboard() {
    * extra request on a page that is already asking for `/api/settings`.
    */
   const settings = useAsync(() => api.settings.get(), [], ['settings']);
-  const panelId = settings.data?.dashboardPanel ?? '';
-  const Panel = resolvePanel(panelId);
+  const panels = settings.data ? chosenPanels(settings.data) : [];
 
   return (
     /*
@@ -71,7 +70,7 @@ export function Dashboard() {
      * the panel stacked underneath, which is exactly what a narrow screen gets
      * anyway — so the fallback is a real layout rather than a broken one.
      */
-    <div className={Panel ? 'dash has-panel' : 'dash'}>
+    <div className={panels.length > 0 ? 'dash has-panel' : 'dash'}>
       <div className="dash-main">
       <section>
         <Capture onAdded={reloadAll} />
@@ -128,18 +127,19 @@ export function Dashboard() {
       )}
       </div>
 
-      {Panel && (
+      {panels.length > 0 && (
         <aside className="dash-panel">
           {/*
-            Its own Suspense boundary, so a panel whose chunk is still arriving
-            leaves the tasks on screen rather than blanking the Dashboard. The
-            fallback is deliberately plain and deliberately not a spinner: on
-            this network the chunk lands in a frame or two, and something that
-            animates would be more noticeable than the thing it is covering for.
+            A boundary *per panel*, not one around the column. They are separate
+            chunks and arrive independently, so one shared boundary would hold
+            every panel back until the slowest had landed — and the whole point
+            of stacking them is that each is a small thing you glance at.
           */}
-          <Suspense fallback={<div className="empty">loading…</div>}>
-            <Panel panelId={panelId} />
-          </Suspense>
+          {panels.map(({ id, Panel }) => (
+            <Suspense key={id} fallback={<div className="empty">loading…</div>}>
+              <Panel panelId={id} />
+            </Suspense>
+          ))}
 
           {/*
             Here rather than inside each panel, so every panel gets it and no

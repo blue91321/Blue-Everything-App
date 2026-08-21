@@ -106,9 +106,30 @@ dependencies, which is 66KB gzipped and nearly all of it framework.
 
 ### The Dashboard's side column
 
-A second column on a wide screen, holding one thing worth having in the corner
-of your eye — who is online, by default nothing. `settings.dashboard_panel`
-holds the choice, server-side like the theme so the PC and the phone agree.
+A second column on a wide screen, holding **as many panels as you like, one
+under the other, in an order you choose** — who is online, who is live, recent
+notes; by default nothing. `settings.dashboard_panels` is a JSON array of opaque
+ids, server-side like the theme so the PC and the phone agree.
+
+**`dashboard_panel` is still written, as the first entry.** It is not dead
+weight: the PWA and the server update independently, so a browser holding an
+older bundle reads that field and draws one panel rather than an empty column.
+Migration `0039` backfills the list from it, so nobody loses what they had.
+
+Reordering is **↑/↓ and a whole-list write**, the same idiom the Habits screen
+uses. Drag and drop is the one interaction that has to be built twice — once for
+the mouse and once for touch — and a list of three does not need it. A panel is
+appended when added rather than inserted, because the bottom is predictable and
+anywhere else is a guess about intent.
+
+Each panel gets **its own Suspense boundary**, not one around the column: they
+are separate chunks that arrive independently, and a shared boundary would hold
+every panel back until the slowest had landed.
+
+A chosen panel whose feature is switched off **keeps its place in the list** and
+says so on the settings screen, rather than being dropped — the stored order is
+left alone so turning the feature back on restores it, and the Dashboard simply
+draws one fewer meanwhile.
 
 **Core cannot import the panel it most wants.** The Dashboard is core and the
 friends list lives in `features/integrations`, which is deletable. That is the
@@ -1068,6 +1089,43 @@ trip: records the sample, sweeps tasks coming due into the queue, and returns
 whatever earned the right to interrupt. Clients stay dumb; all judgement is
 server-side so the phone and the PC can never disagree about what a good moment
 is.
+
+### Two holes found by auditing, and what they teach
+
+Both were in code this project wrote by hand, and both were confirmed by
+actually firing them at the running server rather than by reading.
+
+**Reflected XSS on the OAuth callback.** `/oauth/callback/:provider` builds HTML
+by hand — it has to, being a real navigation rather than a fetch — and dropped
+the provider's `error` and `error_description` straight in. Those come off the
+query string of an *unauthenticated* route, so
+`?error=<script>…` came back at HTTP 200 as `text/html` with the tag intact, on
+the same origin that holds the device bearer token in `localStorage`. `esc()`
+now escapes `&`, `<`, `>`, `"` and `'` — the quotes matter as much as the angle
+brackets, since a value landing inside an attribute escapes it without needing a
+tag at all.
+
+The general lesson is narrow and worth keeping: **this is the only place the app
+builds HTML by hand.** Everywhere else React escapes by construction, which is
+exactly why the one exception went unexamined.
+
+**Path traversal on the habit picture.** The id goes into a filename as
+`habit-${id}.png`, and `habit-` is *its own path segment* — so a `..` after it
+pops that segment and every further `..` climbs out. `..%2F..%2Favatar` returned
+`data/avatar.png` byte-for-byte, and four levels up read a file outside `data/`
+altogether. The read route was the one that leaked because it had no `habits`
+lookup at all; the upload route happened to be safe only because it looked the
+habit up first.
+
+Two things bounded it and neither excuses it: the extension is fixed by the
+caller, so only `.png/.jpg/.gif/.webp` were ever reachable and the database never
+was, and `/api/` requires a token. The guard is a `^[A-Za-z0-9-]{1,64}$` test
+inside `imagePath` and `storedImage` rather than in the route, so a second caller
+cannot reintroduce it.
+
+`smoke` now fires both, plus backslash and mixed forms, and asserts an ordinary
+id still reads its own picture — a guard that merely says no to everything is
+not a fixed feature.
 
 ### Auth: this machine is trusted, everything else needs a token
 
@@ -2468,7 +2526,7 @@ a protection it was not providing.
 ## App integrations
 
 Canvas for coursework; Spotify and YouTube for what you listen to and watch;
-Steam, Discord and Riot for who is around. `npm run integrations-check -w
+Steam, Discord and Riot for who is around; Twitch for who is on air. `npm run integrations-check -w
 @everything/server` proves the parts with no network in them — run it before
 trusting a change to the categoriser, the Takeout reader, or the rules that
 decide what happens to a synced task.
@@ -2486,14 +2544,15 @@ that shows an empty list — is the expensive way to learn it. So a capability i
 `shared/src/integrations.ts` is not a boolean. It carries a `status` and a
 `why`, and the screen renders the `why` next to the thing it explains.
 
-| | playlists | following | who's online | coursework |
-| --- | --- | --- | --- | --- |
-| **Spotify** | yes* | artists you follow | — | — |
-| **YouTube** | yes | subscriptions | — | — |
-| **Steam** | — | — | **yes, properly** | — |
-| **Discord** | — | — | needs their approval | — |
-| **Riot** | — | — | local client only | — |
-| **Canvas** | — | — | — | **yes, properly** |
+| | playlists | following | who's online | coursework | who's live |
+| --- | --- | --- | --- | --- | --- |
+| **Spotify** | yes* | artists you follow | — | — | — |
+| **YouTube** | yes | subscriptions | — | — | **quota says no** |
+| **Steam** | — | — | **yes, properly** | — | — |
+| **Discord** | — | — | needs their approval | — | — |
+| **Riot** | — | — | local client only | — | — |
+| **Canvas** | — | — | — | **yes, properly** | — |
+| **Twitch** | — | channels you follow | — | — | **yes, properly** |
 
 \* **Spotify needs Premium.** Since February 2026 a Development Mode app stops
 working the moment the owner's subscription lapses — it answers
@@ -2650,6 +2709,122 @@ The four that hurt, and why they are stated rather than worked around:
   to look" has to be visible. The other route people use is a user token lifted
   out of the desktop client, which is against Discord's terms and is not
   implemented.
+### Who is live, and why that is one service and not two
+
+`GET /helix/streams/followed` takes your Twitch user id and returns every
+followed channel currently broadcasting, sorted by viewers — **one request, no
+per-channel fan-out**. That is the whole reason a Live tab is possible.
+
+**YouTube cannot be asked, and the number is why.** There is no "which of my
+subscriptions are live" endpoint. The only route is `search.list` per channel at
+**100 quota units** against a **10,000/day** default, so at the 408
+subscriptions on this install a single sweep costs 40,800 units — four times the
+day's allowance, for one refresh, and it would take the playlist and Following
+syncs down with it. So YouTube does not declare the capability, and
+`integrations-check` asserts `LIVE_PROVIDERS` has exactly one member: "add it for
+completeness" is precisely the change somebody would make.
+
+That arithmetic was on the Live tab for a while, under a heading naming YouTube,
+on the reasoning that a service absent from a screen you expected it on reads as
+an oversight. It has been taken off: a permanent block of explanation about a
+service that will never appear is a tax on every future visit to a tab that is
+about Twitch. **The research is recorded here and the row is gone** — the same
+call the Battle.net and Epic providers got, and for the same reason.
+
+`integrations-check` still asserts YouTube does not declare the capability, since
+that is the part a future change could get wrong. It asserts YouTube's absence
+rather than a count of one: a second service that genuinely can answer this is a
+change to welcome, not to block.
+
+**`live` is not a flavour of `follows`.** Following somebody is a standing fact
+about you; being live is a fact about them that is true for three hours on a
+Tuesday. One list you curate, the other empties itself — which is also why
+`replaceLive` deletes and re-inserts where `replaceFriends` upserts and prunes.
+Nothing points at a live row, so churning its primary key costs nothing, whereas
+doing that to a friend destroyed the `person_id` links that join their accounts.
+
+**Starring a channel is a flag on `follows`, not its own table.** A favourite is
+a property of a channel you follow, and unfollowing should take it with you —
+which the prune-by-`seen_at` in `replaceFollows` does for free. The star survives
+an ordinary sync because that upsert names the columns it overwrites explicitly,
+the same protection `group_id` already relies on.
+
+That home cost one thing, and it showed up immediately on real data: **the star
+needs a `follows` row to exist, and the live list is what people open while the
+followed list is only fetched by a "Sync now" nobody has a reason to press.** The
+symptom was 21 live channels and a star that refused every one of them with a
+message telling you to go and press a button. `syncLive` now syncs the followed
+list once when it has never synced — same permission, same account, one extra
+request the first time, which is a far better answer than a feature that depends
+on somebody reading an error.
+
+**The panel narrows, the tab does not.** `/api/integrations/live` always returns
+everything and carries the scope alongside; the panel filters. Filtering
+server-side would have meant a second endpoint or a query parameter to tell the
+two callers apart, when the tab is precisely where you go to see everybody and
+press the stars.
+
+The panel subscribes to `settings` as well as `integrations`, because the scope
+it filters by is a setting. Subscribed to only `integrations`, changing "Starred
+only" left an open Dashboard showing the old filter until something unrelated
+changed — which reads as the setting not having saved.
+
+Two empty states, because a narrowed panel showing nothing while four people are
+live is not the same as a quiet evening, and "Nobody is live" would be a lie in
+the first case. It says *"None of your starred channels are live — 21 others
+are"*, and the count in the header reads "2 of 21" while the filter is hiding
+something.
+
+**Two buttons, not a slider.** A slider is right for a number on a continuum —
+the gauge drain and fill both earn one. This is a pair of named alternatives,
+where a slider would have two positions, no labels at the stops and no way to
+show which is live except by where the handle sat.
+
+**The redirect URI default had to become per-provider.** `OAUTH_REDIRECT_BASE`
+was one global string defaulting to the loopback IP, because Spotify and Google
+stopped accepting `http://localhost` and require `http://127.0.0.1`. Twitch is
+the other way round: it documents `http://localhost:PORT`, and the numeric form
+is what its console refused. No single value serves both, so
+`oauth.loopbackHost` says which spelling a provider wants and `redirectUri`
+applies it — while a base somebody actually set is used exactly as typed, since
+rewriting a deliberate value would work everywhere except the place it was chosen
+for. `integrations-check` asserts both providers' opposite rules.
+
+**And the error message that sent us here may not have meant what it said.**
+"Redirect URIs must use HTTPS protocol" is also what the Twitch console shows for
+a *blank row* left in the redirect list, where the fix is to delete the empty
+field and press Save rather than only Add. So it is genuinely unproven whether
+the IP literal would have been accepted; what is settled is that `localhost`
+works and is what Twitch documents. The setup steps say both, because somebody
+hitting that message needs to check the boring cause before believing the
+interesting one.
+
+**`scope` is a string in RFC 6749 and an array at Twitch.** Spotify, Google and
+Discord all answer `"a b c"`; Twitch answers `["user:read:follows"]`, so
+`token.scope.split(' ')` threw `token.scope.split is not a function` — **after
+the token had been issued**, which is the worst place for it: the handshake had
+succeeded, the connection failed at the last step, and the message named a string
+method rather than the provider that broke the assumption. `TokenResponse.scope`
+is now the union and `grantedFrom` normalises it, so the next provider with an
+opinion is a compile error rather than a runtime one three lines later.
+
+An absent or empty `scope` falls back to what was *asked* for, deliberately:
+several providers omit it on a refresh, and reading that as "nothing granted"
+would report a working connection as having lost its permissions. An empty
+*array* is taken at its word, since that is a provider saying something.
+
+**Twitch is the first provider here that genuinely needs a client secret.** PKCE
+has never shipped for their authorization code flow — the request has sat open on
+their forums for years — so `pkce: false` is a declaration rather than an
+omission, and there is a second box on the card. `integrations-check` asserts
+both halves, since a `pkce: true` here would send a verifier and no secret and
+the token endpoint would refuse every login with nothing on screen but a 400.
+
+Refresh-on-read like the friends list, at a **30-second** staleness window rather
+than 60: a friend who came online a minute ago is the same news either way, while
+a stream that ended three minutes ago is a link to a channel that is not on.
+Still nothing at all while the tab is closed.
+
 ### Canvas: the one capability that writes into core
 
 Everything else in this module ends up on a screen the module owns. A Canvas
@@ -2918,6 +3093,33 @@ somebody looking for a problem that is a button they pressed.
 
 A dot on the corner of each avatar: **blue in-game, green online, yellow away,
 red busy, grey offline**, with "I cannot tell" drawn as a hollow ring.
+
+**`in-game-away` exists because a friend was mistaken for available.** Steam and
+Riot each report "in a game" and "idle" as *separate* facts, and both providers
+were collapsing them: `gameextrainfo ? 'in-game' : …` and
+`playing ? 'in-game' : state` each checked the game first and threw the
+availability away. So somebody AFK mid-match showed the same blue dot as
+somebody actually at the keyboard. That is worse than missing information — it
+is a confident claim in the wrong direction, which is the failure this whole
+screen exists to avoid. On the live list the moment it was fixed: **two of four
+people who looked available were not**.
+
+A game still beats `online`, which is the weaker half of what the provider said,
+and no longer beats `away`. `dnd` is deliberately untouched: busy while playing
+is a choice somebody made rather than idle time accruing.
+
+**The dot is the away yellow carrying a ring of the in-game blue**, and the fill
+is the load-bearing half — the mistake was reading blue as "available", so it has
+to belong to the away family at a glance. The ring adds the second fact rather
+than replacing the first, composing two colours already learned instead of
+inventing a seventh. It sits in the away group, whose heading was *"signed in,
+but not in a game"* and is now *"not answering"*, because the old wording became
+false for exactly these rows.
+
+`STATUS_ORDER` on the Friends screen is a hand-written list, so a new state has
+no filter chip until it is added there — `in-game-away` had none for one build,
+which is a filter you cannot switch off. `integrations-check` now walks every
+state.
 
 **`dnd` had to become a real state to draw it.** Riot and Steam both publish it
 and both were folded into `away`, which loses the only thing it says — the

@@ -31,8 +31,11 @@ rmSync('./data/integrations-check.db', { force: true });
 import { rmSync } from 'node:fs';
 import {
   FOLLOW_PROVIDERS,
+  LIVE_PROVIDERS,
   MUSIC_CATEGORIES,
   PRESENCE_PROVIDERS,
+  PRESENCE_STATES,
+  presenceRank,
   PROVIDERS,
   PROVIDER_LIST,
   canvasHostInput,
@@ -722,6 +725,169 @@ const clash = await syncTasksFromService('canvas', [
   { externalId: 'quiz:9', title: 'Quiz nine', dueAt: DUE, done: false },
 ]);
 check('assignment 9 and quiz 9 are not the same row', clash.created === 2, JSON.stringify(clash));
+
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nWho is on air');
+
+/*
+ * `live` is not a flavour of `follows`, and the tempting mistake is the one
+ * `friends` and `follows` already suffered: following somebody is a standing
+ * fact about you, while being live is a fact about them that is true for three
+ * hours on a Tuesday. One list you curate, one empties itself.
+ */
+check('twitch declares live', PROVIDERS.twitch.capabilities.live !== undefined);
+check('…and follows, which is a different list', PROVIDERS.twitch.capabilities.follows !== undefined);
+check('twitch is a live provider', LIVE_PROVIDERS.includes('twitch'));
+check('twitch is a follow provider', FOLLOW_PROVIDERS.includes('twitch'));
+check('twitch is not a presence provider', !PRESENCE_PROVIDERS.includes('twitch'));
+
+/*
+ * **YouTube must not declare `live`, and that is a number rather than a
+ * preference.** There is no "which of my subscriptions are live" endpoint; the
+ * only route is `search.list` per channel at 100 quota units against a
+ * 10,000/day default, so a few hundred subscriptions cost several times the
+ * whole day's allowance for one refresh — and would take the playlist and
+ * Following syncs down with it. The assertion exists because "add it for
+ * completeness" is exactly the change somebody would make.
+ */
+check('youtube does not claim live', PROVIDERS.youtube.capabilities.live === undefined);
+/*
+ * Not a count. `LIVE_PROVIDERS.length === 1` was the first version and it is
+ * the wrong assertion: it fails the day a second service that *can* answer this
+ * is added, which is a change to welcome rather than to block. What must stay
+ * true is that YouTube is not among them.
+ */
+check('…so it is not a live provider', !LIVE_PROVIDERS.includes('youtube'), LIVE_PROVIDERS.join(', '));
+
+/*
+ * Twitch is the first provider here that genuinely needs a client secret —
+ * PKCE has never shipped for their authorization code flow. Declaring `pkce:
+ * true` would send a code verifier and no secret, and the token endpoint would
+ * refuse every login with nothing on screen but "400".
+ */
+check('twitch does not claim PKCE', PROVIDERS.twitch.oauth?.pkce === false);
+check(
+  '…and therefore offers a secret field',
+  PROVIDERS.twitch.credentials.some((field) => field.key === 'clientSecret' && field.required)
+);
+check(
+  'a PKCE provider still offers no secret',
+  !PROVIDERS.spotify.credentials.some((field) => field.key === 'clientSecret')
+);
+
+/* The live scope is the same one the followed-channels list needs. */
+check('twitch asks for the follows scope', PROVIDERS.twitch.oauth?.scopes.includes('user:read:follows') === true);
+
+/*
+ * The glyph is how a provider row is picked out of seven at a glance, so two
+ * sharing one costs exactly the thing it is there for. Twitch shipped wearing
+ * YouTube's television for about ten minutes.
+ */
+const glyphs = PROVIDER_LIST.map((p) => p.glyph);
+check('every provider has its own glyph', new Set(glyphs).size === glyphs.length, glyphs.join(' '));
+
+/*
+ * **The two loopback spellings, and they are opposite rules.** Spotify and
+ * Google stopped accepting `http://localhost` and require the IP literal;
+ * Twitch's console refuses the IP literal with "Redirect URIs must use HTTPS
+ * protocol" and takes the name. One global base could not serve both, so the
+ * spelling is declared per provider — and the failure mode of getting it wrong
+ * is a registration form that will not accept what the card told you to paste.
+ */
+check('twitch wants the loopback name', PROVIDERS.twitch.oauth?.loopbackHost === 'name');
+check(
+  'spotify and google keep the IP literal',
+  PROVIDERS.spotify.oauth?.loopbackHost === undefined && PROVIDERS.youtube.oauth?.loopbackHost === undefined
+);
+
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nWhat a token response says it granted');
+
+const { grantedFrom } = await import('../features/integrations/oauth.js');
+
+/*
+ * **`scope` is a string in RFC 6749 and an array at Twitch.**
+ *
+ * Spotify, Google and Discord all send `"a b c"`. Twitch sends
+ * `["user:read:follows"]`, so `token.scope.split(' ')` threw
+ * `token.scope.split is not a function` — and it threw *after* the token had
+ * been issued, so the connection failed at the last step with an error naming a
+ * string method. Checked here because the failure needs a real handshake to
+ * reproduce and nobody is going to do that on purpose twice.
+ */
+const twitchSpec = PROVIDERS.twitch;
+check(
+  'an array of scopes is read as a list',
+  grantedFrom({ access_token: 'x', scope: ['user:read:follows'] }, twitchSpec).join(' ') === 'user:read:follows'
+);
+check(
+  'a space-delimited string still splits',
+  grantedFrom({ access_token: 'x', scope: 'playlist-read-private user-follow-read' }, PROVIDERS.spotify).join(',') ===
+    'playlist-read-private,user-follow-read'
+);
+/*
+ * Absent means "the provider did not say", which several omit on a refresh —
+ * reading that as "nothing granted" would report a working connection as having
+ * lost its permissions.
+ */
+check(
+  'nothing said falls back to what was asked for',
+  grantedFrom({ access_token: 'x' }, twitchSpec).join(' ') === 'user:read:follows'
+);
+check(
+  'and so does an empty string',
+  grantedFrom({ access_token: 'x', scope: '' }, twitchSpec).join(' ') === 'user:read:follows'
+);
+check('an empty array is taken at its word', grantedFrom({ access_token: 'x', scope: [] }, twitchSpec).length === 0);
+
+
+/* ------------------------------------------------------------------ */
+
+console.log('\nPlaying, but away');
+
+/*
+ * **Both facts, kept.** Steam and Riot each report "in a game" and "idle" as
+ * separate things and both were collapsing them into `in-game` — the game was
+ * checked first and the availability discarded. A friend AFK in a match then
+ * showed the same blue dot as one actually at the keyboard, and was mistaken
+ * for available. That is worse than missing information: it is a confident
+ * claim in the wrong direction, which is the failure this whole screen is
+ * against.
+ */
+check('there is a state for it', PRESENCE_STATES.includes('in-game-away'));
+
+/*
+ * Ranked below everything you could actually talk to — that is the entire
+ * point — and above plain `away`, because a game is running and somebody idle
+ * mid-match is likelier to come back than somebody idle on the desktop.
+ */
+check('it ranks below online', presenceRank['in-game-away'] > presenceRank.online);
+check('…and below in-game', presenceRank['in-game-away'] > presenceRank['in-game']);
+check('…and below busy, who is at least at the keyboard', presenceRank['in-game-away'] > presenceRank.dnd);
+check('…but above plain away', presenceRank['in-game-away'] < presenceRank.away);
+check('…and well above offline', presenceRank['in-game-away'] < presenceRank.offline);
+
+/*
+ * A hand-written list that must not fall behind the states. The Friends screen
+ * orders its filter chips from one, fixed rather than derived so the buttons do
+ * not reshuffle as people come and go — and a state missing from it has no chip
+ * at all, which is a filter you cannot switch off. `in-game-away` was missing
+ * for exactly one build.
+ */
+check(
+  'every state can be filtered',
+  PRESENCE_STATES.every((state) => presenceRank[state] !== undefined),
+  PRESENCE_STATES.join(',')
+);
+
+/* Every state still has exactly one rank, which is easy to break by hand. */
+const ranks = PRESENCE_STATES.map((state) => presenceRank[state]);
+check('every state is ranked', ranks.every((r) => typeof r === 'number'));
+check('and no two share a rank', new Set(ranks).size === ranks.length, ranks.join(','));
 
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);

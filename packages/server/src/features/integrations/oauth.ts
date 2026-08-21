@@ -136,7 +136,23 @@ export async function clientSecret(provider: ProviderId): Promise<string> {
  * window, and worthless to anybody who did not start the handshake here.
  */
 export function redirectUri(provider: ProviderId): string {
-  return `${config.OAUTH_REDIRECT_BASE}/oauth/callback/${provider}`;
+  /*
+   * The loopback default is spelled differently per provider, and that is not
+   * fussiness — it is two services with opposite rules. Spotify and Google
+   * stopped accepting `http://localhost` and require `http://127.0.0.1`; Twitch
+   * documents `http://localhost:PORT`, and the numeric form is what its console
+   * refused here.
+   *
+   * A base somebody actually set is used exactly as typed. Rewriting a
+   * deliberate value would be the worst kind of help: it would work everywhere
+   * except the one place the value was chosen for.
+   */
+  const base =
+    !config.OAUTH_REDIRECT_BASE_EXPLICIT && PROVIDERS[provider].oauth?.loopbackHost === 'name'
+      ? config.OAUTH_REDIRECT_BASE.replace('//127.0.0.1', '//localhost')
+      : config.OAUTH_REDIRECT_BASE;
+
+  return `${base}/oauth/callback/${provider}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,12 +246,39 @@ export async function beginAuthorization(provider: ProviderId): Promise<{ url: s
   return { url: `${spec.oauth.authorizeUrl}?${params}`, state };
 }
 
-interface TokenResponse {
+export interface TokenResponse {
   access_token: string;
   refresh_token?: string;
   expires_in?: number;
-  scope?: string;
+  /**
+   * What was actually granted — **a space-delimited string, or an array.**
+   *
+   * RFC 6749 says string, and Spotify, Google and Discord all send one. Twitch
+   * sends `["user:read:follows"]`, so `token.scope.split(' ')` threw
+   * `token.scope.split is not a function` and the whole connection failed after
+   * the token had already been issued — the worst place for it, because the
+   * handshake had succeeded and the error named a string method.
+   *
+   * Typed as the union rather than normalised at the fetch, so the next provider
+   * with an opinion about this is a compile error here rather than a runtime one
+   * three lines later.
+   */
+  scope?: string | string[];
   token_type?: string;
+}
+
+/**
+ * The scopes a token response says it carries, whichever shape it said it in.
+ *
+ * Falls back to what was *asked for* when the provider says nothing, which is a
+ * guess and a deliberate one: several of these omit `scope` on a refresh, and
+ * treating that as "no scopes granted" would make the screen report a working
+ * connection as having lost its permissions.
+ */
+export function grantedFrom(token: TokenResponse, spec: ProviderSpec): string[] {
+  if (Array.isArray(token.scope)) return token.scope;
+  if (typeof token.scope === 'string' && token.scope.trim() !== '') return token.scope.split(' ');
+  return spec.oauth?.scopes ?? [];
 }
 
 async function postToken(spec: ProviderSpec, provider: ProviderId, body: URLSearchParams): Promise<TokenResponse> {
@@ -299,7 +342,7 @@ export async function completeAuthorization(state: string, code: string): Promis
     // with undefined is how a working connection quietly becomes unrefreshable.
     ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
     expiresAt: token.expires_in ? Date.now() + token.expires_in * 1000 : null,
-    scopes: JSON.stringify(token.scope ? token.scope.split(' ') : spec.oauth?.scopes ?? []),
+    scopes: JSON.stringify(grantedFrom(token, spec)),
     lastError: null,
   });
 
@@ -368,9 +411,23 @@ async function refresh(provider: ProviderId, account: Account): Promise<string> 
  * revoked the moment you change your password, and without this every sync after
  * that fails until somebody notices and reconnects by hand.
  */
-export async function apiGet<T>(provider: ProviderId, url: string): Promise<T> {
+export async function apiGet<T>(
+  provider: ProviderId,
+  url: string,
+  /**
+   * Anything the provider wants beyond the bearer token.
+   *
+   * Twitch is the reason this exists: every Helix call must carry `Client-Id`
+   * alongside the token, and a provider writing its own fetch to add one header
+   * would lose the refresh-on-401 and the `Retry-After` handling below — the two
+   * parts that are genuinely hard to get right and easy to forget.
+   */
+  extraHeaders: Record<string, string> = {}
+): Promise<T> {
   const attempt = async (token: string) =>
-    fetch(url, { headers: { authorization: `Bearer ${token}`, accept: 'application/json' } });
+    fetch(url, {
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json', ...extraHeaders },
+    });
 
   let response = await attempt(await accessTokenFor(provider));
 

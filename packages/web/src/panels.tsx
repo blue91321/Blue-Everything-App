@@ -42,6 +42,31 @@ export function panelChoices(): Array<PanelMeta & { featureId: string }> {
   ];
 }
 
+/**
+ * The panels to draw, in order, out of what was chosen.
+ *
+ * Ids that nothing answers to are dropped rather than rendered as a gap — a
+ * feature switched off should cost you that panel and nothing else, and the
+ * stored list is left alone so switching it back on restores the order you had.
+ *
+ * Falls back to the single `dashboardPanel` when the list is absent, which is a
+ * server older than the column rather than an empty choice: the two are
+ * genuinely different and collapsing them would blank the column on any install
+ * that had not restarted yet.
+ */
+export function chosenPanels(settings: {
+  dashboardPanels?: string[];
+  dashboardPanel?: string;
+}): Array<{ id: string; Panel: LazyExoticComponent<ComponentType<PanelProps>> }> {
+  const ids = settings.dashboardPanels ?? (settings.dashboardPanel ? [settings.dashboardPanel] : []);
+
+  return ids
+    .map((id) => ({ id, Panel: resolvePanel(id) }))
+    .filter((entry): entry is { id: string; Panel: LazyExoticComponent<ComponentType<PanelProps>> } =>
+      entry.Panel !== null
+    );
+}
+
 /** What to draw for a chosen id, or null if nothing here answers to it. */
 export function resolvePanel(panelId: string): LazyExoticComponent<ComponentType<PanelProps>> | null {
   if (panelId === '') return null;

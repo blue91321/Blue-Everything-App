@@ -54,6 +54,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   follows: 'Following',
   friends: 'Friends',
   assignments: 'Coursework',
+  live: 'Live',
 };
 
 export function Connections({ local }: { local: boolean }) {
@@ -99,7 +100,11 @@ function leavingOut(provider: ProviderInfo): string {
   // Both follow providers would otherwise read "accounts you follow", which is
   // accurate and useless — the entire job of this line is naming what vanishes.
   if (provider.capabilities.follows) {
-    return provider.id === 'youtube' ? 'channels you subscribe to' : 'artists you follow';
+    if (provider.id === 'youtube') return 'channels you subscribe to';
+    // Twitch contributes to two lists, and naming only one of them would make
+    // the tick look cheaper than it is.
+    if (provider.capabilities.live) return 'channels you follow, and whether they are live';
+    return 'artists you follow';
   }
   return 'nothing on these lists';
 }
@@ -114,7 +119,7 @@ function leavingOut(provider: ProviderInfo): string {
  * whose own label says it has no effect is worse than no control.
  */
 function canBeLeftOut(provider: ProviderInfo): boolean {
-  return Boolean(provider.capabilities.friends ?? provider.capabilities.follows);
+  return Boolean(provider.capabilities.friends ?? provider.capabilities.follows ?? provider.capabilities.live);
 }
 
 /**

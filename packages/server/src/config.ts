@@ -121,6 +121,10 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().default(''),
   DISCORD_CLIENT_ID: z.string().default(''),
   DISCORD_CLIENT_SECRET: z.string().default(''),
+  // Twitch has never shipped PKCE for the authorization code flow, so the
+  // secret is not optional here the way Spotify's is.
+  TWITCH_CLIENT_ID: z.string().default(''),
+  TWITCH_CLIENT_SECRET: z.string().default(''),
   STEAM_API_KEY: z.string().default(''),
 
   /**
@@ -132,6 +136,16 @@ const envSchema = z.object({
    * and Google both stopped accepting `http://localhost` while continuing to
    * accept `http://127.0.0.1`. They are the same machine and not the same
    * string, and the error message says neither.
+   *
+   * **And Twitch is the other way round**, which is what forced the default to
+   * become per-provider: it documents `http://localhost:PORT`, and the numeric
+   * form is what produced "Redirect URIs must use HTTPS protocol" here. One
+   * global string could not serve both, so `oauth.loopbackHost` in the manifest
+   * says which spelling a provider wants and `redirectUri` applies it.
+   *
+   * Setting this variable overrides all of that for every provider, untouched —
+   * the escape hatch if a service ever demands genuine HTTPS, since
+   * `tailscale serve` already publishes this app on a real certificate.
    */
   OAUTH_REDIRECT_BASE: z.string().default(''),
 
@@ -158,6 +172,15 @@ export const config = {
   // PORT, which is a sibling field and therefore not available to a `.default()`.
   OAUTH_REDIRECT_BASE:
     parsed.data.OAUTH_REDIRECT_BASE.replace(/\/$/, '') || `http://127.0.0.1:${parsed.data.PORT}`,
+  /**
+   * Whether the value above was chosen or fallen back to.
+   *
+   * `redirectUri` needs to tell those apart. The default is the loopback IP,
+   * which one provider refuses and another requires — so the default gets
+   * rewritten per provider, while a base somebody actually set is used exactly
+   * as typed. Without this the rewrite would quietly edit a deliberate value.
+   */
+  OAUTH_REDIRECT_BASE_EXPLICIT: parsed.data.OAUTH_REDIRECT_BASE.trim() !== '',
 };
 
 const configuredOrigins = config.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);

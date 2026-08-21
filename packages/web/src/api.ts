@@ -370,6 +370,21 @@ export interface AppSettings {
    * process serving it is the ordinary case right after an edit.
    */
   dashboardPanel?: string;
+  /**
+   * What the side column holds, in the order they are drawn.
+   *
+   * Optional for the usual reason: the PWA and the server update independently,
+   * and a bundle newer than the process serving it must read an absent list as
+   * "fall back to the single panel" rather than as "no panels".
+   */
+  dashboardPanels?: string[];
+  /**
+   * What the live panel narrows to — `all` or `favourites`.
+   *
+   * A real pair rather than an opaque string, unlike `dashboardPanel`: these two
+   * values are core's own, so an unknown one would silently mean "all".
+   */
+  livePanelScope?: 'all' | 'favourites';
   updatedAt?: number;
 }
 
@@ -754,7 +769,7 @@ export interface FriendRow {
   provider: string;
   /** `unknown` means nobody could say — not that they are away. */
   /** Mirrors `PRESENCE_STATES` in shared, which this package cannot import. */
-  state: 'offline' | 'online' | 'away' | 'in-game' | 'dnd' | 'unknown';
+  state: 'offline' | 'online' | 'away' | 'in-game' | 'in-game-away' | 'dnd' | 'unknown';
   game: string | null;
   detail: string | null;
   lastOnlineAt: number | null;
@@ -768,6 +783,54 @@ export interface FriendRow {
     /** The service's own id for them, for deep links. Absent on an older server. */
     providerUserId?: string;
   }>;
+}
+
+/** One channel that is on air. Mirrors `live_streams`. */
+export interface LiveStreamRow {
+  id: string;
+  provider: string;
+  providerAccountId: string;
+  streamId: string;
+  channelName: string;
+  title: string;
+  category: string | null;
+  viewers: number | null;
+  startedAt: number | null;
+  thumbnailUrl: string | null;
+  url: string;
+  seenAt: number;
+  /** Starred. False when the followed-channels list has not synced them yet. */
+  favourite: boolean;
+}
+
+/**
+ * Why a live list might be empty, per service.
+ *
+ * The same job `FriendSource` does and for a sharper reason: "nobody is live",
+ * "Twitch is not connected" and "YouTube cannot answer this" all render as
+ * nothing, and only the first is about the people you follow.
+ */
+export interface LiveSource {
+  provider: string;
+  label: string;
+  why: string;
+  connected: boolean;
+  missingConfig: string[];
+  lastError: string | null;
+}
+
+export interface LiveView {
+  streams: LiveStreamRow[];
+  sources: LiveSource[];
+  hiddenCount?: number;
+  /**
+   * What the *panel* should narrow itself to. The tab always shows everything.
+   *
+   * Carried on this response so the panel needs no second request for settings.
+   * Optional because the server and the PWA update independently.
+   */
+  scope?: 'all' | 'favourites';
+  refreshed: SyncOutcome[];
 }
 
 export interface LinkSuggestion {
@@ -1018,8 +1081,12 @@ export const api = {
       overlayScreen?: string | null;
       overlayAvatar?: string;
       hiddenProviders?: string[];
-      /** Opaque panel id, or '' for one column. */
+      /** Opaque panel id, or '' for one column. Kept in step with the list. */
       dashboardPanel?: string;
+      /** The side column's panels, in order. Deduplicated by the server. */
+      dashboardPanels?: string[];
+      /** What the live panel narrows to. The Live tab always shows everything. */
+      livePanelScope?: 'all' | 'favourites';
     }) => patch<AppSettings>('/api/settings', payload),
   },
 
@@ -1169,6 +1236,20 @@ export const api = {
       post<{ outcomes: SyncOutcome[] }>(`/api/integrations/${provider}/sync`, { capabilities }),
     /** `force` is the refresh button; without it the read only refetches if stale. */
     friends: (force = false) => request<FriendsView>(`/api/integrations/friends${force ? '?force=1' : ''}`),
+    live: (force = false) => request<LiveView>(`/api/integrations/live${force ? '?force=1' : ''}`),
+    /**
+     * Star a channel, by the pair a live row already carries.
+     *
+     * Answers 409 when the followed-channels list has not synced that channel
+     * yet: there is no row to flag, and a silent success would spring the star
+     * back on the next reload with nothing said.
+     */
+    favouriteFollow: (provider: string, providerAccountId: string, favourite: boolean) =>
+      post<{ favourite: boolean }>('/api/integrations/follows/favourite', {
+        provider,
+        providerAccountId,
+        favourite,
+      }),
     /** Accounts that look like the same person. Proposals, not links. */
     linkSuggestions: () => request<{ suggestions: LinkSuggestion[] }>('/api/integrations/friends/suggestions'),
     linkFriends: (a: string, b: string) => post<{ personId: string }>('/api/integrations/friends/link', { a, b }),

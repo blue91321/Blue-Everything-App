@@ -15,6 +15,12 @@ import type { FriendRow } from '../../api';
 export const STATE_LABEL: Record<FriendRow['state'], string> = {
   'in-game': 'playing',
   online: 'online',
+  /*
+   * Says both halves, because either alone is the misreading this state exists
+   * to stop: "playing" reads as available and "away" hides that a match is
+   * running and they may be back in a minute.
+   */
+  'in-game-away': 'playing, but away',
   away: 'away',
   dnd: 'busy',
   offline: 'offline',

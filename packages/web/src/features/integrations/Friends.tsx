@@ -138,7 +138,12 @@ export function Friends({ seed }: { seed?: string | null } = {}) {
   // `dnd` belongs up here: they are at the keyboard, and "busy" is a choice
   // somebody made rather than the absence idle time reports.
   const around = shown.filter((f) => f.state === 'in-game' || f.state === 'online' || f.state === 'dnd');
-  const away = shown.filter((f) => f.state === 'away');
+  /*
+   * `in-game-away` joins the away group rather than the one above, which is the
+   * whole point of it existing: a game is running, and they are still not
+   * somebody you can talk to. The row says which of the two kinds of away it is.
+   */
+  const away = shown.filter((f) => f.state === 'away' || f.state === 'in-game-away');
   const unknown = shown.filter((f) => f.state === 'unknown');
   const offline = shown.filter((f) => f.state === 'offline');
 
@@ -239,14 +244,21 @@ export function Friends({ seed }: { seed?: string | null } = {}) {
       {/*
         Between online and offline, where it belongs — these are people who are
         signed in but not here: a launcher left open, the phone companion app,
-        or somebody idle in the League client. Under its own heading rather than
-        mixed into the list above, so the top of the screen answers "who could I
-        actually play with" without qualification.
+        somebody idle in the League client, or somebody AFK in the middle of a
+        match. Under its own heading rather than mixed into the list above, so
+        the top of the screen answers "who could I actually play with" without
+        qualification.
       */}
       {away.length > 0 && (
         <>
           <div className="meta" style={{ margin: '1rem 0 .5rem' }}>
-            Away — signed in, but not in a game
+            {/*
+              The heading has to cover both kinds now. It read "signed in, but
+              not in a game", which was true of everybody here until `in-game-away`
+              arrived and is now plainly false for the friend sitting AFK in a
+              match — the row underneath it says the game they are in.
+            */}
+            Away — signed in, but not answering
           </div>
           {away.map((friend) => (
             <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
@@ -364,7 +376,15 @@ function PlatformFilter({
  * as people come and go — a filter whose buttons move under the cursor is worse
  * than one with a gap in it.
  */
-const STATUS_ORDER: Array<FriendRow['state']> = ['in-game', 'online', 'dnd', 'away', 'offline', 'unknown'];
+const STATUS_ORDER: Array<FriendRow['state']> = [
+  'in-game',
+  'online',
+  'dnd',
+  'in-game-away',
+  'away',
+  'offline',
+  'unknown',
+];
 
 /**
  * Switch whole statuses off.

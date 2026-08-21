@@ -430,18 +430,35 @@ function DashboardPanel() {
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState('');
 
-  const chosen = settings.data?.dashboardPanel ?? '';
   const choices = panelChoices();
 
   // A server that predates the column sends nothing, and a picker that writes a
   // field the server drops is worse than no picker at all.
-  if (settings.data && settings.data.dashboardPanel === undefined) return null;
+  if (settings.data && settings.data.dashboardPanels === undefined) return null;
 
-  const choose = async (id: string) => {
+  /*
+   * The single `dashboardPanel` is the fallback, not a second source of truth.
+   * A server older than the list column sends only that, and reading it here is
+   * what keeps this screen usable on one while the other restarts.
+   */
+  const chosen =
+    settings.data?.dashboardPanels ??
+    (settings.data?.dashboardPanel ? [settings.data.dashboardPanel] : []);
+
+  const available = choices.filter((panel) => !chosen.includes(panel.id));
+
+  /**
+   * One writer for every control here.
+   *
+   * The list and the live scope are two fields of one settings row and
+   * `PATCH /api/settings` takes both, so a second saver would be a second copy
+   * of the busy flag, the error handling and the reload.
+   */
+  const save = async (panels: string[], scope?: 'all' | 'favourites') => {
     setSaving(true);
     setProblem('');
     try {
-      await api.settings.update({ dashboardPanel: id });
+      await api.settings.update({ dashboardPanels: panels, ...(scope ? { livePanelScope: scope } : {}) });
       settings.reload();
     } catch (error) {
       setProblem((error as Error).message);
@@ -450,56 +467,131 @@ function DashboardPanel() {
     }
   };
 
+  /** Swap with a neighbour and write the whole list, as the Habits screen does. */
+  const move = (index: number, delta: number) => {
+    const next = [...chosen];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    void save(next);
+  };
+
+  const labelFor = (id: string) => choices.find((panel) => panel.id === id)?.label ?? id;
+
   return (
     <section id="dashboard-panel">
       <h2>Beside the Dashboard</h2>
       <div className="card">
         <div className="meta" style={{ marginBottom: 8 }}>
-          A second column on a wide screen, for something worth having in the corner of your eye. On a
-          phone it sits underneath instead.
+          A second column on a wide screen, holding as many of these as you like, one under the other in
+          the order below. On a phone they sit underneath the Dashboard instead.
         </div>
 
-        <label className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: 6 }}>
-          <input
-            type="radio"
-            name="dashboard-panel"
-            checked={chosen === ''}
-            disabled={saving}
-            onChange={() => void choose('')}
-          />
-          <span className="grow">
-            Nothing <span className="meta">— one column, as it was</span>
-          </span>
-        </label>
-
-        {choices.map((panel) => (
-          <label key={panel.id} className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: 6 }}>
-            <input
-              type="radio"
-              name="dashboard-panel"
-              checked={chosen === panel.id}
-              disabled={saving}
-              onChange={() => void choose(panel.id)}
-            />
-            <span className="grow">
-              {panel.label}
-              {panel.hint && <span className="meta"> — {panel.hint}</span>}
-            </span>
-          </label>
-        ))}
+        {chosen.length === 0 && (
+          <div className="empty" style={{ marginTop: 8 }}>
+            Nothing here — the Dashboard is one column. Add something below.
+          </div>
+        )}
 
         {/*
-         * The stored choice belongs to a feature that is off, or to a build that
-         * no longer has it. Said out loud rather than silently rewritten to
-         * "Nothing": the setting is deliberately left alone so switching the
-         * feature back on restores what you had, and without this line the
-         * Dashboard would just be missing a column for no visible reason.
-         */}
-        {chosen !== '' && !choices.some((panel) => panel.id === chosen) && (
-          <div className="meta" style={{ marginTop: 8 }}>
-            The panel you picked (<code>{chosen}</code>) is not available in this build — its feature is
-            switched off or has been removed. Your choice is kept, so switching it back on brings the
-            panel back.
+          The chosen ones first, in their order, because that is what the column
+          looks like — the list on screen and the list on the Dashboard read
+          top to bottom the same way.
+
+          Arrows rather than drag and drop: the Habits screen already reorders
+          this way, a list of three or four does not need a drag, and a drag is
+          the one interaction that has to be built twice for touch.
+        */}
+        {chosen.map((id, index) => (
+          <div className="row" key={id} style={{ alignItems: 'center', gap: '.4rem', marginTop: 6 }}>
+            <span className="grow">
+              {labelFor(id)}
+              {/*
+                A panel whose feature is switched off keeps its place rather than
+                being dropped from the list. The stored order is left alone so
+                turning the feature back on restores it — the Dashboard simply
+                draws one fewer in the meantime.
+              */}
+              {!choices.some((panel) => panel.id === id) && (
+                <span className="meta"> — not in this build, kept for when it is back</span>
+              )}
+            </span>
+
+            <button
+              className="btn subtle"
+              aria-label={`Move ${labelFor(id)} up`}
+              disabled={saving || index === 0}
+              onClick={() => move(index, -1)}
+            >
+              ↑
+            </button>
+            <button
+              className="btn subtle"
+              aria-label={`Move ${labelFor(id)} down`}
+              disabled={saving || index === chosen.length - 1}
+              onClick={() => move(index, 1)}
+            >
+              ↓
+            </button>
+            <button
+              className="btn subtle"
+              aria-label={`Remove ${labelFor(id)}`}
+              disabled={saving}
+              onClick={() => void save(chosen.filter((other) => other !== id))}
+            >
+              remove
+            </button>
+          </div>
+        ))}
+
+        {available.length > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <div className="meta" style={{ marginBottom: 8 }}>
+              {chosen.length === 0 ? 'Available' : 'Also available'}
+            </div>
+
+            {available.map((panel) => (
+              <div className="row" key={panel.id} style={{ alignItems: 'center', gap: '.4rem', marginTop: 6 }}>
+                <span className="grow">
+                  {panel.label}
+                  {panel.hint && <span className="meta"> — {panel.hint}</span>}
+                </span>
+                {/* Appended rather than inserted: a new panel going to the bottom
+                    is predictable, where anywhere else is a guess about intent. */}
+                <button className="btn subtle" disabled={saving} onClick={() => void save([...chosen, panel.id])}>
+                  add
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/*
+          Only while the live panel is one of them. A scope control for a panel
+          you are not showing is a setting for nothing — and worse, it invites the
+          reading that it governs the Live *tab*, which always shows everybody.
+        */}
+        {chosen.includes('integrations:live') && settings.data?.livePanelScope !== undefined && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+            <div className="title">Which live channels</div>
+            <div className="meta" style={{ marginTop: 4, marginBottom: 8 }}>
+              The Connections tab always lists everyone on air; this is only the column on the Dashboard.
+              Star a channel there to add it here.
+            </div>
+
+            <div className="row wrap" style={{ gap: '.35rem' }}>
+              {LIVE_SCOPES.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={(settings.data?.livePanelScope ?? 'all') === option.id ? 'btn primary' : 'btn subtle'}
+                  disabled={saving}
+                  onClick={() => void save(chosen, option.id)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -508,6 +600,19 @@ function DashboardPanel() {
     </section>
   );
 }
+
+/**
+ * Two choices, so two buttons rather than a range input.
+ *
+ * A slider is the right control for a number on a continuum — the gauge drain
+ * and fill both earn one. This is a pair of named alternatives, where a slider
+ * would have two positions, no labels at the stops, and no way to show which is
+ * live except by where the handle sat.
+ */
+const LIVE_SCOPES: { id: 'all' | 'favourites'; label: string }[] = [
+  { id: 'all', label: 'Everyone I follow' },
+  { id: 'favourites', label: 'Starred only' },
+];
 
 function NotificationsTab({ session }: { session: Session }) {
   // An older server sends no feature list; absent means everything, not nothing.
