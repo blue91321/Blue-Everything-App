@@ -7,7 +7,7 @@ import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
 import { activeFeatures, isEnabled, missingFeatures } from '../features.js';
 import { VERSION } from '../version.js';
-import { runningPackages } from '../modules.js';
+import { moduleIsRunning, runningPackages } from '../modules.js';
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -102,7 +102,16 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     // Storing a subscription nothing will ever send to is inert rather than
     // harmful, but accepting it would let the phone show "notifications on" for
     // a feature this install does not run.
-    if (!isEnabled('push')) return reply.code(404).send({ error: 'phone push is switched off on this server' });
+    /*
+     * `moduleIsRunning` rather than `isEnabled`, because push is a package now
+     * rather than a built-in feature. The question is unchanged — "does this
+     * install actually do push" — and asking it still matters: storing a
+     * subscription nothing will send to is inert, but accepting it would let the
+     * phone show "notifications on" for something that does not run here.
+     */
+    if (!moduleIsRunning('push')) {
+      return reply.code(404).send({ error: 'phone push is switched off on this server' });
+    }
     if (!request.deviceId) return reply.code(400).send({ error: 'not running with a paired device' });
 
     const body = request.body as { endpoint?: unknown } | null;

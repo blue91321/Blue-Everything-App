@@ -662,6 +662,8 @@ export interface ModuleProblem {
  */
 export interface ModuleInfo {
   id: string;
+  /** Ships with the app rather than having been installed. Not removable. */
+  shipped: boolean;
   label: string;
   blurb: string | null;
   version: string | null;

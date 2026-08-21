@@ -116,7 +116,18 @@ function PackageRow({
             label={`${mod.label} on`}
             onChange={onToggle}
           />
-          {confirming ? (
+          {mod.shipped ? (
+            /*
+              No Remove for a shipped package, and it is absent rather than
+              disabled. A disabled button is a promise that it could work under
+              some condition; this one never can, because the folder is part of
+              your checkout — deleting it would be a `git checkout` away from
+              coming back and a `git status` away from being confusing.
+            */
+            <span className="meta" style={{ whiteSpace: 'nowrap' }}>
+              built in
+            </span>
+          ) : confirming ? (
             <>
               <button className="btn danger" disabled={busy} onClick={onRemove}>
                 Delete
@@ -224,9 +235,31 @@ export function InstalledPackages({ session }: { session: Session }) {
   }
 
   const pendingRestart = data.modules.some((mod) => mod.pendingRestart);
+  /*
+   * Two groups from one list. A shipped package is *also* built in — it came
+   * with the app — so it belongs with the features above rather than under a
+   * heading claiming you installed it. The only thing separating the two is
+   * where the folder lives, and that is exactly what decides whether Remove
+   * can mean anything.
+   */
+  const shipped = data.modules.filter((mod) => mod.shipped);
+  const added = data.modules.filter((mod) => !mod.shipped);
 
   return (
     <>
+      {/* Rendered before the "Installed" heading, so they read as a
+          continuation of the built-in list the tab has already drawn. */}
+      {shipped.map((mod) => (
+        <PackageRow
+          key={mod.id}
+          mod={mod}
+          local={local}
+          busy={busy}
+          onToggle={(enabled) => void toggle(mod.id, enabled)}
+          onRemove={() => void remove(mod.id)}
+        />
+      ))}
+
       <h3 className="pkg-head">Installed</h3>
       <div className="meta" style={{ marginBottom: 8 }}>
         Packages you added yourself. One folder each, under <code>modules/</code>.
@@ -324,12 +357,12 @@ export function InstalledPackages({ session }: { session: Session }) {
         </div>
       )}
 
-      {data.modules.length === 0 ? (
+      {added.length === 0 ? (
         <div className="empty" style={{ marginTop: 10 }}>
           Nothing installed yet.
         </div>
       ) : (
-        data.modules.map((mod) => (
+        added.map((mod) => (
           <PackageRow
             key={mod.id}
             mod={mod}

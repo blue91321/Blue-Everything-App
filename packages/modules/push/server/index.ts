@@ -11,7 +11,7 @@
  * in your head than two mechanisms that each do half the job.
  */
 import type { FastifyInstance } from 'fastify';
-import { providePush } from '../../push-port.js';
+import { providePush } from '@everything/server/module-api';
 import { getVapidKeys, pushIsOnCooldown, resetPushCooldown, sendPushToPhones } from './push.js';
 
 export async function routes(_app: FastifyInstance): Promise<void> {

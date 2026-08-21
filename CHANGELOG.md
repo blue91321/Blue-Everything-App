@@ -55,6 +55,26 @@ second step `npm version` does not do for you.
   The failure renders as a banner naming the package and quoting the error.
 - A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
 
+### Phone notifications is a package now
+
+- **Two module roots.** `packages/modules/` ships with the app and is committed;
+  `modules/` holds what you installed and stays gitignored. Moving a first-party
+  feature into the ignored one would have deleted it from the public repo.
+  Shipped is scanned first, so a downloaded folder cannot shadow a real one.
+- **`@everything/server/module-api`** — the stable surface a server-side package
+  imports instead of reaching into the server's own source with `../../`. Eight
+  exports, arrived at by counting what the four removable features actually use.
+- **`push` moved out of the feature manifest** into `packages/modules/push/`, and
+  loads through the package loader. It shows as built-in on the Packages screen,
+  switchable but not removable — deleting it would mean deleting part of your
+  checkout.
+- **Your switch survives the move.** A shipped package defaults on, so a
+  `push: false` would otherwise have turned notifications back on for anyone who
+  had silenced them. The old key is read once and carried into `modules.json`.
+- `vault`, `voice` and `integrations` have **not** moved. Their browser halves
+  are compiled into the PWA bundle, and a package's must be one self-contained
+  file — see `CLAUDE.md` for what each would cost.
+
 ### Two Windows details, each found by hitting it
 
 - **A byte-order mark is now stripped before every hand-edited JSON parse.**

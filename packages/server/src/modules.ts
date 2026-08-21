@@ -40,6 +40,7 @@ import {
 } from '@everything/shared/modules';
 import { readZip, stripCommonPrefix, ZipError } from './zip.js';
 import { parseJsonText } from './json.js';
+import { featuresFilePath } from './features.js';
 
 /**
  * Anchored to this file, never to the working directory — the same rule the
@@ -59,11 +60,29 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
  */
 export const modulesDir = resolve(repoRoot, 'modules');
 
+/**
+ * The *other* root: packages that ship with the app.
+ *
+ * Two roots rather than one, and the reason is git. `modules/` is gitignored
+ * deliberately — it holds code downloaded from elsewhere, which is emphatically
+ * not ours to commit — so moving a first-party feature into it would delete that
+ * feature from the repository. On a repo that is public, silently.
+ *
+ * So a shipped package lives in `packages/modules/`, which is committed and
+ * typechecked with everything else, and is loaded by exactly the same machinery.
+ * The difference a person sees is one line on the Packages screen: a shipped
+ * package says **Built in** and has no Remove button, because removing it would
+ * mean deleting part of your checkout rather than a folder you added.
+ */
+export const shippedModulesDir = resolve(repoRoot, 'packages/modules');
+
 /** Which modules are switched on. Beside `features.json`, and the same shape. */
 export const modulesStatePath = resolve(repoRoot, MODULES_STATE_FILE);
 
 export interface InstalledModule {
   id: string;
+  /** Ships with the app, out of `packages/modules/`. Not removable from here. */
+  shipped: boolean;
   /** Null when the folder has no readable manifest — the row still appears. */
   manifest: ModuleManifest | null;
   /** Why the manifest was rejected, so the screen can say rather than hide. */
@@ -117,12 +136,12 @@ function writeState(state: Record<string, boolean>): void {
  * the fix there was the same shape: guard in the helper, so a second caller
  * cannot reintroduce it.
  */
-function moduleDir(id: string): string {
+function moduleDir(id: string, root: string = modulesDir): string {
   if (!isModuleId(id)) throw new Error(`not a valid package name: ${id}`);
 
-  const dir = resolve(modulesDir, id);
-  const rel = relative(modulesDir, dir);
-  if (rel === '' || rel.startsWith('..') || rel.includes(sep) || resolve(modulesDir, rel) !== dir) {
+  const dir = resolve(root, id);
+  const rel = relative(root, dir);
+  if (rel === '' || rel.startsWith('..') || rel.includes(sep) || resolve(root, rel) !== dir) {
     throw new Error(`refusing to touch a path outside the packages folder: ${id}`);
   }
   return dir;
@@ -162,19 +181,32 @@ export function ensureModulesDir(): void {
  * single most confusing outcome available here.
  */
 export function scanModules(): InstalledModule[] {
-  if (!existsSync(modulesDir)) return [];
-
   const state = readState();
   const out: InstalledModule[] = [];
+  const seen = new Set<string>();
 
-  for (const entry of readdirSync(modulesDir, { withFileTypes: true })) {
+  /*
+   * Shipped first, and `seen` is what makes that ordering matter: a downloaded
+   * package cannot shadow one that came with the app. Without it, dropping a
+   * folder named `push` into `modules/` would silently replace the real push
+   * feature with somebody else's code — which is the same class of problem the
+   * reserved-id list solves for feature names, one level up.
+   */
+  for (const root of [shippedModulesDir, modulesDir]) {
+    if (!existsSync(root)) continue;
+    const shipped = root === shippedModulesDir;
+
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const id = entry.name;
-    const dir = join(modulesDir, id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const dir = join(root, id);
 
     if (!isModuleId(id)) {
       out.push({
         id,
+        shipped,
         manifest: null,
         problems: [{ field: 'folder', message: 'the folder name is not a valid package name' }],
         dir,
@@ -213,16 +245,79 @@ export function scanModules(): InstalledModule[] {
 
     out.push({
       id,
+      shipped,
       manifest,
       problems,
       dir,
       bytes: folderSize(dir),
-      enabled: state[id] ?? false,
+      /*
+       * A shipped package defaults **on**, an installed one **off**. That is the
+       * same distinction `FeatureSpec.defaultEnabled` already draws and for the
+       * same reason: shipping something is this repo deciding it should run,
+       * while dropping a zip in a folder is not yet a decision to run it.
+       */
+      enabled: state[id] ?? shipped,
       running: loaded.has(id),
     });
   }
+  }
 
   return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Carry a switch across when a feature becomes a package.
+ *
+ * A shipped package defaults **on**, which is right for one that has always
+ * been a package and wrong for one that used to be a feature you had switched
+ * **off**: moving `push` out of the manifest would otherwise turn phone
+ * notifications back on for anybody who had deliberately silenced them, with
+ * nothing on screen to explain why the phone started buzzing again.
+ *
+ * So `features.json` is consulted once, for shipped ids it still mentions, and
+ * the answer is written into `modules.json`. It runs at boot and writes only
+ * what is missing, so it is idempotent and stops doing anything the moment the
+ * old key is gone.
+ */
+function carryOverFromFeatures(app: FastifyInstance): void {
+  if (!existsSync(featuresFilePath)) return;
+
+  let old: Record<string, unknown>;
+  try {
+    old = parseJsonText(readFileSync(featuresFilePath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    // A malformed features.json is the *server's* problem to report at startup,
+    // not something to fail a migration over.
+    return;
+  }
+
+  const state = readState();
+  let changed = false;
+
+  for (const mod of scanModules()) {
+    if (!mod.shipped) continue;
+    const was = old[mod.id];
+    if (typeof was !== 'boolean') continue;
+    if (state[mod.id] !== undefined) continue;
+
+    state[mod.id] = was;
+    changed = true;
+    app.log.info(`package ${mod.id}: carried "${was ? 'on' : 'off'}" over from features.json`);
+  }
+
+  if (changed) writeState(state);
+}
+
+/**
+ * Is this package loaded right now?
+ *
+ * The package equivalent of `isEnabled`, and it asks the stronger question on
+ * purpose: enabled-but-not-yet-restarted is not running, and a route that
+ * accepted work on that basis would be promising something nothing can do
+ * until the app is restarted.
+ */
+export function moduleIsRunning(id: string): boolean {
+  return loaded.has(id);
 }
 
 /** What a running package contributes to the app's own chrome. */
@@ -421,8 +516,21 @@ export function installFromZip(buf: Buffer): InstallResult {
   };
 }
 
-/** Delete a package from disk, and forget its switch. */
+/**
+ * Delete a package from disk, and forget its switch.
+ *
+ * **Shipped packages are refused**, and not merely hidden from the button. They
+ * live inside the checkout, so deleting one is deleting part of the app's own
+ * source — a `git status` away from being confusing and a `git checkout` away
+ * from coming back. Switching it off is the operation that was actually wanted,
+ * and it is one click away on the same row.
+ */
 export function removeModule(id: string): void {
+  const found = scanModules().find((mod) => mod.id === id);
+  if (found?.shipped) {
+    throw new Error(`"${id}" ships with the app and cannot be removed — switch it off instead`);
+  }
+
   const dir = moduleDir(id);
   if (!existsSync(dir)) throw new Error(`no package called "${id}" is installed`);
 
@@ -472,6 +580,8 @@ export function openModulesFolder(): void {
  * works here because the server runs through `tsx` rather than a bundle.
  */
 export async function registerModules(app: FastifyInstance): Promise<void> {
+  carryOverFromFeatures(app);
+
   for (const mod of scanModules()) {
     if (!mod.enabled) continue;
 

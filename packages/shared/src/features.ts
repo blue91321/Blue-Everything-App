@@ -12,7 +12,7 @@
  * facts rather than untrusted input needing validation.
  */
 
-export const FEATURE_IDS = ['vault', 'voice', 'push', 'integrations', 'habits', 'notes', 'time'] as const;
+export const FEATURE_IDS = ['vault', 'voice', 'integrations', 'habits', 'notes', 'time'] as const;
 
 export type FeatureId = (typeof FEATURE_IDS)[number];
 
@@ -89,16 +89,6 @@ export const FEATURES: Record<FeatureId, FeatureSpec> = {
     cost: '~150MB of models on disk, and 198MB resident in the agent while the microphone is open',
   },
 
-  push: {
-    id: 'push',
-    label: 'Phone notifications',
-    blurb: 'Web push to an installed PWA when you are away from the PC.',
-    defaultEnabled: true,
-    removable: true,
-    owns: ['packages/server/src/features/push'],
-    cost: 'needs VAPID_SUBJECT set to a real domain — Apple rejects localhost',
-  },
-
   integrations: {
     id: 'integrations',
     label: 'App integrations',
@@ -151,6 +141,22 @@ export const FEATURES: Record<FeatureId, FeatureSpec> = {
 
 export const FEATURE_LIST: FeatureSpec[] = FEATURE_IDS.map((id) => FEATURES[id]);
 
+/**
+ * Ids that used to be features and are packages now.
+ *
+ * A `features.json` written before the move still names them, and without this
+ * the note reads `"push" is not a feature — ignored`, which is true, unhelpful,
+ * and slightly alarming: it says the key is a typo when it is in fact a setting
+ * that was carried over and is being honoured somewhere else.
+ *
+ * Kept rather than cleaned up, because `features.json` is a file somebody is
+ * expected to hand-edit and silently rewriting one is a rude thing to do. The
+ * entry is harmless; only the message about it needed fixing.
+ */
+export const MOVED_TO_PACKAGES: Record<string, string> = {
+  push: 'Phone notifications',
+};
+
 export function isFeatureId(value: string): value is FeatureId {
   return (FEATURE_IDS as readonly string[]).includes(value);
 }
@@ -180,7 +186,13 @@ export function resolveFeatures(requested: Partial<Record<string, boolean>> | un
   }
 
   for (const key of Object.keys(requested ?? {})) {
-    if (!isFeatureId(key)) notes.push(`features.json mentions "${key}", which is not a feature — ignored`);
+    if (isFeatureId(key)) continue;
+    const movedTo = MOVED_TO_PACKAGES[key];
+    if (movedTo) {
+      notes.push(`"${key}" is a package now (${movedTo}) — its switch moved to Settings → Packages`);
+    } else {
+      notes.push(`features.json mentions "${key}", which is not a feature — ignored`);
+    }
   }
 
   // One pass is enough: the graph is one level deep and checked by `features`

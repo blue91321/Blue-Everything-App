@@ -19,9 +19,24 @@
  * of throwing on the first, because the screen's job is to tell you what is
  * wrong with a package rather than to make it disappear.
  */
+import { FEATURE_IDS } from './features.js';
 
-/** Reserved: a module may not shadow a built-in. Kept in step by `modules-check`. */
-export const RESERVED_MODULE_IDS = ['vault', 'voice', 'push', 'integrations', 'habits', 'notes', 'time'] as const;
+/**
+ * Reserved: a module may not take the name of a built-in feature.
+ *
+ * Derived from `FEATURE_IDS` rather than written out again, and that is not
+ * tidiness — it is the only version of this list that stays true. `push` was
+ * spelled out here, then moved out of the feature manifest and into
+ * `packages/modules/push`, at which point the hand-written copy rejected the
+ * package's own folder name as invalid and the feature simply stopped loading.
+ * The symptom was a row on the Packages screen labelled `push` with no manifest.
+ *
+ * Both files are in `shared` and both are dependency-free, so this costs
+ * nothing. A *shipped* package needs no protection here anyway: those roots are
+ * scanned first, so a downloaded folder of the same name is skipped rather than
+ * allowed to shadow one.
+ */
+export const RESERVED_MODULE_IDS = FEATURE_IDS;
 
 /**
  * The folder name and the id are the same string, so this is also a filename

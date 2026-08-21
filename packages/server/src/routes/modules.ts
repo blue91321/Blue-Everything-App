@@ -61,6 +61,8 @@ export async function moduleRoutes(app: FastifyInstance): Promise<void> {
       canInstall: request.isLocal,
       modules: installed.map((mod) => ({
         id: mod.id,
+        /** Ships with the app: switchable, but not removable from here. */
+        shipped: mod.shipped,
         label: mod.manifest?.label ?? mod.id,
         blurb: mod.manifest?.blurb ?? null,
         version: mod.manifest?.version ?? null,

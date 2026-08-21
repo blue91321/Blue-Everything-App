@@ -318,6 +318,81 @@ invisible from outside.
   never overwrites one that does, since an author who included it has said what
   they meant.
 
+#### Two roots: shipped, and installed
+
+`modules/` is gitignored on purpose — it holds code downloaded from elsewhere,
+which is not ours to commit. So moving a first-party feature into it would
+**delete that feature from the repository**, silently, on a repo that is public.
+
+Shipped packages therefore live in `packages/modules/`, which is committed and
+typechecked with everything else, and both roots are scanned by the same loader.
+The difference a person sees is one line: a shipped package says **built in** and
+has no Remove button, because removing it would mean deleting part of your
+checkout rather than a folder you added — a `git checkout` away from coming back.
+
+**Shipped is scanned first, and that ordering is a guard.** Without it, dropping
+a folder named `push` into `modules/` would replace the real one with somebody
+else's code. It is the same protection `RESERVED_MODULE_IDS` gives feature names,
+one level down.
+
+**A shipped package defaults on; an installed one defaults off.** Shipping
+something is this repo deciding it should run; dropping a zip in a folder is not
+yet a decision to run it.
+
+#### `@everything/server/module-api`
+
+A package in its own folder cannot write `import { db } from '../../db/client.js'`
+— that path is a fact about where the *server's* source sits. So there is a
+stable surface it imports instead, resolved from `node_modules` whether the
+package shipped or was unzipped.
+
+The surface is **the ten things the four removable features actually use**,
+arrived at by counting rather than guessing: `db`, `schema`, `config`, `changes`,
+`getSettings`, `providePush`, `recordHabitDone`, `undoHabitDone`. That is a real
+commitment — the difference between an internal that can be renamed and one that
+cannot — and it is not a sandbox: a package could reach past it with a relative
+path or `node:fs` whenever it liked. It exists so honest code has something
+stable to build against.
+
+The browser side already had its equivalent in `register(host)`, and the two
+surfaces were measured the same way: the web features import exactly five things
+from core (`api`, `controls`, `format`, `nav`, `useAsync`).
+
+#### `push` has moved, and what it cost
+
+The first feature to become a package, chosen because it is 175 lines with no UI
+and no agent half. It is `packages/modules/push/`, out of the feature manifest
+entirely, and `POST /api/devices/me/push` now asks `moduleIsRunning` rather than
+`isEnabled`.
+
+Three things went wrong doing it, all of which the next migration will hit:
+
+- **`RESERVED_MODULE_IDS` was a hand-written copy of the feature list**, so the
+  moment `push` left that list the reserved copy still held it — and the loader
+  rejected the package's own folder name as invalid. The symptom was a row
+  labelled `push` with no manifest and nothing running. It is derived from
+  `FEATURE_IDS` now, so the next feature to move takes itself off the list.
+- **A folder outside a `"type": "module"` scope is CommonJS to TypeScript too**,
+  not just to Node: it resolved drizzle's CJS types and produced a wall of
+  "separate declarations of a private property". The same `package.json` the
+  installer writes for a downloaded package, committed for a shipped one.
+- **A switch has to survive the move.** A shipped package defaults *on*, so a
+  `push: false` in `features.json` would have turned phone notifications back on
+  for somebody who had deliberately silenced them. `carryOverFromFeatures` reads
+  the old key once at boot and writes it into `modules.json` — verified in both
+  directions. `MOVED_TO_PACKAGES` also stops `npm run features` calling the
+  leftover key a typo when it is a setting being honoured elsewhere.
+
+**The other three are not moved, and the reason is the browser half.** `vault`,
+`voice` and `integrations` are ~16,000 lines, and their web halves are compiled
+into the PWA bundle by Vite today. A package's browser half must be **one
+self-contained file**, so each would need its own build step — and every core
+helper it uses either gets inlined into that bundle (the 9.5KB duplication
+problem, once per package) or added to `PackageHost`, which turns five internal
+modules into a public API. `voice` additionally needs an agent-side loader that
+does not exist. Those are decisions to take deliberately, not consequences to
+discover.
+
 #### A package can draw, not just serve
 
 `import.meta.glob` resolves at **build time** — that is what makes deleting a
@@ -834,7 +909,8 @@ that is invisible until it isn't, and the server had no net under it.
 ## Ground rules
 
 - **Never commit real data.** `data/`, `*.db`, `.env`, `agent.config.json`,
-  `features.json`, `modules/`, `modules.json`, the avatar and `logs/` are gitignored. The database is
+  `features.json`, `modules/` (installed packages, **not** `packages/modules/`,
+  which ships), `modules.json`, the avatar and `logs/` are gitignored. The database is
   personal; treat it as such. `npm run publish-check` is the gate — run it
   before any push, and never loosen a rule to make it pass.
 

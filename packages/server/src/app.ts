@@ -104,7 +104,6 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   await registerFeature(app, 'vault', () => import('./features/vault/index.js'));
   await registerFeature(app, 'voice', () => import('./features/voice/index.js'));
-  await registerFeature(app, 'push', () => import('./features/push/index.js'));
   await registerFeature(app, 'integrations', () => import('./features/integrations/index.js'));
 
   /*
