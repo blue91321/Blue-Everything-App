@@ -99,9 +99,30 @@ $builtIndex = Join-Path $root 'packages\web\dist\index.html'
 $needsBuild = -not (Test-Path $builtIndex)
 if (-not $needsBuild) {
   $builtAt = (Get-Item $builtIndex).LastWriteTimeUtc
-  $newest = Get-ChildItem (Join-Path $root 'packages\web\src') -Recurse -File -ErrorAction SilentlyContinue |
+
+  # Both trees, because a shipped package's screens are compiled into this same
+  # bundle from `packages\modules\<id>\web`. Watching only `packages\web\src`
+  # would mean deleting a package left its tab on screen until something
+  # unrelated happened to change — the exact "silently serves the old build"
+  # failure this check exists to prevent, just one folder further out.
+  $watch = @(
+    (Join-Path $root 'packages\web\src'),
+    (Join-Path $root 'packages\modules')
+  )
+  $newest = Get-ChildItem $watch -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notlike '*\models\*' -and $_.FullName -notlike '*\node_modules\*' } |
     Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
   if ($newest -and $newest.LastWriteTimeUtc -gt $builtAt) { $needsBuild = $true }
+}
+
+# A deleted package leaves nothing behind to be "newer", so a timestamp check
+# alone can never notice one. The count is recorded beside the build and
+# compared instead — cheap, and it is the only signal a removal produces.
+$stamp = Join-Path $root 'packages\web\dist\.modules-stamp'
+$moduleCount = (Get-ChildItem (Join-Path $root 'packages\modules') -Directory -ErrorAction SilentlyContinue).Count
+if (-not $needsBuild) {
+  $wasCount = if (Test-Path $stamp) { Get-Content $stamp -Raw } else { '' }
+  if ($wasCount.Trim() -ne "$moduleCount") { $needsBuild = $true }
 }
 
 if ($needsBuild) {
@@ -111,6 +132,9 @@ if ($needsBuild) {
     & npm run build -w @everything/web
     if ($LASTEXITCODE -ne 0) { throw 'building the web app failed' }
   } finally { Pop-Location }
+  # Written after the build, not before: a failed build must not record a state
+  # it never reached, or the next start would skip the rebuild it still needs.
+  Set-Content -Path $stamp -Value "$moduleCount" -Encoding utf8
 }
 
 # Absolute entry paths, even though -WorkingDirectory is also set. The working

@@ -318,6 +318,93 @@ invisible from outside.
   never overwrites one that does, since an author who included it has said what
   they meant.
 
+#### Everything deletable is a package now
+
+`vault`, `voice`, `integrations` and `push` all live in `packages/modules/<id>/`
+with a `server/`, `web/` and `agent/` half as they need one. `FEATURE_IDS` is
+down to `habits`, `notes` and `time` — the three that are woven into the
+Dashboard and have no folder to delete. All four packages appear on the Packages
+tab with a size, a version and a **Remove** button.
+
+**Shipped packages are deletable, and that reversed an earlier decision.** The
+first version refused on the grounds that the folder is part of your checkout.
+But "deleted: the folder is gone, and the app boots and says not installed" has
+been one of this project's three levels from the start, and `features-check`
+proves each survives it. Refusing would have made this screen the one place that
+could not do what the rest of the app promises. The row says which cost applies.
+
+**A shipped package keeps its compiled UI.** Vite globs
+`packages/modules/*/web/` from outside its own root — it will, which is the fact
+that made this affordable — so the vault and Connections screens bundle exactly
+as before. Only *downloaded* packages are fetched and imported at runtime. Two
+kinds of browser half for two genuinely different situations: one is compiled
+with the app, the other arrived afterwards.
+
+**`session.features` carries running package ids alongside real features.** Every
+reader — the drawer, the panel picker, `featureEnabled('voice')` three components
+deep inside the habit editor — is asking the same question either way, and
+teaching each of them about a second list would have been a wide change to
+answer a question they already ask correctly.
+
+`@app/…` is a Vite alias for `packages/web/src`, so a module's web half does not
+count `../` out to the app. The agent's halves use plain relative paths instead:
+that resolution happens at runtime through tsx, where a path alias is one more
+thing that can silently fail and stop the agent booting.
+
+#### Five things this migration got wrong
+
+Worth keeping, because three of them are failures this document already warned
+about happening in some *other* place.
+
+- **`modules/` in `.gitignore` matched `packages/modules/` too.** A pattern with
+  no leading slash matches at any depth, so the instant the three features moved,
+  git stopped seeing them — on a public repo. `/modules/` now. An ignore rule
+  that matches too much fails exactly like one that matches too little.
+- **The smoke suite deleted the vault.** It sent `DELETE /api/modules/vault`
+  expecting a refusal, which was true while `vault` was a reserved *feature* id
+  and false the moment it became a package. It now names only ids that can never
+  be real, and asserts at the end that it removed no shipped package — because
+  the failure presented as a wall of module-not-found errors in *other* suites,
+  with nothing pointing at the check that caused it.
+- **The repo root was counted by hand a third time.** `routes/restart.ts` looked
+  for `packages/scripts/restart.ps1` and disabled the very button that is meant
+  to always work. `paths.ts` owns every path now, including the module roots,
+  which are overridable so a destructive suite can point at a temp directory.
+- **The voice models' ignore rule named the old folder.** Exactly the failure the
+  comment above it described.
+- **A bulk import rewrite was too greedy.** It turned every `../x.js` in the
+  agent halves into a path out to the agent package, including the ones that were
+  always siblings inside the module — so `mic.js` and `vosk.js`, which live in
+  the voice module itself, pointed at files that do not exist. Invisible to
+  `npm run typecheck`, because the tsconfigs did not include the module folders.
+  They do now, in all three workspaces; that is what makes the move safe to
+  repeat.
+
+#### Restarting from inside the app
+
+A **Restart** button in the banner that appears whenever a package is added,
+removed or switched. It exists because deleting something used to end with "now
+go and find the tray icon".
+
+It is built to survive the case it is for — a package having broken something —
+so it is registered in core **before any package loads**, reads no database, no
+settings and no manifest, and answers *before* restarting rather than trying to
+report on a process that is being killed. It asks the server whether it can
+restart before offering, so the button is disabled with a reason rather than
+failing when pressed.
+
+`start.ps1` watches `packages/modules` as well as `packages/web/src`, or a
+deleted package's tab would stay on screen until something unrelated changed —
+and it records the module **count** beside the build, because a deleted folder
+leaves nothing behind that could be "newer" than anything.
+
+**Its first version shipped with `stdio: 'ignore'` and no logging**, so when the
+first restart failed the app was left stopped with not one line written anywhere.
+Output now goes to `logsestart.log` through PowerShell's own `*>>` — not a
+`>>` on the cmd line, because `start /b` hands the child cmd's handles and cmd's
+were `ignore`. That is written down two sections above, about the tray, and was
+reproduced here anyway.
+
 #### Two roots: shipped, and installed
 
 `modules/` is gitignored on purpose — it holds code downloaded from elsewhere,

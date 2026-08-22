@@ -9,9 +9,9 @@
  *   npm run voice-setup -w @everything/agent
  */
 import { existsSync, statSync } from 'node:fs';
-import { listMicrophones, openMicrophone, rms, SAMPLE_RATE } from '@agent/agent/src/mic.js';
-import { createRecogniser, speakerModelAvailable, VoskUnavailable } from '@agent/agent/src/vosk.js';
-import { VOICE_DOWNLOADS, voiceModelPaths } from '@agent/agent/src/voice-paths.js';
+import { listMicrophones, openMicrophone, rms, SAMPLE_RATE } from '../mic.js';
+import { createRecogniser, speakerModelAvailable, VoskUnavailable } from '../vosk.js';
+import { VOICE_DOWNLOADS, voiceModelPaths } from '../voice-paths.js';
 
 const paths = voiceModelPaths();
 const ok = (label: string, value: string) => console.log(`  ${label.padEnd(22)}${value}`);

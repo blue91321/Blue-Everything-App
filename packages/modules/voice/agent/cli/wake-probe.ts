@@ -17,8 +17,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { matchesWakeWord } from '@everything/shared';
-import { rms, SAMPLE_RATE } from '@agent/agent/src/mic.js';
-import { createRecogniser } from '@agent/agent/src/vosk.js';
+import { rms, SAMPLE_RATE } from '../mic.js';
+import { createRecogniser } from '../vosk.js';
 
 const WAKE = process.env.WAKE_WORD || 'hey jarvis';
 const BLOCK = SAMPLE_RATE / 10;

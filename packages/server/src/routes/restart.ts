@@ -25,7 +25,8 @@
  * is running this line.
  */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { repoRoot, restartScript } from '../paths.js';
 
@@ -67,6 +68,19 @@ export async function restartRoutes(app: FastifyInstance): Promise<void> {
      * running a line. `start` has the command processor create the process and
      * cmd then exits, so what runs belongs to nobody and has a console of its own.
      */
+    /*
+     * The output goes to a log, through **PowerShell's own `*>>`** rather than a
+     * `>>` on the cmd line. `start /b` hands the new process cmd's handles, and
+     * cmd's are `ignore` here — so a shell redirect there creates the file and
+     * captures nothing. This is written down in CLAUDE.md about the tray menu,
+     * and this route shipped with `stdio: 'ignore'` and no logging anyway: the
+     * first restart failed, left the app stopped, and produced not one line
+     * anywhere. A broken launch and an unpressed button looked identical.
+     */
+    // The folder may not exist on a fresh clone, and PowerShell's `*>>`
+    // will not create it.
+    mkdirSync(resolve(repoRoot, 'logs'), { recursive: true });
+    const logFile = resolve(repoRoot, 'logs/restart.log');
     const child = spawn(
       'cmd.exe',
       [
@@ -78,8 +92,8 @@ export async function restartRoutes(app: FastifyInstance): Promise<void> {
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
-        '-File',
-        restartScript,
+        '-Command',
+        `& '${restartScript.replace(/'/g, "''")}' *>> '${logFile.replace(/'/g, "''")}'`,
       ],
       { cwd: repoRoot, detached: true, stdio: 'ignore', windowsVerbatimArguments: false }
     );

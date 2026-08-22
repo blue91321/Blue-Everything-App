@@ -27,7 +27,7 @@
  * entirely.
  */
 import { VOICE_ENROL_SAMPLES } from '@everything/shared';
-import { ServerClient } from '@agent/agent/src/client.js';
+import { ServerClient } from '../../../../agent/src/client.js';
 
 const client = new ServerClient();
 

@@ -23,15 +23,15 @@ import {
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { ServerUnreachable, type ServerClient, type VoiceConfig, type VoiceOutcome } from '@agent/agent/src/client.js';
-import { mediaIsPlaying } from '@agent/agent/src/audio.js';
+import { ServerUnreachable, type ServerClient, type VoiceConfig, type VoiceOutcome } from '../../../agent/src/client.js';
+import { mediaIsPlaying } from '../../../agent/src/audio.js';
 import { openUrl, pressKeys, pressMediaKey } from './actions.js';
-import { listScreens, forgetAvatar, type Avatar, type Placement } from '@agent/agent/src/overlay.js';
+import { listScreens, forgetAvatar, type Avatar, type Placement } from '../../../agent/src/overlay.js';
 // The popup is core now, and voice is one of its callers rather than its owner.
 // Nudges use the same window, which is the point: it is the only surface here
 // that draws above an exclusive-fullscreen game.
-import * as popup from '@agent/agent/src/popup.js';
-import { playSound } from '@agent/agent/src/sound.js';
+import * as popup from '../../../agent/src/popup.js';
+import { playSound } from '../../../agent/src/sound.js';
 import { createVoiceListener } from './voice.js';
 import { unknownWords, VoskUnavailable } from './vosk.js';
 

@@ -60,7 +60,7 @@ import {
  * failed the type check for anyone who removed the feature, which is worse for
  * being silent until someone tried.
  */
-import type { VoiceConfig } from '@agent/agent/src/client.js';
+import type { VoiceConfig } from '../../../agent/src/client.js';
 
 export type { VoiceConfig };
 

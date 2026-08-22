@@ -20,9 +20,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { matchVoiceCommand, matchesWakeWord, spokenCount, type VoiceCandidate } from '@everything/shared';
-import { ServerClient } from '@agent/agent/src/client.js';
-import { SAMPLE_RATE } from '@agent/agent/src/mic.js';
-import { createRecogniser } from '@agent/agent/src/vosk.js';
+import { ServerClient } from '../../../../agent/src/client.js';
+import { SAMPLE_RATE } from '../mic.js';
+import { createRecogniser } from '../vosk.js';
 
 const workDir = mkdtempSync(join(tmpdir(), 'everything-voice-'));
 
