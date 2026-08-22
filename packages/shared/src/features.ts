@@ -12,7 +12,7 @@
  * facts rather than untrusted input needing validation.
  */
 
-export const FEATURE_IDS = ['vault', 'voice', 'integrations', 'habits', 'notes', 'time'] as const;
+export const FEATURE_IDS = ['habits', 'notes', 'time'] as const;
 
 export type FeatureId = (typeof FEATURE_IDS)[number];
 
@@ -60,55 +60,6 @@ export interface FeatureSpec {
 }
 
 export const FEATURES: Record<FeatureId, FeatureSpec> = {
-  vault: {
-    id: 'vault',
-    label: 'Password vault',
-    blurb: 'Encrypted password storage, CSV import, and the browser extension that fills them.',
-    defaultEnabled: true,
-    removable: true,
-    owns: [
-      'packages/server/src/features/vault',
-      'packages/web/src/features/vault',
-      'packages/extension',
-    ],
-  },
-
-  voice: {
-    id: 'voice',
-    label: 'Voice commands',
-    blurb: 'Wake word, spoken commands, and the popup at the cursor.',
-    defaultEnabled: true,
-    removable: true,
-    owns: [
-      'packages/server/src/features/voice',
-      'packages/web/src/features/voice',
-      'packages/agent/src/features/voice',
-    ],
-    // The one feature that breaks the leanness budget, so the number is stated
-    // where the switch is rather than buried in a document.
-    cost: '~150MB of models on disk, and 198MB resident in the agent while the microphone is open',
-  },
-
-  integrations: {
-    id: 'integrations',
-    label: 'App integrations',
-    blurb:
-      'Canvas coursework as tasks, Spotify and YouTube libraries, and which of your friends are ' +
-      'online on Steam, Discord and Riot.',
-    // Off until somebody asks for it. Every other feature here works the moment
-    // it is switched on; this one does nothing at all until you have registered
-    // an app with a third party and pasted an id into the environment, so
-    // defaulting it on would put a tab in the drawer that can only apologise.
-    defaultEnabled: false,
-    removable: true,
-    owns: [
-      'packages/server/src/features/integrations',
-      'packages/web/src/features/integrations',
-      'packages/agent/src/features/integrations',
-    ],
-    cost: 'one HTTP request per provider when the friends list is on screen; nothing at all when it is not',
-  },
-
   habits: {
     id: 'habits',
     label: 'Habits',
@@ -155,6 +106,9 @@ export const FEATURE_LIST: FeatureSpec[] = FEATURE_IDS.map((id) => FEATURES[id])
  */
 export const MOVED_TO_PACKAGES: Record<string, string> = {
   push: 'Phone notifications',
+  vault: 'Password vault',
+  voice: 'Voice commands',
+  integrations: 'App integrations',
 };
 
 export function isFeatureId(value: string): value is FeatureId {

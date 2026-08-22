@@ -22,7 +22,7 @@ import {
   splitSecret,
   unwrapVaultKey,
   wrapVaultKey,
-} from '../features/vault/crypto.js';
+} from '../../../modules/vault/server/crypto.js';
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = ''): void {

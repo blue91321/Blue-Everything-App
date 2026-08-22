@@ -7,7 +7,7 @@ import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
 import { activeFeatures, isEnabled, missingFeatures } from '../features.js';
 import { VERSION } from '../version.js';
-import { moduleIsRunning, runningPackages } from '../modules.js';
+import { moduleIsRunning, runningModuleIds, runningPackages } from '../modules.js';
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -25,7 +25,12 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     deviceId: request.deviceId,
     deviceKind: request.deviceKind,
     version: VERSION,
-    features: activeFeatures(),
+    /*
+     * Features *and* running packages, in one list. Three of the four things
+     * that used to be here are packages now, and every reader of this list is
+     * asking the same question either way — is this optional part of the app on.
+     */
+    features: [...activeFeatures(), ...runningModuleIds()],
     // Switched on but absent from disk. Named separately so the app can say
     // "the folder is gone" rather than "you turned it off" — different fixes.
     featuresMissing: missingFeatures(),

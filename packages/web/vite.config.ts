@@ -1,7 +1,23 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/**
+ * `@app/…` is this package's own `src`, for code that lives outside it.
+ *
+ * A shipped package's browser half sits in `packages/modules/<id>/web/`, which
+ * is three directories away from `packages/web/src` — so every import of the
+ * API client or `useAsync` would otherwise read `../../../web/src/api` and
+ * silently break the day anything moved. The alias is the only thing those
+ * folders need to know about where the app lives.
+ *
+ * Downloaded packages do not use it and cannot: they are not compiled with the
+ * app, and get the same things handed to them through `register(host)` instead.
+ */
+const appSrc = fileURLToPath(new URL('./src', import.meta.url));
+
 export default defineConfig({
+  resolve: { alias: { '@app': appSrc } },
   plugins: [react()],
   build: {
     // Served by Fastify from packages/server, so the build lands where the

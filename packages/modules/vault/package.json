@@ -1,0 +1,6 @@
+{
+  "name": "@everything/module-vault",
+  "private": true,
+  "version": "0.2.3",
+  "type": "module"
+}

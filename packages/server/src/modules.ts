@@ -41,14 +41,7 @@ import {
 import { readZip, stripCommonPrefix, ZipError } from './zip.js';
 import { parseJsonText } from './json.js';
 import { featuresFilePath } from './features.js';
-
-/**
- * Anchored to this file, never to the working directory — the same rule the
- * database and `features.json` follow, and for the same reason: Task Scheduler
- * starts processes in C:\Windows\System32, where a relative path finds nothing
- * and quietly creates the wrong thing.
- */
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+import { installedModulesRoot, modulesStateFile, shippedModulesRoot } from './paths.js';
 
 /**
  * The one definition of where packages live, exported rather than re-derived.
@@ -58,7 +51,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
  * convincing right up until a restart changed nothing. Anything that needs this
  * path imports it.
  */
-export const modulesDir = resolve(repoRoot, 'modules');
+export const modulesDir = installedModulesRoot;
 
 /**
  * The *other* root: packages that ship with the app.
@@ -74,10 +67,10 @@ export const modulesDir = resolve(repoRoot, 'modules');
  * package says **Built in** and has no Remove button, because removing it would
  * mean deleting part of your checkout rather than a folder you added.
  */
-export const shippedModulesDir = resolve(repoRoot, 'packages/modules');
+export const shippedModulesDir = shippedModulesRoot;
 
 /** Which modules are switched on. Beside `features.json`, and the same shape. */
-export const modulesStatePath = resolve(repoRoot, MODULES_STATE_FILE);
+export const modulesStatePath = modulesStateFile;
 
 export interface InstalledModule {
   id: string;
@@ -320,6 +313,20 @@ export function moduleIsRunning(id: string): boolean {
   return loaded.has(id);
 }
 
+/**
+ * Every package loaded this boot, whether or not it draws anything.
+ *
+ * Folded into `session.features` alongside the real features, which is what
+ * keeps the whole PWA working unchanged after a feature became a package:
+ * `featureEnabled('voice')` is asked from inside the habit editor, the drawer
+ * filters tabs on it, and the panel picker consults it. Teaching every one of
+ * those about a second list would be a wide change to answer a question they
+ * are already asking correctly — "is this optional part of the app on".
+ */
+export function runningModuleIds(): string[] {
+  return [...loaded];
+}
+
 /** What a running package contributes to the app's own chrome. */
 export interface PackageUi {
   id: string;
@@ -519,19 +526,20 @@ export function installFromZip(buf: Buffer): InstallResult {
 /**
  * Delete a package from disk, and forget its switch.
  *
- * **Shipped packages are refused**, and not merely hidden from the button. They
- * live inside the checkout, so deleting one is deleting part of the app's own
- * source — a `git status` away from being confusing and a `git checkout` away
- * from coming back. Switching it off is the operation that was actually wanted,
- * and it is one click away on the same row.
+ * **Shipped packages can be deleted too**, and that is a deliberate reversal.
+ * The first version refused, on the reasoning that the folder is part of your
+ * checkout — but "deleted: the folder is gone, and the app boots and says not
+ * installed" has been one of this project's three documented levels from the
+ * start, and `features-check` already proves every one of these survives it.
+ * Refusing here would have made the Packages screen the one place that could
+ * not do what the rest of the app promises.
+ *
+ * What it costs is stated on the row rather than prevented: a shipped package
+ * comes back with `git checkout`, and an installed one needs the zip again.
  */
 export function removeModule(id: string): void {
   const found = scanModules().find((mod) => mod.id === id);
-  if (found?.shipped) {
-    throw new Error(`"${id}" ships with the app and cannot be removed — switch it off instead`);
-  }
-
-  const dir = moduleDir(id);
+  const dir = moduleDir(id, found?.shipped ? shippedModulesDir : modulesDir);
   if (!existsSync(dir)) throw new Error(`no package called "${id}" is installed`);
 
   rmSync(dir, { recursive: true, force: true });

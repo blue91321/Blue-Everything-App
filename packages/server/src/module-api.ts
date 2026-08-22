@@ -29,8 +29,23 @@
  * one runs a program.
  */
 
-/** The database handle, and the schema every table is declared in. */
+/** The database handle. */
 export { db } from './db/client.js';
+
+/**
+ * Every table, both as a namespace and by name.
+ *
+ * The whole schema, deliberately, rather than the tables a package "owns" —
+ * because a package does not own any. Migrations are a linear journal and
+ * skipping one breaks every later hash, so `vault_entries`, `voice_commands`
+ * and the integration tables are created whatever is switched on. That was
+ * already the honest boundary of "removable" here; this just makes the code
+ * match it.
+ *
+ * Both shapes because both are already in use: the moved features import tables
+ * by name, and `schema.settings` reads better in code that touches several.
+ */
+export * from './db/schema.js';
 export * as schema from './db/schema.js';
 
 /**
@@ -72,3 +87,14 @@ export { providePush } from './push-port.js';
  * the gauge exactly where it was.
  */
 export { recordHabitDone, undoHabitDone } from './routes/habits.js';
+
+/**
+ * Reading the two opaque-slug settings columns.
+ *
+ * `hidden_providers` and `dashboard_panels` are stored as JSON arrays of
+ * strings that core deliberately never validates — the ids belong to packages,
+ * and core checking them against a package's list would be core depending on a
+ * package. Which means core owns the *parsing* and a package owns the meaning,
+ * so the parser has to be reachable from both.
+ */
+export { parseHiddenProviders, parsePanelList } from './routes/settings.js';

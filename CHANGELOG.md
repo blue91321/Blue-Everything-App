@@ -55,6 +55,50 @@ second step `npm version` does not do for you.
   The failure renders as a banner naming the package and quoting the error.
 - A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
 
+### Everything deletable is a package, and there is a Restart button
+
+- **The vault, voice and integrations have moved** into `packages/modules/`
+  alongside push. All four appear on the Packages tab with a Remove button, a
+  size, and their own version. Deleting one takes it out of the app.
+- **Shipped packages are deletable after all.** The first version refused, on the
+  grounds that the folder is part of your checkout — but "the folder is gone and
+  the app says not installed" has been one of this project's three documented
+  levels from the start, and `features-check` already proves every one survives
+  it. The row says which cost you are paying: `git checkout` brings a shipped one
+  back, an installed one needs the zip again.
+- **A Restart button**, in the banner that appears whenever something is added,
+  removed or switched. Registered in core *before* any package loads, reads no
+  database and no manifest, and answers before restarting rather than trying to
+  report an outcome from a process that is being killed — because the whole point
+  of it is the case where a package has broken something else.
+- **A shipped package keeps its compiled UI**; only downloaded ones are loaded at
+  runtime. Vite globs `packages/modules/*/web/` from outside its own root, which
+  it turns out it will do, so the vault and Connections screens are bundled
+  exactly as before — just from a folder you can delete.
+- **`@everything/server/module-api`** grew to ten exports: the whole schema (a
+  package owns no tables — migrations are a linear journal), plus the two
+  opaque-slug parsers core owns and a package gives meaning to.
+- `features-check` now drives packages through `modules.json` rather than
+  `FEATURES`, and proves each of the four can be **deleted from disk** with the
+  server still booting and the other three unaffected.
+
+### Four things that went wrong, all worth knowing
+
+- **`modules/` in `.gitignore` matched `packages/modules/` too.** A pattern with
+  no leading slash matches at any depth, so the moment the vault, voice and
+  integrations moved, git stopped seeing them. Anchored to `/modules/` now. An
+  ignore rule that matches too much fails exactly like one that matches too
+  little: silently, in the direction you were not looking.
+- **The smoke suite deleted the vault.** It sent `DELETE /api/modules/vault`
+  expecting a refusal — true while the vault was a reserved *feature* id, false
+  the moment it became a package. The suite now names only ids that can never be
+  real, and asserts at the end that it deleted none of the shipped packages.
+- **The repo root was counted by hand a third time and got wrong a second
+  time**, disabling the very Restart button that is meant to always work.
+  `paths.ts` owns every path now.
+- **The voice models' ignore rule named the old folder** and stopped matching
+  when voice moved — the exact failure the comment above it warned about.
+
 ### Phone notifications is a package now
 
 - **Two module roots.** `packages/modules/` ships with the app and is committed;

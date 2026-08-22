@@ -914,8 +914,8 @@ function PackagesTab({ session }: { session: Session }) {
       */}
       <h3 className="pkg-head">Built in</h3>
       <div className="meta" style={{ marginBottom: 8 }}>
-        Part of the app itself. They switch off, and some can be deleted from disk by hand, but they are
-        not installed or removed from this screen.
+        Part of the app itself, and woven into the Dashboard — these three switch off but have no folder
+        to delete. The packages below them ship with the app and can be removed like any other.
       </div>
 
       {data.features.map((feature) => (

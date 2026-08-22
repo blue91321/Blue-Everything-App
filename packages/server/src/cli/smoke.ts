@@ -1031,7 +1031,7 @@ console.log('\nstarred live channels, and narrowing the panel to them');
   check('while the endpoint still returns them all', (await live()).streams.length === 2);
 
   /* A star survives a sync, because `replaceFollows` names the columns it writes. */
-  const { replaceFollows } = await import('../features/integrations/store.js');
+  const { replaceFollows } = await import('../../../modules/integrations/server/store.js');
   await replaceFollows('twitch', [
     { provider: 'twitch', providerAccountId: '1', kind: 'channel', name: 'alfa renamed' },
     { provider: 'twitch', providerAccountId: '2', kind: 'channel', name: 'bravo' },
@@ -1184,6 +1184,18 @@ console.log('packages (installing, switching, removing)');
   eocd.writeUInt32LE(local.length + name.length + body.length, 16);
   const zip = Buffer.concat([local, name, body, central, name, eocd]).toString('base64');
 
+  /*
+   * What is on disk before this section runs, so the `finally` can prove none of
+   * it went missing. A test that can delete a package is a test that can delete
+   * the wrong one, and the way that failure presented — a wall of unrelated
+   * module-not-found errors in *other* suites — gave no hint at all about which
+   * check had done it.
+   */
+  const shippedBefore = (await import('../modules.js'))
+    .scanModules()
+    .filter((mod) => mod.shipped)
+    .map((mod) => mod.id);
+
   try {
     const listed = await app.inject({ method: 'GET', url: '/api/modules' });
     check('the list answers', listed.statusCode === 200);
@@ -1219,8 +1231,21 @@ console.log('packages (installing, switching, removing)');
      * socket instead, with auth on, where the header checks actually run.
      */
 
-    /* An id that is not a package name must never reach the filesystem. */
-    for (const nasty of ['..', '..%2F..%2Fpackages', 'vault']) {
+    /*
+     * An id that is not a package name must never reach the filesystem.
+     *
+     * **`vault` was in this list and it deleted the vault.** It was here as an
+     * example of a reserved id the route would refuse — true while the vault was
+     * a *feature*, and false the moment it became a package, at which point the
+     * suite cheerfully removed `packages/modules/vault` from the working tree
+     * and every later check failed with a module-not-found for a folder the test
+     * itself had just erased.
+     *
+     * So this list holds only shapes that can never name anything: a traversal,
+     * and an id belonging to something that is still a feature and has no folder
+     * at all. The names of real packages do not belong in a destructive test.
+     */
+    for (const nasty of ['..', '..%2F..%2Fpackages', 'habits']) {
       const escaped = await app.inject({ method: 'DELETE', url: `/api/modules/${nasty}` });
       check(`a crafted package id deletes nothing (${decodeURIComponent(nasty)})`, escaped.statusCode === 400 || escaped.statusCode === 404, `${escaped.statusCode}`);
     }
@@ -1234,6 +1259,14 @@ console.log('packages (installing, switching, removing)');
   } finally {
     // Never leave a package behind: the next run would test a different app.
     if (existsSync(join(modulesDir, ID))) rmSync(join(modulesDir, ID), { recursive: true, force: true });
+
+    const shippedAfter = (await import('../modules.js')).scanModules().filter((m) => m.shipped).map((m) => m.id);
+    const lost = shippedBefore.filter((id) => !shippedAfter.includes(id));
+    check(
+      'and this suite deleted none of the shipped packages',
+      lost.length === 0,
+      lost.length > 0 ? `lost ${lost.join(', ')} — restore with git checkout` : ''
+    );
   }
 }
 

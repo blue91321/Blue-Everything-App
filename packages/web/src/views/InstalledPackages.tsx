@@ -85,6 +85,7 @@ function PackageRow({
               that runs.
             */}
             {mod.code ? ' · runs code in the app' : ' · data only, runs no code'}
+            {mod.shipped ? ' · ships with the app' : ''}
           </div>
 
           {mod.notes && (
@@ -116,18 +117,7 @@ function PackageRow({
             label={`${mod.label} on`}
             onChange={onToggle}
           />
-          {mod.shipped ? (
-            /*
-              No Remove for a shipped package, and it is absent rather than
-              disabled. A disabled button is a promise that it could work under
-              some condition; this one never can, because the folder is part of
-              your checkout — deleting it would be a `git checkout` away from
-              coming back and a `git status` away from being confusing.
-            */
-            <span className="meta" style={{ whiteSpace: 'nowrap' }}>
-              built in
-            </span>
-          ) : confirming ? (
+          {confirming ? (
             <>
               <button className="btn danger" disabled={busy} onClick={onRemove}>
                 Delete
@@ -151,10 +141,86 @@ function PackageRow({
 
       {confirming && (
         <div className="meta" style={{ marginTop: 8 }}>
-          This deletes <code>{mod.id}</code> from disk, and cannot be undone from here — you would need the
-          zip again.
+          This deletes <code>{mod.id}</code> from disk. {}
+          {/*
+            Two different costs, and it is worth saying which one you are about
+            to pay. A shipped package is in your checkout, so git has it; an
+            installed one came from a zip you may no longer have.
+          */}
+          {mod.shipped
+            ? 'It ships with the app, so `git checkout` brings it back — but nothing in the app will.'
+            : 'It cannot be undone from here — you would need the zip again.'}{' '}
+          The app restarts to apply it.
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The way out of anything that needs a boot.
+ *
+ * Its own component with its own `useAsync`, so that a failure anywhere else on
+ * this screen cannot stop it rendering — that is the whole point of the button.
+ * It asks the server whether it *can* restart before offering to, because a
+ * button that fails when pressed is worse than one that explains why it cannot;
+ * the same call "Check for updates" makes one section up.
+ */
+export function RestartBanner({ why }: { why: string }) {
+  const state = useAsync(() => api.restart.status(), [], []);
+  const [asked, setAsked] = useState(false);
+  const [problem, setProblem] = useState('');
+
+  const can = state.data?.available === true;
+
+  return (
+    <div className="banner">
+      <div className="row between" style={{ alignItems: 'center', gap: '.6rem' }}>
+        <div className="grow">
+          <strong>Restart to apply.</strong> {why}
+          {asked && !problem && (
+            <div className="meta" style={{ marginTop: 4 }}>
+              Restarting… this page will reconnect on its own in a few seconds.
+            </div>
+          )}
+          {problem && (
+            <div className="meta" style={{ marginTop: 4 }}>
+              {problem} You can always right-click the tray icon and choose Restart.
+            </div>
+          )}
+          {!can && state.data && (
+            <div className="meta" style={{ marginTop: 4 }}>
+              {state.data.local
+                ? 'scripts/restart.ps1 is missing — use the tray icon instead.'
+                : 'Only the PC running the app can restart it.'}
+            </div>
+          )}
+        </div>
+
+        <button
+          className="btn primary"
+          style={{ flex: 'none' }}
+          disabled={!can || asked}
+          onClick={() => {
+            setProblem('');
+            setAsked(true);
+            /*
+             * Nothing is awaited and no error is expected from a success: the
+             * process answering this request is one of the things being
+             * stopped, so a dropped connection is the *normal* outcome and
+             * treating it as a failure would report every working restart as a
+             * broken one.
+             */
+            api.restart.now().catch((error: Error) => {
+              if (error.name === 'ServerUnreachable') return;
+              setAsked(false);
+              setProblem(error.message);
+            });
+          }}
+        >
+          {asked ? 'Restarting…' : 'Restart now'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -165,6 +231,8 @@ export function InstalledPackages({ session }: { session: Session }) {
   const [dragging, setDragging] = useState(false);
   const [problem, setProblem] = useState('');
   const [done, setDone] = useState('');
+  /** An install or a delete happened on this page, so a restart is owed. */
+  const [changedSomething, setChangedSomething] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
 
   const data = state.data;
@@ -199,6 +267,7 @@ export function InstalledPackages({ session }: { session: Session }) {
         `${result.label} ${result.version} ${result.replaced ? 'replaced the old copy' : 'installed'} — ` +
           `${result.files} file${result.files === 1 ? '' : 's'}. Switch it on below, then restart.`
       );
+      setChangedSomething(true);
       state.reload();
     } catch (error) {
       setProblem((error as Error).message);
@@ -226,6 +295,8 @@ export function InstalledPackages({ session }: { session: Session }) {
     setBusy(true);
     try {
       await api.modules.remove(id);
+      setChangedSomething(true);
+      setDone('Removed. Restart to take it out of the running app.');
       state.reload();
     } catch (error) {
       setProblem((error as Error).message);
@@ -277,11 +348,16 @@ export function InstalledPackages({ session }: { session: Session }) {
         program.
       </div>
 
-      {pendingRestart && (
-        <div className="banner">
-          <strong>Restart to apply.</strong> Packages are loaded once when the app starts. Right-click the
-          tray icon and choose <strong>Restart</strong>.
-        </div>
+      {pendingRestart && <RestartBanner why="Packages are loaded once when the app starts." />}
+
+      {/*
+        Shown after an install or a delete as well as for a pending toggle. A
+        deleted package leaves no row behind, so `pendingRestart` — which is a
+        property of a row — cannot possibly report it. Without this, removing
+        something looked instantaneous and then the tab was still there.
+      */}
+      {changedSomething && !pendingRestart && (
+        <RestartBanner why="Something was added or removed since the app started." />
       )}
 
       {problem && <div className="banner">{problem}</div>}

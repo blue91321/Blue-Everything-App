@@ -1119,6 +1119,19 @@ export const api = {
       }),
   },
 
+  /**
+   * Restarting from inside the app.
+   *
+   * Its own top-level entry rather than living under `modules`, because it is
+   * not about packages — it is the way out of anything that needs a boot, and
+   * the one control that has to keep working when a package has broken
+   * something else.
+   */
+  restart: {
+    status: () => request<{ available: boolean; local: boolean; script: string | null }>('/api/restart'),
+    now: () => post<{ ok: boolean; restarting: boolean }>('/api/restart'),
+  },
+
   modules: {
     get: () => request<ModuleState>('/api/modules'),
     /**

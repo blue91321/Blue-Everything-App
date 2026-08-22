@@ -18,6 +18,7 @@ import { dirname, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { FEATURES, isFeatureId, resolveFeatures, type FeatureId } from '@everything/shared/features';
 import { config } from './config.js';
+import { featuresFile } from './paths.js';
 import { parseJsonText } from './json.js';
 
 /**
@@ -37,7 +38,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
  * owed, and a restart would have changed nothing at all. A relative path
  * counted by hand is exactly the sort of thing to have one of.
  */
-export const featuresFilePath = resolve(repoRoot, 'features.json');
+export const featuresFilePath = featuresFile;
 
 function readFeaturesFile(): Partial<Record<string, boolean>> | undefined {
   if (!existsSync(featuresFilePath)) return undefined;

@@ -203,7 +203,7 @@ const missing = validateModuleManifest({ id: 'weather' });
 check('every missing field is reported at once', missing.problems.length === 3);
 check('  ...and it does not stop at the first', missing.problems.map((p) => p.field).join() === 'label,blurb,version');
 
-const reserved = validateModuleManifest({ id: 'vault', label: 'X', blurb: 'b', version: '1' });
+const reserved = validateModuleManifest({ id: 'habits', label: 'X', blurb: 'b', version: '1' });
 check('a built-in id cannot be reused', reserved.manifest === null && /built-in/.test(reserved.problems[0]!.message));
 
 const shouty = validateModuleManifest({ id: 'Weather', label: 'X', blurb: 'b', version: '1' });
@@ -324,7 +324,7 @@ try {
   const noManifest = makeZip([{ name: 'readme.txt', body: 'hello' }]);
   threw('a zip with no manifest installs nothing', () => installFromZip(noManifest), /module\.json/);
 
-  const badId = makeZip([{ name: 'module.json', body: JSON.stringify({ id: 'vault', label: 'X', blurb: 'b', version: '1' }) }]);
+  const badId = makeZip([{ name: 'module.json', body: JSON.stringify({ id: 'habits', label: 'X', blurb: 'b', version: '1' }) }]);
   threw('a zip claiming a built-in id is refused', () => installFromZip(badId), /built-in/);
 } finally {
   try {

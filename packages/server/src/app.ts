@@ -19,6 +19,7 @@ import { connectRoutes } from './routes/connect.js';
 import { deviceRoutes } from './routes/devices.js';
 import { featureRoutes } from './routes/features.js';
 import { moduleRoutes } from './routes/modules.js';
+import { restartRoutes } from './routes/restart.js';
 import { habitRoutes } from './routes/habits.js';
 import { noteRoutes } from './routes/notes.js';
 import { nudgeRoutes } from './routes/nudges.js';
@@ -27,7 +28,7 @@ import { settingsRoutes } from './routes/settings.js';
 import { soundRoutes } from './routes/sound.js';
 import { taskRoutes } from './routes/tasks.js';
 import { timeRoutes } from './routes/time.js';
-import { featureNotes, isEnabled, registerFeature } from './features.js';
+import { featureNotes, isEnabled } from './features.js';
 import { registerModules } from './modules.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -68,6 +69,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deviceRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);
+  /*
+   * Registered before anything optional, deliberately. Restarting is the way
+   * out of a broken package, so it must not be able to be broken *by* one — see
+   * the note in the route.
+   */
+  await app.register(restartRoutes);
   // Core: the one screen that can tell you a feature is off has to work when it is.
   await app.register(featureRoutes);
   /*
@@ -96,15 +103,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   if (isEnabled('habits')) await app.register(habitRoutes);
   if (isEnabled('notes')) await app.register(noteRoutes);
   if (isEnabled('time')) await app.register(timeRoutes);
-
-  /*
-   * Removable. The `() => import(...)` is a literal rather than a path built
-   * from the id — a dynamic `import(variable)` would be invisible to the type
-   * checker and to every bundler, which is a poor trade for saving three lines.
-   */
-  await registerFeature(app, 'vault', () => import('./features/vault/index.js'));
-  await registerFeature(app, 'voice', () => import('./features/voice/index.js'));
-  await registerFeature(app, 'integrations', () => import('./features/integrations/index.js'));
 
   /*
    * Installed packages come last, after every built-in route is mounted. A
