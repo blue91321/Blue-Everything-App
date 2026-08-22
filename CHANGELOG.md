@@ -55,6 +55,26 @@ second step `npm version` does not do for you.
   The failure renders as a banner naming the package and quoting the error.
 - A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
 
+### Weather
+
+- **A Weather tab and a Dashboard panel**, from Open-Meteo — no account, no key,
+  nothing to set up but the place you are in.
+- **Two settings: "Once a day" or "Only when I ask."** The first is a staleness
+  window rather than a timer: reading the weather refreshes it if it is a day
+  old, so opening the tab five times costs one fetch and a PC left alone costs
+  none. Manual mode never fetches on its own — `weather-check` asserts that for
+  a reading never taken and one a month old.
+- **The Check now button is always there**, in both modes, on the tab *and* the
+  panel — having to open a settings screen to press it would make manual mode
+  not worth choosing.
+- **The last reading is kept and its age is always shown**, so manual mode is a
+  usable screen rather than a blank one. A failed fetch is stored beside the
+  reading it could not replace: you get yesterday's weather and the reason.
+- Search for a town rather than typing coordinates, with the candidates listed —
+  Philadelphia alone returns five, in two states.
+- The first thing built *as* a package rather than migrated into one, and it
+  needed no change to core.
+
 ### Everything deletable is a package, and there is a Restart button
 
 - **The vault, voice and integrations have moved** into `packages/modules/`

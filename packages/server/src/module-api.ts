@@ -49,6 +49,21 @@ export * from './db/schema.js';
 export * as schema from './db/schema.js';
 
 /**
+ * Somewhere on disk to keep things, beside the database.
+ *
+ * A package **cannot add a table.** Migrations are a linear journal and skipping
+ * one breaks every later hash, so the schema is core's whatever is installed —
+ * which means a package with state of its own has nowhere in the database to put
+ * it. A file here is the honest answer, and it is the same arrangement the app
+ * logo and the habit pictures already use for the same reason: a settings row
+ * read on every page load has no business carrying a blob.
+ *
+ * Name the file after the package. Nothing enforces that, and nothing can, but
+ * two packages picking `cache.json` would find each other's.
+ */
+export { dataDir } from './paths.js';
+
+/**
  * Environment, already parsed and validated.
  *
  * `config.ts` is the only file allowed to read `process.env`, and that rule

@@ -235,6 +235,72 @@ it even when set, because the format does not exist — declaring the setting no
 is what makes turning it on a small change rather than a new concept. A button
 that fails when pressed would be worse than one that says why it cannot.
 
+### Weather, and what "once a day" actually means
+
+`packages/modules/weather/` — the first thing built *as* a package rather than
+migrated into one, which makes it the honest test of whether the last two
+sessions' work was worth it. It needed no change to core: a tab, a Dashboard
+panel, four endpoints and a file on disk.
+
+**Open-Meteo, because it needs no account and no key.** Every alternative worth
+using wants a registration, and this would then have arrived as a screen that
+could only apologise until you had gone and made one. `npm run weather-check -w
+@everything/server` proves the decisions; `--live` also fetches for real.
+
+#### "Once a day" is a staleness window, not a timer
+
+The obvious reading is a `setInterval` at 24 hours, and there deliberately isn't
+one. This project requires anything on a timer to justify itself against the
+attention loop's numbers, and a timer loses on all three: it fetches on a machine
+nobody is looking at, it needs a handle and an `unref` and an `onClose` or
+`smoke` hangs on an app that will not close, and it *still* would not guarantee
+fresh data when you look — the reading could be twenty-three hours old.
+
+So `GET /api/weather` refreshes anything older than a day as a side effect of
+being read, exactly as the friends list and the live streams do. Opening the tab
+five times costs one fetch; never opening it costs none. The observable behaviour
+is "about once a day", and a PC left alone makes no requests at all.
+
+The screen says so rather than letting you infer it, because somebody watching
+for a fetch at midnight should know it will not come.
+
+**Manual mode never does this.** `isDue` returns false outright — a setting
+called "only when I ask" has to mean it or it is not worth having, the same rule
+`quietHoursEnabled` follows. `weather-check` asserts both tempting cases: never
+fetched, and a reading a month old.
+
+#### The button is always there, in both modes and on both surfaces
+
+In `manual` it is the only way to fetch; in `daily` it is how you get a reading
+*now* rather than whenever the window lapses. A control that appeared and
+disappeared with a setting would be one more thing to work out.
+
+It is on the **panel** as well as the tab, because "always there" has to mean the
+screen you are actually on — having to open a settings tab to press it would make
+manual mode not worth choosing.
+
+#### The last reading is kept, and its age is always on screen
+
+Which is what makes manual mode usable rather than a blank screen: you press the
+button when you want, and what you saw last stays, labelled. A failed fetch is
+**stored next to the reading it could not replace**, so the screen shows
+yesterday's weather *and* why it is yesterday's — either alone is worse, since a
+stale number with nothing admitting it is stale is the failure this app is
+against.
+
+#### Two smaller things
+
+- **A package cannot add a table.** Migrations are a linear journal and the
+  schema is core's whatever is installed, so state goes in `data/weather.json` —
+  the same arrangement the app logo and the habit pictures use. `dataDir` is
+  exported from `module-api` for exactly this, with the warning that two packages
+  choosing `cache.json` would find each other's.
+- **A place is searched for, not typed as coordinates.** Nobody knows their own
+  latitude, so that setup step would have been "go and look it up somewhere
+  else". The candidates are listed rather than the first hit taken, because there
+  are a great many places called Springfield — and the live check confirms it:
+  Philadelphia returns five, in two different states.
+
 ### Installing a package, the way you would a texture pack
 
 `modules/` at the repo root, one folder per package, gitignored. **Settings →
@@ -400,7 +466,8 @@ leaves nothing behind that could be "newer" than anything.
 
 **Its first version shipped with `stdio: 'ignore'` and no logging**, so when the
 first restart failed the app was left stopped with not one line written anywhere.
-Output now goes to `logsestart.log` through PowerShell's own `*>>` — not a
+Output now goes to `logs
+estart.log` through PowerShell's own `*>>` — not a
 `>>` on the cmd line, because `start /b` hands the child cmd's handles and cmd's
 were `ignore`. That is written down two sections above, about the tray, and was
 reproduced here anyway.

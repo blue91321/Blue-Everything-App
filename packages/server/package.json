@@ -19,7 +19,8 @@
     "integrations-check": "tsx src/cli/integrations-check.ts",
     "features": "tsx src/cli/features.ts",
     "features-check": "tsx src/cli/features-check.ts",
-    "modules-check": "node --import tsx src/cli/modules-check.ts"
+    "modules-check": "node --import tsx src/cli/modules-check.ts",
+    "weather-check": "node --import tsx ../modules/weather/server/cli/check.ts"
   },
   "dependencies": {
     "@everything/shared": "*",
