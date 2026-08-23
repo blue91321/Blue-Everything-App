@@ -1083,6 +1083,17 @@ export const api = {
     check: (id: string) => post(`/api/habits/${id}/check`),
     uncheck: (id: string) => post(`/api/habits/${id}/uncheck`),
     /**
+     * Put the tally at a value, rather than nudging it by one.
+     *
+     * A `PUT`, so sending it twice leaves the same state — which is what makes
+     * it safe to fire on both Enter and the blur that Enter causes.
+     */
+    setValue: (id: string, value: number) =>
+      request<{ habitId: string; doneThisPeriod: number; gaugeNow: number | null }>(
+        `/api/habits/${id}/value`,
+        { method: 'PUT', body: JSON.stringify({ value }) }
+      ),
+    /**
      * A picture of your own for the gauge.
      *
      * Base64 in JSON rather than multipart, like the logo and the avatar — the

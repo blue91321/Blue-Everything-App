@@ -776,6 +776,57 @@ on Tasks and Habits, a section id on Settings — and `search`, which is separat
 rather than encoded into it because "open this one thing" and "show me everything
 matching" are different requests and a screen may want both.
 
+### Tapping the number on the Habits screen edits it
+
+That screen describes its stepper as a way to *correct* the tally, and
+correcting "nine, not two" by pressing + seven times is not correcting. So the
+value between − and + is a button, and pressing it turns it into a box.
+`PUT /api/habits/:id/value` puts the tally at a number rather than nudging it.
+
+**A button, not a `<span onClick>`.** That is the whole reason it works without a
+mouse: a span is not focusable, receives no Enter or Space, and is announced as
+plain text with nothing to suggest it does anything. One element, and it buys the
+non-mouse half of "click or tap".
+
+**The two modes mean different things by "the value".** For a gauge it is the
+level, written straight to `gauge_level` and its anchor — and **no entry is
+recorded**, because pressing + means "I did one" and typing 80 means "it is
+actually 80% now". Filing a correction as a completion would put a tick in the
+history for something you never did. For `target` and `interval` the value is a
+count of entries, so entries move: newest removed until the sum fits, remainder
+re-inserted. Newest-first is what keeps `interval` honest, since its next-due
+time comes from the last entry.
+
+That remainder is not a nicety — an entry may carry a count above one, since "I
+drank three waters" is a single row. `smoke` builds exactly that shape (one entry
+of five, then two of one) and drops it to two.
+
+**Enter commits directly, and the blur that follows is the fallback.** The first
+version only blurred and let the blur handler commit, which makes the primary
+path depend on a focus event — the one class of event that does not always
+arrive. Measured: a document that is not focused dispatches **no `blur` and no
+`focusout` at all**, even from a direct `.blur()` on a focused input. Phone
+keyboards also vary in what their Go key does. A `pending` ref makes the second
+call a no-op, and the route is a `PUT` so a double-send would be harmless anyway.
+
+Worth adding to the list: **focus events join `ResizeObserver` and
+`requestAnimationFrame` as things that do not happen in a pane nobody is looking
+at.** All three have now cost a debugging session here.
+
+Three smaller things:
+
+- **An emptied box does not commit as zero.** Tapping the number, changing your
+  mind and tapping away is exactly how somebody backs out, and wiping the tally
+  for it would be the worst available reading of an empty field.
+- **`inputMode="numeric"`, not `type="number"`.** The phone keypad is the point;
+  a number input adds spinner arrows beside the two stepper buttons that already
+  do that job, and eats a scroll wheel passing over it on desktop.
+- **The button and the box are one fixed width.** `min-width: 22px` fitted a
+  single digit and nothing else: a gauge reading 100% shoved both buttons
+  sideways, and the box was ten pixels wider than the button it replaced, so the
+  stepper jumped the instant you typed. Measured at 117 → 108 before, 120 → 120
+  after.
+
 ### Getting to a particular setting
 
 `settings.dashboard_panel` is chosen on a Settings tab, which the friends panel

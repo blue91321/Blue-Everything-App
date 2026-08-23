@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, type Habit, type HabitMode } from '../api';
 import { HabitGauge } from '../Gauge';
 import { spanLabel } from '../format';
@@ -152,6 +152,129 @@ function ManagedHabit({
 }) {
   const [confirming, setConfirming] = useState(false);
 
+/**
+ * The number between − and +, which you can also just type into.
+ *
+ * The stepper is described on this screen as a way to *correct* the tally, and
+ * correcting "nine, not two" by pressing + seven times is not correcting. So the
+ * value is a button, and pressing it turns it into a box.
+ *
+ * A button rather than a `<span>` with an `onClick`, which is the whole reason
+ * it works with a keyboard: a span is not focusable, gets no Enter or Space, and
+ * is announced as text with no hint that anything would happen. The change costs
+ * one element and buys the entire non-mouse half of "click or tap".
+ */
+function EditableCount({ habit, onChanged }: { habit: Habit; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const input = useRef<HTMLInputElement | null>(null);
+  /**
+   * An edit is open and has not been written yet.
+   *
+   * A ref rather than the `editing` state, because both paths below can fire
+   * for one edit — Enter commits, and the blur that Enter causes arrives after —
+   * and a closure over state would read the value from before the first one ran.
+   */
+  const pending = useRef(false);
+
+  const isGauge = habit.mode === 'gauge';
+  const value = isGauge ? habit.gaugeNow ?? 100 : habit.doneThisPeriod;
+
+  useLayoutEffect(() => {
+    if (!editing) return;
+    // Selected, not merely focused: the commonest edit is replacing the number
+    // outright, and starting with the caret after it means clearing it by hand
+    // every single time.
+    input.current?.focus();
+    input.current?.select();
+  }, [editing]);
+
+  async function commit() {
+    // Whichever path gets here first wins; the other becomes a no-op.
+    if (!pending.current) return;
+    pending.current = false;
+
+    const wanted = Number.parseInt(draft, 10);
+    setEditing(false);
+
+    /*
+     * Nothing typed, nonsense typed, or the same number back: leave it alone.
+     * A blank box committing as zero would make "tapped it, changed my mind,
+     * tapped away" silently wipe the tally — and tapping away is exactly how
+     * somebody changes their mind.
+     */
+    if (!Number.isFinite(wanted) || wanted === value) return;
+
+    setSaving(true);
+    try {
+      await api.habits.setValue(habit.id, Math.max(0, wanted));
+      onChanged();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        className="count count-edit"
+        disabled={saving}
+        title={isGauge ? 'Tap to set the level' : 'Tap to set the count'}
+        aria-label={`${habit.name}: ${value}${isGauge ? ' percent' : ''}. Tap to change.`}
+        onClick={() => {
+          setDraft(String(value));
+          pending.current = true;
+          setEditing(true);
+        }}
+      >
+        {isGauge ? `${value}%` : value}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      ref={input}
+      className="count count-input"
+      /*
+       * `inputMode` rather than `type="number"`: the phone keypad is the point,
+       * while a number input adds spinner arrows next to the two stepper buttons
+       * that already do that job, and on desktop it silently eats a scroll
+       * wheel that happens to pass over it.
+       */
+      inputMode="numeric"
+      value={draft}
+      aria-label={`${habit.name}: ${isGauge ? 'level as a percentage' : 'how many so far'}`}
+      onChange={(event) => setDraft(event.target.value.replace(/[^0-9]/g, ''))}
+      onBlur={() => void commit()}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          /*
+           * Committed here rather than by blurring and letting the blur handler
+           * do it. That was the first version and it makes the *primary* path
+           * depend on a focus event, which is the one class of event that does
+           * not always arrive: a document that is not focused dispatches none at
+           * all — measured, when a direct `.blur()` on a focused input produced
+           * neither `blur` nor `focusout` — and phone keyboards vary in what
+           * their Go key does. Losing what somebody typed is not a failure worth
+           * risking for one fewer code path.
+           *
+           * The blur still fires afterwards and still calls `commit`; `pending`
+           * is what makes the second call do nothing.
+           */
+          void commit();
+          event.currentTarget.blur();
+        } else if (event.key === 'Escape') {
+          pending.current = false;
+          setDraft(String(value));
+          setEditing(false);
+        }
+      }}
+    />
+  );
+}
+
   return (
     <div className="card">
       <div className="row between">
@@ -193,9 +316,7 @@ function ManagedHabit({
           >
             −
           </button>
-          <span className="count">
-            {habit.mode === 'gauge' ? `${habit.gaugeNow ?? 100}%` : habit.doneThisPeriod}
-          </span>
+          <EditableCount habit={habit} onChanged={onChanged} />
           <button className="btn subtle" aria-label={`Add one to ${habit.name}`} onClick={() => api.habits.check(habit.id).then(onChanged)}>
             +
           </button>

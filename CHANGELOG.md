@@ -55,6 +55,21 @@ second step `npm version` does not do for you.
   The failure renders as a banner naming the package and quoting the error.
 - A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
 
+### Tap the number on the Habits screen to edit it
+
+- The value between − and + is now a button; pressing it turns it into a box.
+  Correcting "nine, not two" no longer means pressing + seven times.
+- A gauge takes a level and records **no entry** — pressing + is a completion,
+  typing 80 is a correction, and filing one as the other would put a tick in the
+  history for something you never did.
+- A count moves the entries themselves, newest first, splitting one whose count
+  is above one — which "I drank three waters" creates.
+- Enter commits directly rather than relying on the blur it causes: an unfocused
+  document dispatches no focus events at all, and phone keyboards vary. The blur
+  is still a fallback and cannot double-commit.
+- An emptied box does not wipe the tally, letters are filtered as you type, and
+  the button and box share one width so the stepper never jumps.
+
 ### Weather
 
 - **A Weather tab and a Dashboard panel**, from Open-Meteo — no account, no key,

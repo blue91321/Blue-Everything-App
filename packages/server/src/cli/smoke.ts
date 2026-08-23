@@ -1139,6 +1139,62 @@ console.log('\nthings that must stay shut');
 }
 
 console.log('');
+console.log('setting a habit value by hand');
+{
+  /*
+   * Tapping the number on the Habits screen puts the tally at a value rather
+   * than nudging it. The interesting half is going *down*: entries can carry a
+   * count greater than one — "I drank three waters" is a single row — so the
+   * newest are removed until the sum fits and the remainder is re-inserted.
+   */
+  const made = await post('/api/habits', { name: 'Value probe', mode: 'target', targetPerPeriod: 20, cadence: 'daily' });
+  const id = made.json().id;
+
+  const setTo = async (value: number) =>
+    (await app.inject({ method: 'PUT', url: `/api/habits/${id}/value`, payload: { value } })).json();
+
+  check('it goes up from nothing', (await setTo(9)).doneThisPeriod === 9);
+  check('it comes back down', (await setTo(3)).doneThisPeriod === 3);
+  check('it reaches the target', (await setTo(20)).met === true);
+  check('and it reaches zero', (await setTo(0)).doneThisPeriod === 0);
+
+  /* One entry of five, then two of one — the shape the loop has to unpick. */
+  await setTo(5);
+  await post(`/api/habits/${id}/check`);
+  await post(`/api/habits/${id}/check`);
+  const seven = await app.inject({ method: 'GET', url: '/api/habits' });
+  check('five plus two ones is seven', (seven.json() as { id: string; doneThisPeriod: number }[]).find((h) => h.id === id)?.doneThisPeriod === 7);
+  check('dropping to six removes one of the ones', (await setTo(6)).doneThisPeriod === 6);
+  check('dropping to two must split the five', (await setTo(2)).doneThisPeriod === 2);
+
+  /* A PUT, so sending it twice is the same as sending it once — which is what
+     makes it safe for Enter and the blur that follows to both fire. */
+  check('setting the same value twice changes nothing', (await setTo(2)).doneThisPeriod === 2);
+
+  for (const bad of [-1, 1000, 2.5]) {
+    const refused = await app.inject({ method: 'PUT', url: `/api/habits/${id}/value`, payload: { value: bad } });
+    check(`${bad} is refused`, refused.statusCode === 400, `${refused.statusCode}`);
+  }
+  const missing = await app.inject({ method: 'PUT', url: '/api/habits/nope/value', payload: { value: 1 } });
+  check('an unknown habit is a 404', missing.statusCode === 404, `${missing.statusCode}`);
+
+  /* A gauge means the level, not a count of entries — and setting it records
+     no entry, because a correction is not a completion. */
+  const gaugeMade = await post('/api/habits', { name: 'Gauge probe', mode: 'gauge', gaugeDrainPerDay: 100, gaugeFillPerTick: 20 });
+  const gaugeId = gaugeMade.json().id;
+  const put = async (value: number) =>
+    (await app.inject({ method: 'PUT', url: `/api/habits/${gaugeId}/value`, payload: { value } })).json();
+
+  check('a gauge takes a level', (await put(35)).gaugeNow === 35);
+  check('  ...including empty', (await put(0)).gaugeNow === 0);
+  check('  ...and full', (await put(100)).gaugeNow === 100);
+  check('  ...without logging a completion', (await put(60)).doneThisPeriod === 0);
+
+  await app.inject({ method: 'DELETE', url: `/api/habits/${id}` });
+  await app.inject({ method: 'DELETE', url: `/api/habits/${gaugeId}` });
+}
+
+console.log('');
 console.log('packages (installing, switching, removing)');
 {
   /*
