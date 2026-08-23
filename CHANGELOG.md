@@ -77,8 +77,13 @@ second step `npm version` does not do for you.
 - **An hourly temperature graph** on the Weather tab: twenty-four hours as a
   line, with night shaded, rain as bars under it, and a glyph per labelled hour.
   Hand-drawn SVG — 3.1KB gzipped, loaded only when the tab is opened.
-- It scrolls inside its own box rather than squashing; at 375px the page still
-  does not scroll sideways.
+- **It fits at every width, with no scrollbar.** The box is measured and the SVG
+  drawn at exactly that width, text at a fixed size — all 24 hours always
+  plotted, with fewer of them *labelled* when there is less room (12 at 1280px,
+  8 at 375px). `min-width: 0` on the wrapper is what lets a flex child shrink
+  below its content, which was the scrollbar.
+- **Night is darker than day now**, which was backwards: the band was a neutral
+  grey, and grey over a dark card is lighter than the card.
 - Finding "now" in the forecast is a string match against what `Intl` says the
   time is *there*, not date arithmetic: Open-Meteo's timestamps carry no offset,
   so parsing them locally is right in Philadelphia and five hours out in London.

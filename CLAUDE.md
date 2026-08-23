@@ -277,12 +277,34 @@ graph on one screen in a bundle that is 90KB and nearly all of it React. The
 whole tab costs **3.1KB gzipped and only when it is opened**; the panel is
 0.8KB, and the main bundle did not move.
 
-**It scrolls rather than squashing.** Twenty-four legible hours are wider than a
-phone, and the two alternatives are both worse: shrink the labels until nobody
-can read them, or drop hours until the graph is not the thing it claims to be.
-So the SVG keeps a fixed width inside an `overflow-x: auto` box — the rule this
-document already states for wide content. Verified at 375px: the graph scrolls
-in its own box and **the page does not scroll sideways**.
+**It fits, at every width.** This first shipped as a fixed-width SVG in an
+`overflow-x: auto` box — the rule this document states for wide content, and the
+wrong rule here: a graph you have to drag sideways is not one you can glance at,
+which is the only reason to draw a graph instead of printing a table. Scaling it
+with `viewBox` plus `width: 100%` is worse again, because it scales the *text*
+and a phone gets six-pixel labels.
+
+So the box is measured and the SVG drawn at exactly that width, text at a fixed
+size — what `ContextMenu` does rather than guessing. All twenty-four hours are
+always plotted; what gives way on a narrow screen is how many are **labelled**,
+which is the one thing that can go without the graph becoming a different graph.
+Twelve labels at 1280px, eight at 375px, and the step is chosen from divisors of
+the day so they land on hours a person thinks in.
+
+`min-width: 0` on the wrapper is what actually lets it shrink — it sits in a flex
+card, and a flex child defaults to `min-width: auto` and refuses to go below its
+content. That was the scrollbar.
+
+**Three measurements, and the reason is that the test environment cannot check
+the good one.** `ResizeObserver` is correct — the width that matters is the
+card's, and opening the drawer narrows it without the window changing — but a
+browser pane that is not compositing frames delivers **no RO callbacks at all**,
+not even the initial one. So there is also a `resize` listener and a re-measure
+after each render, both verified working with RO dead: 325 → 240 on a resize
+event, 240 → 200 on a re-render.
+
+Worth knowing beyond this graph: **`ResizeObserver` joins `requestAnimationFrame`
+on the list of things that measure nothing in a pane nobody is looking at.**
 
 **Which hour is "now" is not a subtraction.** Open-Meteo returns timestamps
 local to the *place*, with no offset — `2026-08-22T14:00` means two in the
@@ -299,6 +321,12 @@ mode, and a bare array of numbers would be drawn as though it started now.
 
 Three smaller choices:
 
+- **Night is darker than day**, which the first version had backwards. The band
+  was `--muted` at low opacity, on the reasoning that a neutral grey is the least
+  intrusive thing available — but grey over a dark card is *lighter* than the
+  card, so the night hours were the bright part of the chart. It is black now, at
+  0.3 on dark and 0.09 on light: the same intent needs different arithmetic over
+  near-black and over white, which is why the accents are declared twice too.
 - **Rain bars are scaled against the wettest hour, not against 100.** A day of
   light drizzle would otherwise draw as a flat empty strip and read as no rain
   at all.

@@ -1542,17 +1542,19 @@ button {
 /* ---- The hourly weather graph ------------------------------------------ */
 
 /*
- * Twenty-four legible hours are wider than a phone, so the graph scrolls inside
- * its own box rather than the page scrolling sideways — the rule this file
- * already follows for wide content. On a desktop column it fits and the
- * scrollbar never appears.
+ * The graph fits, always. It is drawn at the measured width of this box rather
+ * than at a fixed one — see `HourlyGraph.tsx` for why scrolling and scaling
+ * were both rejected. `min-width: 0` is what actually lets it shrink: this sits
+ * inside a flex card, and a flex child defaults to `min-width: auto` and refuses
+ * to go below its content, which is the whole reason a scrollbar appeared here
+ * in the first place.
  */
-.hourly-scroll {
-  overflow-x: auto;
+.hourly-wrap {
   margin-top: 14px;
-  /* Room for the scrollbar on the platforms that reserve space for one, so it
-     never lands on top of the hour labels. */
-  padding-bottom: 2px;
+  min-width: 0;
+  /* Belt and braces: if anything ever miscalculates by a pixel, it is clipped
+     rather than pushing a scrollbar onto the page. */
+  overflow: hidden;
 }
 
 .hourly {
@@ -1587,13 +1589,38 @@ button {
 }
 
 /*
- * Night, as a band behind the line. Deliberately very faint: it is context for
- * the shape of the day, and anything stronger competes with the line it sits
- * behind.
+ * Night, as a band behind the line — and **darker** than the daylight either
+ * side of it, which the first version got backwards.
+ *
+ * It was `--muted` at low opacity, on the reasoning that a neutral grey is the
+ * least intrusive thing available. Grey over a dark card is *lighter* than the
+ * card, so the night hours were the bright part of the graph and the day was
+ * the dim one. Nobody reads a chart that way round.
+ *
+ * So it is black, at an opacity chosen per theme: enough to read as night at a
+ * glance, not so much that the line loses contrast against it.
  */
 .hourly-night {
-  fill: var(--muted);
+  fill: #000;
+  opacity: 0.3;
+}
+
+/*
+ * Lighter on a light theme, in the sense that matters: 30% black over white is
+ * a heavy grey slab that would dominate the card, while over the dark theme's
+ * near-black it is a gentle deepening. Same intent, different arithmetic —
+ * exactly why the accents are declared twice as well.
+ */
+:root:not([data-theme='dark']) .hourly-night {
   opacity: 0.09;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hourly-night {
+    opacity: 0.3;
+  }
+}
+:root[data-theme='dark'] .hourly-night {
+  opacity: 0.3;
 }
 
 /*
