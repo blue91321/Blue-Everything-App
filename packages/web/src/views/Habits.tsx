@@ -135,23 +135,6 @@ export function Habits({ focus, onFocused }: { focus?: string | null; onFocused?
   );
 }
 
-function ManagedHabit({
-  habit,
-  first,
-  last,
-  onEdit,
-  onMove,
-  onChanged,
-}: {
-  habit: Habit;
-  first: boolean;
-  last: boolean;
-  onEdit: () => void;
-  onMove: (delta: number) => void;
-  onChanged: () => void;
-}) {
-  const [confirming, setConfirming] = useState(false);
-
 /**
  * The number between − and +, which you can also just type into.
  *
@@ -164,7 +147,16 @@ function ManagedHabit({
  * is announced as text with no hint that anything would happen. The change costs
  * one element and buys the entire non-mouse half of "click or tap".
  */
-function EditableCount({ habit, onChanged }: { habit: Habit; onChanged: () => void }) {
+function EditableCount({
+  habit,
+  onChanged,
+  onProblem,
+}: {
+  habit: Habit;
+  onChanged: () => void;
+  /** Reported up rather than shown here: the stepper is 120px wide. */
+  onProblem: (message: string) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
@@ -209,7 +201,21 @@ function EditableCount({ habit, onChanged }: { habit: Habit; onChanged: () => vo
     setSaving(true);
     try {
       await api.habits.setValue(habit.id, Math.max(0, wanted));
+      onProblem('');
       onChanged();
+    } catch (error) {
+      /*
+       * **This used to be swallowed**, and it cost a real "I pressed Enter and
+       * nothing happened". The route is new, the running server had not been
+       * restarted, every save answered 404, and the number simply snapped back
+       * to what it was with nothing said anywhere — which is indistinguishable
+       * from the key not having registered at all.
+       *
+       * The typed number is repeated in the message rather than the editor being
+       * reopened. Reopening would steal focus back from wherever the tap went,
+       * and the point is to say what happened, not to insist on a second go.
+       */
+      onProblem(`Could not set to ${wanted} — ${(error as Error).message}`);
     } finally {
       setSaving(false);
     }
@@ -223,6 +229,7 @@ function EditableCount({ habit, onChanged }: { habit: Habit; onChanged: () => vo
         title={isGauge ? 'Tap to set the level' : 'Tap to set the count'}
         aria-label={`${habit.name}: ${value}${isGauge ? ' percent' : ''}. Tap to change.`}
         onClick={() => {
+          onProblem('');
           setDraft(String(value));
           pending.current = true;
           setEditing(true);
@@ -275,6 +282,30 @@ function EditableCount({ habit, onChanged }: { habit: Habit; onChanged: () => vo
   );
 }
 
+function ManagedHabit({
+  habit,
+  first,
+  last,
+  onEdit,
+  onMove,
+  onChanged,
+}: {
+  habit: Habit;
+  first: boolean;
+  last: boolean;
+  onEdit: () => void;
+  onMove: (delta: number) => void;
+  onChanged: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  /**
+   * Why the last hand-typed value did not save.
+   *
+   * Held by the row rather than by the control, because the stepper is 120px
+   * wide and a reason for a failure does not fit inside it.
+   */
+  const [valueProblem, setValueProblem] = useState('');
+
   return (
     <div className="card">
       <div className="row between">
@@ -316,12 +347,20 @@ function EditableCount({ habit, onChanged }: { habit: Habit; onChanged: () => vo
           >
             −
           </button>
-          <EditableCount habit={habit} onChanged={onChanged} />
+          <EditableCount habit={habit} onChanged={onChanged} onProblem={setValueProblem} />
           <button className="btn subtle" aria-label={`Add one to ${habit.name}`} onClick={() => api.habits.check(habit.id).then(onChanged)}>
             +
           </button>
         </div>
       </div>
+
+      {/* Under the row rather than inside the stepper, which is 120px wide and
+          has no room to explain anything. */}
+      {valueProblem && (
+        <div className="meta urgent" style={{ marginTop: 6 }} role="status">
+          {valueProblem}
+        </div>
+      )}
 
       <div className="row" style={{ marginTop: 8 }}>
         <button className="btn subtle" aria-label="Move up" disabled={first} onClick={() => onMove(-1)}>

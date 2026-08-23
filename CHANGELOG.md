@@ -69,6 +69,11 @@ second step `npm version` does not do for you.
   is still a fallback and cannot double-commit.
 - An emptied box does not wipe the tally, letters are filtered as you type, and
   the button and box share one width so the stepper never jumps.
+- **A failed save says so.** It was swallowed, which is how "I pressed Enter and
+  nothing happened" got reported: the route was new, the app had not been
+  restarted, and every save 404'd in silence.
+- The control moved to the top level. Defined inside the row it was a new
+  component type every render, which would remount the input mid-typing.
 
 ### Weather
 

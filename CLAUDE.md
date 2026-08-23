@@ -813,6 +813,22 @@ Worth adding to the list: **focus events join `ResizeObserver` and
 `requestAnimationFrame` as things that do not happen in a pane nobody is looking
 at.** All three have now cost a debugging session here.
 
+**A failed save says so, and that was reported as the feature not working.**
+`commit()` first shipped with a `try/finally` and no `catch`. The route was new,
+the running server had not been restarted, every save answered 404, and the
+number simply snapped back — indistinguishable from Enter not registering. The
+message names the number you typed (`Could not set to 17 — …`) rather than
+reopening the editor, which would steal focus back from wherever the tap went.
+It renders on the row rather than in the stepper, which is 120px wide.
+
+**And the control has to be declared at the top level.** It was first written
+inside `ManagedHabit`, which is legal JavaScript and quietly wrong in React: a
+component defined during render is a *new type* every render, so the parent
+re-rendering unmounts the input and takes what you were typing with it. It
+survived testing only because the parent does not re-render on a keystroke —
+the draft lives inside the control — which is precisely the kind of luck that
+stops holding the moment anything else on the row becomes stateful.
+
 Three smaller things:
 
 - **An emptied box does not commit as zero.** Tapping the number, changing your
