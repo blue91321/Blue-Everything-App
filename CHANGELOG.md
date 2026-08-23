@@ -74,6 +74,14 @@ second step `npm version` does not do for you.
   Philadelphia alone returns five, in two states.
 - The first thing built *as* a package rather than migrated into one, and it
   needed no change to core.
+- **An hourly temperature graph** on the Weather tab: twenty-four hours as a
+  line, with night shaded, rain as bars under it, and a glyph per labelled hour.
+  Hand-drawn SVG — 3.1KB gzipped, loaded only when the tab is opened.
+- It scrolls inside its own box rather than squashing; at 375px the page still
+  does not scroll sideways.
+- Finding "now" in the forecast is a string match against what `Intl` says the
+  time is *there*, not date arithmetic: Open-Meteo's timestamps carry no offset,
+  so parsing them locally is right in Philadelphia and five hours out in London.
 
 ### Everything deletable is a package, and there is a Restart button
 

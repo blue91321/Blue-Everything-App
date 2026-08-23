@@ -269,6 +269,51 @@ called "only when I ask" has to mean it or it is not worth having, the same rule
 `quietHoursEnabled` follows. `weather-check` asserts both tempting cases: never
 fetched, and a reading a month old.
 
+#### The hourly graph
+
+Twenty-four hours as a line, drawn by hand in SVG like `Gauge.tsx`. A chart
+library would be the largest dependency in this repo by some margin, for one
+graph on one screen in a bundle that is 90KB and nearly all of it React. The
+whole tab costs **3.1KB gzipped and only when it is opened**; the panel is
+0.8KB, and the main bundle did not move.
+
+**It scrolls rather than squashing.** Twenty-four legible hours are wider than a
+phone, and the two alternatives are both worse: shrink the labels until nobody
+can read them, or drop hours until the graph is not the thing it claims to be.
+So the SVG keeps a fixed width inside an `overflow-x: auto` box — the rule this
+document already states for wide content. Verified at 375px: the graph scrolls
+in its own box and **the page does not scroll sideways**.
+
+**Which hour is "now" is not a subtraction.** Open-Meteo returns timestamps
+local to the *place*, with no offset — `2026-08-22T14:00` means two in the
+afternoon there. Parsing that with `new Date()` yields a value in the *server's*
+zone, so comparing it against `Date.now()` is correct only while the two happen
+to agree: right all year in Philadelphia, five hours out for London. So the
+current hour is found by asking `Intl` what time it is there and matching the
+string. String matching looks crude beside date arithmetic and is the thing that
+is actually correct, because the strings are the authority. `weather-check`
+asserts the same instant starts at 14:00 in New York and 19:00 in London.
+
+**Timestamps are stored, not just values.** A reading can be days old in manual
+mode, and a bare array of numbers would be drawn as though it started now.
+
+Three smaller choices:
+
+- **Rain bars are scaled against the wettest hour, not against 100.** A day of
+  light drizzle would otherwise draw as a flat empty strip and read as no rain
+  at all.
+- **The line takes `--accent`; rain keeps its own blue.** The same distinction
+  the presence dots draw: the line is a shape, the blue is a meaning learned
+  from every other weather app, and an amber accent would make a downpour look
+  like a warning about something else. Checked across three accents.
+- **Night is drawn as runs, not a rect per hour**, which leaves hairline seams at
+  some zoom levels — and clamped to the chart rather than left to the SVG
+  overflow default to tidy up.
+
+A colour and a line say nothing to a screen reader, so the SVG carries an
+`aria-label` giving the range, the span and the starting hour — the summary a
+person would give if asked what it showed.
+
 #### The button is always there, in both modes and on both surfaces
 
 In `manual` it is the only way to fetch; in `daily` it is how you get a reading

@@ -49,6 +49,23 @@ export interface Reading {
   label: string;
   glyph: string;
   isDay: boolean;
+  /**
+   * The next twenty-four hours, sliced at fetch time.
+   *
+   * Timestamps are kept rather than only the values, because a reading can be
+   * days old in manual mode — a bare array of numbers would be drawn as though
+   * it started now, which is the one way this graph could actively mislead.
+   */
+  hours: Array<{
+    /** Local ISO, as the service returned it: `2026-08-22T14:00`. */
+    time: string;
+    temperature: number;
+    /** Percent, or null when the service did not say. */
+    rain: number | null;
+    isDay: boolean;
+    label: string;
+    glyph: string;
+  }>;
   days: Array<{
     date: string;
     high: number;
@@ -188,7 +205,7 @@ export async function findPlaces(query: string): Promise<Place[]> {
   }));
 }
 
-interface Forecast {
+export interface Forecast {
   current?: {
     temperature_2m?: number;
     apparent_temperature?: number;
@@ -196,6 +213,13 @@ interface Forecast {
     wind_speed_10m?: number;
     weather_code?: number;
     is_day?: number;
+  };
+  hourly?: {
+    time?: string[];
+    temperature_2m?: (number | null)[];
+    precipitation_probability?: (number | null)[];
+    weather_code?: (number | null)[];
+    is_day?: (number | null)[];
   };
   daily?: {
     time?: string[];
@@ -206,11 +230,83 @@ interface Forecast {
   };
 }
 
+/** How many hours the graph shows. A day, so it reads as "the rest of today". */
+export const HOURLY_SPAN = 24;
+
+/**
+ * The next twenty-four hours, starting from the one we are in.
+ *
+ * Open-Meteo returns the whole forecast range starting at local midnight, so
+ * most of what comes back is already in the past. Which hour is "now" is the
+ * only interesting part of this, and it is not a subtraction:
+ *
+ * The timestamps are **local to the place**, with no offset on them —
+ * `2026-08-22T14:00` means two in the afternoon *there*. Parsing that with
+ * `new Date()` gets a value in the *server's* zone, so comparing it against
+ * `Date.now()` is only correct while the two happen to agree. It would work all
+ * year in Philadelphia and be five hours out for a place in London, which is
+ * exactly the kind of bug that never shows up on the machine it was written on.
+ *
+ * So the current hour is found by asking `Intl` what time it is *there*, and
+ * matching the string. String matching looks crude next to date arithmetic and
+ * is the thing that is actually correct here, because the strings are the
+ * authority.
+ */
+export function sliceHours(
+  hourly: Forecast['hourly'],
+  timezone: string,
+  now = new Date()
+): Reading['hours'] {
+  const times = hourly?.time ?? [];
+  if (times.length === 0) return [];
+
+  let start = 0;
+  try {
+    /*
+     * `sv-SE` because its date format is ISO — a formatter that already emits
+     * `2026-08-22 14:00` rather than one whose parts have to be reassembled by
+     * hand, which is how the month and day end up swapped.
+     */
+    const there = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: timezone === 'auto' ? undefined : timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hour12: false,
+    }).format(now);
+    const stamp = `${there.slice(0, 10)}T${there.slice(11, 13)}`;
+
+    const found = times.findIndex((time) => time.startsWith(stamp));
+    // Not found means the service sent a range that does not contain now, which
+    // should not happen — falling back to the beginning shows real hours with
+    // real labels rather than nothing at all.
+    if (found >= 0) start = found;
+  } catch {
+    // An unknown time zone. Same fallback, same reasoning.
+  }
+
+  return times.slice(start, start + HOURLY_SPAN).map((time, i) => {
+    const at = start + i;
+    const isDay = (hourly?.is_day?.[at] ?? 1) !== 0;
+    const described = describe(hourly?.weather_code?.[at] ?? -1, isDay);
+    return {
+      time,
+      temperature: Math.round(hourly?.temperature_2m?.[at] ?? 0),
+      rain: hourly?.precipitation_probability?.[at] ?? null,
+      isDay,
+      label: described.label,
+      glyph: described.glyph,
+    };
+  });
+}
+
 /** Go and look. The only function here that touches the network for a forecast. */
 export async function fetchReading(place: Place, units: Units): Promise<Reading> {
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
     '&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day' +
+    '&hourly=temperature_2m,precipitation_probability,weather_code,is_day' +
     '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
     `&timezone=${encodeURIComponent(place.timezone)}&forecast_days=4` +
     `&temperature_unit=${units === 'f' ? 'fahrenheit' : 'celsius'}` +
@@ -242,6 +338,7 @@ export async function fetchReading(place: Place, units: Units): Promise<Reading>
   });
 
   return {
+    hours: sliceHours(body.hourly, place.timezone),
     temperature: Math.round(now.temperature_2m),
     feelsLike: Math.round(now.apparent_temperature ?? now.temperature_2m),
     humidity: Math.round(now.relative_humidity_2m ?? 0),

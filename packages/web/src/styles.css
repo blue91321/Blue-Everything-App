@@ -1538,3 +1538,84 @@ button {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
+
+/* ---- The hourly weather graph ------------------------------------------ */
+
+/*
+ * Twenty-four legible hours are wider than a phone, so the graph scrolls inside
+ * its own box rather than the page scrolling sideways — the rule this file
+ * already follows for wide content. On a desktop column it fits and the
+ * scrollbar never appears.
+ */
+.hourly-scroll {
+  overflow-x: auto;
+  margin-top: 14px;
+  /* Room for the scrollbar on the platforms that reserve space for one, so it
+     never lands on top of the hour labels. */
+  padding-bottom: 2px;
+}
+
+.hourly {
+  display: block;
+}
+
+/*
+ * The line takes the accent, so the graph matches whatever colour the app is
+ * set to — it is decoration carrying a shape, not information carrying a
+ * meaning, which is the distinction the presence dots draw the other way.
+ */
+.hourly-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.hourly-dot {
+  fill: var(--accent);
+}
+
+.hourly-value {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hourly-axis {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+/*
+ * Night, as a band behind the line. Deliberately very faint: it is context for
+ * the shape of the day, and anything stronger competes with the line it sits
+ * behind.
+ */
+.hourly-night {
+  fill: var(--muted);
+  opacity: 0.09;
+}
+
+/*
+ * Rain keeps its own blue rather than the accent, for the same reason green
+ * means online: it is carrying meaning that is learned from every other weather
+ * app, and an amber accent would make a downpour look like a warning about
+ * something else.
+ */
+.hourly-rain {
+  fill: #4c9be8;
+  opacity: 0.55;
+}
+
+/* Darker against a light background, where the pale blue washes out. */
+:root:not([data-theme='dark']) .hourly-rain {
+  fill: #2f7fd0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hourly-rain {
+    fill: #4c9be8;
+  }
+}
+:root[data-theme='dark'] .hourly-rain {
+  fill: #4c9be8;
+}

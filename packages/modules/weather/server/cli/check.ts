@@ -15,7 +15,7 @@
  * Pass `--live` to also fetch a real forecast. Off by default: a suite that
  * needs the internet is a suite that fails on a train.
  */
-import { describe, isDue, DAILY_MS, findPlaces, fetchReading, type Place } from '../weather.js';
+import { describe, isDue, sliceHours, HOURLY_SPAN, DAILY_MS, findPlaces, fetchReading, type Place } from '../weather.js';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -99,6 +99,57 @@ const documented = [0, 1, 2, 3, 45, 48, 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 
 const unmapped = documented.filter((code) => describe(code).glyph === '❓');
 check('every documented WMO code is mapped', unmapped.length === 0, unmapped.length ? `missed ${unmapped.join(', ')}` : '');
 
+console.log('');
+console.log('slicing the hourly forecast');
+console.log('');
+
+/*
+ * A day of hours in a place five hours behind UTC, which is the case that
+ * catches a naive `new Date(...)`: the timestamps carry no offset, so parsing
+ * them in the server's zone and comparing against `Date.now()` is only right
+ * while the two agree.
+ */
+const times: string[] = [];
+for (let day = 22; day <= 23; day += 1) {
+  for (let hour = 0; hour < 24; hour += 1) {
+    times.push(`2026-08-${day}T${String(hour).padStart(2, '0')}:00`);
+  }
+}
+const hourly = {
+  time: times,
+  temperature_2m: times.map((_, i) => 60 + (i % 12)),
+  precipitation_probability: times.map((_, i) => (i % 5 === 0 ? 40 : 0)),
+  weather_code: times.map(() => 3),
+  is_day: times.map((_, i) => (i % 24 >= 7 && i % 24 < 20 ? 1 : 0)),
+};
+
+// 2026-08-22T18:00Z is 14:00 in New York.
+const at2pmNewYork = new Date('2026-08-22T18:00:00Z');
+const sliced = sliceHours(hourly, 'America/New_York', at2pmNewYork);
+
+check('it returns a day of hours', sliced.length === HOURLY_SPAN, `${sliced.length}`);
+check('it starts at the local hour, not UTC', sliced[0]?.time === '2026-08-22T14:00', sliced[0]?.time);
+check('  ...and runs into the next day', sliced[HOURLY_SPAN - 1]?.time === '2026-08-23T13:00', sliced[HOURLY_SPAN - 1]?.time);
+
+// The same instant, in a zone on the other side of UTC.
+const inLondon = sliceHours(hourly, 'Europe/London', at2pmNewYork);
+check('a different zone starts at a different hour', inLondon[0]?.time === '2026-08-22T19:00', inLondon[0]?.time);
+
+check('night hours are marked', sliced.some((hour) => !hour.isDay) && sliced.some((hour) => hour.isDay));
+check('rain comes through as a percentage', sliced.some((hour) => hour.rain === 40));
+check('every hour gets a label', sliced.every((hour) => hour.label.length > 0));
+
+/*
+ * Near the end of the range there are fewer than 24 hours left. Returning what
+ * there is beats padding or refusing: the graph draws a shorter line, which is
+ * true, and the alternative is inventing weather.
+ */
+const nearTheEnd = sliceHours(hourly, 'America/New_York', new Date('2026-08-24T02:00:00Z'));
+check('a short tail is returned rather than padded', nearTheEnd.length > 0 && nearTheEnd.length < HOURLY_SPAN, `${nearTheEnd.length}`);
+
+check('no hourly data at all is empty, not a crash', sliceHours(undefined, 'America/New_York').length === 0);
+check('an unknown time zone falls back rather than throwing', sliceHours(hourly, 'Mars/Olympus').length === HOURLY_SPAN);
+
 if (process.argv.includes('--live')) {
   console.log('\nagainst the real service\n');
   try {
@@ -110,6 +161,12 @@ if (process.argv.includes('--live')) {
       check('a forecast comes back', Number.isFinite(reading.temperature), `${reading.temperature}°F ${reading.label}`);
       check('  ...with days attached', reading.days.length >= 3, `${reading.days.length} days`);
       check('  ...and a real label, not a code', !reading.label.startsWith('Code '), reading.label);
+      check('  ...and 24 hours for the graph', reading.hours.length === HOURLY_SPAN, `${reading.hours.length} hours`);
+      check(
+        '  ...whose first hour is the current one',
+        reading.hours[0] !== undefined && Math.abs(reading.hours[0].temperature - reading.temperature) <= 6,
+        `${reading.hours[0]?.temperature}° vs current ${reading.temperature}°`
+      );
     }
   } catch (error) {
     check(`live fetch — ${(error as Error).message}`, false);

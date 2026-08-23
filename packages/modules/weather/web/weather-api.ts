@@ -29,6 +29,8 @@ export interface Reading {
   label: string;
   glyph: string;
   isDay: boolean;
+  /** The next 24 hours as the server sliced them. Empty on an older reading. */
+  hours: Array<{ time: string; temperature: number; rain: number | null; isDay: boolean; label: string; glyph: string }>;
   days: Array<{ date: string; high: number; low: number; rain: number | null; label: string; glyph: string }>;
 }
 

@@ -8,6 +8,7 @@
  */
 import { useState } from 'react';
 import { useAsync } from '@app/useAsync';
+import { HourlyGraph } from './HourlyGraph';
 import { ageOf, dayName, weather, type Place, type RefreshMode, type Units } from './weather-api';
 
 const MODES: Array<{ id: RefreshMode; label: string; hint: string }> = [
@@ -102,6 +103,20 @@ export default function Weather() {
             <div className="meta urgent" style={{ marginTop: 6 }}>
               Last check failed: {data.error}
             </div>
+          )}
+
+          {/*
+            The hourly graph sits between the current conditions and the daily
+            strip, which is the order the question is actually asked in: what is
+            it doing, what is it about to do, what about the rest of the week.
+
+            Guarded on length rather than assumed, because a reading stored
+            before this existed has no `hours` at all — and in manual mode that
+            reading can stay on screen indefinitely. It reappears on the next
+            check rather than forcing one.
+          */}
+          {data.reading.hours && data.reading.hours.length >= 3 && (
+            <HourlyGraph hours={data.reading.hours} units={data.units} />
           )}
 
           {data.reading.days.length > 0 && (
