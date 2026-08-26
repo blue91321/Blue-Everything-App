@@ -1,0 +1,9 @@
+{
+  "id": "weather",
+  "label": "Weather",
+  "blurb": "Local forecast on the Dashboard, fetched once a day or only when you ask.",
+  "version": "0.3.0",
+  "author": "blue91321",
+  "server": "server/index.ts",
+  "notes": "Uses Open-Meteo, which needs no account and no key. Your coordinates are sent to them when it fetches."
+}

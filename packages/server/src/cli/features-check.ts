@@ -21,7 +21,7 @@
  * repo root — still resolves. Nothing in the real tree is ever renamed or
  * deleted, so an interrupted run cannot cost anybody their source.
  */
-import { cpSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -30,6 +30,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const serverRoot = resolve(here, '../..');
 const realSrc = resolve(serverRoot, 'src');
 const copySrc = resolve(serverRoot, 'src.featurecheck');
+/** Where this suite is allowed to write. Removed at the end, whatever happens. */
+const work = resolve(serverRoot, '.featurecheck');
+/** The real shipped packages, copied rather than touched when one is deleted. */
+const shippedRoot = resolve(serverRoot, '../modules');
 
 /** Marks the probe's one line of output apart from the logger's. */
 const RESULT_PREFIX = '##features##';
@@ -98,15 +102,56 @@ interface Probe {
   missing: string[];
 }
 
+/**
+ * A set of packages to boot with, written to a throwaway `modules.json`.
+ *
+ * Packages are switched in `modules.json`, not by `FEATURES` — so once the
+ * vault, voice, push and integrations became packages, half of what this suite
+ * was asserting stopped being reachable by the lever it was pulling. Every
+ * "switched off" check below drives this instead.
+ *
+ * Written under `work/`, never at the repo root, so a run can never disturb the
+ * real one.
+ */
+function withPackages(on: string[]): string {
+  mkdirSync(work, { recursive: true });
+  const file = resolve(work, 'modules.json');
+  const state: Record<string, boolean> = {};
+  for (const id of SHIPPED) state[id] = on.includes(id);
+  writeFileSync(file, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  return file;
+}
+
+/** Every package that ships with the app, read off disk rather than listed. */
+const SHIPPED = readdirSync(shippedRoot, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name);
+
 /** Run the probe in a child process, since features resolve once at import. */
-function probe(features: string | undefined, from = realSrc): Probe | null {
+function probe(
+  features: string | undefined,
+  from = realSrc,
+  packages?: { on: string[]; shipped?: string }
+): Probe | null {
   const result = spawnSync(
     process.execPath,
     ['--import', 'tsx', resolve(from, 'cli/features-check.ts'), 'probe'],
     {
       cwd: serverRoot,
       encoding: 'utf8',
-      env: { ...process.env, ...(features === undefined ? {} : { FEATURES: features }) },
+      env: {
+        ...process.env,
+        ...(features === undefined ? {} : { FEATURES: features }),
+        ...(packages === undefined
+          ? {}
+          : {
+              MODULES_STATE: withPackages(packages.on),
+              MODULES_SHIPPED: packages.shipped ?? shippedRoot,
+              // Nothing installed, so a package left over from a previous run
+              // of any other suite cannot change what this one sees.
+              MODULES_INSTALLED: resolve(work, 'installed'),
+            }),
+      },
     }
   );
 
@@ -122,7 +167,7 @@ function probe(features: string | undefined, from = realSrc): Probe | null {
 }
 
 console.log('\neverything on');
-const all = probe('vault,voice,push,habits,notes,time');
+const all = probe('habits,notes,time', realSrc, { on: SHIPPED });
 if (all) {
   check('the server boots', all.health === 200);
   check('the vault answers', all.vault === 200);
@@ -130,45 +175,37 @@ if (all) {
   check('and the session lists them', all.features.includes('vault') && all.features.includes('voice'));
 }
 
-console.log('\nvault switched off');
-const noVault = probe('voice,push,habits,notes,time');
+console.log('\nthe vault switched off');
+const noVault = probe('habits,notes,time', realSrc, { on: SHIPPED.filter((id) => id !== 'vault') });
 if (noVault) {
   check('the server still boots', noVault.health === 200);
   check('the vault is not mounted', noVault.vault === 404);
   check('voice is unaffected', noVault.voice === 200);
   check('and the session does not list it', !noVault.features.includes('vault'));
-  check('nor claim it is missing — it was switched off', !noVault.missing.includes('vault'));
-}
-
-console.log('\nintegrations, which start off rather than on');
-// The only feature whose default is off, so this checks both directions —
-// a default-off feature that could not be switched *on* would look identical
-// to one that was simply never wired up.
-const withIntegrations = probe('integrations,habits,notes,time');
-if (withIntegrations) {
-  check('it mounts when named', withIntegrations.integrations === 200);
-  check('and appears in the session', withIntegrations.features.includes('integrations'));
-}
-const noIntegrations = probe('vault,voice,push,habits,notes,time');
-if (noIntegrations) {
-  check('it is not mounted when it is not', noIntegrations.integrations === 404);
-  check('and is absent from the session', !noIntegrations.features.includes('integrations'));
-  check('nor claimed missing — it was switched off', !noIntegrations.missing.includes('integrations'));
 }
 
 console.log('\nvoice switched off');
-const noVoice = probe('vault,push,habits,notes,time');
+const noVoice = probe('habits,notes,time', realSrc, { on: SHIPPED.filter((id) => id !== 'voice') });
 if (noVoice) {
   check('the server still boots', noVoice.health === 200);
   check('voice is not mounted', noVoice.voice === 404);
   check('the vault is unaffected', noVoice.vault === 200);
 }
 
+console.log('\nintegrations switched off');
+const noIntegrations = probe('habits,notes,time', realSrc, {
+  on: SHIPPED.filter((id) => id !== 'integrations'),
+});
+if (noIntegrations) {
+  check('it is not mounted when it is not', noIntegrations.integrations === 404);
+  check('and is absent from the session', !noIntegrations.features.includes('integrations'));
+}
+
 console.log('\nonly the core');
 // 'none' rather than '', which would read as "unset" and fall back to defaults.
-const core = probe('none');
+const core = probe('none', realSrc, { on: [] });
 if (core) {
-  check('the server boots with every optional feature off', core.health === 200);
+  check('the server boots with every optional part off', core.health === 200);
   check('no vault', core.vault === 404);
   check('no voice', core.voice === 404);
   check('no integrations', core.integrations === 404);
@@ -177,47 +214,48 @@ if (core) {
   check('and it says so', core.features.length === 0);
 }
 
-console.log('\nthe vault folder deleted from disk');
-try {
-  rmSync(copySrc, { recursive: true, force: true });
-  cpSync(realSrc, copySrc, { recursive: true });
-  rmSync(resolve(copySrc, 'features/vault'), { recursive: true, force: true });
+/*
+ * The real test, and the reason this suite exists: a package folder genuinely
+ * *gone*, not merely switched off.
+ *
+ * The shipped packages are copied and the copy is cut down, so the working tree
+ * is never touched. That was already this file's rule for `src`; it now matters
+ * far more, because a package folder is real source and a suite that deleted the
+ * wrong one would take the vault with it — which is exactly what happened to
+ * `smoke` before it learned the same lesson.
+ */
+for (const gone of ['vault', 'integrations', 'voice']) {
+  console.log(`\nthe ${gone} package deleted from disk`);
+  const trimmed = resolve(work, `shipped-without-${gone}`);
+  try {
+    rmSync(trimmed, { recursive: true, force: true });
+    cpSync(shippedRoot, trimmed, { recursive: true });
+    rmSync(resolve(trimmed, gone), { recursive: true, force: true });
 
-  // Switched *on*, but gone. This is the case that separates "the loader
-  // tolerates a missing folder" from "the loader never had to find out".
-  const deleted = probe('vault,voice,push,habits,notes,time', copySrc);
-  if (deleted) {
-    check('the server still boots', deleted.health === 200);
-    check('the vault is not mounted', deleted.vault === 404);
-    check('voice still works', deleted.voice === 200);
-    check('it is reported as missing, not as off', deleted.missing.includes('vault'));
-    check('and is absent from the active list', !deleted.features.includes('vault'));
+    const deleted = probe('habits,notes,time', realSrc, { on: SHIPPED, shipped: trimmed });
+    if (deleted) {
+      const answered: Record<string, number> = {
+        vault: deleted.vault,
+        voice: deleted.voice,
+        integrations: deleted.integrations,
+      };
+      check('the server still boots', deleted.health === 200);
+      check(`${gone} is not mounted`, answered[gone] === 404);
+      check('and is absent from the active list', !deleted.features.includes(gone));
+      for (const other of ['vault', 'voice', 'integrations'].filter((id) => id !== gone)) {
+        check(`  ...and ${other} is unaffected`, answered[other] === 200);
+      }
+    }
+  } finally {
+    rmSync(trimmed, { recursive: true, force: true });
   }
-} finally {
-  rmSync(copySrc, { recursive: true, force: true });
 }
 
-console.log('\nthe integrations folder deleted from disk');
-try {
-  rmSync(copySrc, { recursive: true, force: true });
-  cpSync(realSrc, copySrc, { recursive: true });
-  rmSync(resolve(copySrc, 'features/integrations'), { recursive: true, force: true });
-
-  const deleted = probe('integrations,voice,habits,notes,time', copySrc);
-  if (deleted) {
-    check('the server still boots', deleted.health === 200);
-    check('integrations are not mounted', deleted.integrations === 404);
-    check('voice still works', deleted.voice === 200);
-    check('it is reported as missing, not as off', deleted.missing.includes('integrations'));
-    check('and is absent from the active list', !deleted.features.includes('integrations'));
-  }
-} finally {
-  rmSync(copySrc, { recursive: true, force: true });
-}
+rmSync(work, { recursive: true, force: true });
 
 console.log(
   failures === 0
-    ? '\n\x1b[32mFeatures are genuinely separable.\x1b[0m'
+    ? '\n\x1b[32mFeatures and packages are genuinely separable.\x1b[0m'
     : `\n\x1b[31m${failures} check(s) failed.\x1b[0m`
 );
 process.exit(failures === 0 ? 0 : 1);

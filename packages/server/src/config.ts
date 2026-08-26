@@ -86,6 +86,23 @@ const envSchema = z.object({
   FEATURES: z.string().default(''),
 
   /**
+   * Where packages live, and where their switches are recorded.
+   *
+   * Empty means the defaults in `paths.ts`. They exist so a test suite can point
+   * the whole package system at a temporary directory — which is not a nicety:
+   * `smoke` runs destructive checks against whatever these resolve to, and with
+   * no override it once deleted `packages/modules/vault` out of the working
+   * tree because an id it used as an example of "should be refused" had quietly
+   * stopped being reserved.
+   *
+   * Also the honest way to relocate an install, which is why they are ordinary
+   * settings rather than a test-only hack.
+   */
+  MODULES_SHIPPED: z.string().default(''),
+  MODULES_INSTALLED: z.string().default(''),
+  MODULES_STATE: z.string().default(''),
+
+  /**
    * Where to ask whether a newer version of anything exists.
    *
    * Empty by default and empty today: there is nowhere to ask yet. The Packages

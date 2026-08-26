@@ -74,24 +74,43 @@ export interface PanelProps {
   panelId: string;
 }
 
-const metaModules = import.meta.glob<{ meta: FeatureMeta; panels?: PanelMeta[] }>('./*/meta.ts', {
+const metaModules = import.meta.glob<{ meta: FeatureMeta; panels?: PanelMeta[] }>(['./*/meta.ts','../../../modules/*/web/meta.ts'], {
   eager: true,
 });
-const viewModules = import.meta.glob<{ default: ComponentType<FeatureViewProps> }>('./*/view.tsx');
+const viewModules = import.meta.glob<{ default: ComponentType<FeatureViewProps> }>([
+  './*/view.tsx',
+  '../../../modules/*/web/view.tsx',
+]);
 /**
  * Lazy like the views, and for a stronger reason: a panel that is not the one
  * you chose must not be downloaded at all, and the Dashboard is the screen that
  * has to open fastest.
  */
-const panelModules = import.meta.glob<{ default: ComponentType<PanelProps> }>('./*/panel.tsx');
+const panelModules = import.meta.glob<{ default: ComponentType<PanelProps> }>([
+  './*/panel.tsx',
+  '../../../modules/*/web/panel.tsx',
+]);
 
-/** './vault/meta.ts' -> 'vault' */
-const folderOf = (path: string) => path.split('/')[1];
+/**
+ * The module id a globbed path belongs to, and the sibling files beside it.
+ *
+ * Two shapes now: `./notes/meta.ts` for anything still inside this package, and
+ * `../../../modules/vault/web/meta.ts` for a shipped package. Returning the
+ * *prefix* rather than just the id is what lets the view and panel lookups stay
+ * one line each — the alternative is reconstructing two path shapes at every
+ * call site and getting one of them wrong.
+ */
+function locate(path: string): { id: string; prefix: string } {
+  const shipped = path.match(/^\.\.\/\.\.\/\.\.\/modules\/([^/]+)\/web\//);
+  if (shipped) return { id: shipped[1]!, prefix: `../../../modules/${shipped[1]}/web/` };
+  const id = path.split('/')[1]!;
+  return { id, prefix: `./${id}/` };
+}
 
 export const webFeatures: WebFeature[] = Object.entries(metaModules)
   .map(([path, mod]) => {
-    const folder = folderOf(path);
-    const load = viewModules[`./${folder}/view.tsx`];
+    const { prefix } = locate(path);
+    const load = viewModules[`${prefix}view.tsx`];
     // A meta with no view is a half-deleted feature. Dropping it is kinder than
     // rendering a tab that throws the moment it is clicked.
     if (!load) return null;
@@ -101,7 +120,7 @@ export const webFeatures: WebFeature[] = Object.entries(metaModules)
      * check on a missing key is flagged as always true while being exactly the
      * check that is needed. A feature with no `panel.tsx` is the normal case.
      */
-    const loadPanel: (typeof panelModules)[string] | undefined = panelModules[`./${folder}/panel.tsx`];
+    const loadPanel: (typeof panelModules)[string] | undefined = panelModules[`${prefix}panel.tsx`];
     return {
       ...mod.meta,
       View: lazy(load),

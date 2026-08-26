@@ -197,6 +197,75 @@ export async function undoHabitDone(habitId: string, now = Date.now()): Promise<
     HabitProgress & { removed: number };
 }
 
+/** The most a tally may be set to by hand. A typo, past this. */
+export const MAX_TALLY = 999;
+
+/**
+ * Set the value to exactly what somebody typed.
+ *
+ * `recordHabitDone` and `undoHabitDone` move it by one; this puts it where you
+ * say. It exists because the stepper is a *correction* tool — the Habits screen
+ * says so — and correcting "I drank nine glasses, not two" by pressing + seven
+ * times is not correcting, it is arithmetic homework.
+ *
+ * ### The two modes mean different things by "the value"
+ *
+ * For a **gauge** the value is the level, so the level and its anchor are
+ * written directly. No entry is recorded, and that is deliberate: pressing +
+ * means "I did one" and is a completion, while typing 80 means "it is actually
+ * 80% right now" and is a correction. Filing a correction as a completion would
+ * put a tick in the history for something you never did.
+ *
+ * For **target** and **interval** the value is a count of entries in this
+ * period, so the entries themselves have to move. Newest are removed until the
+ * sum is no larger than what was asked for, and the remainder — if removing one
+ * overshot, or if the value is going up — is inserted as a single entry.
+ *
+ * Removing newest-first rather than oldest is what keeps `interval` honest: its
+ * next-due time comes from the last entry, and deleting the *oldest* would
+ * leave the newest in place and the habit still claiming it was just done.
+ */
+export async function setHabitValue(
+  habitId: string,
+  value: number,
+  now = Date.now()
+): Promise<HabitProgress | null> {
+  const [habit] = await db.select().from(habits).where(eq(habits.id, habitId));
+  if (!habit) return null;
+
+  if (habit.mode === 'gauge') {
+    const level = Math.max(0, Math.min(GAUGE_FULL, Math.round(value)));
+    await db
+      .update(habits)
+      .set({ gaugeLevel: level, gaugeLevelAt: now, updatedAt: now })
+      .where(eq(habits.id, habitId));
+    return describeProgress({ ...habit, gaugeLevel: level, gaugeLevelAt: now }, now);
+  }
+
+  const target = Math.max(0, Math.min(MAX_TALLY, Math.round(value)));
+  const periodKey = periodKeyFor(habit.cadence as Cadence, new Date(now));
+
+  const existing = await db
+    .select()
+    .from(habitEntries)
+    .where(and(eq(habitEntries.habitId, habitId), eq(habitEntries.periodKey, periodKey)))
+    .orderBy(desc(habitEntries.doneAt));
+
+  let sum = existing.reduce((total, entry) => total + entry.count, 0);
+  for (const entry of existing) {
+    if (sum <= target) break;
+    await db.delete(habitEntries).where(eq(habitEntries.id, entry.id));
+    sum -= entry.count;
+  }
+  // Covers both directions: going up from the start, and the overshoot left by
+  // deleting an entry whose count was larger than the amount that had to go.
+  if (sum < target) {
+    await db.insert(habitEntries).values({ habitId, periodKey, count: target - sum });
+  }
+
+  return describeProgress(habit, now);
+}
+
 /** The state of one habit, in the vocabulary every caller wants. */
 async function describeProgress(
   habit: typeof habits.$inferSelect,
@@ -486,6 +555,29 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
       removed: (progress as HabitProgress & { removed: number }).removed,
       doneThisPeriod: progress.doneThisPeriod,
       gaugeNow: progress.gaugeNow,
+    };
+  });
+
+  /**
+   * Set the value by hand, from tapping the number on the Habits screen.
+   *
+   * A `PUT` rather than a `POST`: this puts the tally at a value rather than
+   * adding to it, so repeating the same request twice leaves the same state —
+   * which `check` and `uncheck` deliberately do not.
+   */
+  app.put('/api/habits/:id/value', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = z.object({ value: z.number().int().min(0).max(MAX_TALLY) }).parse(request.body);
+
+    const progress = await setHabitValue(id, body.value);
+    if (!progress) return reply.code(404).send({ error: 'no such habit' });
+
+    return {
+      habitId: id,
+      doneThisPeriod: progress.doneThisPeriod,
+      gaugeNow: progress.gaugeNow,
+      met: progress.met,
+      wantsDoing: progress.wantsDoing,
     };
   });
 

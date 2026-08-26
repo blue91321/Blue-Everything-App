@@ -453,6 +453,14 @@ export const settings = sqliteTable('settings', {
    * being checked — a switch claiming a protection it was not providing.
    */
   requireKnownSpeaker: integer('require_known_speaker').notNull().default(0),
+  /**
+   * Words that keep being heard *as* the wake word but are not it.
+   *
+   * Comma-separated, and they go into the wake grammar alongside the wake word
+   * — not to be matched, but so the decoder has a better home for that sound
+   * than the one real phrase it would otherwise be forced onto.
+   */
+  wakeDecoys: text('wake_decoys').notNull().default(''),
   speakerThreshold: integer('speaker_threshold_pct').notNull().default(55),
 
   /**
@@ -486,6 +494,15 @@ export const settings = sqliteTable('settings', {
   voiceFollowUpSeconds: integer('voice_follow_up_seconds').notNull().default(6),
   /** The same, but after a miss — repeating yourself takes longer than adding. */
   voiceRetrySeconds: integer('voice_retry_seconds').notNull().default(8),
+  /**
+   * Use the follow-up time for a miss as well, and stop asking about it.
+   *
+   * The stored `voiceRetrySeconds` is **not** overwritten while this is on —
+   * it is resolved on read, so unticking gives back the number you chose rather
+   * than whatever the follow-up happened to be. Same reasoning as quiet hours
+   * keeping its times when it is switched off.
+   */
+  voiceRetryMatchesFollowUp: integer('voice_retry_matches_follow_up').notNull().default(0),
 
   /** Where the popup appears, and on which screen. Null screen = the mouse's. */
   overlayPlacement: text('overlay_placement').notNull().default('cursor'),

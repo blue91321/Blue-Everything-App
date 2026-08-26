@@ -126,12 +126,14 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         // is exactly how it shipped, and exactly how it stayed stuck.
         ...(body.voiceEnabled === true ? { voicePausedUntil: null } : {}),
         wakeWord: body.wakeWord?.trim().toLowerCase(),
+        wakeDecoys: body.wakeDecoys?.trim().toLowerCase(),
         requireKnownSpeaker: toInt(body.requireKnownSpeaker),
         speakerThreshold:
           body.speakerThreshold === undefined ? undefined : Math.round(body.speakerThreshold * 100),
         voiceInputDevice: body.voiceInputDevice,
         voiceFollowUpSeconds: body.voiceFollowUpSeconds,
         voiceRetrySeconds: body.voiceRetrySeconds,
+        voiceRetryMatchesFollowUp: toInt(body.voiceRetryMatchesFollowUp),
         overlayPlacement: body.overlayPlacement,
         overlayScreen: body.overlayScreen,
         overlayAvatar: body.overlayAvatar,

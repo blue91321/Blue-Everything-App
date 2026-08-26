@@ -413,6 +413,42 @@ export const wakeWordSchema = z
 export const DEFAULT_WAKE_WORD = 'hey everything';
 
 /**
+ * Words that keep being heard *as* the wake word, and are not it.
+ *
+ * The same shape as a wake word — letters and single spaces — because they go
+ * into the same grammar and the model can only be given words it can pronounce.
+ * Comma-separated on the way in; a list on the way out.
+ */
+export const wakeDecoysSchema = z.string().max(400);
+
+/** The most that may be added. Each one is another path the decoder considers. */
+export const MAX_WAKE_DECOYS = 24;
+
+/**
+ * Split the stored string into usable entries.
+ *
+ * Anything that is not letters and spaces is dropped rather than refused: this
+ * is a convenience list somebody types in a hurry, and rejecting the whole box
+ * because of a stray comma would be the wrong trade. The wake word itself is
+ * removed if it appears — putting it in the decoy list would be asking the
+ * grammar to compete with itself.
+ */
+export function parseWakeDecoys(stored: string, wakeWord = ''): string[] {
+  const wake = wakeWord.trim().toLowerCase();
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const raw of stored.split(',')) {
+    const word = raw.trim().toLowerCase().replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!word || word === wake || seen.has(word)) continue;
+    seen.add(word);
+    out.push(word);
+    if (out.length >= MAX_WAKE_DECOYS) break;
+  }
+  return out;
+}
+
+/**
  * Words a speech recogniser drops constantly and that carry no identity.
  *
  * "hey" is short, unstressed and usually run into the next word, so Vosk hears
@@ -1749,6 +1785,7 @@ export const updateSettingsSchema = z.object({
   pushDefault: z.boolean().optional(),
   voiceEnabled: z.boolean().optional(),
   wakeWord: wakeWordSchema.optional(),
+  wakeDecoys: wakeDecoysSchema.optional(),
   requireKnownSpeaker: z.boolean().optional(),
   speakerThreshold: z.number().min(0).max(1).optional(),
   /**
@@ -1761,6 +1798,7 @@ export const updateSettingsSchema = z.object({
   voiceFollowUpSeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
   /** Seconds to keep listening after a miss. 0 means don't wait for a retry. */
   voiceRetrySeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
+  voiceRetryMatchesFollowUp: z.boolean().optional(),
   overlayPlacement: overlayPlacementSchema.optional(),
   /** Device name of the screen to anchor to; null follows the mouse. */
   overlayScreen: z.string().max(200).nullish(),

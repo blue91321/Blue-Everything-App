@@ -1,8 +1,236 @@
 # Changelog
 
-All six packages carry the same version and move together — they are one app
-released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
-second step `npm version` does not do for you.
+Everything in this repo carries the same version and moves together — the four
+workspaces, the browser extension, and the five shipped packages. They are one
+app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
+files `npm version` does not touch.
+
+## 0.3.0
+
+Packages you can install, delete and restart into — and everything optional in
+the app moved onto that footing. Weather is the first thing built *as* a package
+rather than migrated into one, which is what makes it the honest test of whether
+the rest was worth doing.
+
+### Install a package the way you would a texture pack
+
+- **`modules/` at the repo root**, one folder per package, listed under
+  **Settings → Packages → Installed**. Drop a `.zip` on the page, open the
+  folder in Explorer, switch one on, delete one from disk.
+- **A built-in feature could never work this way.** `FeatureSpec.owns` shows one
+  is up to three folders across three workspaces — the vault owns a server
+  folder, a web folder and the whole extension — so there is no single directory
+  to open or delete. A module is *defined* as one folder; that constraint is the
+  whole feature. The screen says **Built in** and **Installed** rather than
+  putting a "Remove" button against the vault that could not work.
+- **The texture-pack comparison breaks in one place, and the screen says so.** A
+  resource pack is data; a package here may be code, imported into the server
+  process with the database and the machine. There is no sandbox. The warning is
+  above the drop zone rather than in a README, and a package arrives switched
+  off — running code that came from outside should be a decision.
+- **A hand-rolled zip reader**, no dependency, the same call the PNG encoder and
+  the WAV writer make. It reads the central directory rather than the local
+  headers, which are allowed to carry zeros when the streaming bit is set.
+  Refuses zip slip in both spellings, checks declared sizes before inflating so
+  a decompression bomb cannot expand, verifies the CRC, and refuses ZIP64 and
+  encryption by name. A wrapping folder is stripped when every entry shares one,
+  since archives are made both ways.
+- **A broken package is listed with its problems, never hidden.** Dropping a bad
+  zip and seeing nothing happen is indistinguishable from the drag not working.
+- **Installing, switching, removing and opening the folder are local-only**, and
+  the gate was proved over a real socket with hand-written HTTP — `Host` is a
+  forbidden header for `fetch`, which drops it silently, and the smoke suite
+  disables auth entirely, so neither could test the vector that matters.
+- `npm run modules-check -w @everything/server`, including a zip built by
+  `Compress-Archive` — a hand-rolled parser tested only against a hand-rolled
+  writer proves the two agree, which is worth much less than it looks.
+
+### A package can draw its own screens
+
+- **A package can add a tab and Dashboard panels**, not just endpoints. Declared
+  in `module.json`, drawn by one self-contained JS file the app fetches and
+  imports at runtime.
+- **Fetched with the device token and imported as a blob**, because neither
+  `<script src>` nor a URL import sends an Authorization header — and unlike the
+  icons and the tones, a package's code is not something to put outside auth on
+  a server that binds `0.0.0.0`.
+- **React is handed to the package rather than imported by it**, so there is one
+  copy on the page and hooks work. A package bundles nothing.
+- **A broken package cannot take the app down** — which is the case that matters,
+  since it would otherwise be one you could not reach the screen to uninstall.
+  The failure renders as a banner naming the package and quoting the error.
+- A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
+
+### One timer instead of two, if you want
+
+- **"Use this after a miss too"** under the follow-up slider. Ticking it hides
+  the retry card and uses one number for both.
+- A real stored flag rather than inferring it from the two numbers matching —
+  two settings that happen to be equal is not the same as "keep these together".
+- **The retry value is left alone while it is ticked** and resolved on read, so
+  unticking gives back the number you chose. Verified: 12s, ticked, follow-up
+  moved to 9, unticked, still 12s.
+- Hidden rather than disabled: a disabled slider showing a number that is no
+  longer in use would be the worse lie.
+
+### See what the recogniser can actually hear
+
+- **Voice → "Everything it can hear"** lists the whole grammar, collapsed, with a
+  count — 136 words on this install.
+- **Grouped by where each word came from**: the wake word, your decoys, the words
+  you typed, the forms it generated for itself, and the counting words it always
+  includes. The provenance is the point — "drank" being generated rather than
+  typed is the sort of thing that explains a baffling transcript.
+- The groups partition the grammar exactly, which `voice-check` asserts: a list
+  that quietly omitted part of it would be worse than no list.
+- Words the speech model cannot pronounce are marked, reusing the warning the
+  wake word and phrases already had.
+
+### Stop things that are not the wake word from waking it
+
+- **A list of words that keep setting it off**, on the Voice tab. They go into
+  the wake grammar so the recogniser has somewhere better to put that sound —
+  measured with `wake-falsing`: 1/14 false wakes down to 0/14, both real wakes
+  still firing. They are never matched against and can never trigger anything.
+- **Confidence gating was measured and rejected.** Per-word confidence is now
+  available, and in grammar mode it is 1.00 for everything — a forced match and
+  a real one score identically, because inside a closed grammar the chosen path
+  is the only path. `npm run wake-confidence` shows it.
+- **A generic word list was measured and rejected too.** 108 common English
+  words changed nothing; the competitor has to actually sound like the wake
+  word. That is why this is a list you fill in, and why it is cheap.
+- A decoy the model cannot pronounce gets the same dictionary warning a phrase
+  does, since Vosk drops unknown words without a murmur.
+
+### Tap the number on the Habits screen to edit it
+
+- The value between − and + is now a button; pressing it turns it into a box.
+  Correcting "nine, not two" no longer means pressing + seven times.
+- A gauge takes a level and records **no entry** — pressing + is a completion,
+  typing 80 is a correction, and filing one as the other would put a tick in the
+  history for something you never did.
+- A count moves the entries themselves, newest first, splitting one whose count
+  is above one — which "I drank three waters" creates.
+- Enter commits directly rather than relying on the blur it causes: an unfocused
+  document dispatches no focus events at all, and phone keyboards vary. The blur
+  is still a fallback and cannot double-commit.
+- An emptied box does not wipe the tally, letters are filtered as you type, and
+  the button and box share one width so the stepper never jumps.
+- **A failed save says so.** It was swallowed, which is how "I pressed Enter and
+  nothing happened" got reported: the route was new, the app had not been
+  restarted, and every save 404'd in silence.
+- The control moved to the top level. Defined inside the row it was a new
+  component type every render, which would remount the input mid-typing.
+
+### Weather
+
+- **A Weather tab and a Dashboard panel**, from Open-Meteo — no account, no key,
+  nothing to set up but the place you are in.
+- **Two settings: "Once a day" or "Only when I ask."** The first is a staleness
+  window rather than a timer: reading the weather refreshes it if it is a day
+  old, so opening the tab five times costs one fetch and a PC left alone costs
+  none. Manual mode never fetches on its own — `weather-check` asserts that for
+  a reading never taken and one a month old.
+- **The Check now button is always there**, in both modes, on the tab *and* the
+  panel — having to open a settings screen to press it would make manual mode
+  not worth choosing.
+- **The last reading is kept and its age is always shown**, so manual mode is a
+  usable screen rather than a blank one. A failed fetch is stored beside the
+  reading it could not replace: you get yesterday's weather and the reason.
+- Search for a town rather than typing coordinates, with the candidates listed —
+  Philadelphia alone returns five, in two states.
+- The first thing built *as* a package rather than migrated into one, and it
+  needed no change to core.
+- **An hourly temperature graph** on the Weather tab: twenty-four hours as a
+  line, with night shaded, rain as bars under it, and a glyph per labelled hour.
+  Hand-drawn SVG — 3.1KB gzipped, loaded only when the tab is opened.
+- **It fits at every width, with no scrollbar.** The box is measured and the SVG
+  drawn at exactly that width, text at a fixed size — all 24 hours always
+  plotted, with fewer of them *labelled* when there is less room (12 at 1280px,
+  8 at 375px). `min-width: 0` on the wrapper is what lets a flex child shrink
+  below its content, which was the scrollbar.
+- **Night is darker than day now**, which was backwards: the band was a neutral
+  grey, and grey over a dark card is lighter than the card.
+- Finding "now" in the forecast is a string match against what `Intl` says the
+  time is *there*, not date arithmetic: Open-Meteo's timestamps carry no offset,
+  so parsing them locally is right in Philadelphia and five hours out in London.
+
+### Everything deletable is a package, and there is a Restart button
+
+- **The vault, voice and integrations have moved** into `packages/modules/`
+  alongside push. All four appear on the Packages tab with a Remove button, a
+  size, and their own version. Deleting one takes it out of the app.
+- **Shipped packages are deletable after all.** The first version refused, on the
+  grounds that the folder is part of your checkout — but "the folder is gone and
+  the app says not installed" has been one of this project's three documented
+  levels from the start, and `features-check` already proves every one survives
+  it. The row says which cost you are paying: `git checkout` brings a shipped one
+  back, an installed one needs the zip again.
+- **A Restart button**, in the banner that appears whenever something is added,
+  removed or switched. Registered in core *before* any package loads, reads no
+  database and no manifest, and answers before restarting rather than trying to
+  report an outcome from a process that is being killed — because the whole point
+  of it is the case where a package has broken something else.
+- **A shipped package keeps its compiled UI**; only downloaded ones are loaded at
+  runtime. Vite globs `packages/modules/*/web/` from outside its own root, which
+  it turns out it will do, so the vault and Connections screens are bundled
+  exactly as before — just from a folder you can delete.
+- **`@everything/server/module-api`** grew to ten exports: the whole schema (a
+  package owns no tables — migrations are a linear journal), plus the two
+  opaque-slug parsers core owns and a package gives meaning to.
+- `features-check` now drives packages through `modules.json` rather than
+  `FEATURES`, and proves each of the four can be **deleted from disk** with the
+  server still booting and the other three unaffected.
+
+### Four things that went wrong, all worth knowing
+
+- **`modules/` in `.gitignore` matched `packages/modules/` too.** A pattern with
+  no leading slash matches at any depth, so the moment the vault, voice and
+  integrations moved, git stopped seeing them. Anchored to `/modules/` now. An
+  ignore rule that matches too much fails exactly like one that matches too
+  little: silently, in the direction you were not looking.
+- **The smoke suite deleted the vault.** It sent `DELETE /api/modules/vault`
+  expecting a refusal — true while the vault was a reserved *feature* id, false
+  the moment it became a package. The suite now names only ids that can never be
+  real, and asserts at the end that it deleted none of the shipped packages.
+- **The repo root was counted by hand a third time and got wrong a second
+  time**, disabling the very Restart button that is meant to always work.
+  `paths.ts` owns every path now.
+- **The voice models' ignore rule named the old folder** and stopped matching
+  when voice moved — the exact failure the comment above it warned about.
+
+### Phone notifications is a package now
+
+- **Two module roots.** `packages/modules/` ships with the app and is committed;
+  `modules/` holds what you installed and stays gitignored. Moving a first-party
+  feature into the ignored one would have deleted it from the public repo.
+  Shipped is scanned first, so a downloaded folder cannot shadow a real one.
+- **`@everything/server/module-api`** — the stable surface a server-side package
+  imports instead of reaching into the server's own source with `../../`. Eight
+  exports, arrived at by counting what the four removable features actually use.
+- **`push` moved out of the feature manifest** into `packages/modules/push/`, and
+  loads through the package loader. It shows as built-in on the Packages screen,
+  switchable but not removable — deleting it would mean deleting part of your
+  checkout.
+- **Your switch survives the move.** A shipped package defaults on, so a
+  `push: false` would otherwise have turned notifications back on for anyone who
+  had silenced them. The old key is read once and carried into `modules.json`.
+- `vault`, `voice` and `integrations` have **not** moved. Their browser halves
+  are compiled into the PWA bundle, and a package's must be one self-contained
+  file — see `CLAUDE.md` for what each would cost.
+
+### Two Windows details, each found by hitting it
+
+- **A byte-order mark is now stripped before every hand-edited JSON parse.**
+  PowerShell's `Out-File -Encoding utf8` writes one and `JSON.parse` refuses it,
+  reporting `Unexpected token '﻿'` — an invisible character. This covers
+  `features.json` too, where a BOM stopped the server booting.
+- **A `.js` file under `modules/` is CommonJS**, because Node resolves
+  module-ness from the nearest `package.json` upward and the nearest above
+  `modules/` is the repo root. A package written the obvious way died on its own
+  first `export` with an error naming neither the package nor the cause.
+  Installing now writes `{"type":"module"}` when a package ships no
+  `package.json`, and never overwrites one that does.
 
 ## 0.2.3
 

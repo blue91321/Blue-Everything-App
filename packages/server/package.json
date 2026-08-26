@@ -1,7 +1,7 @@
 {
   "name": "@everything/server",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -18,7 +18,9 @@
     "voice-check": "tsx src/cli/voice-check.ts",
     "integrations-check": "tsx src/cli/integrations-check.ts",
     "features": "tsx src/cli/features.ts",
-    "features-check": "tsx src/cli/features-check.ts"
+    "features-check": "tsx src/cli/features-check.ts",
+    "modules-check": "node --import tsx src/cli/modules-check.ts",
+    "weather-check": "node --import tsx ../modules/weather/server/cli/check.ts"
   },
   "dependencies": {
     "@everything/shared": "*",
@@ -35,5 +37,9 @@
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "exports": {
+    ".": "./src/app.ts",
+    "./module-api": "./src/module-api.ts"
   }
 }

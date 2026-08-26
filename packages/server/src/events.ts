@@ -19,7 +19,8 @@ export type ChangeScope =
   | 'devices'
   | 'time'
   | 'vault'
-  | 'integrations';
+  | 'integrations'
+  | 'packages';
 
 interface ChangeEvent {
   scope: ChangeScope | 'all';
@@ -58,6 +59,14 @@ function scopeForPath(path: string): ChangeScope | 'all' {
       return 'time';
     case 'vault':
       return 'vault';
+    /*
+     * Installed packages, not the built-in features — which announce as
+     * 'settings', since that is the tab they have always lived on. Its own
+     * scope because installing something is a rare, deliberate act and there is
+     * no reason for it to reload the task list.
+     */
+    case 'modules':
+      return 'packages';
     case 'integrations':
       return 'integrations';
     default:

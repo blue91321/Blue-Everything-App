@@ -18,7 +18,7 @@ rmSync('./data/vault-smoke.db', { force: true });
 
 const { runMigrations } = await import('../db/migrate.js');
 const { buildApp } = await import('../app.js');
-const session = await import('../features/vault/session.js');
+const session = await import('../../../modules/vault/server/session.js');
 
 await runMigrations();
 const app = await buildApp();

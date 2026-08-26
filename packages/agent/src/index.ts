@@ -19,7 +19,7 @@
  *   npm run agent -w @everything/agent
  */
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { isAwayFromPc, type AttentionReport } from '@everything/shared';
 import { AttentionMonitor, type AttentionSnapshot, type StoppingPoint } from './attention.js';
@@ -201,13 +201,37 @@ monitor.on('unknown-fullscreen-app', (exe) => {
  */
 let voice: { stop(): void; setPresent(present: boolean): void } | null = null;
 
-const voiceEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'features/voice/index');
-// Both extensions: the agent runs through tsx from source today, but a compiled
-// build would leave .js beside it, and this must not start lying then.
-const voiceInstalled = existsSync(`${voiceEntry}.ts`) || existsSync(`${voiceEntry}.js`);
+/**
+ * Where a package's agent half lives, or null if the package is not installed.
+ *
+ * `packages/modules/<id>/agent/index.ts`, found by looking rather than by a
+ * static import — the folder is deletable, and a static `import` of a path that
+ * may not exist is exactly what stops the build for whoever deleted it.
+ *
+ * Both extensions are tried, because the agent runs through `tsx` from source
+ * today and a compiled build would leave `.js` beside it. This must not start
+ * lying then.
+ */
+function moduleAgentEntry(id: string): string | null {
+  const base = resolve(dirname(fileURLToPath(import.meta.url)), '../../modules', id, 'agent/index');
+  for (const extension of ['.ts', '.js']) {
+    if (existsSync(`${base}${extension}`)) return `${base}${extension}`;
+  }
+  return null;
+}
 
-if (voiceInstalled) {
-  const { startVoice } = await import('./features/voice/index.js');
+const voiceEntry = moduleAgentEntry('voice');
+
+if (voiceEntry) {
+  /*
+   * A genuine dynamic import of a file URL, unlike the static
+   * `() => import('./features/voice/index.js')` this replaced. The path is only
+   * known at runtime now, which works because the agent runs through tsx rather
+   * than a bundle — the same trade the server's module loader makes.
+   */
+  const { startVoice } = (await import(pathToFileURL(voiceEntry).href)) as {
+    startVoice: (serverClient: typeof client, clock: () => string) => typeof voice;
+  };
   voice = startVoice(client, clock);
 } else {
   console.log(`[${clock()}] voice is not installed — running without it`);
@@ -226,10 +250,12 @@ if (voiceInstalled) {
  */
 let integrations: { stop(): void } | null = null;
 
-const integrationsEntry = resolve(dirname(fileURLToPath(import.meta.url)), 'features/integrations/index');
-if (existsSync(`${integrationsEntry}.ts`) || existsSync(`${integrationsEntry}.js`)) {
-  const { startIntegrations } = await import('./features/integrations/index.js');
-  integrations = startIntegrations(client, (message) => console.log(`[${clock()}] ${message}`));
+const integrationsEntry = moduleAgentEntry('integrations');
+if (integrationsEntry) {
+  const { startIntegrations } = (await import(pathToFileURL(integrationsEntry).href)) as {
+    startIntegrations: (serverClient: typeof client, log: (message: string) => void) => typeof integrations;
+  };
+  integrations = startIntegrations(client, (message: string) => console.log(`[${clock()}] ${message}`));
 }
 
 /* ------------------------------------------------------------------ */

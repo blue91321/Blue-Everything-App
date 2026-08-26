@@ -7,6 +7,7 @@ import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
 import { activeFeatures, isEnabled, missingFeatures } from '../features.js';
 import { VERSION } from '../version.js';
+import { moduleIsRunning, runningModuleIds, runningPackages } from '../modules.js';
 
 export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -24,10 +25,26 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     deviceId: request.deviceId,
     deviceKind: request.deviceKind,
     version: VERSION,
-    features: activeFeatures(),
+    /*
+     * Features *and* running packages, in one list. Three of the four things
+     * that used to be here are packages now, and every reader of this list is
+     * asking the same question either way — is this optional part of the app on.
+     */
+    features: [...activeFeatures(), ...runningModuleIds()],
     // Switched on but absent from disk. Named separately so the app can say
     // "the folder is gone" rather than "you turned it off" — different fixes.
     featuresMissing: missingFeatures(),
+    /*
+     * Installed packages that contribute a tab or a panel, for the same reason
+     * the feature list rides along: the drawer has to be drawn once, correctly,
+     * rather than redrawn a round trip later with an extra entry appearing.
+     *
+     * Only the *chrome* — a label, a glyph, an order, the panels offered. The
+     * code behind them is fetched lazily from `/api/modules/:id/web` when the
+     * tab is first opened, so a package you never look at costs one line of
+     * JSON here and nothing else.
+     */
+    packages: runningPackages(),
   }));
 
   /**
@@ -90,7 +107,16 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     // Storing a subscription nothing will ever send to is inert rather than
     // harmful, but accepting it would let the phone show "notifications on" for
     // a feature this install does not run.
-    if (!isEnabled('push')) return reply.code(404).send({ error: 'phone push is switched off on this server' });
+    /*
+     * `moduleIsRunning` rather than `isEnabled`, because push is a package now
+     * rather than a built-in feature. The question is unchanged — "does this
+     * install actually do push" — and asking it still matters: storing a
+     * subscription nothing will send to is inert, but accepting it would let the
+     * phone show "notifications on" for something that does not run here.
+     */
+    if (!moduleIsRunning('push')) {
+      return reply.code(404).send({ error: 'phone push is switched off on this server' });
+    }
     if (!request.deviceId) return reply.code(400).send({ error: 'not running with a paired device' });
 
     const body = request.body as { endpoint?: unknown } | null;

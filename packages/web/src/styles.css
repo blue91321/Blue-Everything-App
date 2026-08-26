@@ -433,10 +433,79 @@ section > h2 {
 }
 
 .stepper .count {
-  min-width: 22px;
+  /*
+   * A fixed width, not a minimum, and wide enough for "100%" — which is what a
+   * full gauge reads. It was `min-width: 22px`, for a single digit, which was
+   * enough while the stepper only ever counted: a gauge going 99% → 100% shoved
+   * both buttons sideways as you watched, and the button and the box it becomes
+   * were different widths, so the stepper shrank the instant you started typing.
+   * Measured at 117px then 108px before this.
+   */
+  width: 52px;
   text-align: center;
+  /* Tabular figures so 1 and 8 are the same width: without it the stepper
+     twitches on every change, which is very visible next to a fixed border. */
   font-variant-numeric: tabular-nums;
   font-size: 14px;
+}
+
+/*
+ * The value, as a button. Styled back down to look like the text it replaced —
+ * it is a control, and it should say so on hover and focus rather than sitting
+ * there looking like one all the time between two buttons that already do.
+ */
+.stepper .count-edit {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 4px;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.stepper .count-edit:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+/* Never `outline: none`: this is the only way to reach the control without a
+   mouse, so the ring is the whole affordance for anybody using one. */
+.stepper .count-edit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.stepper .count-edit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/*
+ * The box it becomes. Deliberately the same metrics as the button above, so
+ * swapping one for the other does not move the two stepper buttons a pixel —
+ * a control that jumps as you start typing reads as a misclick.
+ */
+.stepper .count-input {
+  width: 52px;
+  /*
+   * Border-box, like everything else here. `content-box` was the first attempt
+   * and added the padding and border on top, so the stepper grew by ten pixels
+   * the instant you started typing — measured at 108px then 118px.
+   */
+  box-sizing: border-box;
+  padding: 3px 4px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.stepper .count-input:focus {
+  outline: none;
 }
 
 /* On/off switch. A checkbox reads as "tick this to agree"; a switch reads as
@@ -1493,4 +1562,156 @@ button {
 
 .dash-panel > .panel-settings {
   margin-top: 12px;
+}
+
+/* ---- Packages ---------------------------------------------------------- */
+
+/*
+ * The two halves of the Packages tab. An `h3` rather than another `h2`, because
+ * the tab already has one and these sit under it — the built-ins and the ones
+ * you installed are two groups of the same thing, not two screens.
+ */
+.pkg-head {
+  margin: 20px 0 2px;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pkg-head:first-of-type {
+  margin-top: 4px;
+}
+
+/*
+ * Drop a zip here.
+ *
+ * Dashed, because a dashed border is the one shape that reads as "put something
+ * in me" without a word of explanation — the same convention every upload
+ * target on the web has taught. Centred text, since the whole box is the
+ * target and left-aligning it would suggest the words were the control.
+ */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 18px 14px;
+  text-align: center;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+/*
+ * While a file is over it. The accent, so the feedback is unmissable — a drag
+ * is held rather than clicked, and a target that does not visibly arm leaves
+ * you unsure whether letting go will do anything.
+ */
+.dropzone.dragging {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* ---- The hourly weather graph ------------------------------------------ */
+
+/*
+ * The graph fits, always. It is drawn at the measured width of this box rather
+ * than at a fixed one — see `HourlyGraph.tsx` for why scrolling and scaling
+ * were both rejected. `min-width: 0` is what actually lets it shrink: this sits
+ * inside a flex card, and a flex child defaults to `min-width: auto` and refuses
+ * to go below its content, which is the whole reason a scrollbar appeared here
+ * in the first place.
+ */
+.hourly-wrap {
+  margin-top: 14px;
+  min-width: 0;
+  /* Belt and braces: if anything ever miscalculates by a pixel, it is clipped
+     rather than pushing a scrollbar onto the page. */
+  overflow: hidden;
+}
+
+.hourly {
+  display: block;
+}
+
+/*
+ * The line takes the accent, so the graph matches whatever colour the app is
+ * set to — it is decoration carrying a shape, not information carrying a
+ * meaning, which is the distinction the presence dots draw the other way.
+ */
+.hourly-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.hourly-dot {
+  fill: var(--accent);
+}
+
+.hourly-value {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hourly-axis {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+/*
+ * Night, as a band behind the line — and **darker** than the daylight either
+ * side of it, which the first version got backwards.
+ *
+ * It was `--muted` at low opacity, on the reasoning that a neutral grey is the
+ * least intrusive thing available. Grey over a dark card is *lighter* than the
+ * card, so the night hours were the bright part of the graph and the day was
+ * the dim one. Nobody reads a chart that way round.
+ *
+ * So it is black, at an opacity chosen per theme: enough to read as night at a
+ * glance, not so much that the line loses contrast against it.
+ */
+.hourly-night {
+  fill: #000;
+  opacity: 0.3;
+}
+
+/*
+ * Lighter on a light theme, in the sense that matters: 30% black over white is
+ * a heavy grey slab that would dominate the card, while over the dark theme's
+ * near-black it is a gentle deepening. Same intent, different arithmetic —
+ * exactly why the accents are declared twice as well.
+ */
+:root:not([data-theme='dark']) .hourly-night {
+  opacity: 0.09;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hourly-night {
+    opacity: 0.3;
+  }
+}
+:root[data-theme='dark'] .hourly-night {
+  opacity: 0.3;
+}
+
+/*
+ * Rain keeps its own blue rather than the accent, for the same reason green
+ * means online: it is carrying meaning that is learned from every other weather
+ * app, and an amber accent would make a downpour look like a warning about
+ * something else.
+ */
+.hourly-rain {
+  fill: #4c9be8;
+  opacity: 0.55;
+}
+
+/* Darker against a light background, where the pale blue washes out. */
+:root:not([data-theme='dark']) .hourly-rain {
+  fill: #2f7fd0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hourly-rain {
+    fill: #4c9be8;
+  }
+}
+:root[data-theme='dark'] .hourly-rain {
+  fill: #4c9be8;
 }

@@ -48,6 +48,19 @@ agent.config.json
 # features.json is per-install; features.example.json is the checked-in one.
 features.json
 
+# Installed packages, and which of them are switched on. Third-party code that
+# arrived from outside this repo — emphatically not ours to commit.
+#
+# **Anchored with a leading slash, and that is load-bearing.** A bare `modules/`
+# matches a directory of that name at *any* depth, which quietly swallowed
+# `packages/modules/` — the shipped packages, which are ours and must be
+# committed. The vault, voice and integrations were invisible to git for exactly
+# as long as it took to notice. An ignore rule that matches too much fails the
+# same way as one that matches too little: silently, and only in the direction
+# you were not looking.
+/modules/
+/modules.json
+
 # ---- Personal artefacts --------------------------------------------------
 # The overlay avatar and the app logo are your own pictures, written beside
 # the database. `data/` already covers them; named too, so moving the folder
@@ -74,6 +87,11 @@ logs/
 packages/agent/src/features/voice/models/
 **/features/voice/models/
 packages/agent/models/
+# Where they live since voice became a package. The rules above named the old
+# path and stopped matching the moment the folder moved — which is the failure
+# this whole block already carried a warning about, and it happened anyway.
+packages/modules/voice/agent/models/
+**/voice/agent/models/
 
 # ---- Editor and tooling --------------------------------------------------
 # Was only ever ignored globally. It records local permission grants and

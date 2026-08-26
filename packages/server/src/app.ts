@@ -18,6 +18,8 @@ import { attentionRoutes } from './routes/attention.js';
 import { connectRoutes } from './routes/connect.js';
 import { deviceRoutes } from './routes/devices.js';
 import { featureRoutes } from './routes/features.js';
+import { moduleRoutes } from './routes/modules.js';
+import { restartRoutes } from './routes/restart.js';
 import { habitRoutes } from './routes/habits.js';
 import { noteRoutes } from './routes/notes.js';
 import { nudgeRoutes } from './routes/nudges.js';
@@ -26,7 +28,8 @@ import { settingsRoutes } from './routes/settings.js';
 import { soundRoutes } from './routes/sound.js';
 import { taskRoutes } from './routes/tasks.js';
 import { timeRoutes } from './routes/time.js';
-import { featureNotes, isEnabled, registerFeature } from './features.js';
+import { featureNotes, isEnabled } from './features.js';
+import { registerModules } from './modules.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -66,8 +69,21 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deviceRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);
+  /*
+   * Registered before anything optional, deliberately. Restarting is the way
+   * out of a broken package, so it must not be able to be broken *by* one — see
+   * the note in the route.
+   */
+  await app.register(restartRoutes);
   // Core: the one screen that can tell you a feature is off has to work when it is.
   await app.register(featureRoutes);
+  /*
+   * Core for a sharper version of the same reason: this is the screen that
+   * *uninstalls* a package, so it has to work when an installed one is broken.
+   * Putting it behind anything a module could break would mean a bad package
+   * could stop you removing it.
+   */
+  await app.register(moduleRoutes);
   // Before the static handler, so the generated manifest wins over the one
   // sitting in dist/ from the build.
   await app.register(iconRoutes);
@@ -89,14 +105,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   if (isEnabled('time')) await app.register(timeRoutes);
 
   /*
-   * Removable. The `() => import(...)` is a literal rather than a path built
-   * from the id — a dynamic `import(variable)` would be invisible to the type
-   * checker and to every bundler, which is a poor trade for saving three lines.
+   * Installed packages come last, after every built-in route is mounted. A
+   * module that registers a conflicting path then loses to the app rather than
+   * shadowing it — Fastify refuses a duplicate route, and `registerModules`
+   * catches that and reports it against the package instead of failing the
+   * boot.
    */
-  await registerFeature(app, 'vault', () => import('./features/vault/index.js'));
-  await registerFeature(app, 'voice', () => import('./features/voice/index.js'));
-  await registerFeature(app, 'push', () => import('./features/push/index.js'));
-  await registerFeature(app, 'integrations', () => import('./features/integrations/index.js'));
+  await registerModules(app);
 
   await registerWebApp(app);
 

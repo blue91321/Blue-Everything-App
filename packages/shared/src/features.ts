@@ -12,7 +12,7 @@
  * facts rather than untrusted input needing validation.
  */
 
-export const FEATURE_IDS = ['vault', 'voice', 'push', 'integrations', 'habits', 'notes', 'time'] as const;
+export const FEATURE_IDS = ['habits', 'notes', 'time'] as const;
 
 export type FeatureId = (typeof FEATURE_IDS)[number];
 
@@ -60,65 +60,6 @@ export interface FeatureSpec {
 }
 
 export const FEATURES: Record<FeatureId, FeatureSpec> = {
-  vault: {
-    id: 'vault',
-    label: 'Password vault',
-    blurb: 'Encrypted password storage, CSV import, and the browser extension that fills them.',
-    defaultEnabled: true,
-    removable: true,
-    owns: [
-      'packages/server/src/features/vault',
-      'packages/web/src/features/vault',
-      'packages/extension',
-    ],
-  },
-
-  voice: {
-    id: 'voice',
-    label: 'Voice commands',
-    blurb: 'Wake word, spoken commands, and the popup at the cursor.',
-    defaultEnabled: true,
-    removable: true,
-    owns: [
-      'packages/server/src/features/voice',
-      'packages/web/src/features/voice',
-      'packages/agent/src/features/voice',
-    ],
-    // The one feature that breaks the leanness budget, so the number is stated
-    // where the switch is rather than buried in a document.
-    cost: '~150MB of models on disk, and 198MB resident in the agent while the microphone is open',
-  },
-
-  push: {
-    id: 'push',
-    label: 'Phone notifications',
-    blurb: 'Web push to an installed PWA when you are away from the PC.',
-    defaultEnabled: true,
-    removable: true,
-    owns: ['packages/server/src/features/push'],
-    cost: 'needs VAPID_SUBJECT set to a real domain — Apple rejects localhost',
-  },
-
-  integrations: {
-    id: 'integrations',
-    label: 'App integrations',
-    blurb:
-      'Canvas coursework as tasks, Spotify and YouTube libraries, and which of your friends are ' +
-      'online on Steam, Discord and Riot.',
-    // Off until somebody asks for it. Every other feature here works the moment
-    // it is switched on; this one does nothing at all until you have registered
-    // an app with a third party and pasted an id into the environment, so
-    // defaulting it on would put a tab in the drawer that can only apologise.
-    defaultEnabled: false,
-    removable: true,
-    owns: [
-      'packages/server/src/features/integrations',
-      'packages/web/src/features/integrations',
-      'packages/agent/src/features/integrations',
-    ],
-    cost: 'one HTTP request per provider when the friends list is on screen; nothing at all when it is not',
-  },
-
   habits: {
     id: 'habits',
     label: 'Habits',
@@ -151,6 +92,25 @@ export const FEATURES: Record<FeatureId, FeatureSpec> = {
 
 export const FEATURE_LIST: FeatureSpec[] = FEATURE_IDS.map((id) => FEATURES[id]);
 
+/**
+ * Ids that used to be features and are packages now.
+ *
+ * A `features.json` written before the move still names them, and without this
+ * the note reads `"push" is not a feature — ignored`, which is true, unhelpful,
+ * and slightly alarming: it says the key is a typo when it is in fact a setting
+ * that was carried over and is being honoured somewhere else.
+ *
+ * Kept rather than cleaned up, because `features.json` is a file somebody is
+ * expected to hand-edit and silently rewriting one is a rude thing to do. The
+ * entry is harmless; only the message about it needed fixing.
+ */
+export const MOVED_TO_PACKAGES: Record<string, string> = {
+  push: 'Phone notifications',
+  vault: 'Password vault',
+  voice: 'Voice commands',
+  integrations: 'App integrations',
+};
+
 export function isFeatureId(value: string): value is FeatureId {
   return (FEATURE_IDS as readonly string[]).includes(value);
 }
@@ -180,7 +140,13 @@ export function resolveFeatures(requested: Partial<Record<string, boolean>> | un
   }
 
   for (const key of Object.keys(requested ?? {})) {
-    if (!isFeatureId(key)) notes.push(`features.json mentions "${key}", which is not a feature — ignored`);
+    if (isFeatureId(key)) continue;
+    const movedTo = MOVED_TO_PACKAGES[key];
+    if (movedTo) {
+      notes.push(`"${key}" is a package now (${movedTo}) — its switch moved to Settings → Packages`);
+    } else {
+      notes.push(`features.json mentions "${key}", which is not a feature — ignored`);
+    }
   }
 
   // One pass is enough: the graph is one level deep and checked by `features`

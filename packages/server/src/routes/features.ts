@@ -30,6 +30,7 @@ import { FEATURE_LIST, isFeatureId, resolveFeatures, type FeatureId } from '@eve
 import { config } from '../config.js';
 import { activeFeatures, enabledFeatures, featuresFilePath, missingFeatures } from '../features.js';
 import { VERSION } from '../version.js';
+import { parseJsonText } from '../json.js';
 
 /**
  * Imported, never re-derived.
@@ -51,7 +52,7 @@ const featuresPath = featuresFilePath;
 function readFile(): Record<string, unknown> | null {
   if (!existsSync(featuresPath)) return null;
   try {
-    return JSON.parse(readFileSync(featuresPath, 'utf8')) as Record<string, unknown>;
+    return parseJsonText(readFileSync(featuresPath, 'utf8')) as Record<string, unknown>;
   } catch {
     // A malformed file is reported as absent here rather than thrown: the
     // screen's job is to let you fix it, and refusing to render is the opposite

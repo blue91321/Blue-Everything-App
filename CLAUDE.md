@@ -235,6 +235,501 @@ it even when set, because the format does not exist — declaring the setting no
 is what makes turning it on a small change rather than a new concept. A button
 that fails when pressed would be worse than one that says why it cannot.
 
+### Weather, and what "once a day" actually means
+
+`packages/modules/weather/` — the first thing built *as* a package rather than
+migrated into one, which makes it the honest test of whether the last two
+sessions' work was worth it. It needed no change to core: a tab, a Dashboard
+panel, four endpoints and a file on disk.
+
+**Open-Meteo, because it needs no account and no key.** Every alternative worth
+using wants a registration, and this would then have arrived as a screen that
+could only apologise until you had gone and made one. `npm run weather-check -w
+@everything/server` proves the decisions; `--live` also fetches for real.
+
+#### "Once a day" is a staleness window, not a timer
+
+The obvious reading is a `setInterval` at 24 hours, and there deliberately isn't
+one. This project requires anything on a timer to justify itself against the
+attention loop's numbers, and a timer loses on all three: it fetches on a machine
+nobody is looking at, it needs a handle and an `unref` and an `onClose` or
+`smoke` hangs on an app that will not close, and it *still* would not guarantee
+fresh data when you look — the reading could be twenty-three hours old.
+
+So `GET /api/weather` refreshes anything older than a day as a side effect of
+being read, exactly as the friends list and the live streams do. Opening the tab
+five times costs one fetch; never opening it costs none. The observable behaviour
+is "about once a day", and a PC left alone makes no requests at all.
+
+The screen says so rather than letting you infer it, because somebody watching
+for a fetch at midnight should know it will not come.
+
+**Manual mode never does this.** `isDue` returns false outright — a setting
+called "only when I ask" has to mean it or it is not worth having, the same rule
+`quietHoursEnabled` follows. `weather-check` asserts both tempting cases: never
+fetched, and a reading a month old.
+
+#### The hourly graph
+
+Twenty-four hours as a line, drawn by hand in SVG like `Gauge.tsx`. A chart
+library would be the largest dependency in this repo by some margin, for one
+graph on one screen in a bundle that is 90KB and nearly all of it React. The
+whole tab costs **3.1KB gzipped and only when it is opened**; the panel is
+0.8KB, and the main bundle did not move.
+
+**It fits, at every width.** This first shipped as a fixed-width SVG in an
+`overflow-x: auto` box — the rule this document states for wide content, and the
+wrong rule here: a graph you have to drag sideways is not one you can glance at,
+which is the only reason to draw a graph instead of printing a table. Scaling it
+with `viewBox` plus `width: 100%` is worse again, because it scales the *text*
+and a phone gets six-pixel labels.
+
+So the box is measured and the SVG drawn at exactly that width, text at a fixed
+size — what `ContextMenu` does rather than guessing. All twenty-four hours are
+always plotted; what gives way on a narrow screen is how many are **labelled**,
+which is the one thing that can go without the graph becoming a different graph.
+Twelve labels at 1280px, eight at 375px, and the step is chosen from divisors of
+the day so they land on hours a person thinks in.
+
+`min-width: 0` on the wrapper is what actually lets it shrink — it sits in a flex
+card, and a flex child defaults to `min-width: auto` and refuses to go below its
+content. That was the scrollbar.
+
+**Three measurements, and the reason is that the test environment cannot check
+the good one.** `ResizeObserver` is correct — the width that matters is the
+card's, and opening the drawer narrows it without the window changing — but a
+browser pane that is not compositing frames delivers **no RO callbacks at all**,
+not even the initial one. So there is also a `resize` listener and a re-measure
+after each render, both verified working with RO dead: 325 → 240 on a resize
+event, 240 → 200 on a re-render.
+
+Worth knowing beyond this graph: **`ResizeObserver` joins `requestAnimationFrame`
+on the list of things that measure nothing in a pane nobody is looking at.**
+
+**Which hour is "now" is not a subtraction.** Open-Meteo returns timestamps
+local to the *place*, with no offset — `2026-08-22T14:00` means two in the
+afternoon there. Parsing that with `new Date()` yields a value in the *server's*
+zone, so comparing it against `Date.now()` is correct only while the two happen
+to agree: right all year in Philadelphia, five hours out for London. So the
+current hour is found by asking `Intl` what time it is there and matching the
+string. String matching looks crude beside date arithmetic and is the thing that
+is actually correct, because the strings are the authority. `weather-check`
+asserts the same instant starts at 14:00 in New York and 19:00 in London.
+
+**Timestamps are stored, not just values.** A reading can be days old in manual
+mode, and a bare array of numbers would be drawn as though it started now.
+
+Three smaller choices:
+
+- **Night is darker than day**, which the first version had backwards. The band
+  was `--muted` at low opacity, on the reasoning that a neutral grey is the least
+  intrusive thing available — but grey over a dark card is *lighter* than the
+  card, so the night hours were the bright part of the chart. It is black now, at
+  0.3 on dark and 0.09 on light: the same intent needs different arithmetic over
+  near-black and over white, which is why the accents are declared twice too.
+- **Rain bars are scaled against the wettest hour, not against 100.** A day of
+  light drizzle would otherwise draw as a flat empty strip and read as no rain
+  at all.
+- **The line takes `--accent`; rain keeps its own blue.** The same distinction
+  the presence dots draw: the line is a shape, the blue is a meaning learned
+  from every other weather app, and an amber accent would make a downpour look
+  like a warning about something else. Checked across three accents.
+- **Night is drawn as runs, not a rect per hour**, which leaves hairline seams at
+  some zoom levels — and clamped to the chart rather than left to the SVG
+  overflow default to tidy up.
+
+A colour and a line say nothing to a screen reader, so the SVG carries an
+`aria-label` giving the range, the span and the starting hour — the summary a
+person would give if asked what it showed.
+
+#### The button is always there, in both modes and on both surfaces
+
+In `manual` it is the only way to fetch; in `daily` it is how you get a reading
+*now* rather than whenever the window lapses. A control that appeared and
+disappeared with a setting would be one more thing to work out.
+
+It is on the **panel** as well as the tab, because "always there" has to mean the
+screen you are actually on — having to open a settings tab to press it would make
+manual mode not worth choosing.
+
+#### The last reading is kept, and its age is always on screen
+
+Which is what makes manual mode usable rather than a blank screen: you press the
+button when you want, and what you saw last stays, labelled. A failed fetch is
+**stored next to the reading it could not replace**, so the screen shows
+yesterday's weather *and* why it is yesterday's — either alone is worse, since a
+stale number with nothing admitting it is stale is the failure this app is
+against.
+
+#### Two smaller things
+
+- **A package cannot add a table.** Migrations are a linear journal and the
+  schema is core's whatever is installed, so state goes in `data/weather.json` —
+  the same arrangement the app logo and the habit pictures use. `dataDir` is
+  exported from `module-api` for exactly this, with the warning that two packages
+  choosing `cache.json` would find each other's.
+- **A place is searched for, not typed as coordinates.** Nobody knows their own
+  latitude, so that setup step would have been "go and look it up somewhere
+  else". The candidates are listed rather than the first hit taken, because there
+  are a great many places called Springfield — and the live check confirms it:
+  Philadelphia returns five, in two different states.
+
+### Installing a package, the way you would a texture pack
+
+`modules/` at the repo root, one folder per package, gitignored. **Settings →
+Packages → Installed** lists them, takes a `.zip` dropped on the page, opens the
+folder in Explorer, and deletes one from disk.
+`npm run modules-check -w @everything/server` proves the zip reader, the
+manifest rules and a real install/remove round trip.
+
+**A built-in feature could never work this way, and that is what forced a second
+concept.** `FeatureSpec.owns` shows a feature is up to *three* folders across
+three workspaces — the vault owns a server folder, a web folder and the whole
+extension — so there is no single directory to open, drag into, or delete. A
+module is *defined* as exactly one folder. That constraint is the feature; the
+rest follows from it.
+
+So the screen has two headings. **Built in** is the seven that ship in the repo:
+switchable, deletable by hand, never installed from here. **Installed** is what
+you added. Collapsing them would put "Remove" against the vault, which is a lie
+about what the button can do.
+
+**The comparison to a texture pack breaks in exactly one place, and it is the
+important one.** A resource pack is *data*; a package here may be *code* — one
+with a `server` entry is imported into the server process and handed the Fastify
+instance, with the database, the filesystem and the network. There is no sandbox
+and none is pretended. The warning sits **above the drop zone**, not in the
+README, because the person about to drag a file in is the person who needs it.
+It is nearer to installing a mod than a texture pack, and it says so.
+
+That is also why a package arrives **switched off**. A built-in's default is a
+decision this repo made about code it ships; a module is code from somewhere
+else, and running it should be a thing you chose rather than a consequence of
+dropping a file in a folder.
+
+#### The zip reader is hand-rolled, and reads the central directory
+
+`zip.ts` — no dependency, the same call the PNG encoder and the WAV writer make:
+the format we need is two structs and one `zlib.inflateRawSync`. A zip library
+would be third-party code sitting directly in the path of untrusted input.
+
+It reads the **central directory**, never the local headers. Both describe every
+entry and the local one is tempting because it sits against the bytes — but with
+the streaming bit set (anything that zipped to a pipe) its sizes and CRC are
+zero and the real values trail the data. The central directory is always
+complete.
+
+Guards, all of which `modules-check` fires at it:
+
+- **Zip slip.** An entry named `../x`, or the backslash spelling — treated as a
+  separator *because this is Windows*, where a name containing one is a single
+  segment to the spec and two to the filesystem, and the filesystem creates the
+  file. Checked in the reader **and** again as each file is written: the first is
+  about the archive, the second about the disk, and they are the same check only
+  while both are right.
+- **Declared size before inflating**, so a decompression bomb is refused rather
+  than expanded and then measured.
+- **The CRC**, which is in the archive already — so a half-downloaded zip is a
+  clear message instead of a package that installs and then will not parse.
+- ZIP64 and encryption are refused **by name**, since half-extracting one leaves
+  a broken package behind.
+
+**A wrapping folder is stripped when every entry shares it.** Archives are made
+both ways depending on whether the author zipped the folder or its contents, and
+requiring one spelling would reject half of all correct packages for a reason
+invisible from outside.
+
+#### Two Windows details that cost a debugging session each
+
+- **A BOM is stripped before every hand-edited JSON parse.** `Out-File -Encoding
+  utf8` in Windows PowerShell writes one, Notepad wrote one for years, and
+  `JSON.parse` refuses it — the error prints as `Unexpected token '﻿'`, an
+  invisible character. Found building a test package with `Out-File`. `json.ts`
+  now serves `module.json`, `modules.json` **and `features.json`**, which is the
+  one that mattered most: it is documented as hand-editable and a BOM in it
+  stopped the server booting.
+- **A `.js` file under `modules/` is CommonJS.** Node resolves module-ness from
+  the nearest `package.json` going *up*, and the nearest above `modules/` is the
+  repo root, which has no `type`. So a package written the obvious way died on
+  its own first `export`, with `Cannot require() ES Module … in a cycle` —
+  naming neither the package nor the problem. `installFromZip` writes
+  `{"type":"module"}` when the package ships no `package.json` of its own, and
+  never overwrites one that does, since an author who included it has said what
+  they meant.
+
+#### Everything deletable is a package now
+
+`vault`, `voice`, `integrations` and `push` all live in `packages/modules/<id>/`
+with a `server/`, `web/` and `agent/` half as they need one. `FEATURE_IDS` is
+down to `habits`, `notes` and `time` — the three that are woven into the
+Dashboard and have no folder to delete. All four packages appear on the Packages
+tab with a size, a version and a **Remove** button.
+
+**Shipped packages are deletable, and that reversed an earlier decision.** The
+first version refused on the grounds that the folder is part of your checkout.
+But "deleted: the folder is gone, and the app boots and says not installed" has
+been one of this project's three levels from the start, and `features-check`
+proves each survives it. Refusing would have made this screen the one place that
+could not do what the rest of the app promises. The row says which cost applies.
+
+**A shipped package keeps its compiled UI.** Vite globs
+`packages/modules/*/web/` from outside its own root — it will, which is the fact
+that made this affordable — so the vault and Connections screens bundle exactly
+as before. Only *downloaded* packages are fetched and imported at runtime. Two
+kinds of browser half for two genuinely different situations: one is compiled
+with the app, the other arrived afterwards.
+
+**`session.features` carries running package ids alongside real features.** Every
+reader — the drawer, the panel picker, `featureEnabled('voice')` three components
+deep inside the habit editor — is asking the same question either way, and
+teaching each of them about a second list would have been a wide change to
+answer a question they already ask correctly.
+
+`@app/…` is a Vite alias for `packages/web/src`, so a module's web half does not
+count `../` out to the app. The agent's halves use plain relative paths instead:
+that resolution happens at runtime through tsx, where a path alias is one more
+thing that can silently fail and stop the agent booting.
+
+#### Five things this migration got wrong
+
+Worth keeping, because three of them are failures this document already warned
+about happening in some *other* place.
+
+- **`modules/` in `.gitignore` matched `packages/modules/` too.** A pattern with
+  no leading slash matches at any depth, so the instant the three features moved,
+  git stopped seeing them — on a public repo. `/modules/` now. An ignore rule
+  that matches too much fails exactly like one that matches too little.
+- **The smoke suite deleted the vault.** It sent `DELETE /api/modules/vault`
+  expecting a refusal, which was true while `vault` was a reserved *feature* id
+  and false the moment it became a package. It now names only ids that can never
+  be real, and asserts at the end that it removed no shipped package — because
+  the failure presented as a wall of module-not-found errors in *other* suites,
+  with nothing pointing at the check that caused it.
+- **The repo root was counted by hand a third time.** `routes/restart.ts` looked
+  for `packages/scripts/restart.ps1` and disabled the very button that is meant
+  to always work. `paths.ts` owns every path now, including the module roots,
+  which are overridable so a destructive suite can point at a temp directory.
+- **The voice models' ignore rule named the old folder.** Exactly the failure the
+  comment above it described.
+- **A bulk import rewrite was too greedy.** It turned every `../x.js` in the
+  agent halves into a path out to the agent package, including the ones that were
+  always siblings inside the module — so `mic.js` and `vosk.js`, which live in
+  the voice module itself, pointed at files that do not exist. Invisible to
+  `npm run typecheck`, because the tsconfigs did not include the module folders.
+  They do now, in all three workspaces; that is what makes the move safe to
+  repeat.
+
+#### Restarting from inside the app
+
+A **Restart** button in the banner that appears whenever a package is added,
+removed or switched. It exists because deleting something used to end with "now
+go and find the tray icon".
+
+It is built to survive the case it is for — a package having broken something —
+so it is registered in core **before any package loads**, reads no database, no
+settings and no manifest, and answers *before* restarting rather than trying to
+report on a process that is being killed. It asks the server whether it can
+restart before offering, so the button is disabled with a reason rather than
+failing when pressed.
+
+`start.ps1` watches `packages/modules` as well as `packages/web/src`, or a
+deleted package's tab would stay on screen until something unrelated changed —
+and it records the module **count** beside the build, because a deleted folder
+leaves nothing behind that could be "newer" than anything.
+
+**Its first version shipped with `stdio: 'ignore'` and no logging**, so when the
+first restart failed the app was left stopped with not one line written anywhere.
+Output now goes to `logs
+estart.log` through PowerShell's own `*>>` — not a
+`>>` on the cmd line, because `start /b` hands the child cmd's handles and cmd's
+were `ignore`. That is written down two sections above, about the tray, and was
+reproduced here anyway.
+
+#### Two roots: shipped, and installed
+
+`modules/` is gitignored on purpose — it holds code downloaded from elsewhere,
+which is not ours to commit. So moving a first-party feature into it would
+**delete that feature from the repository**, silently, on a repo that is public.
+
+Shipped packages therefore live in `packages/modules/`, which is committed and
+typechecked with everything else, and both roots are scanned by the same loader.
+The difference a person sees is one line: a shipped package says **built in** and
+has no Remove button, because removing it would mean deleting part of your
+checkout rather than a folder you added — a `git checkout` away from coming back.
+
+**Shipped is scanned first, and that ordering is a guard.** Without it, dropping
+a folder named `push` into `modules/` would replace the real one with somebody
+else's code. It is the same protection `RESERVED_MODULE_IDS` gives feature names,
+one level down.
+
+**A shipped package defaults on; an installed one defaults off.** Shipping
+something is this repo deciding it should run; dropping a zip in a folder is not
+yet a decision to run it.
+
+#### `@everything/server/module-api`
+
+A package in its own folder cannot write `import { db } from '../../db/client.js'`
+— that path is a fact about where the *server's* source sits. So there is a
+stable surface it imports instead, resolved from `node_modules` whether the
+package shipped or was unzipped.
+
+The surface is **the ten things the four removable features actually use**,
+arrived at by counting rather than guessing: `db`, `schema`, `config`, `changes`,
+`getSettings`, `providePush`, `recordHabitDone`, `undoHabitDone`. That is a real
+commitment — the difference between an internal that can be renamed and one that
+cannot — and it is not a sandbox: a package could reach past it with a relative
+path or `node:fs` whenever it liked. It exists so honest code has something
+stable to build against.
+
+The browser side already had its equivalent in `register(host)`, and the two
+surfaces were measured the same way: the web features import exactly five things
+from core (`api`, `controls`, `format`, `nav`, `useAsync`).
+
+#### `push` has moved, and what it cost
+
+The first feature to become a package, chosen because it is 175 lines with no UI
+and no agent half. It is `packages/modules/push/`, out of the feature manifest
+entirely, and `POST /api/devices/me/push` now asks `moduleIsRunning` rather than
+`isEnabled`.
+
+Three things went wrong doing it, all of which the next migration will hit:
+
+- **`RESERVED_MODULE_IDS` was a hand-written copy of the feature list**, so the
+  moment `push` left that list the reserved copy still held it — and the loader
+  rejected the package's own folder name as invalid. The symptom was a row
+  labelled `push` with no manifest and nothing running. It is derived from
+  `FEATURE_IDS` now, so the next feature to move takes itself off the list.
+- **A folder outside a `"type": "module"` scope is CommonJS to TypeScript too**,
+  not just to Node: it resolved drizzle's CJS types and produced a wall of
+  "separate declarations of a private property". The same `package.json` the
+  installer writes for a downloaded package, committed for a shipped one.
+- **A switch has to survive the move.** A shipped package defaults *on*, so a
+  `push: false` in `features.json` would have turned phone notifications back on
+  for somebody who had deliberately silenced them. `carryOverFromFeatures` reads
+  the old key once at boot and writes it into `modules.json` — verified in both
+  directions. `MOVED_TO_PACKAGES` also stops `npm run features` calling the
+  leftover key a typo when it is a setting being honoured elsewhere.
+
+**The other three are not moved, and the reason is the browser half.** `vault`,
+`voice` and `integrations` are ~16,000 lines, and their web halves are compiled
+into the PWA bundle by Vite today. A package's browser half must be **one
+self-contained file**, so each would need its own build step — and every core
+helper it uses either gets inlined into that bundle (the 9.5KB duplication
+problem, once per package) or added to `PackageHost`, which turns five internal
+modules into a public API. `voice` additionally needs an agent-side loader that
+does not exist. Those are decisions to take deliberately, not consequences to
+discover.
+
+#### A package can draw, not just serve
+
+`import.meta.glob` resolves at **build time** — that is what makes deleting a
+feature folder a supported operation, and it is exactly why it can never see a
+package installed afterwards. So a package's browser half is loaded the only way
+a browser can load code it did not know about: **fetched with the token, then
+imported as a blob URL.**
+
+`<script src>` and a bare `import('/api/…')` send no Authorization header — the
+constraint that put the icons and the tones *outside* `/api/`. That escape is not
+available here: those are a colour and a sine wave, this is code from a package
+you installed, on a server that binds `0.0.0.0`. So it is fetched like any other
+API call and turned into a blob, the same move the habit pictures make with their
+bytes.
+
+**The cost is that a blob has no base URL**, so a relative `import './x.js'`
+inside a package cannot resolve. A browser half must be **one self-contained
+file** — which is also why React is *handed to it* rather than imported.
+
+**One React, passed in.** A package importing its own would ship a second copy
+and, far worse, hooks from one React inside a tree rendered by another throw in
+ways that read as the package being broken. `register(host)` receives the app's
+React, its API client, `useAsync` and `goTo`, so a package bundles nothing at
+all. Verified: a package's button held state across clicks and left no React
+global behind.
+
+**The manifest declares, the code draws.** `tab` and `panels` are static in
+`module.json` so the drawer and the panel picker can be built without loading
+every package's code — the same split `meta.ts` and the lazy `panel.tsx` already
+make for features. A `tab` or `panels` without a `web` entry is **refused rather
+than ignored**, because the alternative is a drawer entry that opens an empty
+screen with nothing anywhere saying why.
+
+**Panel ids are prefixed by the server, not by the author.** A package declares
+`now` and the app stores `weather:now`, so two packages cannot collide however
+carelessly they are named and nobody can get the convention wrong. An author who
+prefixes it themselves is refused.
+
+**Tab ids are namespaced as `package:<id>`** in the drawer, so a package cannot
+take over a core screen by calling itself `settings`.
+
+**A glyph is one grapheme, not one code point.** `[...glyph][0]` was the first
+version and silently truncated 👨‍💻 to 👨 — three code points joined by a
+zero-width joiner. `Intl.Segmenter`, guarded, since this file is also read while
+deciding how much of the app exists.
+
+**A broken package must not take the app down, and this is the case that
+matters most:** if it did, a bad package would be one you could not reach the
+screen to uninstall. `lazy` rejects into the nearest error boundary and this app
+has none, so a load failure is turned into a component that renders it — naming
+the package, quoting the error, and pointing at Settings → Packages. Verified by
+installing a package whose entry throws on purpose: the drawer stayed intact and
+the banner appeared where the screen would be.
+
+**Only *running* packages reach `/api/session`.** The browser half alone would
+need no restart — it is fetched at runtime — but a tab that appeared instantly
+while its endpoints waited for a restart is worse than one rule applied evenly.
+
+#### Loading is deliberately unlike `registerFeature`
+
+The import is a genuine dynamic `import()` of a file URL rather than a static
+`() => import(...)`, which works only because the server runs through `tsx`
+rather than a bundle.
+
+And a failure is **caught rather than rethrown**, which is the opposite call.
+`registerFeature` rethrows anything that is not a missing module, because a
+broken feature is a bug in this repo and should stop the app. A broken *module*
+is somebody else's bug, and taking the app down over it would mean a bad package
+could stop you reaching the screen that uninstalls it. The reason is kept and
+shown on that package's row.
+
+Packages load **after every built-in route**, so one registering a conflicting
+path loses to the app rather than shadowing it.
+
+#### What the screen refuses to hide
+
+A folder whose manifest will not parse is **listed, with its problems named by
+field**. Dropping a bad zip and seeing nothing happen is indistinguishable from
+the drag not having worked, which is the most confusing outcome available here.
+Its toggle is disabled and the API refuses to enable it — a switch reading "on"
+against something that cannot load is the same lie the `EVERYTHING_FEATURES`
+lock is disabled to avoid.
+
+#### Everything that changes anything is local-only
+
+Installing runs someone else's code on this machine and removing deletes a
+folder from it, so both sit with minting a device token and writing
+`features.json`. **Proved over a real socket**, not with `app.inject()`: the
+smoke suite sets `AUTH_REQUIRED=false`, which short-circuits `isLocal` to true
+before `isTrustedLocal` is consulted, so an injected cross-site request is
+allowed there — which looks exactly like a broken gate and is a disabled one.
+Smoke says so rather than asserting either way.
+
+The gate was instead driven with **hand-written HTTP over `node:net`**, because
+`Host` is a forbidden header name for `fetch`, which drops it silently — a probe
+built on fetch reports the most important vector here as passing when it was
+never sent. All five module routes refuse a tailnet `Host`, a cross-site
+`Sec-Fetch-Site`, an `X-Forwarded-For` and a foreign `Origin`, and `localhost`
+by name is still allowed.
+
+**Opening the folder is the server's job, not the agent's**, which is the one
+place this departs from the division voice draws. A hotkey or a browser acts on
+whatever machine you are sitting at; this opens a folder on the *server's own*
+filesystem, so routing it through the agent would open the wrong machine's
+folder the day the server moves.
+
+**The upload has its own `bodyLimit`.** Fastify defaults to 1MB globally, and
+raising *that* to accept a package would widen how much memory any request can
+ask the process to buffer, for one endpoint that is already local-only.
+
 ### Finishing something takes a moment to move
 
 `useSettling.ts` pins a just-ticked row in place for 1.8s before it drops to the
@@ -280,6 +775,73 @@ A request carries `focus` — **opaque, read differently by each screen**: a row
 on Tasks and Habits, a section id on Settings — and `search`, which is separate
 rather than encoded into it because "open this one thing" and "show me everything
 matching" are different requests and a screen may want both.
+
+### Tapping the number on the Habits screen edits it
+
+That screen describes its stepper as a way to *correct* the tally, and
+correcting "nine, not two" by pressing + seven times is not correcting. So the
+value between − and + is a button, and pressing it turns it into a box.
+`PUT /api/habits/:id/value` puts the tally at a number rather than nudging it.
+
+**A button, not a `<span onClick>`.** That is the whole reason it works without a
+mouse: a span is not focusable, receives no Enter or Space, and is announced as
+plain text with nothing to suggest it does anything. One element, and it buys the
+non-mouse half of "click or tap".
+
+**The two modes mean different things by "the value".** For a gauge it is the
+level, written straight to `gauge_level` and its anchor — and **no entry is
+recorded**, because pressing + means "I did one" and typing 80 means "it is
+actually 80% now". Filing a correction as a completion would put a tick in the
+history for something you never did. For `target` and `interval` the value is a
+count of entries, so entries move: newest removed until the sum fits, remainder
+re-inserted. Newest-first is what keeps `interval` honest, since its next-due
+time comes from the last entry.
+
+That remainder is not a nicety — an entry may carry a count above one, since "I
+drank three waters" is a single row. `smoke` builds exactly that shape (one entry
+of five, then two of one) and drops it to two.
+
+**Enter commits directly, and the blur that follows is the fallback.** The first
+version only blurred and let the blur handler commit, which makes the primary
+path depend on a focus event — the one class of event that does not always
+arrive. Measured: a document that is not focused dispatches **no `blur` and no
+`focusout` at all**, even from a direct `.blur()` on a focused input. Phone
+keyboards also vary in what their Go key does. A `pending` ref makes the second
+call a no-op, and the route is a `PUT` so a double-send would be harmless anyway.
+
+Worth adding to the list: **focus events join `ResizeObserver` and
+`requestAnimationFrame` as things that do not happen in a pane nobody is looking
+at.** All three have now cost a debugging session here.
+
+**A failed save says so, and that was reported as the feature not working.**
+`commit()` first shipped with a `try/finally` and no `catch`. The route was new,
+the running server had not been restarted, every save answered 404, and the
+number simply snapped back — indistinguishable from Enter not registering. The
+message names the number you typed (`Could not set to 17 — …`) rather than
+reopening the editor, which would steal focus back from wherever the tap went.
+It renders on the row rather than in the stepper, which is 120px wide.
+
+**And the control has to be declared at the top level.** It was first written
+inside `ManagedHabit`, which is legal JavaScript and quietly wrong in React: a
+component defined during render is a *new type* every render, so the parent
+re-rendering unmounts the input and takes what you were typing with it. It
+survived testing only because the parent does not re-render on a keystroke —
+the draft lives inside the control — which is precisely the kind of luck that
+stops holding the moment anything else on the row becomes stateful.
+
+Three smaller things:
+
+- **An emptied box does not commit as zero.** Tapping the number, changing your
+  mind and tapping away is exactly how somebody backs out, and wiping the tally
+  for it would be the worst available reading of an empty field.
+- **`inputMode="numeric"`, not `type="number"`.** The phone keypad is the point;
+  a number input adds spinner arrows beside the two stepper buttons that already
+  do that job, and eats a scroll wheel passing over it on desktop.
+- **The button and the box are one fixed width.** `min-width: 22px` fitted a
+  single digit and nothing else: a gauge reading 100% shoved both buttons
+  sideways, and the box was ten pixels wider than the button it replaced, so the
+  stepper jumped the instant you typed. Measured at 117 → 108 before, 120 → 120
+  after.
 
 ### Getting to a particular setting
 
@@ -586,9 +1148,25 @@ the first question whenever something looks wrong.
 Bump with `npm version <patch|minor|major> --workspaces --include-workspace-root`.
 
 **Check what it committed before you walk away, because it does not commit all
-of it.** That command bumps all five files, but the commit and tag it creates
-contain **only the root `package.json`** — the four workspace bumps are left
-sitting in the working tree, unstaged. Nothing warns you.
+of it, and it no longer even *bumps* all of it.** Sixteen files carry a version
+now and `npm version --workspaces` can see five: the root and the four
+workspaces. It misses
+
+- **the browser extension**, which has a `manifest.json` and no `package.json`,
+  and moved to `packages/modules/vault/extension` when the vault became a
+  package;
+- **every shipped package** — `packages/modules/<id>/module.json` *and* its
+  `package.json` — because the workspace glob is `packages/*` and those are one
+  directory deeper.
+
+The module manifests are the ones that matter to look at, because their version
+is **on screen**: the Packages tab prints it against every row, so leaving them
+behind puts the app at 0.3.0 and everything it ships at 0.2.3, on the one screen
+whose whole job is saying what version things are.
+
+And of the five it does bump, the commit and tag it creates contain **only the
+root `package.json`** — the four workspace bumps are left sitting in the working
+tree, unstaged. Nothing warns you about any of it.
 
 That is worse than untidy. `version.ts` reads `packages/server/package.json`, so
 a clone at the tag `v0.2.0` starts up and reports `0.1.0` on `/health` and on the
@@ -600,8 +1178,13 @@ So the bump is two steps, and the second is not optional:
 
 ```bash
 npm version minor --workspaces --include-workspace-root
-git add -A && git commit --amend --no-edit && git tag -d v0.2.0 && git tag v0.2.0
+# then bump the eleven it cannot see, and only then:
+git add -A && git commit --amend --no-edit && git tag -d v0.3.0 && git tag v0.3.0
 ```
+
+Verify at the **tag**, not in the working tree — `git show v0.3.0:<file>` — since
+that is what a clone gets and the whole failure mode is a file that never made it
+into the commit.
 
 That is about the **workspace packages**, which are one app. The *features* on
 the Packages screen are a different axis: they report the app's version while
@@ -641,7 +1224,8 @@ that is invisible until it isn't, and the server had no net under it.
 ## Ground rules
 
 - **Never commit real data.** `data/`, `*.db`, `.env`, `agent.config.json`,
-  `features.json`, the avatar and `logs/` are gitignored. The database is
+  `features.json`, `modules/` (installed packages, **not** `packages/modules/`,
+  which ships), `modules.json`, the avatar and `logs/` are gitignored. The database is
   personal; treat it as such. `npm run publish-check` is the gate — run it
   before any push, and never loosen a rule to make it pass.
 
@@ -980,6 +1564,7 @@ npm run integrations-check -w @everything/server  # the categoriser, the Takeout
 
 npm run features         # what is switched on, and what is actually on disk
 npm run features-check   # prove each one can be switched off and deleted
+npm run modules-check -w @everything/server  # the zip reader, and installing a package
 npm run publish-check    # is this repo safe to make public?
 npm run typecheck        # all three TypeScript packages, server included
 ```
@@ -1980,6 +2565,53 @@ that, or trailing off after "jarvis" would file a note reading "jarvis".
 Verified across four deliveries: 600ms pause, 1.5s pause, run together, and run
 together at speed. All four deliver.
 
+### Words that are not the wake word
+
+Reported from real use: a dog called Harley kept waking it, and it was not the
+only thing. The cause is structural rather than a tuning mistake — **a closed
+grammar has to answer every sound with something it contains.** With one phrase
+and `[unk]` in it, a near-miss has nowhere better to go than the wake word, and
+`[unk]` is a weak competitor.
+
+`settings.wake_decoys` is a comma-separated list of words that keep being heard
+*as* the wake word. They go into the wake grammar beside it and are **never
+matched against** — `matchesWakeWord` only ever looks for the wake word — so a
+decoy can absorb a sound but can never trigger on one.
+
+`npm run wake-falsing -w @everything/agent` takes `WAKE_DECOYS=` so the effect is
+measured rather than argued about: **1/14 false wakes to 0/14**, with both real
+wakes still firing.
+
+**Two things were measured and rejected first**, and they are worth keeping
+written down because both are the obvious idea.
+
+- **Confidence gating does not work here.** `vosk_recognizer_set_words` is bound
+  now and per-word confidence is on `Utterance`, and in grammar mode it is
+  **1.00 for everything** — real wake words and forced ones alike. Inside a
+  closed grammar the chosen path is the only path, so there is no competing
+  hypothesis to be unsure against. A threshold would have rejected nothing and
+  cost real wakes. `npm run wake-confidence -w @everything/agent` prints the
+  numbers.
+- **A generic word list does not work either.** 108 common English words in the
+  grammar changed the false-wake count not at all: "harvest festival" still
+  landed on the wake word. It stopped only when *"harvest"* and *"festival"*
+  themselves were there. The competitor has to actually sound like the wake
+  word, which is why this is a list you fill in rather than one that ships —
+  and why it costs nothing, since it is a handful of words rather than a
+  vocabulary. The generic list also cost 1.49ms → 1.61ms per 100ms block for
+  that nothing.
+
+**The synthesiser cannot reproduce the report.** Windows TTS says "Harley" far
+too clearly for it to be mistaken, so `wake-falsing` shows it not firing while
+it fires in the room. That is a limit of the tool, not evidence against the
+report: the mechanism is the same one "harvest festival" demonstrates, which is
+reproducible. Slurred speech at a distance is simply not something this test can
+make.
+
+**A decoy the model cannot pronounce does nothing**, silently — Vosk drops words
+outside its lexicon. So decoys ride along in `checkWords` and get the same
+dictionary warning the phrase words already had, rather than a second mechanism.
+
 ### The grammar must be able to say what people actually say
 
 The matcher stems, so a stored `drink water` covers "I drank some water". The
@@ -2250,6 +2882,30 @@ is still your turn and making you say "hey jarvis" again would be the point
 missed. A `pause` is the exception — you asked for silence, so carrying on
 listening would be perverse.
 
+**One box makes it one setting.** "Use this after a miss too" sits under the
+follow-up slider and hides the retry card entirely — the two numbers are the
+same for most people, and a second slider you have to keep in step is a chore
+rather than a choice.
+
+`voiceRetryMatchesFollowUp` is a **real flag, not `retry === followUp`**. Two
+settings that happen to hold the same number is not the same statement as "keep
+these together": inferring it would tick the box by coincidence and then start
+dragging one slider with the other. `quietHoursEnabled` is a real flag for
+exactly this reason, and for the same reason **the retry value is left alone
+while the box is ticked** — resolved on read, so unticking gives back the number
+you chose rather than whatever the follow-up happened to be. Verified: 12s,
+ticked, follow-up moved to 9, unticked, still 12s.
+
+Hidden rather than disabled, because a disabled slider sitting at a number that
+is no longer in use is a worse lie than not showing it. The agent is told one
+figure and never learns the box exists — judgement server-side, as everywhere
+else here.
+
+**It cost a type lie to get right.** `AppSettings` declared it `boolean`, the
+row returns `1`, and `=== true` was quietly false — so the card never hid while
+the setting saved perfectly. `api.ts` opens with a warning about exactly this;
+every other boolean on that type is a `number`.
+
 **How long it waits is two settings**, both 0–30 with sliders on the Voice tab.
 `voiceFollowUpSeconds` is the wait after it *works* — you may add a second
 thing. `voiceRetrySeconds` is the wait after it *misses* — you are about to
@@ -2488,6 +3144,40 @@ behind a Save button, matching how ticking a habit off works everywhere else.
 do" without doing it. The failure everyone hits is a phrase that reads perfectly
 and never matches; the alternative way to find that out is repeating it at the
 microphone while watching a log.
+
+### The vocabulary is on screen
+
+**Voice → "Everything it can hear"**, collapsed, with a count. It exists because
+a closed grammar can only emit words it contains, and most of the confusing
+things this feature has ever done came straight from that: a stored "drink
+water" left it unable to say "drank", so "I drank water" came back as "resume
+water" and paused the music. None of that is guessable from the commands screen.
+
+**Grouped by where each word came from**, which is the part that makes it worth
+showing rather than a wall of words:
+
+| | |
+| --- | --- |
+| The wake word | left exactly as typed, never expanded |
+| Words that are not the wake word | the decoys, absorbing sounds only |
+| Words from your phrases | exactly what you typed |
+| Forms it worked out for itself | plurals, past tenses, `-ing`, and each phrase run together |
+| Always included | the counting and amount words, whatever your commands are |
+
+**The groups partition the grammar exactly** — every word the recogniser can emit
+appears in one and none appears twice, which `voice-check` asserts. A display
+that quietly omitted part of the grammar would be worse than none, since the
+whole reason to open it is to find the word you did not expect. On this install
+it is 136 words: 2 wake, 28 typed, 89 generated, 17 always.
+
+**Its own endpoint, not a field on `/api/voice/config`.** That one is the
+agent's and is long-polled; putting a hundred-odd words on it would send the
+whole list every poll forever to serve a screen nobody has open.
+
+A word the model cannot pronounce is marked, reusing the `unknownWords` the
+agent already reports rather than growing a second mechanism — the same warning
+the wake word and the phrases already carry, in the one place that shows every
+word at once.
 
 ### Only responding to your voice
 

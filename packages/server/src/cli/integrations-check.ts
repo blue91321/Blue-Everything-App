@@ -50,7 +50,7 @@ import {
 
 // Dynamic, so the scratch database above is already chosen by the time this
 // pulls in the store and the store pulls in the client.
-const { parseIsoDuration } = await import('../features/integrations/providers/youtube.js');
+const { parseIsoDuration } = await import('../../../modules/integrations/server/providers/youtube.js');
 
 let failures = 0;
 
@@ -533,7 +533,7 @@ check(
 
 console.log('\nReading the planner');
 
-const { nextPage, toTask } = await import('../features/integrations/providers/canvas.js');
+const { nextPage, toTask } = await import('../../../modules/integrations/server/providers/canvas.js');
 
 const BASE = 'https://canvas.example.edu';
 
@@ -646,7 +646,7 @@ await runMigrations();
 const { db } = await import('../db/client.js');
 const { tasks: taskTable } = await import('../db/schema.js');
 const { eq } = await import('drizzle-orm');
-const { syncTasksFromService } = await import('../features/integrations/store.js');
+const { syncTasksFromService } = await import('../../../modules/integrations/server/store.js');
 
 const DUE = Date.parse('2026-09-01T23:59:00Z');
 const essay = { externalId: 'assignment:1', title: 'Essay on Rome', context: 'HIST 210', dueAt: DUE, done: false };
@@ -807,7 +807,7 @@ check(
 
 console.log('\nWhat a token response says it granted');
 
-const { grantedFrom } = await import('../features/integrations/oauth.js');
+const { grantedFrom } = await import('../../../modules/integrations/server/oauth.js');
 
 /*
  * **`scope` is a string in RFC 6749 and an array at Twitch.**

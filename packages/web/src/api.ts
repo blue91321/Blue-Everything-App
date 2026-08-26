@@ -344,6 +344,8 @@ export interface AppSettings {
    */
   voiceEnabled?: number;
   wakeWord?: string;
+  /** Comma-separated words that keep being heard as the wake word. */
+  wakeDecoys?: string;
   requireKnownSpeaker?: number;
   /** 0-1. Stored as whole percent; converted on the way out of the server. */
   speakerThreshold?: number;
@@ -355,6 +357,15 @@ export interface AppSettings {
   /** Seconds it keeps listening after answering. 0 switches follow-ups off. */
   voiceFollowUpSeconds?: number;
   voiceRetrySeconds?: number;
+  /**
+   * Use the follow-up time after a miss too, and hide the second slider.
+   *
+   * A **number**, like every other boolean on this type. SQLite has no boolean,
+   * so a row carries 0 or 1 — and the update payload below takes a real boolean,
+   * because that side is the zod schema rather than the row. Typing this one as
+   * `boolean` made `=== true` quietly false and the card never hid.
+   */
+  voiceRetryMatchesFollowUp?: number;
   overlayPlacement?: string;
   overlayScreen?: string | null;
   /** An emoji, `file` for an uploaded picture, or empty for none. */
@@ -389,6 +400,11 @@ export interface AppSettings {
 }
 
 /** An `AppSettings` from a server that actually has voice support. */
+export interface VoiceVocabulary {
+  total: number;
+  groups: Array<{ id: string; label: string; why: string; words: string[] }>;
+}
+
 export type VoiceSettings = AppSettings & Required<Pick<AppSettings, 'wakeWord' | 'speakerThreshold' | 'voiceprintSamples'>>;
 
 export const serverSupportsVoice = (settings: AppSettings): settings is VoiceSettings =>
@@ -564,6 +580,14 @@ export interface TimeEntry {
 
 /* ---------- endpoints ---------- */
 
+/** A package's contribution to the app's chrome, from `/api/session`. */
+export interface SessionPackage {
+  id: string;
+  label: string;
+  tab: { label: string; glyph: string; order: number } | null;
+  panels: { id: string; label: string; hint?: string }[];
+}
+
 export interface Session {
   ok: boolean;
   /** True when running on the PC hosting the server — no token needed. */
@@ -572,6 +596,12 @@ export interface Session {
   deviceKind: string | null;
   /** What the server is running. Absent on a server older than this field. */
   version?: string;
+  /**
+   * Installed packages that draw something. Absent on a server that predates
+   * them, which is read as "none" rather than as an error — the same treatment
+   * `features` gets, and for the same reason.
+   */
+  packages?: SessionPackage[];
   /**
    * Which optional features this server runs, e.g. `['vault', 'voice']`.
    *
@@ -626,6 +656,60 @@ export interface FeatureState {
   /** Whether there is anywhere to check for updates yet. */
   updates?: { configured: boolean; source: string | null };
   features: FeatureInfo[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Installed packages                                                  */
+/* ------------------------------------------------------------------ */
+
+/** What is wrong with a package, named field by field. */
+export interface ModuleProblem {
+  field: string;
+  message: string;
+}
+
+/**
+ * One folder under `modules/`.
+ *
+ * Unlike a `FeatureInfo`, most of this is nullable — a package whose manifest
+ * will not parse is still *listed*, with its problems, because a bad zip that
+ * produced no row at all would be indistinguishable from a drag that never
+ * worked. `usable` is the one field that says whether it can run.
+ */
+export interface ModuleInfo {
+  id: string;
+  /** Ships with the app rather than having been installed. Not removable. */
+  shipped: boolean;
+  label: string;
+  blurb: string | null;
+  version: string | null;
+  author: string | null;
+  notes: string | null;
+  /** It has a server entry point, which means installing it runs code. */
+  code: boolean;
+  bytes: number;
+  enabled: boolean;
+  /** Loaded into the running process — false until a restart. */
+  running: boolean;
+  pendingRestart: boolean;
+  problems: ModuleProblem[];
+  usable: boolean;
+}
+
+export interface ModuleState {
+  /** Absolute path, or null when the caller is not on the server's machine. */
+  folder: string | null;
+  canInstall: boolean;
+  modules: ModuleInfo[];
+}
+
+export interface InstalledPackage {
+  ok: boolean;
+  id: string;
+  label: string;
+  version: string;
+  replaced: boolean;
+  files: number;
 }
 
 export interface Device {
@@ -1015,6 +1099,17 @@ export const api = {
     check: (id: string) => post(`/api/habits/${id}/check`),
     uncheck: (id: string) => post(`/api/habits/${id}/uncheck`),
     /**
+     * Put the tally at a value, rather than nudging it by one.
+     *
+     * A `PUT`, so sending it twice leaves the same state — which is what makes
+     * it safe to fire on both Enter and the blur that Enter causes.
+     */
+    setValue: (id: string, value: number) =>
+      request<{ habitId: string; doneThisPeriod: number; gaugeNow: number | null }>(
+        `/api/habits/${id}/value`,
+        { method: 'PUT', body: JSON.stringify({ value }) }
+      ),
+    /**
      * A picture of your own for the gauge.
      *
      * Base64 in JSON rather than multipart, like the logo and the avatar — the
@@ -1051,6 +1146,72 @@ export const api = {
       }),
   },
 
+  /**
+   * Restarting from inside the app.
+   *
+   * Its own top-level entry rather than living under `modules`, because it is
+   * not about packages — it is the way out of anything that needs a boot, and
+   * the one control that has to keep working when a package has broken
+   * something else.
+   */
+  restart: {
+    status: () => request<{ available: boolean; local: boolean; script: string | null }>('/api/restart'),
+    now: () => post<{ ok: boolean; restarting: boolean }>('/api/restart'),
+  },
+
+  modules: {
+    get: () => request<ModuleState>('/api/modules'),
+    /**
+     * Send a `.zip` to be unpacked into `modules/`.
+     *
+     * Base64 in JSON rather than multipart, like the habit picture and the
+     * logo — the server registers no multipart parser, and adding one for a
+     * screen visited twice a year is a dependency for nothing.
+     */
+    install: (file: File) =>
+      new Promise<InstalledPackage>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('could not read that file'));
+        reader.onload = () => {
+          const result = String(reader.result);
+          // Strip the `data:application/zip;base64,` prefix the reader adds.
+          const data = result.slice(result.indexOf(',') + 1);
+          post<InstalledPackage>('/api/modules', { data, filename: file.name }).then(resolve, reject);
+        };
+        reader.readAsDataURL(file);
+      }),
+    set: (id: string, enabled: boolean) =>
+      patch2<{ ok: boolean; id: string; enabled: boolean; pendingRestart: boolean }>(
+        `/api/modules/${encodeURIComponent(id)}`,
+        { enabled }
+      ),
+    remove: (id: string) =>
+      request<{ ok: boolean; id: string }>(`/api/modules/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    /** Local-only: a file manager can only open on the machine it runs on. */
+    openFolder: () => post<{ ok: boolean; folder: string }>('/api/modules/folder'),
+    /**
+     * A package's browser half, as source text.
+     *
+     * Its own fetch rather than `request`, which parses JSON — this is
+     * JavaScript, and it is deliberately fetched *with the token* so the route
+     * can stay behind auth. `packages.tsx` turns it into a blob and imports it;
+     * see the note there on why a URL import would not do.
+     */
+    web: async (id: string): Promise<string> => {
+      let response: Response;
+      try {
+        response = await fetch(`/api/modules/${encodeURIComponent(id)}/web`, {
+          headers: { authorization: `Bearer ${getToken()}` },
+        });
+      } catch (cause) {
+        throw new ServerUnreachable(cause instanceof Error ? cause.message : 'could not reach the server');
+      }
+      if (response.status === 401) throw new Unauthorized('this device is not paired');
+      if (!response.ok) throw new Error(await errorMessage(response, 'GET', `/api/modules/${id}/web`));
+      return response.text();
+    },
+  },
+
   settings: {
     get: () => request<AppSettings>('/api/settings'),
     update: (payload: {
@@ -1072,10 +1233,12 @@ export const api = {
       pushDefault?: boolean;
       voiceEnabled?: boolean;
       wakeWord?: string;
+      wakeDecoys?: string;
       requireKnownSpeaker?: boolean;
       speakerThreshold?: number;
       voiceInputDevice?: string | null;
       voiceFollowUpSeconds?: number;
+      voiceRetryMatchesFollowUp?: boolean;
       voiceRetrySeconds?: number;
       overlayPlacement?: string;
       overlayScreen?: string | null;
@@ -1122,6 +1285,8 @@ export const api = {
     test: (text: string) => post<VoiceTest>('/api/voice/test', { text }),
     forgetVoice: () => request<void>('/api/voice/enrol', { method: 'DELETE' }),
     status: () => request<VoiceStatus>('/api/voice/status'),
+    /** What the recogniser can say, grouped by where each word came from. */
+    vocabulary: () => request<VoiceVocabulary>('/api/voice/vocabulary'),
     commands: () => request<VoiceCommand[]>('/api/voice/commands'),
     createCommand: (payload: Partial<VoiceCommand>) => post<VoiceCommand>('/api/voice/commands', payload),
     updateCommand: (id: string, payload: Partial<VoiceCommand>) =>

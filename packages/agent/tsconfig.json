@@ -7,7 +7,12 @@
     "noEmit": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": false,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "../modules/*/agent"
+  ]
 }

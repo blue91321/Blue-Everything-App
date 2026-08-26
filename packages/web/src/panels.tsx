@@ -15,6 +15,7 @@
  */
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
 import { availablePanels, featureEnabled, panelComponent, type PanelMeta, type PanelProps } from './features';
+import { packagePanelComponent, packagePanels } from './packages';
 
 /**
  * Panels core owns.
@@ -39,6 +40,14 @@ export function panelChoices(): Array<PanelMeta & { featureId: string }> {
   return [
     ...CORE_PANELS.filter((panel) => featureEnabled(panel.featureId)).map(({ Panel: _p, ...rest }) => rest),
     ...availablePanels(),
+    /*
+     * Packages offer panels on exactly the same terms as features. They carry a
+     * `featureId` of their own namespaced id purely so the picker's shape is
+     * uniform — nothing looks it up in the feature list, and `featureEnabled`
+     * is not consulted, because a package that is switched off never reaches
+     * `/api/session` in the first place.
+     */
+    ...packagePanels().map(({ packageId, ...panel }) => ({ ...panel, featureId: `package:${packageId}` })),
   ];
 }
 
@@ -71,5 +80,8 @@ export function chosenPanels(settings: {
 export function resolvePanel(panelId: string): LazyExoticComponent<ComponentType<PanelProps>> | null {
   if (panelId === '') return null;
   const core = CORE_PANELS.find((panel) => panel.id === panelId && featureEnabled(panel.featureId));
-  return core?.Panel ?? panelComponent(panelId);
+  // Features first, then packages. A built-in must win a collision, since a
+  // package could otherwise shadow a panel by naming itself after a feature —
+  // which the reserved-id list already prevents, and this makes harmless anyway.
+  return core?.Panel ?? panelComponent(panelId) ?? packagePanelComponent(panelId);
 }

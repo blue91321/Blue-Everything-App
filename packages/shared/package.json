@@ -1,7 +1,7 @@
 {
   "name": "@everything/shared",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./features": "./src/features.ts",
     "./integrations": "./src/integrations.ts",
+    "./modules": "./src/modules.ts",
     "./sound": "./src/sound.ts"
   },
   "dependencies": {

@@ -1031,7 +1031,7 @@ console.log('\nstarred live channels, and narrowing the panel to them');
   check('while the endpoint still returns them all', (await live()).streams.length === 2);
 
   /* A star survives a sync, because `replaceFollows` names the columns it writes. */
-  const { replaceFollows } = await import('../features/integrations/store.js');
+  const { replaceFollows } = await import('../../../modules/integrations/server/store.js');
   await replaceFollows('twitch', [
     { provider: 'twitch', providerAccountId: '1', kind: 'channel', name: 'alfa renamed' },
     { provider: 'twitch', providerAccountId: '2', kind: 'channel', name: 'bravo' },
@@ -1136,6 +1136,280 @@ console.log('\nthings that must stay shut');
   const ok = await app.inject({ method: 'GET', url: `/api/habits/${guardId}/image` });
   check('an ordinary id still reads its own picture', ok.statusCode === 200 && ok.headers['content-type'] === 'image/png');
   await app.inject({ method: 'DELETE', url: `/api/habits/${guardId}` });
+}
+
+console.log('');
+console.log('one timer instead of two');
+{
+  const agentSees = async () =>
+    (await app.inject({ method: 'POST', url: '/api/voice/agent', payload: { listening: false } })).json();
+  const screenSees = async () => (await app.inject({ method: 'GET', url: '/api/voice/status' })).json();
+
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/settings',
+    payload: { voiceFollowUpSeconds: 6, voiceRetrySeconds: 12, voiceRetryMatchesFollowUp: false },
+  });
+  check('unticked, the agent gets both numbers', (await agentSees()).retryMs === 12_000, `${(await agentSees()).retryMs}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceRetryMatchesFollowUp: true } });
+  const linked = await agentSees();
+  check('ticked, a miss uses the answer time', linked.retryMs === 6_000, `${linked.retryMs}`);
+
+  /*
+   * The stored value is untouched. This is the whole reason it is resolved on
+   * read: unticking has to give back the number you chose, not whatever the
+   * follow-up happened to be — the same rule quiet hours follows for its times.
+   */
+  check('  ...and the stored one is left alone', (await screenSees()).retrySeconds === 12, `${(await screenSees()).retrySeconds}`);
+  check('  ...and the screen knows the box is ticked', (await screenSees()).retryMatchesFollowUp === true);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceFollowUpSeconds: 9 } });
+  check('moving the answer time moves the miss with it', (await agentSees()).retryMs === 9_000, `${(await agentSees()).retryMs}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceRetryMatchesFollowUp: false } });
+  check('unticking restores the number you had', (await agentSees()).retryMs === 12_000, `${(await agentSees()).retryMs}`);
+
+  /* Zero still means off, and linking it must not turn it back on. */
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/settings',
+    payload: { voiceFollowUpSeconds: 0, voiceRetryMatchesFollowUp: true },
+  });
+  check('zero stays off through the link', (await agentSees()).retryMs === 0, `${(await agentSees()).retryMs}`);
+
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/settings',
+    payload: { voiceFollowUpSeconds: 6, voiceRetrySeconds: 8, voiceRetryMatchesFollowUp: false },
+  });
+}
+
+console.log('');
+console.log('words that are not the wake word');
+{
+  const { parseWakeDecoys, MAX_WAKE_DECOYS } = await import('@everything/shared');
+
+  check('a plain list parses', parseWakeDecoys('harley, charlie').join('|') === 'harley|charlie');
+  check('spacing and case do not matter', parseWakeDecoys('  HARLEY ,charlie  ').join('|') === 'harley|charlie');
+  check('a two-word entry survives', parseWakeDecoys('harvest festival').join('|') === 'harvest festival');
+  check('punctuation is dropped rather than refused', parseWakeDecoys("harley's, char-lie").join('|') === 'harley s|char lie');
+  check('duplicates collapse', parseWakeDecoys('harley, harley').length === 1);
+  check('empty entries are ignored', parseWakeDecoys('harley,,, ,charlie').length === 2);
+
+  /*
+   * The wake word itself must never end up in the list: it would be asking the
+   * grammar to compete with itself, and the likeliest way for it to get there
+   * is somebody pasting the whole thing in to "block" it.
+   */
+  check('the wake word is removed', parseWakeDecoys('harley, hey jarvis', 'hey jarvis').join('|') === 'harley');
+  check('  ...whatever its case', parseWakeDecoys('HEY JARVIS', 'hey jarvis').length === 0);
+
+  /* Letters only — the parser strips digits, so `word1` and `word2` would both
+     collapse to `word` and the cap would look broken when the fixture was. */
+  const many = Array.from({ length: 40 }, (_, i) => `w${'a'.repeat(i + 1)}`).join(',');
+  check('the list is capped', parseWakeDecoys(many).length === MAX_WAKE_DECOYS, `${parseWakeDecoys(many).length}`);
+
+  /* It reaches the agent, and moves the version so the grammar is rebuilt. */
+  const before = (await app.inject({ method: 'GET', url: '/api/voice/config' })).json();
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { wakeDecoys: 'harley, harvest festival' } });
+  const after = (await app.inject({ method: 'GET', url: '/api/voice/config' })).json();
+
+  check('the decoys reach /api/voice/config', (after.wakeDecoys as string[]).join('|') === 'harley|harvest festival', JSON.stringify(after.wakeDecoys));
+  check('  ...and the version moves, so the grammar is rebuilt', after.version !== before.version);
+  check('  ...and they are dictionary-checked like a phrase', (after.checkWords as string[]).includes('harvest'));
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { wakeDecoys: '' } });
+  const cleared = (await app.inject({ method: 'GET', url: '/api/voice/config' })).json();
+  check('clearing them empties the list', (cleared.wakeDecoys as string[]).length === 0);
+}
+
+console.log('');
+console.log('setting a habit value by hand');
+{
+  /*
+   * Tapping the number on the Habits screen puts the tally at a value rather
+   * than nudging it. The interesting half is going *down*: entries can carry a
+   * count greater than one — "I drank three waters" is a single row — so the
+   * newest are removed until the sum fits and the remainder is re-inserted.
+   */
+  const made = await post('/api/habits', { name: 'Value probe', mode: 'target', targetPerPeriod: 20, cadence: 'daily' });
+  const id = made.json().id;
+
+  const setTo = async (value: number) =>
+    (await app.inject({ method: 'PUT', url: `/api/habits/${id}/value`, payload: { value } })).json();
+
+  check('it goes up from nothing', (await setTo(9)).doneThisPeriod === 9);
+  check('it comes back down', (await setTo(3)).doneThisPeriod === 3);
+  check('it reaches the target', (await setTo(20)).met === true);
+  check('and it reaches zero', (await setTo(0)).doneThisPeriod === 0);
+
+  /* One entry of five, then two of one — the shape the loop has to unpick. */
+  await setTo(5);
+  await post(`/api/habits/${id}/check`);
+  await post(`/api/habits/${id}/check`);
+  const seven = await app.inject({ method: 'GET', url: '/api/habits' });
+  check('five plus two ones is seven', (seven.json() as { id: string; doneThisPeriod: number }[]).find((h) => h.id === id)?.doneThisPeriod === 7);
+  check('dropping to six removes one of the ones', (await setTo(6)).doneThisPeriod === 6);
+  check('dropping to two must split the five', (await setTo(2)).doneThisPeriod === 2);
+
+  /* A PUT, so sending it twice is the same as sending it once — which is what
+     makes it safe for Enter and the blur that follows to both fire. */
+  check('setting the same value twice changes nothing', (await setTo(2)).doneThisPeriod === 2);
+
+  for (const bad of [-1, 1000, 2.5]) {
+    const refused = await app.inject({ method: 'PUT', url: `/api/habits/${id}/value`, payload: { value: bad } });
+    check(`${bad} is refused`, refused.statusCode === 400, `${refused.statusCode}`);
+  }
+  const missing = await app.inject({ method: 'PUT', url: '/api/habits/nope/value', payload: { value: 1 } });
+  check('an unknown habit is a 404', missing.statusCode === 404, `${missing.statusCode}`);
+
+  /* A gauge means the level, not a count of entries — and setting it records
+     no entry, because a correction is not a completion. */
+  const gaugeMade = await post('/api/habits', { name: 'Gauge probe', mode: 'gauge', gaugeDrainPerDay: 100, gaugeFillPerTick: 20 });
+  const gaugeId = gaugeMade.json().id;
+  const put = async (value: number) =>
+    (await app.inject({ method: 'PUT', url: `/api/habits/${gaugeId}/value`, payload: { value } })).json();
+
+  check('a gauge takes a level', (await put(35)).gaugeNow === 35);
+  check('  ...including empty', (await put(0)).gaugeNow === 0);
+  check('  ...and full', (await put(100)).gaugeNow === 100);
+  check('  ...without logging a completion', (await put(60)).doneThisPeriod === 0);
+
+  await app.inject({ method: 'DELETE', url: `/api/habits/${id}` });
+  await app.inject({ method: 'DELETE', url: `/api/habits/${gaugeId}` });
+}
+
+console.log('');
+console.log('packages (installing, switching, removing)');
+{
+  /*
+   * The disk work and the zip parser are proved by `modules-check`; this is the
+   * HTTP skin around them — the part that decides who is allowed to run any of
+   * it. Installing runs somebody else's code on this machine and removing
+   * deletes a folder from it, so the local-only gate is the check that matters
+   * most here.
+   */
+  const { modulesDir } = await import('../modules.js');
+  const { existsSync, rmSync } = await import('node:fs');
+  const { join } = await import('node:path');
+
+  const ID = 'smoke-probe-package';
+  const manifest = JSON.stringify({ id: ID, label: 'Smoke probe', blurb: 'Installed by the smoke suite.', version: '0.0.1' });
+
+  /* A stored (uncompressed) one-entry zip, built by hand so the suite needs no fixture file. */
+  const { crc32 } = await import('node:zlib');
+  const name = Buffer.from('module.json', 'utf8');
+  const body = Buffer.from(manifest, 'utf8');
+  const sum = crc32(body);
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt32LE(sum, 14);
+  local.writeUInt32LE(body.length, 18);
+  local.writeUInt32LE(body.length, 22);
+  local.writeUInt16LE(name.length, 26);
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt32LE(sum, 16);
+  central.writeUInt32LE(body.length, 20);
+  central.writeUInt32LE(body.length, 24);
+  central.writeUInt16LE(name.length, 28);
+  central.writeUInt32LE(0, 42);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(1, 8);
+  eocd.writeUInt16LE(1, 10);
+  eocd.writeUInt32LE(central.length + name.length, 12);
+  eocd.writeUInt32LE(local.length + name.length + body.length, 16);
+  const zip = Buffer.concat([local, name, body, central, name, eocd]).toString('base64');
+
+  /*
+   * What is on disk before this section runs, so the `finally` can prove none of
+   * it went missing. A test that can delete a package is a test that can delete
+   * the wrong one, and the way that failure presented — a wall of unrelated
+   * module-not-found errors in *other* suites — gave no hint at all about which
+   * check had done it.
+   */
+  const shippedBefore = (await import('../modules.js'))
+    .scanModules()
+    .filter((mod) => mod.shipped)
+    .map((mod) => mod.id);
+
+  try {
+    const listed = await app.inject({ method: 'GET', url: '/api/modules' });
+    check('the list answers', listed.statusCode === 200);
+    check('  ...and names the folder to a local caller', typeof listed.json().folder === 'string');
+
+    const installed = await app.inject({ method: 'POST', url: '/api/modules', payload: { data: zip, filename: 'probe.zip' } });
+    check('a zip installs', installed.statusCode === 200 && installed.json().id === ID, `${installed.statusCode} ${installed.body.slice(0, 120)}`);
+    check('  ...and lands in modules/', existsSync(join(modulesDir, ID, 'module.json')));
+
+    const after = (await app.inject({ method: 'GET', url: '/api/modules' })).json();
+    const row = (after.modules as { id: string; enabled: boolean; usable: boolean }[]).find((m) => m.id === ID);
+    check('it appears in the list', row !== undefined && row.usable);
+    check('  ...switched off, because it is code that arrived from outside', row?.enabled === false);
+
+    const on = await app.inject({ method: 'PATCH', url: `/api/modules/${ID}`, payload: { enabled: true } });
+    check('it can be switched on', on.statusCode === 200 && on.json().enabled === true);
+    check('  ...and says a restart is owed', on.json().pendingRestart === true);
+
+    /*
+     * The local-only gate is **not** tested here, and the reason is worth
+     * writing down rather than discovering twice.
+     *
+     * This file sets `AUTH_REQUIRED=false` at the top so the whole suite can
+     * run without minting a device, and `auth.ts` short-circuits on that by
+     * setting `isLocal = true` for every request before `isTrustedLocal` is
+     * ever consulted. So an injected request carrying a tailnet Host and
+     * `Sec-Fetch-Site: cross-site` is allowed in here — which looks exactly
+     * like a broken gate and is in fact a disabled one.
+     *
+     * Asserting a 403 here would therefore have been a test that could only
+     * fail, and asserting a 200 would enshrine the harness's own bypass as
+     * though it were the app's behaviour. The gate is exercised against a real
+     * socket instead, with auth on, where the header checks actually run.
+     */
+
+    /*
+     * An id that is not a package name must never reach the filesystem.
+     *
+     * **`vault` was in this list and it deleted the vault.** It was here as an
+     * example of a reserved id the route would refuse — true while the vault was
+     * a *feature*, and false the moment it became a package, at which point the
+     * suite cheerfully removed `packages/modules/vault` from the working tree
+     * and every later check failed with a module-not-found for a folder the test
+     * itself had just erased.
+     *
+     * So this list holds only shapes that can never name anything: a traversal,
+     * and an id belonging to something that is still a feature and has no folder
+     * at all. The names of real packages do not belong in a destructive test.
+     */
+    for (const nasty of ['..', '..%2F..%2Fpackages', 'habits']) {
+      const escaped = await app.inject({ method: 'DELETE', url: `/api/modules/${nasty}` });
+      check(`a crafted package id deletes nothing (${decodeURIComponent(nasty)})`, escaped.statusCode === 400 || escaped.statusCode === 404, `${escaped.statusCode}`);
+    }
+
+    const gone = await app.inject({ method: 'DELETE', url: `/api/modules/${ID}` });
+    check('it removes', gone.statusCode === 200 && !existsSync(join(modulesDir, ID)));
+
+    const junk = await app.inject({ method: 'POST', url: '/api/modules', payload: { data: Buffer.from('not a zip').toString('base64') } });
+    check('a file that is not a zip is refused', junk.statusCode === 400);
+    check('  ...with a reason worth reading', /not a zip/.test(junk.json().error ?? ''), junk.body.slice(0, 120));
+  } finally {
+    // Never leave a package behind: the next run would test a different app.
+    if (existsSync(join(modulesDir, ID))) rmSync(join(modulesDir, ID), { recursive: true, force: true });
+
+    const shippedAfter = (await import('../modules.js')).scanModules().filter((m) => m.shipped).map((m) => m.id);
+    const lost = shippedBefore.filter((id) => !shippedAfter.includes(id));
+    check(
+      'and this suite deleted none of the shipped packages',
+      lost.length === 0,
+      lost.length > 0 ? `lost ${lost.join(', ')} — restore with git checkout` : ''
+    );
+  }
 }
 
 await app.close();

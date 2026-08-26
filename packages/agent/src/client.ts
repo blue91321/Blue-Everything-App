@@ -21,6 +21,14 @@ export interface VoiceConfig {
   speakerThreshold: number;
   voiceprint: number[] | null;
   vocabulary: string[];
+  /**
+   * Words that keep being heard as the wake word but are not it.
+   *
+   * Optional so an older server — which sends no such field — is read as "none"
+   * rather than crashing the agent, the same treatment every other field added
+   * to this payload has had.
+   */
+  wakeDecoys?: string[];
   /** The literal phrase words, for the can-this-be-heard check. */
   checkWords?: string[];
   version: string;
