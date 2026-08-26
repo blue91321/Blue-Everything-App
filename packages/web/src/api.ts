@@ -366,6 +366,8 @@ export interface AppSettings {
    * `boolean` made `=== true` quietly false and the card never hid.
    */
   voiceRetryMatchesFollowUp?: number;
+  gameDetectionEnabled?: number;
+  interruptDuringGames?: number;
   overlayPlacement?: string;
   overlayScreen?: string | null;
   /** An emoji, `file` for an uploaded picture, or empty for none. */
@@ -710,6 +712,19 @@ export interface InstalledPackage {
   version: string;
   replaced: boolean;
   files: number;
+}
+
+/** One executable this machine has been seen running. */
+export interface Game {
+  exe: string;
+  label: string;
+  isGame: number;
+  /** 1 yes, 0 no, null follows `interruptDuringGames` — three states on purpose. */
+  allowInterruptions: number | null;
+  launchPath: string | null;
+  source: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
 }
 
 export interface Device {
@@ -1154,6 +1169,14 @@ export const api = {
    * the one control that has to keep working when a package has broken
    * something else.
    */
+  games: {
+    list: () => request<Game[]>('/api/games'),
+    update: (exe: string, patch: { label?: string; isGame?: boolean; allowInterruptions?: boolean | null; launchPath?: string | null }) =>
+      patch2<Game>(`/api/games/${encodeURIComponent(exe)}`, patch),
+    add: (exe: string, extra: { label?: string; launchPath?: string } = {}) => post<Game>('/api/games', { exe, ...extra }),
+    forget: (exe: string) => request<{ ok: boolean }>(`/api/games/${encodeURIComponent(exe)}`, { method: 'DELETE' }),
+  },
+
   restart: {
     status: () => request<{ available: boolean; local: boolean; script: string | null }>('/api/restart'),
     now: () => post<{ ok: boolean; restarting: boolean }>('/api/restart'),
@@ -1239,6 +1262,8 @@ export const api = {
       voiceInputDevice?: string | null;
       voiceFollowUpSeconds?: number;
       voiceRetryMatchesFollowUp?: boolean;
+      gameDetectionEnabled?: boolean;
+      interruptDuringGames?: boolean;
       voiceRetrySeconds?: number;
       overlayPlacement?: string;
       overlayScreen?: string | null;

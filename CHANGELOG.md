@@ -5,6 +5,25 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## Unreleased
+
+### A Games tab
+
+- **Settings → Games**: whether to notice games at all, whether one may be
+  interrupted, and the list of everything this PC has been seen running.
+- **The list fills itself in.** Rows appear because the agent saw a process run
+  or an app take the screen — the game list used to be a constant in the agent's
+  source plus an array in a config file, and a fullscreen app was written to a
+  console log and nowhere else.
+- **A fullscreen app is listed but not called a game.** Films and browsers go
+  fullscreen too, and guessing wrong means silently holding nudges back.
+- **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
+  the setting above. The most restrictive running game wins — being interrupted
+  mid-match is the failure this app exists to prevent.
+- The agent takes its list from the server now, so unticking something takes
+  effect rather than waiting for a restart. It costs no queries per poll and the
+  list is fetched only when its hash moves.
+
 ## 0.3.0
 
 Packages you can install, delete and restart into — and everything optional in

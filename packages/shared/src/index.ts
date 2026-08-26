@@ -39,6 +39,14 @@ export const attentionReportSchema = z.object({
   title: z.string().max(500).nullish(),
   idleMs: z.number().int().nonnegative().default(0),
   liveGames: z.array(z.string().max(260)).default([]),
+  /**
+   * The executable holding exclusive fullscreen, if any.
+   *
+   * Reported whether or not it is a known game, because that is exactly how an
+   * unknown one gets onto the list — it used to be written to the agent's
+   * console and nowhere else, which is no use to anybody looking at a screen.
+   */
+  fullscreenApp: z.string().max(260).nullish(),
   /** Windows' own Do Not Disturb / quiet time is switched on right now. */
   windowsDnd: z.boolean().default(false),
   /** Something has played sound recently — a video, a stream, a call. */
@@ -404,6 +412,55 @@ export const reorderSchema = z.object({ ids: z.array(z.string().uuid()).max(500)
  * Two words minimum: a single short word fires constantly on ordinary speech,
  * and the room is full of ordinary speech.
  */
+/**
+ * May a nudge break into a running game?
+ *
+ * Three states per game and one global default, resolved in one place so the
+ * sweep, the API and the settings screen cannot disagree — the same job
+ * `resolvePush` does for the phone and `quietReason` for going quiet.
+ *
+ * **The most restrictive running game wins.** With two games somehow live at
+ * once, or one whose row says "never" beside one that follows the default, the
+ * answer is no: being interrupted mid-match is the exact failure this whole app
+ * exists to prevent, and the cost of being wrong is asymmetric. A nudge held
+ * back arrives at the next stopping point a few minutes later; one let through
+ * lands in the middle of a fight.
+ */
+export function gamesAllowInterruption(
+  running: ReadonlyArray<{ allowInterruptions: number | null }>,
+  interruptByDefault: boolean
+): boolean {
+  if (running.length === 0) return true;
+  return running.every((game) =>
+    game.allowInterruptions === null ? interruptByDefault : game.allowInterruptions === 1
+  );
+}
+
+/** Turn `fortniteclient-win64-shipping.exe` into something readable. */
+export function labelForExe(exe: string): string {
+  const base = exe.replace(/\.exe$/i, '');
+  const trimmed = base
+    // Build-system noise every Unreal title carries, and nobody calls it that.
+    .replace(/[-_](win64|win32|shipping|x64|x86|final|retail)/gi, '')
+    .replace(/[-_.]+/g, ' ')
+    .trim();
+  const words = (trimmed || base).split(/\s+/).filter(Boolean);
+  /*
+   * Short words are upper-cased because they are nearly always initialisms here
+   * — cs2, gta5, rdr2 — but the handful that are ordinary English are not, or
+   * "league of legends" comes out as "League OF Legends". Only ever the *first*
+   * word escapes the exception, since a title starting with "of" is not a thing.
+   */
+  const LOWER = new Set(['of', 'the', 'and', 'a', 'an', 'to', 'in', 'at', 'on', 'for']);
+  return words
+    .map((word, i) => {
+      if (LOWER.has(word)) return i === 0 ? word[0]!.toUpperCase() + word.slice(1) : word;
+      if (word.length <= 3) return word.toUpperCase();
+      return word[0]!.toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
 export const wakeWordSchema = z
   .string()
   .min(3)
@@ -1799,6 +1856,8 @@ export const updateSettingsSchema = z.object({
   /** Seconds to keep listening after a miss. 0 means don't wait for a retry. */
   voiceRetrySeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
   voiceRetryMatchesFollowUp: z.boolean().optional(),
+  gameDetectionEnabled: z.boolean().optional(),
+  interruptDuringGames: z.boolean().optional(),
   overlayPlacement: overlayPlacementSchema.optional(),
   /** Device name of the screen to anchor to; null follows the mouse. */
   overlayScreen: z.string().max(200).nullish(),

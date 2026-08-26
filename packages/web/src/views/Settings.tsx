@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type AppSettings, type Device, type Session } from '../api';
 import { InstalledPackages } from './InstalledPackages';
+import { GamesTab } from './GamesTab';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
 import { panelChoices } from '../panels';
@@ -269,6 +270,7 @@ const TABS = [
   { id: 'general', label: 'General', hint: 'Appearance and reminders' },
   { id: 'notifications', label: 'Notifications', hint: 'Sound, quiet hours and the phone' },
   { id: 'devices', label: 'Devices', hint: 'Phones, browsers and the extension' },
+  { id: 'games', label: 'Games', hint: 'What counts as a game, and what may interrupt one' },
   { id: 'packages', label: 'Packages', hint: 'Which parts of the app run' },
 ] as const;
 
@@ -391,6 +393,7 @@ export function Settings({
       {tab === 'general' && <GeneralTab />}
       {tab === 'notifications' && <NotificationsTab session={session} />}
       {tab === 'devices' && <DevicesTab session={session} onChanged={onChanged} />}
+      {tab === 'games' && <GamesTab session={session} />}
       {tab === 'packages' && <PackagesTab session={session} />}
     </>
   );

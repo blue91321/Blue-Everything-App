@@ -504,6 +504,24 @@ export const settings = sqliteTable('settings', {
    */
   voiceRetryMatchesFollowUp: integer('voice_retry_matches_follow_up').notNull().default(0),
 
+  /**
+   * Watch for games at all.
+   *
+   * Off means the attention monitor never reports `in-game`, so a match looks
+   * like ordinary use and nudges arrive as they would at the desktop. It does
+   * not stop the *list* being kept — turning it back on should not mean
+   * rediscovering everything.
+   */
+  gameDetectionEnabled: integer('game_detection_enabled').notNull().default(1),
+  /**
+   * Whether a running game blocks nudges by default.
+   *
+   * Off is the behaviour this app was built around: `in-game` is not a moment,
+   * and only a passed deadline breaks through. A per-game `allowInterruptions`
+   * overrides it either way.
+   */
+  interruptDuringGames: integer('interrupt_during_games').notNull().default(0),
+
   /** Where the popup appears, and on which screen. Null screen = the mouse's. */
   overlayPlacement: text('overlay_placement').notNull().default('cursor'),
   overlayScreen: text('overlay_screen'),
@@ -1105,3 +1123,36 @@ export const schema = {
 
 /** Used by the health check to prove the database is actually reachable. */
 export const healthProbe = sql`select 1`;
+
+/**
+ * Games this machine has seen, and what to do about each.
+ *
+ * A record of what actually ran rather than a list to keep up to date: rows are
+ * created by the agent reporting what it saw, so the screen can only ever offer
+ * choices about things that genuinely happened here.
+ *
+ * The executable is the key. It is what the monitor has in hand — a window title
+ * changes with the map you are on, and a display name is something a person
+ * types afterwards.
+ */
+export const games = sqliteTable('games', {
+  /** Lowercase executable name, e.g. `cs2.exe`. */
+  exe: text('exe').primaryKey(),
+  label: text('label').notNull(),
+  /** Treat it as a game at all. Off makes it an ordinary app again. */
+  isGame: integer('is_game').notNull().default(1),
+  /**
+   * Let nudges through while it runs. **Null follows the global setting**, and
+   * the null is the design rather than laziness about a boolean: stamping every
+   * row with today's default would make changing that default later leave every
+   * game already on the list answering the old question, silently. The same
+   * three states `push_to_phone` has, for the same reason.
+   */
+  allowInterruptions: integer('allow_interruptions'),
+  /** Where to launch it, when known. */
+  launchPath: text('launch_path'),
+  /** `builtin`, `seen`, `fullscreen` or `manual` — how it got here. */
+  source: text('source').notNull().default('seen'),
+  firstSeenAt: integer('first_seen_at').notNull(),
+  lastSeenAt: integer('last_seen_at').notNull(),
+});

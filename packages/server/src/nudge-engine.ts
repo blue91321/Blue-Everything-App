@@ -20,11 +20,13 @@ import {
   type DeliverableNudge,
   type NudgeQuality,
   type StoppingQuality,
+  gamesAllowInterruption,
 } from '@everything/shared';
 import { db } from './db/client.js';
 import { habitEntries, habits, nudges, settings, tasks } from './db/schema.js';
 import { phones } from './push-port.js';
 import { periodKeyFor } from './routes/habits.js';
+import { runningGames } from './routes/games.js';
 
 /**
  * The one settings row, created on first read.
@@ -279,14 +281,41 @@ async function freshenForDelivery(winners: Winner[], now: number): Promise<Winne
   return kept;
 }
 
+/**
+ * The moment, once the game settings have had their say.
+ *
+ * `momentQuality` answers for a *state*; this answers for this install. A
+ * running game blocks nudges by default and always has — but detection can be
+ * switched off entirely, the default can be flipped, and a single game can be
+ * given its own answer, and all three have to land before the state is judged.
+ *
+ * Resolved by turning `in-game` into an ordinary moment rather than by teaching
+ * `momentQuality` about games: that function is the policy table this project
+ * keeps deliberately small and testable, and "which executables count" is not a
+ * fact about attention states.
+ */
+export async function resolveMoment(
+  report: AttentionReport,
+  prefs: Awaited<ReturnType<typeof getSettings>>
+): Promise<NudgeQuality | null> {
+  if (report.state !== 'in-game') return momentQuality(report.state, report.stoppingPoint);
+
+  // Detection off means a game is not a thing this install recognises, so the
+  // moment is judged as though it were ordinary use.
+  if (!prefs.gameDetectionEnabled) return momentQuality('free', report.stoppingPoint);
+
+  const running = await runningGames(report.liveGames);
+  const allowed = gamesAllowInterruption(running, Boolean(prefs.interruptDuringGames));
+  return momentQuality(allowed ? 'free' : 'in-game', report.stoppingPoint);
+}
+
 export async function collectDeliverable(
   report: AttentionReport,
   deviceId: string | null
 ): Promise<DeliveryResult> {
   const now = report.at ?? Date.now();
-  const moment = momentQuality(report.state, report.stoppingPoint);
-
   const prefs = await getSettings();
+  const moment = await resolveMoment(report, prefs);
   const quiet =
     quietReason(new Date(now), {
       quietHoursEnabled: Boolean(prefs.quietHoursEnabled),

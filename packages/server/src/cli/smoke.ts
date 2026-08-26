@@ -1139,6 +1139,66 @@ console.log('\nthings that must stay shut');
 }
 
 console.log('');
+console.log('games, and what may interrupt one');
+{
+  const report = (over: Partial<AttentionReport>) =>
+    post('/api/attention', { state: 'free', reason: 'games probe', idleMs: 0, liveGames: [], audioPlaying: false, windowsDnd: false, ...over });
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { quietHoursEnabled: false, gameDetectionEnabled: true, interruptDuringGames: false } });
+
+  /* Discovery: the agent reports what ran, and the list grows by itself. */
+  await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  const listed = async () => (await app.inject({ method: 'GET', url: '/api/games' })).json() as Array<{ exe: string; isGame: number; source: string; allowInterruptions: number | null }>;
+  const cs2 = (await listed()).find((g) => g.exe === 'cs2.exe');
+  check('a running game puts itself on the list', cs2 !== undefined);
+  check('  ...marked as a game', cs2?.isGame === 1);
+
+  /*
+   * A fullscreen app is recorded but NOT assumed to be a game. Films and
+   * browsers go fullscreen too, and guessing wrong means silently holding
+   * nudges back for something nobody would think to look at this list about.
+   */
+  await report({ state: 'in-game', liveGames: [], fullscreenApp: 'vlc.exe' });
+  const vlc = (await listed()).find((g) => g.exe === 'vlc.exe');
+  check('a fullscreen app is listed', vlc !== undefined, vlc?.source);
+  check('  ...but not called a game', vlc?.isGame === 0);
+
+  /* The interruption rule. */
+  await post('/api/nudges', { title: 'Mid-match', minQuality: 'any' });
+  const midMatch = await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  check('nothing interrupts a game by default', midMatch.json().deliver.length === 0, `${midMatch.json().deliver.length}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { interruptDuringGames: true } });
+  const allowed = await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  check('unless you say it may', allowed.json().deliver.some((n: { title: string }) => n.title === 'Mid-match'), JSON.stringify(allowed.json().deliver.map((n: {title:string}) => n.title)));
+
+  /* One game saying no outranks the global yes — the conservative direction. */
+  await app.inject({ method: 'PATCH', url: '/api/games/cs2.exe', payload: { allowInterruptions: false } });
+  await post('/api/nudges', { title: 'Held back', minQuality: 'any' });
+  const refused = await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  check('a game may still refuse on its own', !refused.json().deliver.some((n: {title:string}) => n.title === 'Held back'));
+
+  /* Detection off makes a match read as ordinary use. */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { gameDetectionEnabled: false } });
+  const undetected = await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  check('detection off lets everything through', undetected.json().deliver.some((n: {title:string}) => n.title === 'Held back'));
+
+  /* Not a game any more: unticking it removes it from the decision entirely. */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { gameDetectionEnabled: true, interruptDuringGames: false } });
+  await app.inject({ method: 'PATCH', url: '/api/games/cs2.exe', payload: { isGame: false, allowInterruptions: null } });
+  const watching = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json();
+  check('unticking takes it out of what the agent watches', !(watching.exes as string[]).includes('cs2.exe'), (watching.exes as string[]).join(','));
+
+  const before = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json().version;
+  await app.inject({ method: 'PATCH', url: '/api/games/cs2.exe', payload: { isGame: true } });
+  const after = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json().version;
+  check('the version moves when the list does', before !== after);
+
+  await app.inject({ method: 'DELETE', url: '/api/games/cs2.exe' });
+  await app.inject({ method: 'DELETE', url: '/api/games/vlc.exe' });
+}
+
+console.log('');
 console.log('one timer instead of two');
 {
   const agentSees = async () =>

@@ -4277,6 +4277,73 @@ last fifty every single time, and a Takeout file is the whole history every time
 Videos already known from a playlist sync keep the details they have, so an
 import can never downgrade a categorised track to a bare title.
 
+### Games: what counts as one, and what may interrupt it
+
+**Settings → Games.** The nudge engine's most consequential rule lives here —
+`in-game` has never been a moment, which is the whole reason this is a nudge
+engine rather than a to-do list — and until now that rule had no screen at all.
+The game list was a constant in `packages/agent/src/games.ts` plus an
+`extraGames` array in a config file on the PC, and an app that grabbed exclusive
+fullscreen was written to the agent's console and nowhere else.
+
+**The list is a record, not a configuration.** Rows appear because the agent
+reported something running or something taking the screen. Nothing to keep up to
+date; the shipped list seeds it so the screen is not empty before you have
+played anything.
+
+**A fullscreen app is recorded but not called a game.** Films, browsers and
+photo viewers all go fullscreen, and assuming otherwise means silently holding
+nudges back for something nobody would ever think to look at this list about.
+It is listed, so you can tick it if it *is* a game.
+
+**"Interrupt me during this one" is three-state** — yes, no, and follow the
+setting above. The null is the design, not laziness about a boolean: stamping
+every row with today's default would look identical on the day it was made and
+diverge silently forever after. `push_to_phone` made the same choice for the
+same reason, and `gamesAllowInterruption` in `shared` is the one place the three
+states become two.
+
+**The most restrictive running game wins.** Being interrupted mid-match is the
+exact failure this app exists to prevent, and the cost is asymmetric: a nudge
+held back arrives a few minutes later, one let through lands in a fight.
+
+**Resolved by rewriting the state, not by teaching `momentQuality` about games.**
+That function is the policy table this project keeps small and testable, and
+"which executables count" is not a fact about attention states. `resolveMoment`
+turns `in-game` into `free` when the settings allow it and hands that to the
+same table.
+
+#### The deadlock this shipped with for ten minutes
+
+The agent takes its list from the server now, so the screen can edit it — and
+`replaceKnownGames` suppresses any shipped game the server does not name, or
+unticking one would do nothing until a restart.
+
+With the shipped list living only in the agent, that produced: empty table →
+agent told to watch nothing → nothing detected → table stays empty. It reported
+itself as `watching 0 games` and looked exactly like detection being broken,
+which it was.
+
+`BUILTIN_GAMES` is in `shared` now, and the server seeds the table from it at
+boot — **insert-only**, so a game you switched off stays off rather than coming
+back on every restart. Both halves are needed: the seed makes the list non-empty,
+and insert-only makes it a floor rather than a reset.
+
+#### It costs nothing per poll
+
+The heartbeat arrives every two to fifteen seconds and names the same
+executables every time, so `recordSeen` keeps an in-memory set of what this
+process has already written and does nothing for anything seen in the last five
+minutes. The steady state — one game running for an hour — is zero queries, not
+one per poll, which is the row-per-tick cost the attention log was shaped to
+avoid arriving by a different door.
+
+The response carries a **hash of the list**, not the list: a hundred executables
+on every poll would be the same waste in bandwidth. The agent fetches
+`/api/games/watching` only when the hash moves. Hashed rather than counted, for
+the reason the voice vocabulary already learned — swapping one game for another
+leaves the count identical.
+
 ## Attention model
 
 `packages/agent/src/attention.ts` classifies each moment as `free`, `in-game`,

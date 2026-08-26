@@ -4,11 +4,12 @@ import { attentionReportSchema, isAwayFromPc } from '@everything/shared';
 import { db } from '../db/client.js';
 import { attentionSamples } from '../db/schema.js';
 import { changes } from '../events.js';
+import { gamesVersion, recordSeen } from './games.js';
 import {
   collectDeliverable,
   expireStaleNudges,
   getSettings,
-  momentQuality,
+  resolveMoment,
   sweepDueTasks,
   sweepHabitReminders,
 } from '../nudge-engine.js';
@@ -106,13 +107,39 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
     const result = await collectDeliverable(report, request.deviceId);
     const prefs = await getSettings();
 
+    /*
+     * Record what was running, so the Games screen has something to show.
+     *
+     * Cheap by design: `recordSeen` remembers what this process has already
+     * written and does nothing at all for an executable it has seen in the last
+     * five minutes, so the steady state — the same game running for an hour —
+     * costs no queries rather than one per poll.
+     *
+     * A fullscreen app is recorded as *not* a game. Films, browsers and photo
+     * viewers all go fullscreen, and assuming otherwise would silently start
+     * holding nudges back for something nobody would think to look at this list
+     * about.
+     */
+    await recordSeen([
+      ...report.liveGames.map((exe) => ({ exe, source: 'seen' as const, isGame: true })),
+      ...(report.fullscreenApp && !report.liveGames.includes(report.fullscreenApp)
+        ? [{ exe: report.fullscreenApp, source: 'fullscreen' as const, isGame: false }]
+        : []),
+    ]);
+
     // This endpoint fires every few seconds, so it announces changes only when
     // it genuinely made one — otherwise every open client would reload on a
     // timer, which is the polling this was meant to avoid.
     if (queueChanged || result.deliver.length > 0 || result.pushed > 0) changes.emitChange('nudges');
 
     return {
-      moment: momentQuality(report.state, report.stoppingPoint),
+      /*
+       * The same moment `collectDeliverable` judged by, not a second opinion.
+       * They were two calls to `momentQuality` and would have disagreed the
+       * moment the game settings came into it — the agent showing "in-game" on
+       * a screen while the engine had already decided it was interruptible.
+       */
+      moment: await resolveMoment(report, prefs),
       deliver: result.deliver,
       pushed: result.pushed,
       awayFromPc: result.awayFromPc,
@@ -123,6 +150,17 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
        * only request the agent always makes.
        */
       soundEnabled: Boolean(prefs.soundEnabled),
+      /*
+       * Game detection rides here for the same reason `soundEnabled` does: this
+       * is the one request the agent always makes, whatever is installed.
+       *
+       * The *version* rather than the list. A hundred executables on every poll
+       * would be the bandwidth equivalent of the row-per-tick cost this endpoint
+       * was shaped to avoid; the agent compares the hash and fetches the list
+       * only when it has actually moved.
+       */
+      gameDetectionEnabled: Boolean(prefs.gameDetectionEnabled),
+      gamesVersion: await gamesVersion(),
       /*
        * Which tone each moment gets. On the *attention* heartbeat for the same
        * reason the on/off switch is: popups are core, so an install with voice

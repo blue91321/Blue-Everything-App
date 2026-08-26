@@ -10,7 +10,8 @@
     "./features": "./src/features.ts",
     "./integrations": "./src/integrations.ts",
     "./modules": "./src/modules.ts",
-    "./sound": "./src/sound.ts"
+    "./sound": "./src/sound.ts",
+    "./games": "./src/games.ts"
   },
   "dependencies": {
     "zod": "^3.25.76"

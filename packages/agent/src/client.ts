@@ -14,6 +14,12 @@ import { agentConfig } from './config.js';
  * this is the client that fetches it, and `features/voice/` can be deleted.
  * Core must not reach into a folder that may be absent, even for a type.
  */
+/** The executables the server says are games. */
+export interface WatchedGames {
+  version: string;
+  exes: string[];
+}
+
 export interface VoiceConfig {
   enabled: boolean;
   wakeWord: string;
@@ -62,6 +68,14 @@ export interface AttentionResponse {
    * default for a setting that is on.
    */
   soundEnabled?: boolean;
+  /**
+   * Whether to watch for games at all, and a hash of which ones.
+   *
+   * Optional: a server older than the Games screen sends neither, and the agent
+   * must then behave exactly as it did — detecting, with the shipped list.
+   */
+  gameDetectionEnabled?: boolean;
+  gamesVersion?: string;
   /**
    * Which tone each moment gets, by name. Empty or absent means the default.
    *
@@ -197,6 +211,16 @@ export class ServerClient {
   /** Wake word, phrase vocabulary and the enrolled voiceprint. */
   voiceConfig(): Promise<VoiceConfig> {
     return this.request<VoiceConfig>('/api/voice/config');
+  }
+
+  /**
+   * The executables the server counts as games.
+   *
+   * Fetched only when the version on the heartbeat has moved, so the ordinary
+   * cost of this is nothing at all.
+   */
+  watchedGames(): Promise<WatchedGames> {
+    return this.request<WatchedGames>('/api/games/watching');
   }
 
   /**

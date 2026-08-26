@@ -134,6 +134,8 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         voiceFollowUpSeconds: body.voiceFollowUpSeconds,
         voiceRetrySeconds: body.voiceRetrySeconds,
         voiceRetryMatchesFollowUp: toInt(body.voiceRetryMatchesFollowUp),
+        gameDetectionEnabled: toInt(body.gameDetectionEnabled),
+        interruptDuringGames: toInt(body.interruptDuringGames),
         overlayPlacement: body.overlayPlacement,
         overlayScreen: body.overlayScreen,
         overlayAvatar: body.overlayAvatar,

@@ -70,6 +70,15 @@ export interface AttentionSnapshot {
   audioPlaying: boolean;
   /** Known game executables currently alive, whether focused or not. */
   liveGames: string[];
+  /**
+   * The executable holding exclusive fullscreen, if any.
+   *
+   * Reported every tick rather than announced once, because the server keeps the
+   * list now: the `unknown-fullscreen-app` event fired a single time per process
+   * lifetime and went to the console, which is no use to a screen somebody opens
+   * an hour later.
+   */
+  fullscreenApp: string | null;
 }
 
 /**
@@ -226,7 +235,11 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
       notificationState === NotificationState.QUIET_TIME ||
       notificationState === NotificationState.PRESENTATION_MODE;
     const audioPlaying = audioRecentlyPlaying(now).playing;
-    const base = { at, foreground, idleMs, notificationState, windowsDnd, audioPlaying, liveGames };
+    const fullscreenApp =
+      notificationState === NotificationState.RUNNING_D3D_FULL_SCREEN && foreground?.exe && !isLauncher(foreground.exe)
+        ? foreground.exe.toLowerCase()
+        : null;
+    const base = { at, foreground, idleMs, notificationState, windowsDnd, audioPlaying, liveGames, fullscreenApp };
 
     // Order matters. A live game outranks idleness: sitting in a death-cam
     // without touching the mouse is not the same as walking away, and firing a
