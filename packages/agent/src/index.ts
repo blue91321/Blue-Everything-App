@@ -216,9 +216,6 @@ monitor.on('stopping-point', (sp) => {
   console.log(`[${clock()}] stopping point (${sp.quality}): ${sp.reason}`);
 });
 
-monitor.on('unknown-fullscreen-app', (exe) => {
-  console.log(`[${clock()}] ${exe} held exclusive fullscreen but isn't in games.ts`);
-});
 
 /* ------------------------------------------------------------------ */
 /* Voice — optional, and loaded only if it is actually here            */

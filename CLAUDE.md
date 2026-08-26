@@ -4294,10 +4294,38 @@ you do. The built-in names still exist, in `shared`, purely so a game is
 That distinction is what the deadlock below is really about, and it is worth
 stating as a rule: **the agent recognises, the server records.**
 
-**A fullscreen app is recorded but not called a game.** Films, browsers and
-photo viewers all go fullscreen, and assuming otherwise means silently holding
-nudges back for something nobody would ever think to look at this list about.
-It is listed, so you can tick it if it *is* a game.
+#### How a game is found, and why the first answer was wrong
+
+Discovery originally hung off `RUNNING_D3D_FULL_SCREEN`, which is Windows'
+*exclusive* fullscreen flag. Most people play **borderless**, which never sets
+it — so an entire library was invisible and the only thing ever discovered was
+the rare game that grabs the display outright. Reported from real use, and the
+sort of bug that looks like nothing happening.
+
+Two signals replaced it, and they answer different halves of the question:
+
+- **The window covers its monitor** — `isFullScreen`, which is geometry rather
+  than a Windows flag, so borderless counts and exclusive fullscreen still does.
+  A *maximised* window does not, because it stops at the work area, which makes
+  this narrower than "a big window". Held for two consecutive snapshots, so a
+  transition or an installer flashing up does not get listed.
+- **The executable lives in a game library** — `looksLikeGameInstall`, matching
+  `steamapps/common`, `Epic Games`, `Riot Games`, `GOG`, `Xbox Games` and the
+  rest. This is by far the stronger signal, because it is true whatever shape
+  the window is.
+
+**Covering the screen gets it listed; the path is what switches it on.** A
+browser at F11 and a film both fill a monitor, so that alone can only ever make
+a candidate — while an executable under `steamapps/common` is a game whatever it
+looks like, and making somebody tick that would be busywork. Verified live: a
+borderless Warframe was found, switched on from its Steam path, and its location
+recorded, on a machine where the old check had found nothing at all.
+
+The markers are deliberately unambiguous. `Battle.net/` is the launcher's own
+folder rather than where Blizzard games install, and `WindowsApps/` holds every
+Store app including Notepad — **a marker that catches non-games is worse than
+one that misses games**, because a wrongly detected game silently holds your
+reminders back and nobody would think to blame this list for it.
 
 **"Interrupt me during this one" is three-state** — yes, no, and follow the
 setting above. The null is the design, not laziness about a boolean: stamping

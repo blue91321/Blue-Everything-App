@@ -19,7 +19,7 @@ import { relative } from '../format';
 /** What each `source` means, said plainly on the row. */
 const SOURCE_LABEL: Record<string, string> = {
   seen: 'seen running',
-  fullscreen: 'took over the screen',
+  fullscreen: 'filled the screen',
   manual: 'you added it',
 };
 
@@ -129,9 +129,13 @@ export function GamesTab({ session }: { session: Session }) {
         Detected here{watched.length > 0 ? ` · ${watched.length} treated as ${watched.length === 1 ? 'a game' : 'games'}` : ''}
       </h3>
       <div className="meta" style={{ marginBottom: 8 }}>
-        Only what has actually run on this PC. Nothing is listed because the app has heard of it — no
-        game names ship with the app, so this is a record rather than a catalogue of things you may not
-        even have installed.
+        Only what has actually run on this PC — no game names ship with the app, so this is a record
+        rather than a catalogue of things you may not have installed.
+      </div>
+      <div className="meta" style={{ marginBottom: 8 }}>
+        Anything that fills a whole monitor gets listed, borderless included. One installed under a game
+        library — Steam, Epic, Riot, GOG, Xbox — is switched on for you; anything else is listed switched
+        off, because films and browsers fill the screen too.
       </div>
 
       {games.length === 0 ? (

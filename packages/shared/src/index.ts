@@ -449,7 +449,12 @@ export function labelForExe(exe: string): string {
   const base = exe.replace(/\.exe$/i, '');
   const trimmed = base
     // Build-system noise every Unreal title carries, and nobody calls it that.
-    .replace(/[-_](win64|win32|shipping|x64|x86|final|retail)/gi, '')
+    /*
+     * Build-system noise, separated by a dot as well as a dash or underscore —
+     * `warframe.x64.exe` was the first real row this ever produced and came out
+     * as "Warframe X64".
+     */
+    .replace(/[-_.](win64|win32|shipping|x64|x86|final|retail)(?=$|[-_. ])/gi, '')
     .replace(/[-_.]+/g, ' ')
     .trim();
   const words = (trimmed || base).split(/\s+/).filter(Boolean);

@@ -20,6 +20,13 @@ files `npm version` does not touch.
 - **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
   the setting above. The most restrictive running game wins — being interrupted
   mid-match is the failure this app exists to prevent.
+- **Borderless games are found now.** Discovery hung off Windows' *exclusive*
+  fullscreen flag, which borderless never sets — so most of a library was
+  invisible. It uses window geometry instead (a maximised window still does not
+  count, since it stops at the work area), plus the install path.
+- **A game under Steam, Epic, Riot, GOG or Xbox is switched on for you.** Filling
+  the screen only gets something listed — films and browsers do that too — but an
+  executable living in a game library is a game whatever shape its window is.
 - **No game names ship with the app.** A row means "this ran here". The built-in
   names still exist so a game is *recognised* the first time it runs, but they
   never create a row — a list of titles you may not have installed buries the

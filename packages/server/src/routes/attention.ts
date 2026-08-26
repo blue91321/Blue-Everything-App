@@ -5,6 +5,7 @@ import { db } from '../db/client.js';
 import { attentionSamples } from '../db/schema.js';
 import { changes } from '../events.js';
 import { gamesVersion, recordSeen } from './games.js';
+import { looksLikeGameInstall } from '@everything/shared/games';
 import {
   collectDeliverable,
   expireStaleNudges,
@@ -123,7 +124,21 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
     await recordSeen([
       ...report.liveGames.map((exe) => ({ exe, source: 'seen' as const, isGame: true, path: report.gamePaths[exe] })),
       ...(report.fullscreenApp && !report.liveGames.includes(report.fullscreenApp)
-        ? [{ exe: report.fullscreenApp, source: 'fullscreen' as const, isGame: false, path: report.gamePaths[report.fullscreenApp] }]
+        ? [
+            {
+              exe: report.fullscreenApp,
+              source: 'fullscreen' as const,
+              /*
+               * Covering the screen gets it *listed*; the path is what switches
+               * it on. A browser at F11 and a film both cover the screen, so
+               * that alone can only ever be a candidate — but an executable
+               * living under `steamapps/common` is a game whatever shape its
+               * window is, and making you tick that would be busywork.
+               */
+              isGame: looksLikeGameInstall(report.gamePaths[report.fullscreenApp] ?? ''),
+              path: report.gamePaths[report.fullscreenApp],
+            },
+          ]
         : []),
     ]);
 

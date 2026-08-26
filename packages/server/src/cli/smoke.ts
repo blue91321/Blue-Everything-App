@@ -1157,14 +1157,36 @@ console.log('games, and what may interrupt one');
   check('  ...marked as a game', cs2?.isGame === 1);
 
   /*
-   * A fullscreen app is recorded but NOT assumed to be a game. Films and
-   * browsers go fullscreen too, and guessing wrong means silently holding
-   * nudges back for something nobody would think to look at this list about.
+   * An app covering the screen is recorded but NOT assumed to be a game. Films
+   * and browsers cover the screen too, and guessing wrong means silently holding
+   * nudges back for something nobody would think to blame this list for.
    */
-  await report({ state: 'in-game', liveGames: [], fullscreenApp: 'vlc.exe' });
+  const B = String.fromCharCode(92);
+  await report({
+    state: 'in-game',
+    liveGames: [],
+    fullscreenApp: 'vlc.exe',
+    gamePaths: { 'vlc.exe': `C:${B}Program Files${B}VideoLAN${B}VLC${B}vlc.exe` },
+  });
   const vlc = (await listed()).find((g) => g.exe === 'vlc.exe');
-  check('a fullscreen app is listed', vlc !== undefined, vlc?.source);
+  check('an app covering the screen is listed', vlc !== undefined, vlc?.source);
   check('  ...but not called a game', vlc?.isGame === 0);
+
+  /*
+   * Unless it lives where only games live. This is the signal that actually
+   * matters for a borderless window: nothing about the window shape says
+   * "game", and the install path says it plainly whatever shape it is.
+   */
+  await report({
+    state: 'in-game',
+    liveGames: [],
+    fullscreenApp: 'fsd.exe',
+    gamePaths: { 'fsd.exe': `D:${B}SteamLibrary${B}steamapps${B}common${B}Deep Rock Galactic${B}FSD.exe` },
+  });
+  const drg = (await listed()).find((g) => g.exe === 'fsd.exe');
+  check('one in a game library is switched on for you', drg?.isGame === 1, `isGame=${drg?.isGame}`);
+  check('  ...and the agent is told to watch it', ((await app.inject({ method: 'GET', url: '/api/games/watching' })).json().exes as string[]).includes('fsd.exe'));
+  await app.inject({ method: 'DELETE', url: '/api/games/fsd.exe' });
 
   /* The interruption rule. */
   await post('/api/nudges', { title: 'Mid-match', minQuality: 'any' });

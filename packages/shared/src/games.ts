@@ -45,3 +45,47 @@ export const BUILTIN_LAUNCHERS: string[] = [
   'galaxyclient.exe',
 ];
 
+/**
+ * Folders that only ever contain games.
+ *
+ * Matched against the executable's full path, and it is by far the strongest
+ * signal available — far better than anything about the window, because it is
+ * true whether the game is fullscreen, borderless, or in a little window in the
+ * corner of the screen.
+ *
+ * Written with forward slashes and matched against a normalised path, so the
+ * source carries no backslash escaping to get wrong.
+ *
+ * Deliberately unambiguous entries only. `Battle.net/` is the launcher's own
+ * folder rather than where Blizzard games install, and `WindowsApps/` holds
+ * every Store app including Notepad. A marker that catches non-games is worse
+ * than one that misses games: a wrongly detected "game" silently holds your
+ * reminders back, and nobody would think to blame this list for that.
+ */
+const LIBRARY_MARKERS = [
+  '/steamapps/common/',
+  '/epic games/',
+  '/gog galaxy/games/',
+  '/gog games/',
+  '/riot games/',
+  '/xboxgames/',
+  '/xbox games/',
+  '/origin games/',
+  '/ea games/',
+  '/ubisoft game launcher/games/',
+];
+
+/**
+ * Does this executable live somewhere only games live?
+ *
+ * Decides whether a newly discovered app is treated as a game outright or merely
+ * listed for you to say. Covering the screen gets it onto the list; the path is
+ * what switches it on.
+ */
+export function looksLikeGameInstall(exePath: string): boolean {
+  if (!exePath) return false;
+  // `split` on a one-character string rather than a regex, so this file carries
+  // exactly one escaped backslash and no character class to get wrong.
+  const path = exePath.toLowerCase().split(String.fromCharCode(92)).join('/');
+  return LIBRARY_MARKERS.some((marker) => path.includes(marker));
+}
