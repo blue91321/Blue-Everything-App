@@ -55,6 +55,22 @@ second step `npm version` does not do for you.
   The failure renders as a banner naming the package and quoting the error.
 - A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
 
+### Stop things that are not the wake word from waking it
+
+- **A list of words that keep setting it off**, on the Voice tab. They go into
+  the wake grammar so the recogniser has somewhere better to put that sound —
+  measured with `wake-falsing`: 1/14 false wakes down to 0/14, both real wakes
+  still firing. They are never matched against and can never trigger anything.
+- **Confidence gating was measured and rejected.** Per-word confidence is now
+  available, and in grammar mode it is 1.00 for everything — a forced match and
+  a real one score identically, because inside a closed grammar the chosen path
+  is the only path. `npm run wake-confidence` shows it.
+- **A generic word list was measured and rejected too.** 108 common English
+  words changed nothing; the competitor has to actually sound like the wake
+  word. That is why this is a list you fill in, and why it is cheap.
+- A decoy the model cannot pronounce gets the same dictionary warning a phrase
+  does, since Vosk drops unknown words without a murmur.
+
 ### Tap the number on the Habits screen to edit it
 
 - The value between − and + is now a button; pressing it turns it into a box.

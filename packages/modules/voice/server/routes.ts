@@ -35,6 +35,7 @@ import {
   type VoiceAgentReport,
   type VoiceCandidate,
   type VoiceHeard,
+  parseWakeDecoys,
 } from '@everything/shared';
 import { db } from '@everything/server/module-api';
 import { notes, settings, voiceCommands } from '@everything/server/module-api';
@@ -212,6 +213,12 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
     // far more accurate and far cheaper than open-ended transcription, which is
     // what makes an always-on microphone affordable at all.
     const words = vocabularyFor(commands, row.wakeWord);
+    /*
+     * Words that keep being *mis*heard as the wake word. They are not commands
+     * and are never matched against — they exist only so the wake grammar has
+     * somewhere better to put that sound than the one phrase it contains.
+     */
+    const decoys = parseWakeDecoys(row.wakeDecoys ?? '', row.wakeWord);
     // Checked against the model separately from the grammar: the grammar now
     // carries generated inflections, and warning that "waters" is unknown would
     // bury the one warning that matters under noise nobody typed.
@@ -224,7 +231,15 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       speakerThreshold: thresholdFraction(row.speakerThreshold),
       voiceprint: row.voiceprint ? (JSON.parse(row.voiceprint) as number[]) : null,
       vocabulary: words,
-      checkWords: literal,
+      wakeDecoys: decoys,
+      /*
+       * The decoys ride along here too. A word the model cannot pronounce is
+       * dropped by Vosk without a murmur, so a decoy nobody can say absorbs
+       * nothing and looks exactly like one that is working — the same silent
+       * failure the phrase words already have a warning for, reusing the same
+       * mechanism rather than growing a second one.
+       */
+      checkWords: [...literal, ...decoys.flatMap((d) => d.split(' '))],
       /**
        * Changes whenever anything above does. The agent compares this instead
        * of diffing the payload, so rebuilding the recognisers — which reloads a
@@ -235,7 +250,17 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
        * version would have left the agent listening for the old vocabulary
        * until something unrelated happened to bump it.
        */
-      version: createHash('sha256').update(`${row.wakeWord}\n${words.join(' ')}`).digest('hex').slice(0, 16),
+      version: createHash('sha256')
+        /*
+         * The decoys are hashed in too: they change the *wake* grammar, so
+         * leaving them out would leave the agent listening with the old one
+         * until something unrelated happened to move the hash.
+         */
+        .update(`${row.wakeWord}
+${words.join(' ')}
+${decoys.join(' ')}`)
+        .digest('hex')
+        .slice(0, 16),
     };
   });
 

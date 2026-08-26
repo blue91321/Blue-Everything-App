@@ -20,6 +20,15 @@ import { rms, SAMPLE_RATE } from '../mic.js';
 import { createRecogniser } from '../vosk.js';
 
 const WAKE = process.env.WAKE_WORD || 'hey jarvis';
+/**
+ * Words to put in the grammar beside the wake word, comma-separated.
+ *
+ *   WAKE_DECOYS="harvest,festival" npm run wake-falsing -w @everything/agent
+ *
+ * This is the whole point of the setting on the Voice tab, and it is here so
+ * the effect can be *measured* rather than argued about.
+ */
+const DECOYS = (process.env.WAKE_DECOYS ?? '').split(',').map((w) => w.trim()).filter(Boolean);
 const BLOCK = SAMPLE_RATE / 10;
 const SPEECH_FLOOR = 0.006;
 
@@ -35,6 +44,15 @@ const CHATTER = [
   'just give us a minute and we can sort it out',
   'that is not what i meant at all',
   'they always do this at the end of the month',
+  /*
+   * Reported from real use: a dog called Harley set it off repeatedly. It is
+   * two syllables with the same stress and a near-identical vowel, which is
+   * exactly the shape that beats `[unk]` in a grammar holding one real phrase.
+   */
+  'harley come here',
+  'where did harley go',
+  'harley stop that right now',
+  'charlie was asking about it earlier',
 ];
 
 const workDir = mkdtempSync(join(tmpdir(), 'everything-falsing-'));
@@ -78,7 +96,7 @@ interface Outcome {
  * measures a system nobody is running, which is worse than not measuring.
  */
 function run(audio: Int16Array): Outcome {
-  const wake = createRecogniser([WAKE], { withSpeaker: true });
+  const wake = createRecogniser([WAKE, ...DECOYS], { withSpeaker: true });
   const out: Outcome = { partial: false, live: false };
 
   let at = 0;

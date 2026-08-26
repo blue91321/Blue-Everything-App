@@ -344,6 +344,8 @@ export interface AppSettings {
    */
   voiceEnabled?: number;
   wakeWord?: string;
+  /** Comma-separated words that keep being heard as the wake word. */
+  wakeDecoys?: string;
   requireKnownSpeaker?: number;
   /** 0-1. Stored as whole percent; converted on the way out of the server. */
   speakerThreshold?: number;
@@ -1217,6 +1219,7 @@ export const api = {
       pushDefault?: boolean;
       voiceEnabled?: boolean;
       wakeWord?: string;
+      wakeDecoys?: string;
       requireKnownSpeaker?: boolean;
       speakerThreshold?: number;
       voiceInputDevice?: string | null;

@@ -453,6 +453,14 @@ export const settings = sqliteTable('settings', {
    * being checked — a switch claiming a protection it was not providing.
    */
   requireKnownSpeaker: integer('require_known_speaker').notNull().default(0),
+  /**
+   * Words that keep being heard *as* the wake word but are not it.
+   *
+   * Comma-separated, and they go into the wake grammar alongside the wake word
+   * — not to be matched, but so the decoder has a better home for that sound
+   * than the one real phrase it would otherwise be forced onto.
+   */
+  wakeDecoys: text('wake_decoys').notNull().default(''),
   speakerThreshold: integer('speaker_threshold_pct').notNull().default(55),
 
   /**

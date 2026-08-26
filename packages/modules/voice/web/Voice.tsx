@@ -71,6 +71,7 @@ function VoiceSettings({
 }) {
   const [saving, setSaving] = useState(false);
   const [draftWakeWord, setDraftWakeWord] = useState<string | null>(null);
+  const [draftDecoys, setDraftDecoys] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   async function update(payload: Parameters<typeof api.settings.update>[0]) {
@@ -109,6 +110,7 @@ function VoiceSettings({
   }
 
   const wakeWord = draftWakeWord ?? current.wakeWord;
+  const decoys = draftDecoys ?? current.wakeDecoys ?? '';
   // One word is allowed. It is a worse choice, not an invalid one — and it is
   // the choice that survives the recogniser dropping half the phrase, so the
   // screen advises rather than refuses.
@@ -120,6 +122,17 @@ function VoiceSettings({
    * nothing wakes at all, and every other diagnostic on this screen looks fine.
    * Only checks the *saved* one, since that is what the agent was asked about.
    */
+  /*
+   * A decoy the model cannot pronounce is dropped by Vosk without a word, which
+   * is the same silent failure the wake word already has a warning for — so it
+   * reuses the same list rather than growing a second mechanism.
+   */
+  const decoyUnknown = (look?.unknownWords ?? []).filter((word) =>
+    (current.wakeDecoys ?? '')
+      .toLowerCase()
+      .split(/[,\s]+/)
+      .includes(word)
+  );
   const wakeWordUnknown = (look?.unknownWords ?? []).filter((word) =>
     current.wakeWord.toLowerCase().split(/\s+/).includes(word)
   );
@@ -187,6 +200,58 @@ function VoiceSettings({
           )}
           <div className="meta" style={{ marginTop: 6 }}>
             Takes effect straight away — the status above will say what it's listening for.
+          </div>
+        </div>
+
+        {/*
+          Its own card, directly under the wake word, because it is only ever
+          about the wake word — not about commands, which have their own screen
+          and their own matcher.
+        */}
+        <div className="card">
+          <div className="title">Words that keep waking it by mistake</div>
+          <div className="meta" style={{ marginTop: 4 }}>
+            The recogniser is only allowed to answer with the wake word or "not that", so anything close
+            enough gets forced onto the wake word — a pet called Harley, a name, a phrase you say often.
+            Listing the real word here gives it somewhere better to put that sound.
+          </div>
+
+          <div className="row" style={{ marginTop: 8, gap: '.4rem' }}>
+            <div className="grow">
+              <input
+                value={decoys}
+                aria-label="Words that are not the wake word"
+                placeholder="harley, harvest, charlie"
+                onChange={(event) => setDraftDecoys(event.target.value)}
+              />
+            </div>
+            <button
+              className="btn"
+              disabled={saving || decoys.trim() === (current.wakeDecoys ?? '').trim()}
+              onClick={() =>
+                update({ wakeDecoys: decoys.trim().toLowerCase() }).then(() => setDraftDecoys(null))
+              }
+            >
+              Save
+            </button>
+          </div>
+
+          {decoyUnknown.length > 0 && (
+            <div className="meta urgent" style={{ marginTop: 6 }}>
+              ⚠ {decoyUnknown.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so
+              it cannot absorb anything. The same fix as for a wake word: two ordinary words beat one
+              invented one.
+            </div>
+          )}
+
+          <div className="meta" style={{ marginTop: 6 }}>
+            {/*
+              Said plainly, because the obvious reading of this box is "ignore
+              these", and it is not that. A decoy is never matched against — it
+              only ever competes for the sound.
+            */}
+            These are never treated as commands and can never trigger anything. They only compete for the
+            sound. Separate them with commas.
           </div>
         </div>
 

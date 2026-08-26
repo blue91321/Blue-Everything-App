@@ -258,7 +258,22 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     // wake word is the part reliably spoken at the microphone in a known
     // phrase, which makes it a far better speaker sample than a command that
     // might be two words long.
-    wake = createRecogniser([wakeWord], { withSpeaker: true });
+    /*
+     * The wake word, plus anything that keeps being heard *as* it.
+     *
+     * A closed grammar has to answer every sound with something it contains, so
+     * with one phrase and `[unk]` in it a near-miss has nowhere better to go —
+     * measured, "harvest festival" landing squarely on the wake word. Adding the
+     * real words gives the decoder a genuinely better acoustic path and it takes
+     * it: that line stopped waking the moment they were in the grammar, with
+     * every real wake still firing.
+     *
+     * A decoy is never *matched* against — `matchesWakeWord` only ever looks for
+     * the wake word — so it can absorb a sound but never trigger on one. And a
+     * generic list of 108 common English words was tried first and changed
+     * nothing: the competitor has to actually sound like the wake word.
+     */
+    wake = createRecogniser([wakeWord, ...(config.wakeDecoys ?? [])], { withSpeaker: true });
 
     // One space-joined string, not one entry per word — that is how a Vosk
     // grammar expresses "any sequence of these words". A list of separate

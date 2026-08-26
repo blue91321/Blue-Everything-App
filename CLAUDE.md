@@ -2544,6 +2544,53 @@ that, or trailing off after "jarvis" would file a note reading "jarvis".
 Verified across four deliveries: 600ms pause, 1.5s pause, run together, and run
 together at speed. All four deliver.
 
+### Words that are not the wake word
+
+Reported from real use: a dog called Harley kept waking it, and it was not the
+only thing. The cause is structural rather than a tuning mistake — **a closed
+grammar has to answer every sound with something it contains.** With one phrase
+and `[unk]` in it, a near-miss has nowhere better to go than the wake word, and
+`[unk]` is a weak competitor.
+
+`settings.wake_decoys` is a comma-separated list of words that keep being heard
+*as* the wake word. They go into the wake grammar beside it and are **never
+matched against** — `matchesWakeWord` only ever looks for the wake word — so a
+decoy can absorb a sound but can never trigger on one.
+
+`npm run wake-falsing -w @everything/agent` takes `WAKE_DECOYS=` so the effect is
+measured rather than argued about: **1/14 false wakes to 0/14**, with both real
+wakes still firing.
+
+**Two things were measured and rejected first**, and they are worth keeping
+written down because both are the obvious idea.
+
+- **Confidence gating does not work here.** `vosk_recognizer_set_words` is bound
+  now and per-word confidence is on `Utterance`, and in grammar mode it is
+  **1.00 for everything** — real wake words and forced ones alike. Inside a
+  closed grammar the chosen path is the only path, so there is no competing
+  hypothesis to be unsure against. A threshold would have rejected nothing and
+  cost real wakes. `npm run wake-confidence -w @everything/agent` prints the
+  numbers.
+- **A generic word list does not work either.** 108 common English words in the
+  grammar changed the false-wake count not at all: "harvest festival" still
+  landed on the wake word. It stopped only when *"harvest"* and *"festival"*
+  themselves were there. The competitor has to actually sound like the wake
+  word, which is why this is a list you fill in rather than one that ships —
+  and why it costs nothing, since it is a handful of words rather than a
+  vocabulary. The generic list also cost 1.49ms → 1.61ms per 100ms block for
+  that nothing.
+
+**The synthesiser cannot reproduce the report.** Windows TTS says "Harley" far
+too clearly for it to be mistaken, so `wake-falsing` shows it not firing while
+it fires in the room. That is a limit of the tool, not evidence against the
+report: the mechanism is the same one "harvest festival" demonstrates, which is
+reproducible. Slurred speech at a distance is simply not something this test can
+make.
+
+**A decoy the model cannot pronounce does nothing**, silently — Vosk drops words
+outside its lexicon. So decoys ride along in `checkWords` and get the same
+dictionary warning the phrase words already had, rather than a second mechanism.
+
 ### The grammar must be able to say what people actually say
 
 The matcher stems, so a stored `drink water` covers "I drank some water". The

@@ -19,7 +19,8 @@
     "voice-setup": "tsx ../modules/voice/agent/cli/voice-setup.ts",
     "voice-try": "tsx ../modules/voice/agent/cli/voice-try.ts",
     "voice-enrol": "tsx ../modules/voice/agent/cli/voice-enrol.ts",
-    "overlay-try": "tsx src/cli/overlay-try.ts"
+    "overlay-try": "tsx src/cli/overlay-try.ts",
+    "wake-confidence": "tsx ../modules/voice/agent/cli/wake-confidence.ts"
   },
   "dependencies": {
     "@everything/shared": "*",

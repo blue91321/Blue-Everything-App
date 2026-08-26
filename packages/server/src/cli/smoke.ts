@@ -1139,6 +1139,45 @@ console.log('\nthings that must stay shut');
 }
 
 console.log('');
+console.log('words that are not the wake word');
+{
+  const { parseWakeDecoys, MAX_WAKE_DECOYS } = await import('@everything/shared');
+
+  check('a plain list parses', parseWakeDecoys('harley, charlie').join('|') === 'harley|charlie');
+  check('spacing and case do not matter', parseWakeDecoys('  HARLEY ,charlie  ').join('|') === 'harley|charlie');
+  check('a two-word entry survives', parseWakeDecoys('harvest festival').join('|') === 'harvest festival');
+  check('punctuation is dropped rather than refused', parseWakeDecoys("harley's, char-lie").join('|') === 'harley s|char lie');
+  check('duplicates collapse', parseWakeDecoys('harley, harley').length === 1);
+  check('empty entries are ignored', parseWakeDecoys('harley,,, ,charlie').length === 2);
+
+  /*
+   * The wake word itself must never end up in the list: it would be asking the
+   * grammar to compete with itself, and the likeliest way for it to get there
+   * is somebody pasting the whole thing in to "block" it.
+   */
+  check('the wake word is removed', parseWakeDecoys('harley, hey jarvis', 'hey jarvis').join('|') === 'harley');
+  check('  ...whatever its case', parseWakeDecoys('HEY JARVIS', 'hey jarvis').length === 0);
+
+  /* Letters only — the parser strips digits, so `word1` and `word2` would both
+     collapse to `word` and the cap would look broken when the fixture was. */
+  const many = Array.from({ length: 40 }, (_, i) => `w${'a'.repeat(i + 1)}`).join(',');
+  check('the list is capped', parseWakeDecoys(many).length === MAX_WAKE_DECOYS, `${parseWakeDecoys(many).length}`);
+
+  /* It reaches the agent, and moves the version so the grammar is rebuilt. */
+  const before = (await app.inject({ method: 'GET', url: '/api/voice/config' })).json();
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { wakeDecoys: 'harley, harvest festival' } });
+  const after = (await app.inject({ method: 'GET', url: '/api/voice/config' })).json();
+
+  check('the decoys reach /api/voice/config', (after.wakeDecoys as string[]).join('|') === 'harley|harvest festival', JSON.stringify(after.wakeDecoys));
+  check('  ...and the version moves, so the grammar is rebuilt', after.version !== before.version);
+  check('  ...and they are dictionary-checked like a phrase', (after.checkWords as string[]).includes('harvest'));
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { wakeDecoys: '' } });
+  const cleared = (await app.inject({ method: 'GET', url: '/api/voice/config' })).json();
+  check('clearing them empties the list', (cleared.wakeDecoys as string[]).length === 0);
+}
+
+console.log('');
 console.log('setting a habit value by hand');
 {
   /*

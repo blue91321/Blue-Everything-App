@@ -1,0 +1,11 @@
+-- Words that are NOT the wake word, so the recogniser has somewhere to put them.
+--
+-- A closed grammar has to map every sound onto something it contains, and with
+-- only the wake word plus `[unk]` in it, a near-miss like a dog called Harley
+-- has nowhere better to go than the wake word. Measured: "harvest festival"
+-- woke it, and stopped the moment "harvest" and "festival" were in the grammar.
+--
+-- Empty by default, because the words that matter are the ones going off in
+-- *your* house — a generic list of common English words was measured and made
+-- no difference at all.
+ALTER TABLE `settings` ADD `wake_decoys` text DEFAULT '' NOT NULL;

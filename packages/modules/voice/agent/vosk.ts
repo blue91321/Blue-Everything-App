@@ -40,6 +40,7 @@ interface VoskApi {
   recognizerNew: (model: unknown, rate: number) => unknown;
   recognizerNewGrm: (model: unknown, rate: number, grammar: string) => unknown;
   setSpkModel: (recognizer: unknown, spkModel: unknown) => void;
+  setWords: (recognizer: unknown, words: number) => void;
   acceptWaveform: (recognizer: unknown, data: unknown, length: number) => number;
   result: (recognizer: unknown) => string;
   partialResult: (recognizer: unknown) => string;
@@ -78,6 +79,7 @@ function load(): VoskApi {
     recognizerNew: lib.func('void *vosk_recognizer_new(void *model, float rate)'),
     recognizerNewGrm: lib.func('void *vosk_recognizer_new_grm(void *model, float rate, const char *grammar)'),
     setSpkModel: lib.func('void vosk_recognizer_set_spk_model(void *recognizer, void *spkModel)'),
+    setWords: lib.func('void vosk_recognizer_set_words(void *recognizer, int words)'),
     acceptWaveform: lib.func('int vosk_recognizer_accept_waveform(void *recognizer, const void *data, int length)'),
     result: lib.func('const char *vosk_recognizer_result(void *recognizer)'),
     partialResult: lib.func('const char *vosk_recognizer_partial_result(void *recognizer)'),
@@ -166,6 +168,15 @@ export interface Utterance {
   speaker: number[] | null;
   /** Frames the embedding was computed over. Short ones are not worth trusting. */
   speakerFrames: number;
+  /**
+   * Per-word confidence, when the recogniser was built with `withWords`.
+   *
+   * Empty otherwise. This is the decoder saying how sure it is that *this* word
+   * is what it heard, and it is the only signal available for telling a clearly
+   * spoken wake word from a different word the grammar had nowhere better to
+   * put — which a closed grammar always has to do with something.
+   */
+  words: Array<{ word: string; confidence: number }>;
 }
 
 export interface Recogniser {
@@ -200,6 +211,8 @@ interface VoskResult {
   partial?: string;
   spk?: number[];
   spk_frames?: number;
+  /** Present only when `set_words` was enabled on this recogniser. */
+  result?: Array<{ word?: string; conf?: number }>;
 }
 
 function parse(json: string): Utterance {
@@ -207,7 +220,7 @@ function parse(json: string): Utterance {
   try {
     parsed = JSON.parse(json) as VoskResult;
   } catch {
-    return { text: '', speaker: null, speakerFrames: 0 };
+    return { text: '', speaker: null, speakerFrames: 0, words: [] };
   }
 
   return {
@@ -221,6 +234,15 @@ function parse(json: string): Utterance {
     text: (parsed.text ?? '').replace(/\[unk\]/g, ' ').replace(/\s+/g, ' ').trim(),
     speaker: Array.isArray(parsed.spk) ? parsed.spk : null,
     speakerFrames: parsed.spk_frames ?? 0,
+    /*
+     * `[unk]` is dropped here too. It carries a confidence like any other token
+     * and keeping it would drag the minimum down for an utterance whose *real*
+     * words were all heard perfectly well — which is the opposite of what a
+     * confidence gate is for.
+     */
+    words: (parsed.result ?? [])
+      .filter((entry) => typeof entry.word === 'string' && entry.word !== '[unk]')
+      .map((entry) => ({ word: entry.word!, confidence: typeof entry.conf === 'number' ? entry.conf : 1 })),
   };
 }
 
@@ -232,7 +254,10 @@ function parse(json: string): Utterance {
  * phrase — which for an always-on microphone means the wake word firing on
  * coughs, music, and half of every conversation.
  */
-export function createRecogniser(phrases: string[], options: { withSpeaker?: boolean } = {}): Recogniser {
+export function createRecogniser(
+  phrases: string[],
+  options: { withSpeaker?: boolean; withWords?: boolean } = {}
+): Recogniser {
   const vosk = load();
   const { speech, speaker } = models();
 
@@ -241,6 +266,12 @@ export function createRecogniser(phrases: string[], options: { withSpeaker?: boo
   if (!recogniser) throw new VoskUnavailable('vosk could not create a recogniser');
 
   if (options.withSpeaker && speaker) vosk.setSpkModel(recogniser, speaker);
+  /*
+   * Asked for per-word timings and confidences. Costs nothing at recognition
+   * time — the decoder already has them — and only changes the shape of the
+   * JSON that comes back.
+   */
+  if (options.withWords) vosk.setWords(recogniser, 1);
 
   let closed = false;
 
@@ -271,7 +302,7 @@ export function createRecogniser(phrases: string[], options: { withSpeaker?: boo
     },
 
     flush(): Utterance {
-      if (closed) return { text: '', speaker: null, speakerFrames: 0 };
+      if (closed) return { text: '', speaker: null, speakerFrames: 0, words: [] };
       return parse(vosk.finalResult(recogniser));
     },
 
