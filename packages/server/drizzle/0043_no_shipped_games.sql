@@ -1,0 +1,14 @@
+-- Ship no game names. Only what actually ran here belongs on the list.
+--
+-- The previous migration's companion code seeded this table from the built-in
+-- list at boot, so a fresh install opened the Games screen to sixteen titles it
+-- had never seen — most of them not installed. A list of things you do not have
+-- is not a record of anything, and it buries the two you do.
+--
+-- The built-in names are still *known* to the agent, because that is how a game
+-- is recognised the first time it runs. They simply no longer create rows: a row
+-- means "this ran here".
+--
+-- Only `builtin` rows go. Anything seen, added by hand, or that took the screen
+-- is a real observation and is left alone.
+DELETE FROM `games` WHERE `source` = 'builtin';

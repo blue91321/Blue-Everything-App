@@ -1175,6 +1175,9 @@ export const api = {
       patch2<Game>(`/api/games/${encodeURIComponent(exe)}`, patch),
     add: (exe: string, extra: { label?: string; launchPath?: string } = {}) => post<Game>('/api/games', { exe, ...extra }),
     forget: (exe: string) => request<{ ok: boolean }>(`/api/games/${encodeURIComponent(exe)}`, { method: 'DELETE' }),
+    /** Local-only: the path comes from the row, never from the caller. */
+    launch: (exe: string) => post<{ ok: boolean; launched: string }>(`/api/games/${encodeURIComponent(exe)}/launch`),
+    showFolder: (exe: string) => post<{ ok: boolean; folder: string }>(`/api/games/${encodeURIComponent(exe)}/folder`),
   },
 
   restart: {

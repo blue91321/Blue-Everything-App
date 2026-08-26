@@ -18,7 +18,6 @@ import { relative } from '../format';
 
 /** What each `source` means, said plainly on the row. */
 const SOURCE_LABEL: Record<string, string> = {
-  builtin: 'ships with the app',
   seen: 'seen running',
   fullscreen: 'took over the screen',
   manual: 'you added it',
@@ -80,8 +79,14 @@ export function GamesTab({ session }: { session: Session }) {
           <div className="grow">
             <div className="title">Notice when I'm in a game</div>
             <div className="meta" style={{ marginTop: 4 }}>
+              {/*
+                Deliberately not "watching for N games". The app recognises the
+                common ones already — that is how anything gets onto the list at
+                all — so a count of *rows* would read as "it only knows about
+                these", which is the opposite of true when the list is empty.
+              */}
               {detecting
-                ? `Watching for ${watched.length} ${watched.length === 1 ? 'game' : 'games'}. A match reads as "in a game" and the queue waits for it to end.`
+                ? 'A match reads as "in a game" and the queue waits for it to end. Common games are recognised already; anything else is learned the first time it runs.'
                 : 'Off — a match looks like ordinary desktop use, so nudges arrive during one. The list below is kept either way.'}
             </div>
           </div>
@@ -120,15 +125,19 @@ export function GamesTab({ session }: { session: Session }) {
         </div>
       </div>
 
-      <h3 className="pkg-head">Detected here</h3>
+      <h3 className="pkg-head">
+        Detected here{watched.length > 0 ? ` · ${watched.length} treated as ${watched.length === 1 ? 'a game' : 'games'}` : ''}
+      </h3>
       <div className="meta" style={{ marginBottom: 8 }}>
-        Everything this PC has been seen running or taking over the screen with. Nothing to keep up to
-        date — it fills itself in.
+        Only what has actually run on this PC. Nothing is listed because the app has heard of it — no
+        game names ship with the app, so this is a record rather than a catalogue of things you may not
+        even have installed.
       </div>
 
       {games.length === 0 ? (
         <div className="empty">
-          Nothing yet. Play something and it will appear — the agent has to see it run.
+          Nothing yet — nothing is listed until it has actually run here. Start a game and it appears
+          within a few seconds.
         </div>
       ) : (
         games.map((game) => (
@@ -140,6 +149,8 @@ export function GamesTab({ session }: { session: Session }) {
             interruptByDefault={interrupting}
             onChange={(patch) => void run(() => api.games.update(game.exe, patch))}
             onForget={() => void run(() => api.games.forget(game.exe))}
+            onLaunch={() => void run(() => api.games.launch(game.exe))}
+            onShowFolder={() => void run(() => api.games.showFolder(game.exe))}
           />
         ))
       )}
@@ -165,6 +176,8 @@ function GameRow({
   interruptByDefault,
   onChange,
   onForget,
+  onLaunch,
+  onShowFolder,
 }: {
   game: Game;
   local: boolean;
@@ -172,6 +185,8 @@ function GameRow({
   interruptByDefault: boolean;
   onChange: (patch: { isGame?: boolean; allowInterruptions?: boolean | null; label?: string }) => void;
   onForget: () => void;
+  onLaunch: () => void;
+  onShowFolder: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -189,6 +204,34 @@ function GameRow({
           <div className="meta" style={{ marginTop: 2 }}>
             {SOURCE_LABEL[game.source] ?? game.source} · last seen {relative(game.lastSeenAt)}
           </div>
+
+          {/*
+            The path, and the two things worth doing with it. Both are absent
+            rather than disabled until it is known: the path fills itself in the
+            first time the game runs, and a greyed-out Run beside a game you have
+            played would be a puzzle rather than a hint.
+          */}
+          {game.launchPath ? (
+            <>
+              <div className="meta truncate" style={{ marginTop: 2 }} title={game.launchPath}>
+                {game.launchPath}
+              </div>
+              {local && (
+                <div className="row" style={{ gap: '.35rem', marginTop: 6 }}>
+                  <button className="btn subtle" disabled={busy} onClick={onLaunch}>
+                    Run
+                  </button>
+                  <button className="btn subtle" disabled={busy} onClick={onShowFolder}>
+                    Show folder
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="meta" style={{ marginTop: 2 }}>
+              Where it lives is filled in the next time it runs.
+            </div>
+          )}
         </div>
 
         <div className="row" style={{ gap: '.4rem', alignItems: 'center', flex: 'none' }}>

@@ -29,6 +29,7 @@ import {
   NotificationState,
   notificationStateName,
   type ForegroundWindowInfo,
+  exePathForPid,
 } from './win32.js';
 import { audioRecentlyPlaying } from './audio.js';
 import { isGame, isLauncher } from './games.js';
@@ -79,6 +80,15 @@ export interface AttentionSnapshot {
    * an hour later.
    */
   fullscreenApp: string | null;
+  /**
+   * Full paths for the live games, keyed by executable.
+   *
+   * Read from the PID the monitor is already tracking, so it costs one call per
+   * game per snapshot and only while one is running. It is what makes "run this"
+   * and "show me where it is" possible at all — the executable *name* is enough
+   * to recognise a game and useless for launching one.
+   */
+  gamePaths: Record<string, string>;
 }
 
 /**
@@ -239,7 +249,27 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
       notificationState === NotificationState.RUNNING_D3D_FULL_SCREEN && foreground?.exe && !isLauncher(foreground.exe)
         ? foreground.exe.toLowerCase()
         : null;
-    const base = { at, foreground, idleMs, notificationState, windowsDnd, audioPlaying, liveGames, fullscreenApp };
+    const gamePaths: Record<string, string> = {};
+    for (const [exe, pid] of this.trackedGames) {
+      const path = exePathForPid(pid);
+      if (path) gamePaths[exe] = path;
+    }
+    if (fullscreenApp && foreground?.pid) {
+      const path = exePathForPid(foreground.pid);
+      if (path) gamePaths[fullscreenApp] = path;
+    }
+
+    const base = {
+      at,
+      foreground,
+      idleMs,
+      notificationState,
+      windowsDnd,
+      audioPlaying,
+      liveGames,
+      fullscreenApp,
+      gamePaths,
+    };
 
     // Order matters. A live game outranks idleness: sitting in a death-cam
     // without touching the mouse is not the same as walking away, and firing a

@@ -17,7 +17,10 @@ import { agentConfig } from './config.js';
 /** The executables the server says are games. */
 export interface WatchedGames {
   version: string;
+  /** Names the agent would not otherwise know. */
   exes: string[];
+  /** Names it knows and must stop treating as games. Absent on an older server. */
+  off?: string[];
 }
 
 export interface VoiceConfig {

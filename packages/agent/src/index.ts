@@ -25,7 +25,7 @@ import { isAwayFromPc, type AttentionReport } from '@everything/shared';
 import { AttentionMonitor, type AttentionSnapshot, type StoppingPoint } from './attention.js';
 import { ServerClient, ServerUnreachable } from './client.js';
 import { agentConfig, assertConfigured } from './config.js';
-import { registerExtraGames, replaceKnownGames, setGameDetection } from './games.js';
+import { applyServerGames, registerExtraGames, setGameDetection } from './games.js';
 import * as popup from './popup.js';
 import { setSoundEnabled, setTones } from './sound.js';
 import { createTray, runAppScript, type Tray } from './tray.js';
@@ -82,6 +82,7 @@ function toReport(snapshot: AttentionSnapshot, stoppingPoint: StoppingPoint | nu
     idleMs: snapshot.idleMs,
     liveGames: snapshot.liveGames,
     fullscreenApp: snapshot.fullscreenApp,
+    gamePaths: snapshot.gamePaths,
     windowsDnd: snapshot.windowsDnd,
     audioPlaying: snapshot.audioPlaying,
     stoppingPoint: stoppingPoint ? { quality: stoppingPoint.quality, reason: stoppingPoint.reason } : null,
@@ -127,9 +128,11 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
     if (gamesVersion && gamesVersion !== knownGamesVersion) {
       try {
         const watched = await client.watchedGames();
-        replaceKnownGames(watched.exes);
+        applyServerGames(watched.exes, watched.off ?? []);
         knownGamesVersion = watched.version;
-        console.log(`[${clock()}] watching ${watched.exes.length} games`);
+        console.log(
+          `[${clock()}] games: ${watched.exes.length} added, ${(watched.off ?? []).length} switched off`
+        );
       } catch {
         /*
          * Left for the next tick rather than retried here. The version is

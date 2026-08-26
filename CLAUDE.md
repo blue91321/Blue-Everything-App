@@ -4286,10 +4286,13 @@ The game list was a constant in `packages/agent/src/games.ts` plus an
 `extraGames` array in a config file on the PC, and an app that grabbed exclusive
 fullscreen was written to the agent's console and nowhere else.
 
-**The list is a record, not a configuration.** Rows appear because the agent
-reported something running or something taking the screen. Nothing to keep up to
-date; the shipped list seeds it so the screen is not empty before you have
-played anything.
+**No game names ship onto the list.** A row means "this ran here" — anything
+else is a catalogue of titles you may not have installed, which buries the two
+you do. The built-in names still exist, in `shared`, purely so a game is
+*recognised* the first time it runs; they never create a row.
+
+That distinction is what the deadlock below is really about, and it is worth
+stating as a rule: **the agent recognises, the server records.**
 
 **A fullscreen app is recorded but not called a game.** Films, browsers and
 photo viewers all go fullscreen, and assuming otherwise means silently holding
@@ -4313,21 +4316,48 @@ That function is the policy table this project keeps small and testable, and
 turns `in-game` into `free` when the settings allow it and hands that to the
 same table.
 
-#### The deadlock this shipped with for ten minutes
+#### The deadlock, and the fix that was worse than the bug
 
-The agent takes its list from the server now, so the screen can edit it — and
-`replaceKnownGames` suppresses any shipped game the server does not name, or
-unticking one would do nothing until a restart.
+The agent takes its list from the server so the screen can edit it, and it has
+to *suppress* anything the screen unticks — otherwise unticking would do nothing
+until a restart.
 
-With the shipped list living only in the agent, that produced: empty table →
-agent told to watch nothing → nothing detected → table stays empty. It reported
-itself as `watching 0 games` and looked exactly like detection being broken,
-which it was.
+Written as "watch exactly these", that produced: empty table → agent watching
+nothing → nothing detected → table stays empty. It reported itself as
+`watching 0 games`.
 
-`BUILTIN_GAMES` is in `shared` now, and the server seeds the table from it at
-boot — **insert-only**, so a game you switched off stays off rather than coming
-back on every restart. Both halves are needed: the seed makes the list non-empty,
-and insert-only makes it a floor rather than a reset.
+**The first fix was to seed the table from the built-in list, and it was wrong.**
+It cured the deadlock and filled a fresh install's screen with sixteen titles the
+machine had never run — a list of games you do not own, which is exactly what
+this screen should not be.
+
+So the server **overrides** rather than replaces: `exes` adds names the agent
+would not know, `off` removes ones the screen has unticked, and the shipped list
+stays where it is as recognition. An empty table now means "nothing has run yet",
+which is true, rather than "watch nothing", which was fatal.
+
+Both halves of the version hash matter for the same reason: unticking a *shipped*
+game removes nothing from `exes`, so hashing only the watch list would leave the
+change never reaching the agent.
+
+
+#### Run it, or see where it lives
+
+Each row carries the executable's full path, read from the PID the monitor is
+already tracking — so it costs one call per game per snapshot, only while one is
+running, and only until the path is known.
+
+**The path is never taken from the caller.** `POST /api/games/:exe/launch` reads
+it from the row, which the agent filled in by watching that executable actually
+run here; a route that accepted a path would be a remote "run anything" button
+wearing a game's name. Local-only on top of that, and `cmd /c start` with the
+game's own folder as the working directory, since plenty of games look for files
+beside themselves.
+
+Filling a path in had to bypass the write cache, which is the one non-obvious
+part: a row created before paths existed is "recently written", so every
+heartbeat carrying its location was skipped and the Run button would never have
+appeared — on precisely the rows an upgraded install starts with.
 
 #### It costs nothing per poll
 

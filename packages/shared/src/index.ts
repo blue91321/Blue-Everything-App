@@ -47,6 +47,14 @@ export const attentionReportSchema = z.object({
    * console and nowhere else, which is no use to anybody looking at a screen.
    */
   fullscreenApp: z.string().max(260).nullish(),
+  /**
+   * Where each live game actually lives on disk, keyed by executable.
+   *
+   * The name recognises a game; the path is what lets the screen open its folder
+   * or start it. Recorded when first seen rather than asked for later, because
+   * the only moment this is cheaply knowable is while the process is running.
+   */
+  gamePaths: z.record(z.string(), z.string().max(500)).default({}),
   /** Windows' own Do Not Disturb / quiet time is switched on right now. */
   windowsDnd: z.boolean().default(false),
   /** Something has played sound recently — a video, a stream, a call. */

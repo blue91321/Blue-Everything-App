@@ -12,11 +12,13 @@
  * how this install behaves.
  */
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { labelForExe } from '@everything/shared';
-import { BUILTIN_GAMES } from '@everything/shared/games';
 import { db } from '../db/client.js';
 import { games } from '../db/schema.js';
 import { changes } from '../events.js';
@@ -47,8 +49,18 @@ const TOUCH_AFTER_MS = 5 * 60 * 1000;
  */
 const writtenAt = new Map<string, number>();
 
+/**
+ * Executables whose path this process has already stored.
+ *
+ * Without it the cache above swallows the one report that could fill a path in:
+ * a row created before paths existed is "recently written", so every heartbeat
+ * carrying its location is skipped and the Run button never appears. Which is
+ * exactly the state every row on an upgraded install starts in.
+ */
+const pathKnown = new Set<string>();
+
 export async function recordSeen(
-  seen: Array<{ exe: string; source: GameSource; isGame: boolean }>,
+  seen: Array<{ exe: string; source: GameSource; isGame: boolean; path?: string }>,
   now = Date.now()
 ): Promise<void> {
   if (seen.length === 0) return;
@@ -56,6 +68,9 @@ export async function recordSeen(
   const fresh = seen.filter((entry) => {
     const exe = entry.exe.toLowerCase();
     if (!exe) return false;
+    // A path we have not stored yet is always worth a look, however recently
+    // this row was touched.
+    if (entry.path && !pathKnown.has(exe)) return true;
     const at = writtenAt.get(exe);
     return at === undefined || now - at >= TOUCH_AFTER_MS;
   });
@@ -71,6 +86,8 @@ export async function recordSeen(
     writtenAt.set(exe, now);
     const row = known.get(exe);
 
+    if (entry.path) pathKnown.add(exe);
+
     if (!row) {
       await db.insert(games).values({
         exe,
@@ -85,6 +102,7 @@ export async function recordSeen(
          */
         isGame: entry.isGame ? 1 : 0,
         source: entry.source,
+        launchPath: entry.path ?? null,
         firstSeenAt: now,
         lastSeenAt: now,
       });
@@ -92,8 +110,23 @@ export async function recordSeen(
       continue;
     }
 
-    if (now - row.lastSeenAt >= TOUCH_AFTER_MS) {
-      await db.update(games).set({ lastSeenAt: now }).where(eq(games.exe, exe));
+    if (now - row.lastSeenAt >= TOUCH_AFTER_MS || (entry.path && !row.launchPath)) {
+      /*
+       * The path is filled in the first time it is known, and never overwritten
+       * — a game moved to another drive would otherwise silently keep the old
+       * one, and a path you typed yourself should not be replaced by wherever
+       * the process happened to be launched from.
+       */
+      await db
+        .update(games)
+        .set({ lastSeenAt: now, ...(entry.path && !row.launchPath ? { launchPath: entry.path } : {}) })
+        .where(eq(games.exe, exe));
+      if (entry.path && !row.launchPath) changed = true;
+    } else if (entry.path && !row.launchPath) {
+      // Not due a touch, but the path is new — the whole reason this entry got
+      // past the cache above.
+      await db.update(games).set({ launchPath: entry.path }).where(eq(games.exe, exe));
+      changed = true;
       /*
        * Deliberately *not* announced. This fires every five minutes while
        * something is running and says nothing anybody is watching for — waking
@@ -138,8 +171,17 @@ export function forgetGameVersion(): void {
 
 export async function gamesVersion(): Promise<string> {
   if (versionCache !== null) return versionCache;
-  const exes = await gameExecutables();
-  versionCache = createHash('sha256').update(exes.sort().join(' ')).digest('hex').slice(0, 16);
+  const [exes, off] = await Promise.all([gameExecutables(), suppressedExecutables()]);
+  /*
+   * Both halves are hashed. Unticking a *shipped* game removes nothing from
+   * `exes` — the agent knew that name already — so a hash of the watch list
+   * alone would not move, and the change would never reach the agent.
+   */
+  versionCache = createHash('sha256')
+    .update(`${exes.sort().join(' ')}
+${off.sort().join(' ')}`)
+    .digest('hex')
+    .slice(0, 16);
   return versionCache;
 }
 
@@ -150,36 +192,26 @@ export async function gameExecutables(): Promise<string[]> {
 }
 
 /**
- * Put the shipped games on the list, once.
+ * Executables the screen has explicitly said are *not* games.
  *
- * Without this the table starts empty, the agent is told to watch nothing, and
- * nothing is ever detected to fill the table — a deadlock that reports itself
- * as `watching 0 games` and looks exactly like detection being broken, which it
- * is. Seeding also means the screen has something on it before you have played
- * anything, which is the difference between "here is what I watch for" and an
- * empty box.
+ * Sent to the agent alongside the list, and it is what replaced seeding this
+ * table from the built-in names.
  *
- * Only ever *inserts*. A game you unticked must stay unticked across restarts,
- * so an existing row is never touched — the seed is a floor, not a reset.
+ * The agent knows the shipped list — that is how a game is recognised the first
+ * time it runs — so the server cannot simply hand over "watch these": an empty
+ * table would mean watch nothing, nothing would be detected, and the table would
+ * stay empty. That deadlock shipped once and reported itself as
+ * `watching 0 games`.
+ *
+ * Seeding fixed it and was the wrong fix: it filled the screen with sixteen
+ * titles this machine had never run. So the agent keeps its own list for
+ * *recognition* and the server only ever overrides it — additions in `exes`,
+ * removals here. A row appears when something actually runs, which is the only
+ * thing that makes the list a record rather than a catalogue.
  */
-export async function seedBuiltinGames(now = Date.now()): Promise<void> {
-  const existing = await db.select({ exe: games.exe }).from(games);
-  const known = new Set(existing.map((row) => row.exe));
-
-  const missing = BUILTIN_GAMES.filter((exe) => !known.has(exe));
-  if (missing.length === 0) return;
-
-  await db.insert(games).values(
-    missing.map((exe) => ({
-      exe,
-      label: labelForExe(exe),
-      isGame: 1,
-      source: 'builtin' as const,
-      firstSeenAt: now,
-      lastSeenAt: now,
-    }))
-  );
-  forgetGameVersion();
+export async function suppressedExecutables(): Promise<string[]> {
+  const rows = await db.select({ exe: games.exe }).from(games).where(eq(games.isGame, 0));
+  return rows.map((row) => row.exe);
 }
 
 export async function gameRoutes(app: FastifyInstance): Promise<void> {
@@ -197,7 +229,10 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
    */
   app.get('/api/games/watching', async () => ({
     version: await gamesVersion(),
+    /** Extra names the agent would not otherwise know about. */
     exes: await gameExecutables(),
+    /** Names it *does* know and must stop treating as games. */
+    off: await suppressedExecutables(),
   }));
 
   /**
@@ -244,6 +279,76 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
     forgetGameVersion();
     changes.emitChange('games');
     return updated;
+  });
+
+  /**
+   * Start it.
+   *
+   * **The path is never taken from the caller.** It comes from the row, which
+   * was filled in by the agent watching that executable actually run here — so
+   * this can only ever launch something this machine has already launched by
+   * itself. A route that took a path would be a remote "run anything" button
+   * wearing a game's name.
+   *
+   * Local-only on top of that, and detached so a game outlives the request.
+   */
+  app.post('/api/games/:exe/launch', async (request, reply) => {
+    if (!request.isLocal) {
+      return reply.code(403).send({ error: 'games can only be started from the PC running the server' });
+    }
+
+    const { exe } = request.params as { exe: string };
+    const [row] = await db.select().from(games).where(eq(games.exe, exe.toLowerCase()));
+    if (!row) return reply.code(404).send({ error: 'no such game' });
+    if (!row.launchPath) {
+      return reply.code(409).send({ error: 'nowhere to launch it from — run it once and this fills itself in' });
+    }
+    if (!existsSync(row.launchPath)) {
+      return reply.code(409).send({ error: `${row.launchPath} is not there any more` });
+    }
+
+    /*
+     * `cmd /c start` rather than spawning the executable directly, for the
+     * reason the tray menu and the restart button both learned: the child has
+     * to outlive this process, and `detached` alone on Windows means
+     * DETACHED_PROCESS, which leaves a program with no console host.
+     *
+     * `start` also wants the working directory to be the game's own folder —
+     * plenty of games look for files beside themselves and simply fail if
+     * started from somewhere else.
+     */
+    const child = spawn('cmd.exe', ['/c', 'start', '', row.launchPath], {
+      cwd: dirname(row.launchPath),
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.on('error', (error) => request.log.error(error, 'launch failed'));
+    child.unref();
+
+    return { ok: true, launched: row.launchPath };
+  });
+
+  /** Open the folder it lives in, so you can see what is actually there. */
+  app.post('/api/games/:exe/folder', async (request, reply) => {
+    if (!request.isLocal) {
+      return reply.code(403).send({ error: 'the folder can only be opened on the PC running the server' });
+    }
+
+    const { exe } = request.params as { exe: string };
+    const [row] = await db.select().from(games).where(eq(games.exe, exe.toLowerCase()));
+    if (!row?.launchPath) return reply.code(409).send({ error: 'nowhere to look — run it once first' });
+    if (!existsSync(row.launchPath)) {
+      return reply.code(409).send({ error: `${row.launchPath} is not there any more` });
+    }
+
+    // `/select,` highlights the file rather than just opening the folder, which
+    // is the difference between "here it is" and "here are ninety files".
+    const child = spawn('explorer.exe', [`/select,${row.launchPath}`], { detached: true, stdio: 'ignore' });
+    // Explorer returns a non-zero exit code on success, so nothing reads one.
+    child.on('error', () => {});
+    child.unref();
+
+    return { ok: true, folder: dirname(row.launchPath) };
   });
 
   /** Forget one. It comes back if it runs again, which is the point of a record. */

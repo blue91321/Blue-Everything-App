@@ -43,6 +43,9 @@ const report = (over: Partial<AttentionReport>): AttentionReport => ({
   // was not actually an AttentionReport. Silent until the server was typechecked.
   audioPlaying: false,
   windowsDnd: false,
+  // Likewise: required on the report, so leaving it out makes this helper's
+  // return type a claim it does not meet.
+  gamePaths: {},
   ...over,
 });
 
@@ -1189,10 +1192,29 @@ console.log('games, and what may interrupt one');
   const watching = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json();
   check('unticking takes it out of what the agent watches', !(watching.exes as string[]).includes('cs2.exe'), (watching.exes as string[]).join(','));
 
+  /*
+   * Nothing is shipped onto the list. A fresh table is empty, and the agent
+   * still knows the built-in names — the server only ever overrides, which is
+   * what stops "watch exactly these" deadlocking an empty table.
+   */
+  const watchingNow = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json();
+  check('unticking sends it as switched off', (watchingNow.off as string[]).includes('cs2.exe'), (watchingNow.off as string[]).join(','));
+
   const before = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json().version;
   await app.inject({ method: 'PATCH', url: '/api/games/cs2.exe', payload: { isGame: true } });
   const after = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json().version;
   check('the version moves when the list does', before !== after);
+
+  /* Launching can only ever use the row's own path, never one from the caller. */
+  const noPath = await app.inject({ method: 'POST', url: '/api/games/cs2.exe/launch', payload: {} });
+  check('a game with no known path refuses to launch', noPath.statusCode === 409, `${noPath.statusCode}`);
+  const missing = await app.inject({ method: 'POST', url: '/api/games/nope.exe/launch', payload: {} });
+  check('and an unknown one is a 404', missing.statusCode === 404, `${missing.statusCode}`);
+
+  /* A path the agent reported is remembered, and only the first one. */
+  await report({ state: 'in-game', liveGames: ['cs2.exe'], gamePaths: { 'cs2.exe': 'C:\Games\cs2.exe' } });
+  const withPath = (await listed()).find((g) => g.exe === 'cs2.exe') as { launchPath?: string } | undefined;
+  check('a reported path is stored', withPath?.launchPath === 'C:\Games\cs2.exe', withPath?.launchPath);
 
   await app.inject({ method: 'DELETE', url: '/api/games/cs2.exe' });
   await app.inject({ method: 'DELETE', url: '/api/games/vlc.exe' });

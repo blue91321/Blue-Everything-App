@@ -19,7 +19,7 @@ import { connectRoutes } from './routes/connect.js';
 import { deviceRoutes } from './routes/devices.js';
 import { featureRoutes } from './routes/features.js';
 import { moduleRoutes } from './routes/modules.js';
-import { gameRoutes, seedBuiltinGames } from './routes/games.js';
+import { gameRoutes } from './routes/games.js';
 import { restartRoutes } from './routes/restart.js';
 import { habitRoutes } from './routes/habits.js';
 import { noteRoutes } from './routes/notes.js';
@@ -69,12 +69,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(attentionRoutes);
   // Core: what counts as a game decides what may interrupt, which is the engine.
   await app.register(gameRoutes);
-  /*
-   * Seeded before anything can ask what to watch for. Insert-only, so a game you
-   * switched off stays off — this puts a floor under the list rather than
-   * resetting it.
-   */
-  await seedBuiltinGames();
+
   await app.register(deviceRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);

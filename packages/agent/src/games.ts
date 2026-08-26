@@ -27,25 +27,28 @@ export function registerExtraGames(names: readonly string[]): void {
 }
 
 /**
- * Replace the list outright, rather than adding to it.
+ * Apply what the server says, on top of the shipped list.
  *
- * The server owns this now — it is a table the Games screen edits — so a
- * *merge* would make unticking something on that screen have no effect until
- * the agent restarted, which is precisely the kind of change that looks like it
- * saved and did not.
+ * **Not a replacement**, which it was for about ten minutes and which deadlocked
+ * the whole feature: the server's table starts empty, so "watch exactly these"
+ * meant watch nothing, so nothing was ever detected to fill the table.
  *
- * The shipped `GAME_PROCESSES` set is still consulted, so a fresh install knows
- * what League is before it has ever seen it run. Unticking one of those is what
- * `SUPPRESSED` is for.
+ * The shipped names stay as *recognition* — how a game is known the first time
+ * it runs — and the server only overrides: `extra` adds names it has learned or
+ * you typed, `off` removes ones the screen has unticked. Nothing about the
+ * shipped list reaches a screen unless it actually ran here.
  */
-export function replaceKnownGames(names: readonly string[]): void {
+export function applyServerGames(extra: readonly string[], off: readonly string[]): void {
   extraGames.clear();
   suppressed.clear();
-  const wanted = new Set(names.map((n) => n.trim().toLowerCase()).filter(Boolean));
-  for (const name of wanted) extraGames.add(name);
-  // Anything the shipped list calls a game but the server does not: the screen
-  // said no, and the screen wins.
-  for (const name of GAME_PROCESSES) if (!wanted.has(name)) suppressed.add(name);
+  for (const name of extra) {
+    const normalised = name.trim().toLowerCase();
+    if (normalised) extraGames.add(normalised);
+  }
+  for (const name of off) {
+    const normalised = name.trim().toLowerCase();
+    if (normalised) suppressed.add(normalised);
+  }
 }
 
 /** Shipped games the server's list has switched off. */

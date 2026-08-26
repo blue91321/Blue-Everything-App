@@ -121,9 +121,9 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
      * about.
      */
     await recordSeen([
-      ...report.liveGames.map((exe) => ({ exe, source: 'seen' as const, isGame: true })),
+      ...report.liveGames.map((exe) => ({ exe, source: 'seen' as const, isGame: true, path: report.gamePaths[exe] })),
       ...(report.fullscreenApp && !report.liveGames.includes(report.fullscreenApp)
-        ? [{ exe: report.fullscreenApp, source: 'fullscreen' as const, isGame: false }]
+        ? [{ exe: report.fullscreenApp, source: 'fullscreen' as const, isGame: false, path: report.gamePaths[report.fullscreenApp] }]
         : []),
     ]);
 

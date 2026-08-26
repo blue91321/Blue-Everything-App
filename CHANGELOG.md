@@ -20,6 +20,13 @@ files `npm version` does not touch.
 - **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
   the setting above. The most restrictive running game wins — being interrupted
   mid-match is the failure this app exists to prevent.
+- **No game names ship with the app.** A row means "this ran here". The built-in
+  names still exist so a game is *recognised* the first time it runs, but they
+  never create a row — a list of titles you may not have installed buries the
+  two you do. Migration `0043` removes any that were seeded.
+- **Run and Show folder** on each row, using the path the agent read from the
+  running process. The path is never taken from the caller, so this can only
+  start something this machine has already started by itself.
 - The agent takes its list from the server now, so unticking something takes
   effect rather than waiting for a restart. It costs no queries per poll and the
   list is fetched only when its hash moves.
