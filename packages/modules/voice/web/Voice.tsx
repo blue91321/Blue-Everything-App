@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from '@app/api';
 import { useAsync } from '@app/useAsync';
+import { Vocabulary } from './Vocabulary';
 import { Toggle } from '@app/controls';
 import { VoicePhrases } from './VoiceCommands';
 import { VoiceLook } from './VoiceLook';
@@ -254,6 +255,10 @@ function VoiceSettings({
             sound. Separate them with commas.
           </div>
         </div>
+
+        {/* Directly after the two cards about the grammar, because it is the
+            same subject: what the recogniser is allowed to say. */}
+        <Vocabulary unknown={look?.unknownWords ?? []} />
 
         <div className="card">
           <div className="title">Keep listening after it answers</div>

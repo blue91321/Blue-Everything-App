@@ -3100,6 +3100,40 @@ do" without doing it. The failure everyone hits is a phrase that reads perfectly
 and never matches; the alternative way to find that out is repeating it at the
 microphone while watching a log.
 
+### The vocabulary is on screen
+
+**Voice → "Everything it can hear"**, collapsed, with a count. It exists because
+a closed grammar can only emit words it contains, and most of the confusing
+things this feature has ever done came straight from that: a stored "drink
+water" left it unable to say "drank", so "I drank water" came back as "resume
+water" and paused the music. None of that is guessable from the commands screen.
+
+**Grouped by where each word came from**, which is the part that makes it worth
+showing rather than a wall of words:
+
+| | |
+| --- | --- |
+| The wake word | left exactly as typed, never expanded |
+| Words that are not the wake word | the decoys, absorbing sounds only |
+| Words from your phrases | exactly what you typed |
+| Forms it worked out for itself | plurals, past tenses, `-ing`, and each phrase run together |
+| Always included | the counting and amount words, whatever your commands are |
+
+**The groups partition the grammar exactly** — every word the recogniser can emit
+appears in one and none appears twice, which `voice-check` asserts. A display
+that quietly omitted part of the grammar would be worse than none, since the
+whole reason to open it is to find the word you did not expect. On this install
+it is 136 words: 2 wake, 28 typed, 89 generated, 17 always.
+
+**Its own endpoint, not a field on `/api/voice/config`.** That one is the
+agent's and is long-polled; putting a hundred-odd words on it would send the
+whole list every poll forever to serve a screen nobody has open.
+
+A word the model cannot pronounce is marked, reusing the `unknownWords` the
+agent already reports rather than growing a second mechanism — the same warning
+the wake word and the phrases already carry, in the one place that shows every
+word at once.
+
 ### Only responding to your voice
 
 **Voice → "Teach it my voice"** — say the wake word ten times, and the mean of

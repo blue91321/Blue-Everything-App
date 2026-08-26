@@ -49,6 +49,7 @@ import {
   resolveVoiceCommand,
   runCommand,
   phraseWordsFor,
+  vocabularyBreakdown,
   vocabularyFor,
   type VoiceOutcome,
 } from './actions.js';
@@ -204,6 +205,26 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
    * changes when you change it — so it carries the voiceprint inline rather
    * than making the agent fetch it separately.
    */
+  /**
+   * Everything the recogniser is allowed to say, and where each word came from.
+   *
+   * Its own endpoint rather than a field on `/api/voice/config`, because that
+   * one is the *agent's* and is long-polled: this is a page somebody opens
+   * occasionally, and putting it there would send the whole list on every poll
+   * forever to serve a screen nobody has open.
+   */
+  app.get('/api/voice/vocabulary', async () => {
+    const row = await getSettings();
+    const commands = await loadCommands();
+    const decoys = parseWakeDecoys(row.wakeDecoys ?? '', row.wakeWord);
+    const groups = vocabularyBreakdown(commands, row.wakeWord, decoys);
+
+    return {
+      total: groups.reduce((sum, group) => sum + group.words.length, 0),
+      groups,
+    };
+  });
+
   app.get('/api/voice/config', async () => {
     const row = await getSettings();
     const commands = await loadCommands();

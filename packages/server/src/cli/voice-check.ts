@@ -10,6 +10,7 @@
  *
  * Runs entirely in memory. Touches no database and needs no server.
  */
+import { vocabularyBreakdown, vocabularyFor } from '../../../modules/voice/server/actions.js';
 import {
   ALWAYS_IN_VOCABULARY,
   cosineSimilarity,
@@ -366,6 +367,42 @@ check('empty is 0', cosineSimilarity([], []), 0);
 
 const orthogonal = Math.abs(cosineSimilarity([1, 0, 0, 0], [0, 1, 0, 0]));
 check('unrelated vectors score ~0', orthogonal < 0.001, true);
+
+console.log('');
+console.log('what the recogniser can say');
+console.log('');
+{
+  const commands = [
+    { id: 'a', kind: 'habit', phrases: ['drink water'], targetId: null, allowFollowUp: 1 },
+    { id: 'b', kind: 'media', phrases: ['skip this track', 'never mind'], targetId: 'next', allowFollowUp: 1 },
+  ] as unknown as Parameters<typeof vocabularyBreakdown>[0];
+
+  const groups = vocabularyBreakdown(commands, 'hey jarvis', ['harley', 'harvest festival']);
+  const shown = groups.flatMap((g) => g.words);
+  const grammar = vocabularyFor(commands, 'hey jarvis');
+
+  /*
+   * The point of the screen is finding the word you did not expect, so a group
+   * list that quietly dropped part of the grammar would be worse than none.
+   */
+  check('every word in the grammar is shown somewhere', grammar.filter((w) => !shown.includes(w)), []);
+
+  const seen = new Set<string>();
+  check('and none of them twice', shown.filter((w) => (seen.has(w) ? true : (seen.add(w), false))), []);
+
+  const by = (id: string) => groups.find((g) => g.id === id)?.words ?? [];
+  check('the wake word is its own group', by('wake').join(' '), 'hey jarvis');
+  check('decoys are their own group', by('decoys').includes('harley') && by('decoys').includes('harvest'), true);
+  check('words you typed are reported as yours', by('phrases').includes('drink') && by('phrases').includes('water'), true);
+  check('a form it invented is reported separately', by('generated').includes('drank') && !by('phrases').includes('drank'), true);
+  check('counting words are always there', by('always').includes('two') && by('always').includes('max'), true);
+  check('the run-together form is shown too', by('generated').includes('nevermind'), true);
+
+  /* A decoy sits in the grammar and must never be matched as the wake word. */
+  check('a decoy never counts as the wake word', matchesWakeWord('harley', 'hey jarvis'), false);
+  check('  ...nor does a two-word one', matchesWakeWord('harvest festival', 'hey jarvis'), false);
+}
+
 
 console.log(
   failures === 0

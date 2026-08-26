@@ -391,6 +391,11 @@ export interface AppSettings {
 }
 
 /** An `AppSettings` from a server that actually has voice support. */
+export interface VoiceVocabulary {
+  total: number;
+  groups: Array<{ id: string; label: string; why: string; words: string[] }>;
+}
+
 export type VoiceSettings = AppSettings & Required<Pick<AppSettings, 'wakeWord' | 'speakerThreshold' | 'voiceprintSamples'>>;
 
 export const serverSupportsVoice = (settings: AppSettings): settings is VoiceSettings =>
@@ -1270,6 +1275,8 @@ export const api = {
     test: (text: string) => post<VoiceTest>('/api/voice/test', { text }),
     forgetVoice: () => request<void>('/api/voice/enrol', { method: 'DELETE' }),
     status: () => request<VoiceStatus>('/api/voice/status'),
+    /** What the recogniser can say, grouped by where each word came from. */
+    vocabulary: () => request<VoiceVocabulary>('/api/voice/vocabulary'),
     commands: () => request<VoiceCommand[]>('/api/voice/commands'),
     createCommand: (payload: Partial<VoiceCommand>) => post<VoiceCommand>('/api/voice/commands', payload),
     updateCommand: (id: string, payload: Partial<VoiceCommand>) =>

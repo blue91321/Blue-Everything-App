@@ -134,6 +134,88 @@ export function phraseWordsFor(commands: LoadedCommand[], wakeWord: string): str
   return [...words].sort();
 }
 
+export interface VocabularyGroup {
+  id: string;
+  label: string;
+  /** One line saying why these are in the grammar at all. */
+  why: string;
+  words: string[];
+}
+
+/**
+ * The whole vocabulary, split by where each word came from.
+ *
+ * The list alone is a wall of words; what makes it worth showing is the
+ * *provenance*, because every surprise this feature has produced was somebody
+ * not knowing which of these buckets a word was in — "drank" being generated
+ * rather than typed, "went" arriving from a phrase nobody connected with it, "max"
+ * being there whether you asked for it or not.
+ *
+ * The groups partition the grammar exactly: every word the recogniser can emit
+ * appears in one of them and none appears twice, which `voice-check` asserts.
+ * A display that quietly omitted part of the grammar would be worse than none,
+ * since the whole reason to look is to find the word you did not expect.
+ */
+export function vocabularyBreakdown(
+  commands: LoadedCommand[],
+  wakeWord: string,
+  decoys: string[] = []
+): VocabularyGroup[] {
+  const claimed = new Set<string>();
+  const take = (words: Iterable<string>): string[] => {
+    const out: string[] = [];
+    for (const word of words) {
+      if (!word || claimed.has(word)) continue;
+      claimed.add(word);
+      out.push(word);
+    }
+    return out.sort();
+  };
+
+  /*
+   * Order matters, and it is "most specific first": a word you typed should be
+   * reported as yours rather than as an inflection that happens to match it.
+   */
+  const wake = take(wakeWord.toLowerCase().split(/\s+/));
+  const decoyWords = take(decoys.flatMap((d) => d.toLowerCase().split(/\s+/)));
+  const literal = take(phraseWordsFor(commands, wakeWord));
+  const always = take(ALWAYS_IN_VOCABULARY);
+  const rest = take(vocabularyFor(commands, wakeWord));
+
+  return [
+    {
+      id: 'wake',
+      label: 'The wake word',
+      why: 'Left exactly as you typed it. It is a name, so it is never expanded — widening the one grammar that most needs to stay narrow would buy nothing.',
+      words: wake,
+    },
+    {
+      id: 'decoys',
+      label: 'Words that are not the wake word',
+      why: 'Here only to absorb sounds that would otherwise be forced onto the wake word. Never matched against, so they cannot trigger anything.',
+      words: decoyWords,
+    },
+    {
+      id: 'phrases',
+      label: 'Words from your phrases',
+      why: 'Exactly the words you typed into a command.',
+      words: literal,
+    },
+    {
+      id: 'generated',
+      label: 'Forms it worked out for itself',
+      why: 'A grammar can only say words it contains, so a stored "drink" would leave it unable to say "drank" — it would substitute whatever sounded nearest. These are the plurals, past tenses and -ing forms of your own words, plus each phrase run together as one word.',
+      words: rest,
+    },
+    {
+      id: 'always',
+      label: 'Always included',
+      why: 'Counting and amount words, whatever your commands are. "Two waters" and "to max" are read out of the transcript, and the recogniser cannot say what it was never given.',
+      words: always,
+    },
+  ].filter((group) => group.words.length > 0);
+}
+
 /**
  * The recogniser's whole vocabulary — phrase words *and their inflections*.
  *

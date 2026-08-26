@@ -55,6 +55,19 @@ second step `npm version` does not do for you.
   The failure renders as a banner naming the package and quoting the error.
 - A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
 
+### See what the recogniser can actually hear
+
+- **Voice → "Everything it can hear"** lists the whole grammar, collapsed, with a
+  count — 136 words on this install.
+- **Grouped by where each word came from**: the wake word, your decoys, the words
+  you typed, the forms it generated for itself, and the counting words it always
+  includes. The provenance is the point — "drank" being generated rather than
+  typed is the sort of thing that explains a baffling transcript.
+- The groups partition the grammar exactly, which `voice-check` asserts: a list
+  that quietly omitted part of it would be worse than no list.
+- Words the speech model cannot pronounce are marked, reusing the warning the
+  wake word and phrases already had.
+
 ### Stop things that are not the wake word from waking it
 
 - **A list of words that keep setting it off**, on the Voice tab. They go into
