@@ -1148,9 +1148,25 @@ the first question whenever something looks wrong.
 Bump with `npm version <patch|minor|major> --workspaces --include-workspace-root`.
 
 **Check what it committed before you walk away, because it does not commit all
-of it.** That command bumps all five files, but the commit and tag it creates
-contain **only the root `package.json`** — the four workspace bumps are left
-sitting in the working tree, unstaged. Nothing warns you.
+of it, and it no longer even *bumps* all of it.** Sixteen files carry a version
+now and `npm version --workspaces` can see five: the root and the four
+workspaces. It misses
+
+- **the browser extension**, which has a `manifest.json` and no `package.json`,
+  and moved to `packages/modules/vault/extension` when the vault became a
+  package;
+- **every shipped package** — `packages/modules/<id>/module.json` *and* its
+  `package.json` — because the workspace glob is `packages/*` and those are one
+  directory deeper.
+
+The module manifests are the ones that matter to look at, because their version
+is **on screen**: the Packages tab prints it against every row, so leaving them
+behind puts the app at 0.3.0 and everything it ships at 0.2.3, on the one screen
+whose whole job is saying what version things are.
+
+And of the five it does bump, the commit and tag it creates contain **only the
+root `package.json`** — the four workspace bumps are left sitting in the working
+tree, unstaged. Nothing warns you about any of it.
 
 That is worse than untidy. `version.ts` reads `packages/server/package.json`, so
 a clone at the tag `v0.2.0` starts up and reports `0.1.0` on `/health` and on the
@@ -1162,8 +1178,13 @@ So the bump is two steps, and the second is not optional:
 
 ```bash
 npm version minor --workspaces --include-workspace-root
-git add -A && git commit --amend --no-edit && git tag -d v0.2.0 && git tag v0.2.0
+# then bump the eleven it cannot see, and only then:
+git add -A && git commit --amend --no-edit && git tag -d v0.3.0 && git tag v0.3.0
 ```
+
+Verify at the **tag**, not in the working tree — `git show v0.3.0:<file>` — since
+that is what a clone gets and the whole failure mode is a file that never made it
+into the commit.
 
 That is about the **workspace packages**, which are one app. The *features* on
 the Packages screen are a different axis: they report the app's version while

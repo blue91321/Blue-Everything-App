@@ -2,7 +2,7 @@
   "id": "voice",
   "label": "Voice commands",
   "blurb": "Wake word, spoken commands, and the popup at the cursor.",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "author": "blue91321",
   "server": "server/index.ts",
   "notes": "~150MB of models on disk, and 198MB resident in the agent while the microphone is open."

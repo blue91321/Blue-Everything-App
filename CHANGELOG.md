@@ -1,10 +1,16 @@
 # Changelog
 
-All six packages carry the same version and move together — they are one app
-released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
-second step `npm version` does not do for you.
+Everything in this repo carries the same version and moves together — the four
+workspaces, the browser extension, and the five shipped packages. They are one
+app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
+files `npm version` does not touch.
 
-## Unreleased
+## 0.3.0
+
+Packages you can install, delete and restart into — and everything optional in
+the app moved onto that footing. Weather is the first thing built *as* a package
+rather than migrated into one, which is what makes it the honest test of whether
+the rest was worth doing.
 
 ### Install a package the way you would a texture pack
 

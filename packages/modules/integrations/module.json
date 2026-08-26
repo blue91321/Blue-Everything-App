@@ -2,7 +2,7 @@
   "id": "integrations",
   "label": "App integrations",
   "blurb": "Canvas coursework as tasks, Spotify and YouTube libraries, and which of your friends are online on Steam, Discord and Riot.",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "author": "blue91321",
   "server": "server/index.ts",
   "notes": "Does nothing until you connect a service on the Connections tab."
