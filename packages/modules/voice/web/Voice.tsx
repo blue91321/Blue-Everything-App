@@ -104,6 +104,16 @@ function VoiceSettings({
 
   const [draftRetry, setDraftRetry] = useState<number | null>(null);
   const retry = draftRetry ?? current.voiceRetrySeconds ?? 8;
+  /**
+   * Whether a miss reuses the answer timer.
+   *
+   * A stored flag, not `retry === followUp`: two settings that happen to hold
+   * the same number is not the same statement as "keep these together", and
+   * inferring it would tick the box by coincidence and then start dragging one
+   * slider with the other. `quietHoursEnabled` is a real flag for exactly this
+   * reason.
+   */
+  const sameTimer = Boolean(current.voiceRetryMatchesFollowUp);
 
   function commitRetry() {
     if (draftRetry === null || draftRetry === current.voiceRetrySeconds) return;
@@ -284,8 +294,38 @@ function VoiceSettings({
               {followUp === 0 ? 'off' : `${followUp}s`}
             </span>
           </div>
+
+          {/*
+            On the *follow-up* card rather than the retry one, because it is the
+            follow-up time it copies — and because the card it governs is the one
+            that disappears, which would be an odd place to keep its own switch.
+          */}
+          <label className="row" style={{ marginTop: 12, gap: '.5rem', alignItems: 'center', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              style={{ width: 'auto' }}
+              checked={sameTimer}
+              disabled={saving}
+              onChange={(event) => void update({ voiceRetryMatchesFollowUp: event.target.checked })}
+            />
+            <span className="meta">Use this after a miss too</span>
+          </label>
+          {sameTimer && (
+            <div className="meta" style={{ marginTop: 4 }}>
+              {followUp === 0
+                ? 'A miss closes the microphone as well.'
+                : `It waits ${followUp} second${followUp === 1 ? '' : 's'} after a miss as well as after an answer.`}
+            </div>
+          )}
         </div>
 
+        {/*
+          Hidden rather than disabled while the box is ticked. A disabled slider
+          sitting at a number that is no longer the one in use would be a worse
+          lie than not showing it — and the value behind it is untouched, so
+          unticking brings the card back exactly where it was.
+        */}
+        {!sameTimer && (
         <div className="card">
           <div className="title">Keep listening after it misses</div>
           <div className="meta" style={{ marginTop: 4 }}>
@@ -311,6 +351,7 @@ function VoiceSettings({
             </span>
           </div>
         </div>
+        )}
       </section>
 
       <VoiceLook settings={current} status={look} saving={saving} onChange={update} />

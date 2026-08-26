@@ -133,6 +133,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         voiceInputDevice: body.voiceInputDevice,
         voiceFollowUpSeconds: body.voiceFollowUpSeconds,
         voiceRetrySeconds: body.voiceRetrySeconds,
+        voiceRetryMatchesFollowUp: toInt(body.voiceRetryMatchesFollowUp),
         overlayPlacement: body.overlayPlacement,
         overlayScreen: body.overlayScreen,
         overlayAvatar: body.overlayAvatar,

@@ -494,6 +494,15 @@ export const settings = sqliteTable('settings', {
   voiceFollowUpSeconds: integer('voice_follow_up_seconds').notNull().default(6),
   /** The same, but after a miss — repeating yourself takes longer than adding. */
   voiceRetrySeconds: integer('voice_retry_seconds').notNull().default(8),
+  /**
+   * Use the follow-up time for a miss as well, and stop asking about it.
+   *
+   * The stored `voiceRetrySeconds` is **not** overwritten while this is on —
+   * it is resolved on read, so unticking gives back the number you chose rather
+   * than whatever the follow-up happened to be. Same reasoning as quiet hours
+   * keeping its times when it is switched off.
+   */
+  voiceRetryMatchesFollowUp: integer('voice_retry_matches_follow_up').notNull().default(0),
 
   /** Where the popup appears, and on which screen. Null screen = the mouse's. */
   overlayPlacement: text('overlay_placement').notNull().default('cursor'),

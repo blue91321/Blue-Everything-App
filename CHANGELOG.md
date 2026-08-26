@@ -55,6 +55,18 @@ second step `npm version` does not do for you.
   The failure renders as a banner naming the package and quoting the error.
 - A glyph is now taken as one *grapheme*: the first version truncated 👨‍💻 to 👨.
 
+### One timer instead of two, if you want
+
+- **"Use this after a miss too"** under the follow-up slider. Ticking it hides
+  the retry card and uses one number for both.
+- A real stored flag rather than inferring it from the two numbers matching —
+  two settings that happen to be equal is not the same as "keep these together".
+- **The retry value is left alone while it is ticked** and resolved on read, so
+  unticking gives back the number you chose. Verified: 12s, ticked, follow-up
+  moved to 9, unticked, still 12s.
+- Hidden rather than disabled: a disabled slider showing a number that is no
+  longer in use would be the worse lie.
+
 ### See what the recogniser can actually hear
 
 - **Voice → "Everything it can hear"** lists the whole grammar, collapsed, with a

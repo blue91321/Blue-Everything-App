@@ -1139,6 +1139,53 @@ console.log('\nthings that must stay shut');
 }
 
 console.log('');
+console.log('one timer instead of two');
+{
+  const agentSees = async () =>
+    (await app.inject({ method: 'POST', url: '/api/voice/agent', payload: { listening: false } })).json();
+  const screenSees = async () => (await app.inject({ method: 'GET', url: '/api/voice/status' })).json();
+
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/settings',
+    payload: { voiceFollowUpSeconds: 6, voiceRetrySeconds: 12, voiceRetryMatchesFollowUp: false },
+  });
+  check('unticked, the agent gets both numbers', (await agentSees()).retryMs === 12_000, `${(await agentSees()).retryMs}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceRetryMatchesFollowUp: true } });
+  const linked = await agentSees();
+  check('ticked, a miss uses the answer time', linked.retryMs === 6_000, `${linked.retryMs}`);
+
+  /*
+   * The stored value is untouched. This is the whole reason it is resolved on
+   * read: unticking has to give back the number you chose, not whatever the
+   * follow-up happened to be — the same rule quiet hours follows for its times.
+   */
+  check('  ...and the stored one is left alone', (await screenSees()).retrySeconds === 12, `${(await screenSees()).retrySeconds}`);
+  check('  ...and the screen knows the box is ticked', (await screenSees()).retryMatchesFollowUp === true);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceFollowUpSeconds: 9 } });
+  check('moving the answer time moves the miss with it', (await agentSees()).retryMs === 9_000, `${(await agentSees()).retryMs}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceRetryMatchesFollowUp: false } });
+  check('unticking restores the number you had', (await agentSees()).retryMs === 12_000, `${(await agentSees()).retryMs}`);
+
+  /* Zero still means off, and linking it must not turn it back on. */
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/settings',
+    payload: { voiceFollowUpSeconds: 0, voiceRetryMatchesFollowUp: true },
+  });
+  check('zero stays off through the link', (await agentSees()).retryMs === 0, `${(await agentSees()).retryMs}`);
+
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/settings',
+    payload: { voiceFollowUpSeconds: 6, voiceRetrySeconds: 8, voiceRetryMatchesFollowUp: false },
+  });
+}
+
+console.log('');
 console.log('words that are not the wake word');
 {
   const { parseWakeDecoys, MAX_WAKE_DECOYS } = await import('@everything/shared');

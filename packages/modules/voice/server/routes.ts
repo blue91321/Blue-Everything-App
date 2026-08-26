@@ -325,8 +325,16 @@ ${decoys.join(' ')}`)
       inputDevice: row.voiceInputDevice,
       /** 0 means the microphone closes as soon as a command is done. */
       followUpMs: row.voiceFollowUpSeconds * 1000,
-      /** After a miss rather than a hit — see DEFAULT_VOICE_RETRY_SECONDS. */
-      retryMs: row.voiceRetrySeconds * 1000,
+      /**
+       * After a miss rather than a hit — see DEFAULT_VOICE_RETRY_SECONDS.
+       *
+       * Resolved here rather than stored, so ticking "use the same time" leaves
+       * the number you chose intact and unticking gives it straight back. The
+       * agent is told one figure and never learns the box exists, which is the
+       * same division every other decision here draws: judgement server-side,
+       * the agent carries it out.
+       */
+      retryMs: (row.voiceRetryMatchesFollowUp ? row.voiceFollowUpSeconds : row.voiceRetrySeconds) * 1000,
       overlayPlacement: row.overlayPlacement,
       overlayScreen: row.overlayScreen,
       overlayAvatar: row.overlayAvatar,
@@ -368,7 +376,10 @@ ${decoys.join(' ')}`)
       lastReportAt: agentState?.at ?? null,
       selectedDevice: row.voiceInputDevice,
       followUpSeconds: row.voiceFollowUpSeconds,
+      /* What the *screen* shows, which is the stored value — the slider has to
+         come back to where you left it when the box is unticked. */
       retrySeconds: row.voiceRetrySeconds,
+      retryMatchesFollowUp: Boolean(row.voiceRetryMatchesFollowUp),
       overlayPlacement: row.overlayPlacement,
       overlayScreen: row.overlayScreen,
       overlayAvatar: row.overlayAvatar,

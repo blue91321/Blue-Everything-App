@@ -2861,6 +2861,30 @@ is still your turn and making you say "hey jarvis" again would be the point
 missed. A `pause` is the exception — you asked for silence, so carrying on
 listening would be perverse.
 
+**One box makes it one setting.** "Use this after a miss too" sits under the
+follow-up slider and hides the retry card entirely — the two numbers are the
+same for most people, and a second slider you have to keep in step is a chore
+rather than a choice.
+
+`voiceRetryMatchesFollowUp` is a **real flag, not `retry === followUp`**. Two
+settings that happen to hold the same number is not the same statement as "keep
+these together": inferring it would tick the box by coincidence and then start
+dragging one slider with the other. `quietHoursEnabled` is a real flag for
+exactly this reason, and for the same reason **the retry value is left alone
+while the box is ticked** — resolved on read, so unticking gives back the number
+you chose rather than whatever the follow-up happened to be. Verified: 12s,
+ticked, follow-up moved to 9, unticked, still 12s.
+
+Hidden rather than disabled, because a disabled slider sitting at a number that
+is no longer in use is a worse lie than not showing it. The agent is told one
+figure and never learns the box exists — judgement server-side, as everywhere
+else here.
+
+**It cost a type lie to get right.** `AppSettings` declared it `boolean`, the
+row returns `1`, and `=== true` was quietly false — so the card never hid while
+the setting saved perfectly. `api.ts` opens with a warning about exactly this;
+every other boolean on that type is a `number`.
+
 **How long it waits is two settings**, both 0–30 with sliders on the Voice tab.
 `voiceFollowUpSeconds` is the wait after it *works* — you may add a second
 thing. `voiceRetrySeconds` is the wait after it *misses* — you are about to

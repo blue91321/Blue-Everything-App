@@ -1798,6 +1798,7 @@ export const updateSettingsSchema = z.object({
   voiceFollowUpSeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
   /** Seconds to keep listening after a miss. 0 means don't wait for a retry. */
   voiceRetrySeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
+  voiceRetryMatchesFollowUp: z.boolean().optional(),
   overlayPlacement: overlayPlacementSchema.optional(),
   /** Device name of the screen to anchor to; null follows the mouse. */
   overlayScreen: z.string().max(200).nullish(),

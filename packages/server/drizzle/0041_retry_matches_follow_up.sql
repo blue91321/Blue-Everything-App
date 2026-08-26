@@ -1,0 +1,12 @@
+-- One timer instead of two, when you want it.
+--
+-- A real flag rather than inferring it from the two numbers being equal, for
+-- the reason `quiet_hours_enabled` is a real flag rather than `start == end`:
+-- two settings that happen to match is not the same statement as "keep these
+-- together", and collapsing them would make unticking the box impossible to
+-- tell from having set the same number twice.
+--
+-- The retry value is left alone while the box is ticked and resolved on read,
+-- so unticking restores the number you had rather than whatever the follow-up
+-- happened to be.
+ALTER TABLE `settings` ADD `voice_retry_matches_follow_up` integer DEFAULT 0 NOT NULL;

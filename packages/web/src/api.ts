@@ -357,6 +357,15 @@ export interface AppSettings {
   /** Seconds it keeps listening after answering. 0 switches follow-ups off. */
   voiceFollowUpSeconds?: number;
   voiceRetrySeconds?: number;
+  /**
+   * Use the follow-up time after a miss too, and hide the second slider.
+   *
+   * A **number**, like every other boolean on this type. SQLite has no boolean,
+   * so a row carries 0 or 1 — and the update payload below takes a real boolean,
+   * because that side is the zod schema rather than the row. Typing this one as
+   * `boolean` made `=== true` quietly false and the card never hid.
+   */
+  voiceRetryMatchesFollowUp?: number;
   overlayPlacement?: string;
   overlayScreen?: string | null;
   /** An emoji, `file` for an uploaded picture, or empty for none. */
@@ -1229,6 +1238,7 @@ export const api = {
       speakerThreshold?: number;
       voiceInputDevice?: string | null;
       voiceFollowUpSeconds?: number;
+      voiceRetryMatchesFollowUp?: boolean;
       voiceRetrySeconds?: number;
       overlayPlacement?: string;
       overlayScreen?: string | null;
