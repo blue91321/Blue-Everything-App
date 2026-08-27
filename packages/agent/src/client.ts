@@ -94,6 +94,12 @@ export type VoiceAction =
   | { do: 'open-url'; url: string }
   | { do: 'press-keys'; keys: string }
   | { do: 'media'; action: string }
+  /**
+   * Start a program. The path is resolved by the *server* from the games list,
+   * which this agent filled in by watching that executable run here — the
+   * stored command holds a name like `cs2.exe`, never a path.
+   */
+  | { do: 'launch'; path: string; name: string }
   | { do: 'pause'; untilMs: number | null }
   | { do: 'cancel' };
 
@@ -103,6 +109,7 @@ export interface VoiceOutcome {
     | 'habit-checked'
     | 'note-added'
     | 'opened'
+    | 'launched'
     | 'keys-sent'
     | 'media-sent'
     | 'paused'

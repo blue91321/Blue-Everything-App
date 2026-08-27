@@ -20,6 +20,10 @@ files `npm version` does not touch.
 - **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
   the setting above. The most restrictive running game wins — being interrupted
   mid-match is the failure this app exists to prevent.
+- **Voice can start a game or an app.** A new command kind, whose target names a
+  row on the Games list rather than a path — so what a mis-heard phrase can start
+  is bounded by what this PC has already run on its own. A path typed as a target
+  is refused outright rather than merely failing to match.
 - **Borderless games are found now.** Discovery hung off Windows' *exclusive*
   fullscreen flag, which borderless never sets — so most of a library was
   invisible. It uses window geometry instead (a maximised window still does not

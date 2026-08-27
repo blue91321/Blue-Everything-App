@@ -2741,6 +2741,7 @@ sources of truth would only ever disagree.
 | `url` | opens it in the default browser | http(s) address |
 | `hotkey` | presses keys into the focused window | e.g. `ctrl+shift+m` |
 | `media` | play/pause, skip, back, stop, volume, mute | one of `mediaActions` |
+| `launch` | starts a game or app | an **exe on the games list** |
 | `pause` | closes the microphone, for N minutes or until switched back on | — |
 | `cancel` | drops the sentence in progress; the microphone stays on | — |
 
@@ -2749,6 +2750,44 @@ the server, which owns the database. Anything touching *this machine* — a
 browser, a keystroke — comes back as an instruction for the agent to carry out,
 because the server is meant to be movable and has no business assuming it runs
 on your desk.
+
+#### Starting a game by voice, without a spoken "run anything"
+
+**The target names a row on the games list, and the path is read from that
+row.** That is the whole safety property of the kind, and it is the same rule
+`POST /api/games/:exe/launch` follows: the path was filled in by the agent
+watching that executable actually run here, so what a mis-heard phrase can start
+is bounded by what this machine has already started on its own. A target that
+could hold a path would be a spoken "run anything", which is a categorically
+larger thing than "open the game I named".
+
+So `isLaunchTarget` **refuses a separator rather than normalising it**. Accepting
+`C:\Windows\System32\cmd.exe` and then merely failing to find a row for it
+would work by accident, and what has to hold is the rule — that is what somebody
+editing this next will read.
+
+**Both ends check, and they are checking different things.** The server refuses a
+target that is not a bare name and resolves the row; the agent refuses a path
+that is not an existing `.exe` before handing it to the shell. One is about the
+list and the other is about the disk, and they are the same check only while both
+are right — the arrangement the zip reader's path guard already uses.
+
+**Three failures are told apart, because they have three different fixes.** Not
+on the list, on the list with no path known yet, and gone from disk. "It didn't
+work" is not a fix; *"run it once and I will know where it is"* is — and the
+editor says that at the moment you pick such a row rather than waiting for the
+command to fail, since a row with no path saves perfectly and then answers with
+what reads as the command being broken.
+
+**The picker offers nothing when the list is empty**, and says why. An empty
+dropdown is indistinguishable from a broken screen, and the fix — go and run the
+thing once — is not guessable from one.
+
+Nothing had to be added to the grammar: phrase words are expanded by
+`vocabularyFor` whatever kind they belong to, so "start warframe" contributed
+`start`, `warframe`, their generated forms and the run-together `startwarframe`
+on its own. A game name the model cannot pronounce gets the same warning every
+other phrase word already gets.
 
 **Media commands are gated on something actually playing.** They go out as the
 system media keys rather than a `hotkey`, so they reach whatever owns playback

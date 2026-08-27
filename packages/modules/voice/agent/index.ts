@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { ServerUnreachable, type ServerClient, type VoiceConfig, type VoiceOutcome } from '../../../agent/src/client.js';
 import { mediaIsPlaying } from '../../../agent/src/audio.js';
-import { openUrl, pressKeys, pressMediaKey } from './actions.js';
+import { launchProgram, openUrl, pressKeys, pressMediaKey } from './actions.js';
 import { listScreens, forgetAvatar, type Avatar, type Placement } from '../../../agent/src/overlay.js';
 // The popup is core now, and voice is one of its callers rather than its owner.
 // Nudges use the same window, which is the point: it is the only surface here
@@ -149,6 +149,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     try {
       if (result.action.do === 'open-url') openUrl(result.action.url);
       if (result.action.do === 'press-keys') pressKeys(result.action.keys);
+      if (result.action.do === 'launch') launchProgram(result.action.path, result.action.name);
 
       if (result.action.do === 'media') {
         if (!mediaAllowed()) {

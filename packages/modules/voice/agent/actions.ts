@@ -17,10 +17,16 @@
  *    single stray letter can never be sent,
  *  - only `http:` and `https:` URLs open, so the shell is never handed a
  *    `file:` path or a custom protocol handler,
+ *  - a `launch` runs a path the *server* resolved from the games list, which
+ *    the agent itself filled in by watching that executable run here — so what
+ *    voice can start is bounded by what this machine has already started on its
+ *    own, and the stored command holds a name rather than a path,
  *  - the speaker check, when enrolled, still gates everything, and
  *  - the vault remains entirely out of reach of voice.
  */
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import koffi from 'koffi';
 import { isOpenableUrl, parseHotkey, type MediaAction } from '@everything/shared';
 
@@ -119,4 +125,35 @@ export function pressKeys(combo: string): void {
 export function openUrl(url: string): void {
   if (!isOpenableUrl(url)) throw new ActionRefused(`refusing to open "${url}" — only http and https`);
   spawn('cmd.exe', ['/c', 'start', '', url], { windowsHide: true, stdio: 'ignore', detached: true }).unref();
+}
+
+/**
+ * Start a program that the games list already knows about.
+ *
+ * The path arrives resolved, because only the server can read the row it comes
+ * from — but this end checks it too, since these are two different claims and
+ * they are the same check only while both are right. The server's is about the
+ * list; this one is about the disk, and the disk is what is about to be handed
+ * to the shell.
+ *
+ * `cmd /c start` rather than spawning it directly, for the reason the tray
+ * menu, the restart button and the Run button all learned: the child has to
+ * outlive the agent, and `detached` alone on Windows means DETACHED_PROCESS,
+ * which leaves a program with no console host. The working directory is the
+ * game's own folder, because plenty of them look for files beside themselves.
+ */
+export function launchProgram(path: string, name: string): void {
+  // Not a normalisation — a refusal. A resolved path is absolute and ends in
+  // `.exe`, and anything else means something upstream is not what it claims.
+  if (!path || !path.toLowerCase().endsWith('.exe') || !path.includes(String.fromCharCode(92))) {
+    throw new ActionRefused(`refusing to start "${name}" — that is not a program path`);
+  }
+  if (!existsSync(path)) throw new ActionRefused(`${name} is not where it used to be`);
+
+  spawn('cmd.exe', ['/c', 'start', '', path], {
+    cwd: dirname(path),
+    windowsHide: true,
+    stdio: 'ignore',
+    detached: true,
+  }).unref();
 }

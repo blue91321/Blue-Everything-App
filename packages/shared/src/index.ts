@@ -1195,7 +1195,7 @@ export function ticksFor(
  * microphone for minutes or until switched back on. "Never mind" should not
  * cost you the next five minutes of voice.
  */
-export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'media', 'pause', 'cancel'] as const;
+export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'media', 'launch', 'pause', 'cancel'] as const;
 export const voiceCommandKindSchema = z.enum(voiceCommandKinds);
 export type VoiceCommandKind = z.infer<typeof voiceCommandKindSchema>;
 
@@ -1285,6 +1285,28 @@ export function isOpenableUrl(value: string): boolean {
   }
 }
 
+/**
+ * A `launch` target names a row on the games list. It is never a path.
+ *
+ * **That is the whole safety property of this kind**, and it is the same rule
+ * `POST /api/games/:exe/launch` follows: the path is read from a row the agent
+ * filled in by watching that executable actually run here, so what a voice
+ * command can start is bounded by what this machine has already started by
+ * itself. A target that could hold a path would be a spoken "run anything",
+ * which is a categorically larger thing than "open the game I named".
+ *
+ * So a separator is refused rather than normalised — accepting
+ * `C:\\Windows\\System32\\cmd.exe` and then failing to find a row for it
+ * would work by accident rather than by rule, and the rule is what has to hold
+ * when somebody edits this next.
+ */
+export function isLaunchTarget(value: string): boolean {
+  const name = value.trim().toLowerCase();
+  if (!name || name.length > 260) return false;
+  if (name.includes('/') || name.includes(String.fromCharCode(92)) || name.includes(':')) return false;
+  return name.endsWith('.exe');
+}
+
 export const createVoiceCommandSchema = z
   .object({
     kind: voiceCommandKindSchema,
@@ -1316,6 +1338,9 @@ export const createVoiceCommandSchema = z
     }
     if (value.kind === 'media' && !(mediaActions as readonly string[]).includes(value.target ?? '')) {
       fail('pick which media control this is');
+    }
+    if (value.kind === 'launch' && !isLaunchTarget(value.target ?? '')) {
+      fail('pick something from the games list — a name like cs2.exe, never a path');
     }
   });
 

@@ -462,7 +462,7 @@ export interface VoiceStatus {
   }[];
 }
 
-export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'media' | 'pause' | 'cancel';
+export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'media' | 'launch' | 'pause' | 'cancel';
 
 export interface VoiceCommand {
   id: string;

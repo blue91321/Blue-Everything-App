@@ -938,6 +938,51 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   check('and leaves it full rather than overflowing', (await listOf(voiceGaugeId)).gaugeNow === 100);
 
   /*
+   * Starting a game by voice. The whole safety property of this kind is that a
+   * stored target names a *row on the games list* and the path is read from
+   * that row — so what a mis-heard phrase can start is bounded by what this
+   * machine has already run on its own.
+   */
+  const sep = String.fromCharCode(92);
+  const gamePath = `D:${sep}SteamLibrary${sep}steamapps${sep}common${sep}Deep Rock Galactic${sep}FSD.exe`;
+  await post('/api/games', { exe: 'fsd.exe', label: 'Deep Rock Galactic', launchPath: gamePath });
+  await post('/api/voice/commands', { kind: 'launch', target: 'fsd.exe', phrases: ['rock and stone'] });
+
+  const started = (await post('/api/voice/command', { text: 'hey everything rock and stone', speakerScore: null })).json();
+  check('a spoken phrase can start a game', started.outcome === 'launched', JSON.stringify(started));
+  check('  ...and the path comes off the row, not the command', started.action?.path === gamePath, started.action?.path);
+  check('  ...and it says which one', started.say === 'Starting Deep Rock Galactic', started.say);
+
+  /*
+   * A path as the target is refused by the schema rather than merely failing to
+   * find a row. Working by accident is not the same as working by rule, and the
+   * rule is what has to hold when somebody edits this next.
+   */
+  const asPath = await post('/api/voice/commands', {
+    kind: 'launch',
+    target: `C:${sep}Windows${sep}System32${sep}cmd.exe`,
+    phrases: ['open a shell'],
+  });
+  check('a path is refused as a launch target', asPath.statusCode === 400, `HTTP ${asPath.statusCode}`);
+
+  const bareName = await post('/api/voice/commands', { kind: 'launch', target: 'cmd.exe', phrases: ['open a shell'] });
+  check('  ...and a name with no row is stored but starts nothing', bareName.statusCode === 201, `HTTP ${bareName.statusCode}`);
+  const missing = (await post('/api/voice/command', { text: 'hey everything open a shell', speakerScore: null })).json();
+  check('  ...saying so rather than pretending', missing.outcome === 'no-match' && missing.action === undefined, JSON.stringify(missing));
+
+  /*
+   * A row whose path is not known yet: it saves, and says what to do about it.
+   * "It did not work" is not a fix; "run it once" is.
+   */
+  await post('/api/games', { exe: 'nopath.exe', label: 'Not Run Yet' });
+  await post('/api/voice/commands', { kind: 'launch', target: 'nopath.exe', phrases: ['start the other one'] });
+  const noPath = (await post('/api/voice/command', { text: 'hey everything start the other one', speakerScore: null })).json();
+  check('a game never run here says where the gap is', /run it once/.test(noPath.say ?? ''), noPath.say);
+
+  await app.inject({ method: 'DELETE', url: '/api/games/fsd.exe' });
+  await app.inject({ method: 'DELETE', url: '/api/games/nopath.exe' });
+
+  /*
    * A gauge with no reminder interval is purely something to look at. Nagging
    * about one nobody asked to be nagged about would make the mode unusable as
    * decoration, which is a legitimate way to use it.
