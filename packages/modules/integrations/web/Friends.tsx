@@ -803,15 +803,39 @@ function Sources({ sources, anyFriends }: { sources: FriendSource[]; anyFriends:
 
           <div className="meta" style={{ marginTop: 2 }}>{source.why}</div>
 
-          {/* The three states a local provider can be in, which need three
-              different things done about them. */}
+          {/*
+            The *four* states a local provider can be in, each needing something
+            different done about it. The fourth was missing and is the one that
+            caused a report: Riot's launcher can be running while League itself
+            is not, so the lockfile exists, `clientRunning` is true, and every
+            request for the friends list answers 404. This card said "Client
+            running, last checked just now" — the most reassuring of the four
+            messages, over the state that was quietly serving hours-old
+            statuses.
+          */}
           {source.local && (
             <div className="meta" style={{ marginTop: 2 }}>
               {source.local.stale
                 ? 'The Windows agent is not reporting — is it running?'
-                : source.local.clientRunning
-                  ? `Client running, last checked ${relativeTime(source.local.reportedAt)}`
-                  : `Client is closed — showing what it last saw, ${relativeTime(source.local.reportedAt)}`}
+                : source.local.error
+                  ? `The client is open but not answering — the game itself may be closed. (${source.local.error})`
+                  : source.local.clientRunning
+                    ? `Client running, last checked ${relativeTime(source.local.reportedAt)}`
+                    : `Client is closed — showing who it last saw, ${relativeTime(source.local.reportedAt)}`}
+            </div>
+          )}
+
+          {/*
+            Named, because otherwise this is a wall of hollow rings with no
+            cause. The names are still real — they are kept deliberately, so
+            quitting a game does not empty your friends list — but what those
+            people were *doing* has aged out, which is a different claim with a
+            different shelf life.
+          */}
+          {(source.unconfirmed ?? 0) > 0 && (
+            <div className="meta" style={{ marginTop: 2 }}>
+              {source.unconfirmed} {source.unconfirmed === 1 ? 'status is' : 'statuses are'} too old to show — the
+              names are still here, but nothing has confirmed what they are doing recently enough to say.
             </div>
           )}
 

@@ -4152,6 +4152,65 @@ quietly absorbing whatever was linked to that id next. `unlinkPerson` remains
 on the server for dissolving a whole group in one call; nothing on screen needs
 it now that the panel lists the accounts.
 
+### A name keeps; a status goes off
+
+Reported from real use: the Riot client had been shut for hours and somebody was
+still on screen playing a match, long after they had gone to bed.
+
+The rows are kept deliberately when a client closes — that is what stops
+quitting League emptying your friends list, and the section below is about how
+much it cost to get that right. But **keeping the names and keeping the claim
+about what those people are doing were one decision, and they are two.** A name
+a few hours old is a list. A status a few hours old is a lie with a coloured dot
+next to it, which is the failure this whole screen exists to avoid.
+
+So `trustedPresence()` decays a state to `unknown` once nothing has confirmed it
+for `PRESENCE_TRUSTED_MS`. `unknown` is exactly right and already existed: a
+hollow ring rather than a filled dot, sorted last, left out of the Dashboard
+panel, and specifically the value that means *nobody can vouch for this*.
+
+**It is applied on read, after the refresh**, which is what lets one rule cover
+every provider. A web service that answered has a fresh `seenAt`; one that
+failed does not; a local client that is shut never had the chance. Three causes,
+one observable fact — when did anybody last confirm this — and the merge already
+excludes `unknown` when choosing which account speaks, so a decayed Riot row
+silently defers to a live Steam one for the same person.
+
+**Every state decays, `offline` included.** The tempting version spares it as
+"the quiet answer", and it is wrong twice: `unknown` exists in the first place
+because *"grey would say offline — the specific thing that state exists to avoid
+saying"*, and a rule that decays only some states needs a list of which, which is
+what silently goes wrong the day a state is added to it. `STATUS_ORDER` missing
+`in-game-away` is the same failure one level up.
+
+**Three minutes, and the number has to clear every legitimate gap.** The longest
+is a web provider's 60s `PRESENCE_STALE_MS` refresh window plus the fetch; the
+agent's Riot poll is 30s, so this is six missed tries. Much tighter and it flaps
+on one slow request, which is worse than the bug — a dot that keeps changing
+teaches you to ignore it. It is deliberately *shorter* than
+`LOCAL_PRESENCE_STALE_MS`, so "the agent has stopped" is still reported as its
+own thing rather than being swallowed.
+
+**The count is reported per service, not merely applied**, for the reason
+`hiddenCount` is: 163 hollow rings with nothing saying why reads as the app
+having broken rather than as a client that is shut.
+
+#### The fourth state of a local provider, which was missing
+
+Finding this turned up the thing that made it confusing. The status card had
+three rungs — agent quiet, client running, client closed — and Riot has a
+fourth: **the launcher runs while the game does not.** `riotclientservices.exe`
+holds the lockfile open, so `clientRunning` is true and every request for the
+friends list answers `404 /lol-chat/v1/friends`.
+
+`recordLocalPresence` handled that correctly and had since the `error` guard
+went in — it declines to write an errored report through. The *card* did not:
+it read the boolean, skipped the error beside it, and said **"Client running,
+last checked just now"**, which is the most reassuring of the four messages
+printed over the one state that was quietly serving hours-old statuses.
+Measured on this machine at the moment of the report: `clientRunning: true`,
+`error: "League client returned 404"`, 163 rows unconfirmed.
+
 ### An errored report must not be written through as an empty list
 
 `recordLocalPresence` refused to write when `clientRunning` was false, and that

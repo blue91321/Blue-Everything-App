@@ -1446,3 +1446,44 @@ export type LiveScope = (typeof LIVE_SCOPES)[number];
 
 /** How long a `local` provider's snapshot stays believable once the agent stops reporting. */
 export const LOCAL_PRESENCE_STALE_MS = 5 * 60_000;
+
+/**
+ * How long a friend's *state* stays believable after the last time a service
+ * confirmed it.
+ *
+ * Reported from real use: the Riot client had been shut for hours and somebody
+ * was still on screen playing a match, long after they had gone to bed. The
+ * rows are deliberately kept when a client closes — that is what stops quitting
+ * League emptying your friends list — but keeping the *names* and keeping the
+ * *claim about what they are doing* were being treated as one decision, and they
+ * are not. A name that is a few hours old is a list; a status that is a few
+ * hours old is a lie with a coloured dot next to it.
+ *
+ * So the row survives and the state decays to `unknown`, which is the value
+ * that already means "nobody can vouch for this": a hollow ring rather than a
+ * filled dot, sorted last, and left out of the Dashboard panel entirely.
+ *
+ * **Three minutes, and the number has to clear every legitimate gap.** The
+ * longest is a web provider's `PRESENCE_STALE_MS` refresh window at 60s plus
+ * however long that fetch takes; the agent's Riot poll is 30s, so this is six
+ * missed tries. Anything much tighter would flap on one slow request, which is
+ * a worse failure than the one being fixed — a dot that keeps changing teaches
+ * you to ignore it.
+ */
+export const PRESENCE_TRUSTED_MS = 3 * 60_000;
+
+/**
+ * What a stored row is allowed to still claim, given how old the evidence is.
+ *
+ * **Every state decays, including `offline`, and that is deliberate.** The
+ * tempting version degrades only the states that assert somebody is *there* and
+ * leaves `offline` alone, on the grounds that it is the quiet answer. But
+ * `offline` is a confident claim too — `unknown` exists in the first place
+ * because "grey would say offline, the specific thing that state exists to
+ * avoid saying". And a rule that decays some states and not others needs a
+ * list of which, and a list like that is what silently goes wrong the day a
+ * state is added to it.
+ */
+export function trustedPresence(state: PresenceState, seenAt: number, now = Date.now()): PresenceState {
+  return now - seenAt > PRESENCE_TRUSTED_MS ? 'unknown' : state;
+}

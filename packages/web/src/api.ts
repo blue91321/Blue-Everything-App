@@ -947,6 +947,15 @@ export interface FriendSource {
   missingConfig: string[];
   lastError: string | null;
   local: LocalStatus | null;
+  /**
+   * How many of this service's rows are too old to still say what anybody is
+   * doing, so they show as "cannot tell" instead.
+   *
+   * Optional because the server and the PWA update independently — a browser
+   * holding this bundle against an older process must not throw over a field
+   * that predates it.
+   */
+  unconfirmed?: number;
 }
 
 export interface FriendsView {

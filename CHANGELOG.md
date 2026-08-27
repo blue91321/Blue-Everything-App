@@ -20,6 +20,14 @@ files `npm version` does not touch.
 - **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
   the setting above. The most restrictive running game wins — being interrupted
   mid-match is the failure this app exists to prevent.
+- **A friend's status now goes off, while their name keeps.** Somebody was still
+  shown playing a match hours after the Riot client had been shut. A state
+  nothing has confirmed for three minutes decays to "cannot tell" — a hollow
+  ring, sorted last, and left out of the Dashboard panel — while the row itself
+  stays, so quitting a game still does not empty your friends list.
+- **A local client that is open but not answering says so.** Riot's launcher runs
+  while League does not, and the card read "Client running, last checked just
+  now" over exactly that.
 - **A stopped agent is started from the app.** The Voice screen said "Start it
   with Blue Everything.cmd"; there is a **Start it** button there now. It starts
   only the agent — the server is not restarted, because it is not the thing that

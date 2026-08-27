@@ -27,6 +27,8 @@ import {
   connectSteamSchema,
   credentialsSchema,
   IDENTITY_PREFERENCE,
+  trustedPresence,
+  type PresenceState,
   LIVE_PROVIDERS,
   isHiddenByProviders,
   isProviderId,
@@ -500,7 +502,26 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     const { force } = request.query as { force?: string };
 
     const outcomes = await refreshPresence(force === '1');
-    const rows = await allFriends();
+    /*
+     * Read *after* the refresh, so `seenAt` reflects whatever just succeeded.
+     * That ordering is what makes one rule cover every provider: a web service
+     * that answered has a fresh row, one that failed does not, and a local
+     * client that is shut never had the chance — three different causes, one
+     * observable fact, which is "when did anybody last confirm this".
+     */
+    const now = Date.now();
+    /*
+     * Counted per provider as it decays, so the screen can name the cause. A
+     * hundred and sixty hollow rings with nothing saying why is the failure this
+     * screen is most against — it reads as the app having broken rather than as
+     * a client that is shut.
+     */
+    const unconfirmed = new Map<string, number>();
+    const rows = (await allFriends()).map((row) => {
+      const state = trustedPresence(row.state as PresenceState, row.seenAt, now);
+      if (state !== row.state) unconfirmed.set(row.provider, (unconfirmed.get(row.provider) ?? 0) + 1);
+      return { ...row, state };
+    });
 
     /*
      * One row per person, not per account.
@@ -620,6 +641,12 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
             missingConfig: missingCredentials(p.id),
             lastError: account?.lastError ?? null,
             local: p.reach === 'local' ? localStatusOf(p.id) : null,
+            /**
+             * How many of this service's rows have gone too long unconfirmed to
+             * still say what anybody is doing. Reported rather than merely
+             * applied, for the same reason `hiddenCount` is.
+             */
+            unconfirmed: unconfirmed.get(p.id) ?? 0,
           };
         })
       ),

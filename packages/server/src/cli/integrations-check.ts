@@ -46,6 +46,10 @@ import {
   resolveSetupLinks,
   steamProfileInput,
   type MusicCategory,
+  trustedPresence,
+  PRESENCE_TRUSTED_MS,
+  PRESENCE_STALE_MS,
+  LOCAL_PRESENCE_STALE_MS,
 } from '@everything/shared/integrations';
 
 // Dynamic, so the scratch database above is already chosen by the time this
@@ -889,6 +893,44 @@ const ranks = PRESENCE_STATES.map((state) => presenceRank[state]);
 check('every state is ranked', ranks.every((r) => typeof r === 'number'));
 check('and no two share a rank', new Set(ranks).size === ranks.length, ranks.join(','));
 
+
+console.log('\nA status has a shelf life; a name does not');
+
+{
+  const now = 1_000_000_000_000;
+  const stale = now - (PRESENCE_TRUSTED_MS + 1);
+
+  check('a just-confirmed match is still a match', trustedPresence('in-game', now - 30_000, now) === 'in-game');
+  check('one nobody has confirmed for a while is not', trustedPresence('in-game', stale, now) === 'unknown');
+
+  /*
+   * The reported failure exactly: the Riot client had been shut for hours and
+   * somebody was still on screen playing a match, long after they went to bed.
+   */
+  check(
+    'the client shut hours ago, so nobody is still in that match',
+    trustedPresence('in-game', now - 6 * 60 * 60_000, now) === 'unknown'
+  );
+
+  /*
+   * Every state decays, `offline` included. The tempting version spares it as
+   * "the quiet answer", but `unknown` exists precisely because grey would say
+   * offline — and a rule that decays only some states needs a list of which,
+   * which is what silently goes wrong the day a state is added to it.
+   */
+  for (const state of PRESENCE_STATES) {
+    check(`  ${state} decays too`, trustedPresence(state, stale, now) === 'unknown');
+  }
+
+  /*
+   * The window has to clear every legitimate gap or it flaps, which is a worse
+   * failure than the one it fixes: a dot that keeps changing teaches you to
+   * ignore it.
+   */
+  check('it clears a web refresh window', PRESENCE_TRUSTED_MS > PRESENCE_STALE_MS);
+  check('  ...with room for the request itself', PRESENCE_TRUSTED_MS >= PRESENCE_STALE_MS * 2);
+  check('a stopped agent is reported before its snapshot decays', PRESENCE_TRUSTED_MS < LOCAL_PRESENCE_STALE_MS);
+}
 
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);
 process.exit(failures === 0 ? 0 : 1);
