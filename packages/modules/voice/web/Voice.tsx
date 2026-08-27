@@ -161,7 +161,7 @@ function VoiceSettings({
         <div className="card">
           <div className="row between">
             <div className="grow">
-              <div className="title">Listen for a wake word</div>
+              <div className="title">Enable voice</div>
               <div className="meta">
                 Say the wake word, then something like <em>"I drank water"</em>, and the matching habit gets
                 ticked off. The microphone stays open while this is on — nothing is recorded, nothing leaves
@@ -181,7 +181,7 @@ function VoiceSettings({
             <Toggle
               on={Boolean(current.voiceEnabled)}
               disabled={saving}
-              label="Listen for a wake word"
+              label="Enable voice"
               onChange={(on) => update({ voiceEnabled: on })}
             />
           </div>
