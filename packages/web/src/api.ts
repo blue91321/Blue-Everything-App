@@ -1185,6 +1185,17 @@ export const api = {
     now: () => post<{ ok: boolean; restarting: boolean }>('/api/restart'),
   },
 
+  /**
+   * Starting the Windows agent, without restarting the server it is talking to.
+   *
+   * Separate from `restart` because the two answer different questions: the
+   * server being fine is not in doubt when this is what you need.
+   */
+  agent: {
+    canStart: () => request<{ available: boolean; local: boolean; script: string | null }>('/api/agent/start'),
+    start: () => post<{ ok: boolean; starting: boolean }>('/api/agent/start'),
+  },
+
   modules: {
     get: () => request<ModuleState>('/api/modules'),
     /**

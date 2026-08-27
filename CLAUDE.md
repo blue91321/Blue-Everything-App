@@ -2326,6 +2326,47 @@ Status lives in memory on the server, like `currentWindowsDnd`. "Is a microphone
 open right now" cannot be answered from a log, and writing a row every ten
 seconds for it would be the polling this app avoids everywhere else.
 
+### Starting it, rather than being told to go and start it
+
+The status card answered a stopped agent with *"Nothing is listening. Start it
+with Blue Everything.cmd."* — accurate, and exactly the friction the three
+double-clickable files in the repo root exist to remove. An app that can tell
+you something is not running can start it, so there is a **Start it** button
+where that sentence was.
+
+**It is not the Restart button.** Restarting stops the server too, and the
+server is demonstrably fine — you are reading its response. Taking it down to
+fix the other half would drop every open browser onto the offline screen to
+solve a problem none of them had. `POST /api/agent/start` starts only the agent.
+
+**And it hands off to `start.ps1 -AgentOnly` rather than spawning node itself.**
+That script already owns the entry path, the working directory that lets
+`--import tsx` resolve, and the log files; a second recipe here would be a
+second thing to keep true. The switch exists because the ordinary path
+**short-circuits on the server's port already being open** — so "the agent has
+stopped while the server is fine" is precisely the case `start.ps1` could not
+serve, and the button would have done nothing at all.
+
+Registered in core beside `restartRoutes` and before anything optional, for the
+same reason: "the agent has stopped" is a state the app must be able to fix from
+inside, and a package must not be able to be the reason it cannot.
+
+The button asks whether it *can* before offering, like the Restart button — over
+Tailscale from the phone it genuinely cannot, since the agent runs on the PC. The
+file name is still named in that fallback, because a machine with no
+`start.ps1` has to be told something.
+
+**The switch above it is the whole system, and now says so.** `voiceEnabled` is
+a server-side setting, so turning it off from the phone closes the microphone on
+the PC — but the card underneath reports a *second* thing, whether the agent is
+running, and without a line saying which is which the two read as one confusing
+switch.
+
+**Which state the screen shows lags by up to `AGENT_STALE_MS` (45s).** That is
+deliberate and not a bug to tighten: the agent long-polls, so an idle report
+arrives about every twenty seconds, and a window much under a minute would
+flicker the screen into "the agent is down" on an ordinary slow tick.
+
 ### Testing it
 
 **Test it** arms a 45-second window in which the agent *reports* what it hears

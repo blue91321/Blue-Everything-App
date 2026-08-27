@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from '@app/api';
 import { useAsync } from '@app/useAsync';
+import { RestartBanner } from '@app/views/InstalledPackages';
 import { Vocabulary } from './Vocabulary';
 import { Toggle } from '@app/controls';
 import { VoicePhrases } from './VoiceCommands';
@@ -52,8 +53,14 @@ export function Voice({ local }: { local: boolean }) {
             This screen needs voice support on the server, and the process that's running predates it.
             Restart it and this page will work.
           </div>
-          <code className="snippet">Stop Blue Everything.cmd, then Blue Everything.cmd</code>
         </div>
+        {/*
+          The button rather than the two file names it used to print. Restarting
+          is the fix, the app can do it, and `RestartBanner` already asks the
+          server whether it can before offering — so the fallback for a machine
+          that cannot is its problem rather than a second copy of it here.
+        */}
+        <RestartBanner why="The running server predates this screen." />
       </section>
     );
   }
@@ -159,6 +166,16 @@ function VoiceSettings({
                 Say the wake word, then something like <em>"I drank water"</em>, and the matching habit gets
                 ticked off. The microphone stays open while this is on — nothing is recorded, nothing leaves
                 this PC, and speech is only processed while there's actually sound in the room.
+              </div>
+              {/*
+                This one switch is the whole system, on every device: it is a
+                server-side setting, so turning it off from the phone closes the
+                microphone on the PC. Saying so matters because the status card
+                below reports a *second* thing — whether the agent is running —
+                and without this the two read as one confusing switch.
+              */}
+              <div className="meta" style={{ marginTop: 6 }}>
+                Applies to this PC whichever device you set it from, and stays set until you change it.
               </div>
             </div>
             <Toggle
@@ -602,7 +619,18 @@ function LiveStatus({
   // without it this said "Starting up…" indefinitely at something that was
   // never going to start.
   const state = !status.agentRunning
-    ? { text: 'The agent is not running', tone: 'urgent', why: 'Nothing is listening. Start it with Blue Everything.cmd.' }
+    ? {
+        text: 'The agent is not running',
+        tone: 'urgent',
+        /*
+         * This said "Start it with Blue Everything.cmd", which is accurate and
+         * is exactly the friction the double-clickable files exist to remove:
+         * an app that can tell you something is not running can start it. The
+         * button is beside this line; the fallback text only appears when there
+         * is genuinely no button to offer.
+         */
+        why: 'Nothing is listening — the part of the app that holds the microphone has stopped.',
+      }
     : status.error
       ? { text: 'Not listening', tone: 'urgent', why: status.error }
       : !enabled
@@ -630,9 +658,17 @@ function LiveStatus({
           <div className={`title ${state.tone === 'ok-text' ? 'ok-text' : ''}`}>{state.text}</div>
           {state.why && <div className={`meta ${state.tone === 'urgent' ? 'urgent' : ''}`}>{state.why}</div>}
         </div>
-        {/* Resume outranks Test: while paused there is nothing to test, and
-            getting back to listening is the only thing worth offering. */}
-        {enabled && status.paused ? (
+        {/*
+          Start outranks both. While the agent is down, resuming and testing are
+          requests to a process that is not there — so this is the only thing on
+          the card worth offering, and it is the thing the screen was previously
+          telling you to leave the app to do.
+        */}
+        {!status.agentRunning ? (
+          <StartAgent onStarted={async () => setStatus(await api.voice.status())} />
+        ) : /* Resume outranks Test: while paused there is nothing to test, and
+              getting back to listening is the only thing worth offering. */
+        enabled && status.paused ? (
           <button
             className="btn primary"
             disabled={busy}
@@ -847,6 +883,72 @@ function PhraseTester() {
               would say so. Heard words: {result.tokens.join(', ') || '(none)'}.
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * "Start it", where the instructions to go and find a .cmd file used to be.
+ *
+ * It asks the server whether it *can* before offering, the same call the
+ * Restart button makes — a button that fails when pressed is worse than one
+ * that says why it cannot, and over Tailscale from the phone this genuinely
+ * cannot: the agent runs on the PC, and only the PC may start it.
+ *
+ * The fallback names the file, because that is still the answer when the script
+ * is missing or you are not at that machine — and a screen that reports a
+ * stopped agent with no route forward at all is what this replaced.
+ */
+function StartAgent({ onStarted }: { onStarted: () => void }) {
+  const can = useAsync(() => api.agent.canStart(), [], []);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+
+  if (can.loading) return null;
+
+  if (!can.data?.available) {
+    return (
+      <div className="meta" style={{ maxWidth: 260, textAlign: 'right' }}>
+        {can.data?.local
+          ? 'scripts/start.ps1 is missing — double-click Blue Everything.cmd instead.'
+          : 'It runs on the PC, so only the PC can start it.'}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ textAlign: 'right' }}>
+      <button
+        className="btn primary"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setProblem('');
+          try {
+            await api.agent.start();
+            /*
+             * The agent takes a few seconds to load, and its first heartbeat is
+             * what actually proves it is up. The card already polls twice a
+             * second, so the honest thing is to say it is starting and let that
+             * poll be what changes the answer — rather than checking once,
+             * finding it not up yet, and reporting a failure that is only
+             * earliness.
+             */
+            setTimeout(onStarted, 3000);
+          } catch (error) {
+            setProblem((error as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? 'Starting…' : 'Start it'}
+      </button>
+      {problem && (
+        <div className="meta urgent" style={{ marginTop: 6, maxWidth: 260 }}>
+          {problem}
         </div>
       )}
     </div>

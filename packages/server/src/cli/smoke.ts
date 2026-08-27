@@ -983,6 +983,24 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   await app.inject({ method: 'DELETE', url: '/api/games/nopath.exe' });
 
   /*
+   * Starting the agent from inside the app. The Voice screen used to answer a
+   * stopped agent with "run Blue Everything.cmd", which is the friction the
+   * double-clickable files exist to remove.
+   *
+   * Only the capability is asserted here, deliberately. `AUTH_REQUIRED=false`
+   * short-circuits `isLocal` to true, so an injected cross-site request is
+   * allowed in this suite — which looks exactly like a broken gate and is a
+   * disabled one. The route's own refusal is the same `request.isLocal` check
+   * every other write on this machine uses, and the unit checks above cover it.
+   */
+  const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
+  check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);
+  check('  ...and knows whether it actually can', typeof canStart.json().available === 'boolean');
+  const { startScript: startPs1 } = await import('../paths.js');
+  const { existsSync: haveFile } = await import('node:fs');
+  check('  ...by naming the script rather than counting the repo root by hand', haveFile(startPs1), startPs1);
+
+  /*
    * A gauge with no reminder interval is purely something to look at. Nagging
    * about one nobody asked to be nagged about would make the mode unusable as
    * decoration, which is a legitimate way to use it.

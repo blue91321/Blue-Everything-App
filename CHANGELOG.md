@@ -20,6 +20,12 @@ files `npm version` does not touch.
 - **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
   the setting above. The most restrictive running game wins — being interrupted
   mid-match is the failure this app exists to prevent.
+- **A stopped agent is started from the app.** The Voice screen said "Start it
+  with Blue Everything.cmd"; there is a **Start it** button there now. It starts
+  only the agent — the server is not restarted, because it is not the thing that
+  stopped.
+- **The Voice screen no longer names a .cmd file anywhere.** The stale-server
+  card offers the Restart button instead of printing two file names.
 - **Voice can start a game or an app.** A new command kind, whose target names a
   row on the Games list rather than a path — so what a mis-heard phrase can start
   is bounded by what this PC has already run on its own. A path typed as a target
