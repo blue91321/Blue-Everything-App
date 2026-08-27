@@ -4327,6 +4327,20 @@ Store app including Notepad — **a marker that catches non-games is worse than
 one that misses games**, because a wrongly detected game silently holds your
 reminders back and nobody would think to blame this list for it.
 
+**And the desktop is a window covering its whole monitor.** `explorer.exe` was
+listed as having filled the screen within a day of this shipping, which it had:
+the shell becomes the foreground window every time you alt-tab out of a game, so
+the geometry check was right and the conclusion was absurd. `looksLikeSystemApp`
+is the counterpart to the library markers and stops something being a *candidate*
+at all — a stronger claim, so the folders in it have to be unambiguous.
+
+The omission that matters there is `WindowsApps/`: every Game Pass title installs
+beside Notepad, so excluding it would hide a library to be rid of a text editor.
+It is checked in the **agent and the server both** — one stops the shell being
+reported, the other stops an older agent putting it back — which are the same
+check only while both are right, the arrangement the zip reader's path guard
+already uses.
+
 **"Interrupt me during this one" is three-state** — yes, no, and follow the
 setting above. The null is the design, not laziness about a boolean: stamping
 every row with today's default would look identical on the day it was made and

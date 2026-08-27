@@ -27,6 +27,9 @@ files `npm version` does not touch.
 - **A game under Steam, Epic, Riot, GOG or Xbox is switched on for you.** Filling
   the screen only gets something listed — films and browsers do that too — but an
   executable living in a game library is a game whatever shape its window is.
+- **The Windows desktop is no longer listed as a game candidate.** The shell's
+  desktop window covers its whole monitor by definition, and is the foreground
+  window every time you alt-tab out of a game.
 - **No game names ship with the app.** A row means "this ran here". The built-in
   names still exist so a game is *recognised* the first time it runs, but they
   never create a row — a list of titles you may not have installed buries the

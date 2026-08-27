@@ -89,3 +89,32 @@ export function looksLikeGameInstall(exePath: string): boolean {
   const path = exePath.toLowerCase().split(String.fromCharCode(92)).join('/');
   return LIBRARY_MARKERS.some((marker) => path.includes(marker));
 }
+
+/**
+ * Folders that never contain a game, whatever their windows look like.
+ *
+ * The counterpart to the markers above, and it exists because of one specific
+ * report: **`explorer.exe` was listed as having filled the screen.** The desktop
+ * *is* a window covering its whole monitor — that is what a desktop is — and it
+ * becomes the foreground window every time you alt-tab out of a game or minimise
+ * everything, so the geometry check was right and the conclusion was absurd.
+ *
+ * Only `C:/Windows/` is here, and the omission that matters is
+ * `WindowsApps/`: every Game Pass title installs there alongside Notepad, so
+ * excluding it would hide a whole library to be rid of a text editor. This list
+ * stops something being a *candidate* at all, which is a stronger claim than
+ * `LIBRARY_MARKERS` makes and has to be earned by the folder being unambiguous.
+ */
+const SYSTEM_MARKERS = ['/windows/system32/', '/windows/syswow64/', '/windows/explorer.exe'];
+
+/**
+ * Is this the operating system rather than something you ran?
+ *
+ * Checked before anything else, because a system component covering the screen
+ * is the shell drawing the desktop rather than an app taking it over.
+ */
+export function looksLikeSystemApp(exePath: string): boolean {
+  if (!exePath) return false;
+  const path = exePath.toLowerCase().split(String.fromCharCode(92)).join('/');
+  return SYSTEM_MARKERS.some((marker) => path.includes(marker));
+}

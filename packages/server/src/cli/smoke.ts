@@ -1188,6 +1188,22 @@ console.log('games, and what may interrupt one');
   check('  ...and the agent is told to watch it', ((await app.inject({ method: 'GET', url: '/api/games/watching' })).json().exes as string[]).includes('fsd.exe'));
   await app.inject({ method: 'DELETE', url: '/api/games/fsd.exe' });
 
+  /*
+   * The shell is never a candidate, however plainly it covers the screen.
+   * `explorer.exe` was listed on the real machine within a day of this shipping:
+   * the desktop *is* a window filling its monitor, and it is the foreground
+   * window every time you alt-tab out of a game. The geometry check was right
+   * and the conclusion was absurd.
+   */
+  await report({
+    state: 'free',
+    liveGames: [],
+    fullscreenApp: 'explorer.exe',
+    gamePaths: { 'explorer.exe': `C:${B}Windows${B}explorer.exe` },
+  });
+  check('the desktop is not listed as having filled the screen',
+    (await listed()).find((g) => g.exe === 'explorer.exe') === undefined);
+
   /* The interruption rule. */
   await post('/api/nudges', { title: 'Mid-match', minQuality: 'any' });
   const midMatch = await report({ state: 'in-game', liveGames: ['cs2.exe'] });

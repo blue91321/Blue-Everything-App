@@ -32,6 +32,7 @@ import {
   exePathForPid,
 } from './win32.js';
 import { audioRecentlyPlaying } from './audio.js';
+import { looksLikeSystemApp } from '@everything/shared/games';
 import { isGame, isLauncher } from './games.js';
 
 export type AttentionState =
@@ -264,9 +265,19 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
      * and a list that filled with those would be worse than one that filled
      * slowly.
      */
-    const covering = foreground?.exe && foreground.isFullScreen && !isLauncher(foreground.exe)
-      ? foreground.exe.toLowerCase()
-      : null;
+    /*
+     * The shell is excluded before anything else. The desktop *is* a window
+     * covering its whole monitor, and it is the foreground window every time you
+     * alt-tab out of a game — so without this, `explorer.exe` is discovered as
+     * an app that filled the screen. Which it had. Reported from real use.
+     */
+    const covering =
+      foreground?.exe &&
+      foreground.isFullScreen &&
+      !isLauncher(foreground.exe) &&
+      !looksLikeSystemApp(foreground.exePath)
+        ? foreground.exe.toLowerCase()
+        : null;
     const sustained = covering !== null && covering === this.lastCovering;
     this.lastCovering = covering;
     const fullscreenApp = sustained ? covering : null;

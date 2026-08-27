@@ -5,7 +5,7 @@ import { db } from '../db/client.js';
 import { attentionSamples } from '../db/schema.js';
 import { changes } from '../events.js';
 import { gamesVersion, recordSeen } from './games.js';
-import { looksLikeGameInstall } from '@everything/shared/games';
+import { looksLikeGameInstall, looksLikeSystemApp } from '@everything/shared/games';
 import {
   collectDeliverable,
   expireStaleNudges,
@@ -123,7 +123,17 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
      */
     await recordSeen([
       ...report.liveGames.map((exe) => ({ exe, source: 'seen' as const, isGame: true, path: report.gamePaths[exe] })),
-      ...(report.fullscreenApp && !report.liveGames.includes(report.fullscreenApp)
+      /*
+       * The shell never becomes a row, checked here as well as in the agent.
+       * The two are about different things: the agent's copy stops it being
+       * *reported*, this one stops an older agent — or a replayed report —
+       * putting `explorer.exe` back on the list. They are the same check only
+       * while both are right, which is the arrangement the zip reader's path
+       * guard already uses.
+       */
+      ...(report.fullscreenApp &&
+      !report.liveGames.includes(report.fullscreenApp) &&
+      !looksLikeSystemApp(report.gamePaths[report.fullscreenApp] ?? '')
         ? [
             {
               exe: report.fullscreenApp,
