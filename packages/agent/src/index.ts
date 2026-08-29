@@ -83,6 +83,7 @@ function toReport(snapshot: AttentionSnapshot, stoppingPoint: StoppingPoint | nu
     liveGames: snapshot.liveGames,
     fullscreenApp: snapshot.fullscreenApp,
     gamePaths: snapshot.gamePaths,
+    gameUrls: snapshot.gameUrls,
     windowsDnd: snapshot.windowsDnd,
     audioPlaying: snapshot.audioPlaying,
     stoppingPoint: stoppingPoint ? { quality: stoppingPoint.quality, reason: stoppingPoint.reason } : null,

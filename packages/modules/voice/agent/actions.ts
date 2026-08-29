@@ -29,6 +29,7 @@ import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import koffi from 'koffi';
 import { isOpenableUrl, parseHotkey, type MediaAction } from '@everything/shared';
+import { isLaunchUrl } from '@everything/shared/games';
 
 const user32 = koffi.load('user32.dll');
 
@@ -147,7 +148,34 @@ export function openUrl(url: string): void {
  * which leaves a program with no console host. The working directory is the
  * game's own folder, because plenty of them look for files beside themselves.
  */
-export function launchProgram(path: string, name: string): void {
+export function launchProgram(target: { path?: string; url?: string }, name: string): void {
+  /*
+   * A `steam://` address, when the games list has one.
+   *
+   * **This is the one place the shell is handed a protocol other than http.**
+   * `openUrl` refuses everything but http and https precisely so a registered
+   * handler is never invoked with an argument we did not write — and a Steam
+   * game genuinely cannot be started any other way, since running its
+   * executable answers "start warframe from launcher" and quits.
+   *
+   * So the exception is a *shape* rather than a scheme: `isLaunchUrl` allows
+   * `steam://rungameid/<digits>` and nothing else — no query, no fragment, no
+   * second segment. `steam://` can install, uninstall and open pages in its own
+   * browser, and the digits are what keep this to "start the game I named".
+   */
+  if (target.url) {
+    if (!isLaunchUrl(target.url)) {
+      throw new ActionRefused(`refusing to open "${target.url}" — not a game address`);
+    }
+    spawn('cmd.exe', ['/c', 'start', '', target.url], {
+      windowsHide: true,
+      stdio: 'ignore',
+      detached: true,
+    }).unref();
+    return;
+  }
+
+  const path = target.path ?? '';
   // Not a normalisation — a refusal. A resolved path is absolute and ends in
   // `.exe`, and anything else means something upstream is not what it claims.
   if (!path || !path.toLowerCase().endsWith('.exe') || !path.includes(String.fromCharCode(92))) {

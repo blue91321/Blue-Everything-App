@@ -150,7 +150,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     try {
       if (result.action.do === 'open-url') openUrl(result.action.url);
       if (result.action.do === 'press-keys') pressKeys(result.action.keys);
-      if (result.action.do === 'launch') launchProgram(result.action.path, result.action.name);
+      if (result.action.do === 'launch') launchProgram(result.action, result.action.name);
 
       if (result.action.do === 'media') {
         if (!mediaAllowed()) {

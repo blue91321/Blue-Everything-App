@@ -46,6 +46,7 @@ const report = (over: Partial<AttentionReport>): AttentionReport => ({
   // Likewise: required on the report, so leaving it out makes this helper's
   // return type a claim it does not meet.
   gamePaths: {},
+  gameUrls: {},
   ...over,
 });
 
@@ -954,6 +955,23 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   check('  ...and it says which one', started.say === 'Starting Deep Rock Galactic', started.say);
 
   /*
+   * And when the row knows a `steam://` address, that wins over the path.
+   *
+   * This is the whole point of the address existing: running a Steam game's own
+   * executable frequently answers "start <game> from launcher" and quits, which
+   * is what was reported. The action the agent receives has to carry the URL and
+   * not the path, or the fix reaches the database and stops there.
+   */
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/games/fsd.exe',
+    payload: { launchUrl: 'steam://rungameid/548430' },
+  });
+  const viaSteam = (await post('/api/voice/command', { text: 'hey everything rock and stone', speakerScore: null })).json();
+  check('a Steam game starts through Steam, not through its exe', viaSteam.action?.url === 'steam://rungameid/548430', JSON.stringify(viaSteam.action));
+  check('  ...and the path is not sent instead', viaSteam.action?.path === undefined);
+
+  /*
    * A path as the target is refused by the schema rather than merely failing to
    * find a row. Working by accident is not the same as working by rule, and the
    * rule is what has to hold when somebody edits this next.
@@ -1214,7 +1232,7 @@ console.log('games, and what may interrupt one');
 
   /* Discovery: the agent reports what ran, and the list grows by itself. */
   await report({ state: 'in-game', liveGames: ['cs2.exe'] });
-  const listed = async () => (await app.inject({ method: 'GET', url: '/api/games' })).json() as Array<{ exe: string; isGame: number; source: string; allowInterruptions: number | null }>;
+  const listed = async () => (await app.inject({ method: 'GET', url: '/api/games' })).json() as Array<{ exe: string; isGame: number; source: string; allowInterruptions: number | null; launchPath: string | null; launchUrl: string | null }>;
   const cs2 = (await listed()).find((g) => g.exe === 'cs2.exe');
   check('a running game puts itself on the list', cs2 !== undefined);
   check('  ...marked as a game', cs2?.isGame === 1);
@@ -1249,6 +1267,43 @@ console.log('games, and what may interrupt one');
   const drg = (await listed()).find((g) => g.exe === 'fsd.exe');
   check('one in a game library is switched on for you', drg?.isGame === 1, `isGame=${drg?.isGame}`);
   check('  ...and the agent is told to watch it', ((await app.inject({ method: 'GET', url: '/api/games/watching' })).json().exes as string[]).includes('fsd.exe'));
+  /*
+   * A Steam game starts through Steam, not by running its executable.
+   *
+   * Reported from real use: `Warframe.x64.exe` answers "start warframe from
+   * launcher" and quits, because the binary expects Steam to have set the
+   * environment up first. The agent resolves the app id from the
+   * `appmanifest_*.acf` beside the game and reports the address; the row keeps
+   * both, and the address wins.
+   */
+  await report({
+    state: 'in-game',
+    liveGames: ['fsd.exe'],
+    gamePaths: { 'fsd.exe': `D:${B}SteamLibrary${B}steamapps${B}common${B}Deep Rock Galactic${B}FSD.exe` },
+    gameUrls: { 'fsd.exe': 'steam://rungameid/548430' },
+  });
+  const steamRow = (await listed()).find((g) => g.exe === 'fsd.exe');
+  check('a Steam game records how to start it', steamRow?.launchUrl === 'steam://rungameid/548430', steamRow?.launchUrl ?? undefined);
+  check('  ...and keeps the path as well', Boolean(steamRow?.launchPath));
+
+  /*
+   * The shape is the guard, not the scheme. `steam://` can install, uninstall
+   * and open pages in its own browser, so only "run this numbered game" is
+   * accepted — by the API on the way in, and again by the launcher on the way
+   * out, because those are two different claims.
+   */
+  for (const bad of ['steam://install/1', 'steam://openurl/http://x', 'http://example.com', 'steam://rungameid/1;calc']) {
+    const refused = await app.inject({
+      method: 'PATCH',
+      url: '/api/games/fsd.exe',
+      payload: { launchUrl: bad },
+    });
+    check(`  ...and refuses ${bad}`, refused.statusCode === 400, `HTTP ${refused.statusCode}`);
+  }
+
+  const cleared = await app.inject({ method: 'PATCH', url: '/api/games/fsd.exe', payload: { launchUrl: '' } });
+  check('  ...while an empty address clears it', cleared.statusCode === 200, `HTTP ${cleared.statusCode}`);
+
   await app.inject({ method: 'DELETE', url: '/api/games/fsd.exe' });
 
   /*

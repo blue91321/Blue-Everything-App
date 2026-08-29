@@ -103,11 +103,14 @@ export type VoiceAction =
   | { do: 'press-keys'; keys: string }
   | { do: 'media'; action: string }
   /**
-   * Start a program. The path is resolved by the *server* from the games list,
-   * which this agent filled in by watching that executable run here — the
-   * stored command holds a name like `cs2.exe`, never a path.
+   * Start a program. Resolved by the *server* from the games list, which this
+   * agent filled in by watching that executable run here — the stored command
+   * holds a name like `cs2.exe`, never a path.
+   *
+   * Either a path or a `steam://` address, since running a Steam game's binary
+   * directly is often the wrong thing. Exactly one is set.
    */
-  | { do: 'launch'; path: string; name: string }
+  | { do: 'launch'; path?: string; url?: string; name: string }
   | { do: 'pause'; untilMs: number | null }
   | { do: 'cancel' };
 

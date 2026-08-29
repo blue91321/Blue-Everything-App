@@ -187,7 +187,12 @@ function GameRow({
   local: boolean;
   busy: boolean;
   interruptByDefault: boolean;
-  onChange: (patch: { isGame?: boolean; allowInterruptions?: boolean | null; label?: string }) => void;
+  onChange: (patch: {
+    isGame?: boolean;
+    allowInterruptions?: boolean | null;
+    label?: string;
+    launchUrl?: string | null;
+  }) => void;
   onForget: () => void;
   onLaunch: () => void;
   onShowFolder: () => void;
@@ -220,6 +225,16 @@ function GameRow({
               <div className="meta truncate" style={{ marginTop: 2 }} title={game.launchPath}>
                 {game.launchPath}
               </div>
+              {/*
+                Shown when there is one, because it changes what Run actually
+                does — and because "it started through Steam" is the answer to
+                why a game that would not start now does.
+              */}
+              {game.launchUrl && (
+                <div className="meta truncate" style={{ marginTop: 2 }} title={game.launchUrl}>
+                  starts via <code>{game.launchUrl}</code>
+                </div>
+              )}
               {local && (
                 <div className="row" style={{ gap: '.35rem', marginTop: 6 }}>
                   <button className="btn subtle" disabled={busy} onClick={onLaunch}>
@@ -271,6 +286,8 @@ function GameRow({
 
       {/* Only for things that are actually games. Asking whether a photo viewer
           may interrupt you is a question about nothing. */}
+      {game.isGame === 1 && local && <LaunchAddress game={game} busy={busy} onChange={onChange} />}
+
       {game.isGame === 1 && (
         <div style={{ marginTop: 10 }}>
           <div className="meta">Interrupt me during this one</div>
@@ -340,5 +357,73 @@ function AddGame({ local, busy, onAdd }: { local: boolean; busy: boolean; onAdd:
         </button>
       </form>
     </div>
+  );
+}
+
+/**
+ * The address that starts a game, when running its executable does not.
+ *
+ * Reported from real use: `"start warframe"` ran `Warframe.x64.exe` and got
+ * **"start warframe from launcher"** back. Plenty of Steam games are a thin
+ * binary behind a launcher that expects Steam to have set things up first, so
+ * the executable is the wrong thing to run even though it is what was running
+ * when the app saw it.
+ *
+ * Found automatically for anything under a Steam library — the app id is in
+ * `appmanifest_*.acf` beside the game — and typeable here for everything else,
+ * because the address is already sitting in the properties of a shortcut you
+ * have. Collapsed, since most games need nothing here.
+ */
+function LaunchAddress({
+  game,
+  busy,
+  onChange,
+}: {
+  game: Game;
+  busy: boolean;
+  onChange: (patch: { launchUrl?: string | null }) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? game.launchUrl ?? '';
+  const trimmed = value.trim();
+  // Empty is how you clear it, so it is "none" rather than invalid.
+  const valid = trimmed === '' || /^steam:\/\/(?:rungameid|run)\/[0-9]{1,10}$/.test(trimmed.toLowerCase());
+
+  return (
+    <details style={{ marginTop: 10 }}>
+      <summary className="meta">
+        {game.launchUrl ? 'Starts through Steam' : 'Does it need a launcher to start?'}
+      </summary>
+      <div className="meta" style={{ marginTop: 6 }}>
+        Some games refuse to run from their own executable and say so — "start it from the launcher".
+        Right-click the game's desktop shortcut, copy the address from its properties, and paste it here.
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <div className="grow">
+          <input
+            value={value}
+            placeholder="steam://rungameid/230410"
+            aria-label={`How to start ${game.label}`}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        </div>
+        <button
+          className="btn"
+          disabled={busy || !valid || trimmed === (game.launchUrl ?? '')}
+          onClick={() => {
+            onChange({ launchUrl: trimmed });
+            setDraft(null);
+          }}
+        >
+          Save
+        </button>
+      </div>
+      {!valid && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          Only a Steam game address — <code>steam://rungameid/230410</code>. Anything else would hand the
+          shell a program somebody else chose, which is a much larger thing than starting a game.
+        </div>
+      )}
+    </details>
   );
 }

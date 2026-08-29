@@ -19,6 +19,7 @@ import { and, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { labelForExe } from '@everything/shared';
+import { isLaunchUrl } from '@everything/shared/games';
 import { db } from '../db/client.js';
 import { games } from '../db/schema.js';
 import { changes } from '../events.js';
@@ -59,8 +60,11 @@ const writtenAt = new Map<string, number>();
  */
 const pathKnown = new Set<string>();
 
+/** The same, for the `steam://` address. */
+const urlKnown = new Set<string>();
+
 export async function recordSeen(
-  seen: Array<{ exe: string; source: GameSource; isGame: boolean; path?: string }>,
+  seen: Array<{ exe: string; source: GameSource; isGame: boolean; path?: string; url?: string }>,
   now = Date.now()
 ): Promise<void> {
   if (seen.length === 0) return;
@@ -69,8 +73,10 @@ export async function recordSeen(
     const exe = entry.exe.toLowerCase();
     if (!exe) return false;
     // A path we have not stored yet is always worth a look, however recently
-    // this row was touched.
+    // this row was touched. Same for the launch URL, which arrives the same way
+    // and for the same rows.
     if (entry.path && !pathKnown.has(exe)) return true;
+    if (entry.url && !urlKnown.has(exe)) return true;
     const at = writtenAt.get(exe);
     return at === undefined || now - at >= TOUCH_AFTER_MS;
   });
@@ -87,6 +93,7 @@ export async function recordSeen(
     const row = known.get(exe);
 
     if (entry.path) pathKnown.add(exe);
+    if (entry.url) urlKnown.add(exe);
 
     if (!row) {
       await db.insert(games).values({
@@ -103,6 +110,7 @@ export async function recordSeen(
         isGame: entry.isGame ? 1 : 0,
         source: entry.source,
         launchPath: entry.path ?? null,
+        launchUrl: entry.url ?? null,
         firstSeenAt: now,
         lastSeenAt: now,
       });
@@ -110,7 +118,10 @@ export async function recordSeen(
       continue;
     }
 
-    if (now - row.lastSeenAt >= TOUCH_AFTER_MS || (entry.path && !row.launchPath)) {
+    const newPath = Boolean(entry.path) && !row.launchPath;
+    const newUrl = Boolean(entry.url) && !row.launchUrl;
+
+    if (now - row.lastSeenAt >= TOUCH_AFTER_MS || newPath || newUrl) {
       /*
        * The path is filled in the first time it is known, and never overwritten
        * — a game moved to another drive would otherwise silently keep the old
@@ -119,13 +130,20 @@ export async function recordSeen(
        */
       await db
         .update(games)
-        .set({ lastSeenAt: now, ...(entry.path && !row.launchPath ? { launchPath: entry.path } : {}) })
+        .set({
+          lastSeenAt: now,
+          ...(newPath ? { launchPath: entry.path } : {}),
+          ...(newUrl ? { launchUrl: entry.url } : {}),
+        })
         .where(eq(games.exe, exe));
-      if (entry.path && !row.launchPath) changed = true;
-    } else if (entry.path && !row.launchPath) {
-      // Not due a touch, but the path is new — the whole reason this entry got
-      // past the cache above.
-      await db.update(games).set({ launchPath: entry.path }).where(eq(games.exe, exe));
+      if (newPath || newUrl) changed = true;
+    } else if (newPath || newUrl) {
+      // Not due a touch, but something we did not have is now known — the whole
+      // reason this entry got past the cache above.
+      await db
+        .update(games)
+        .set({ ...(newPath ? { launchPath: entry.path } : {}), ...(newUrl ? { launchUrl: entry.url } : {}) })
+        .where(eq(games.exe, exe));
       changed = true;
       /*
        * Deliberately *not* announced. This fires every five minutes while
@@ -254,6 +272,21 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
         /** Null puts it back to following the global setting. */
         allowInterruptions: z.boolean().nullable().optional(),
         launchPath: z.string().max(500).nullable().optional(),
+        /*
+         * How to *start* it, when running the executable is not how. `''`
+         * clears it and falls back to the path.
+         *
+         * Validated rather than trusted, because this string is handed to the
+         * shell — and validated again by the launch route on the way out, since
+         * "what may be stored" and "what may be run" are two different claims
+         * and they agree only while both are right.
+         */
+        launchUrl: z
+          .string()
+          .max(300)
+          .refine((v) => v === '' || isLaunchUrl(v), 'must be a steam://rungameid/... address')
+          .nullable()
+          .optional(),
       })
       .parse(request.body);
 
@@ -271,6 +304,10 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
         allowInterruptions:
           body.allowInterruptions === undefined ? undefined : body.allowInterruptions === null ? null : body.allowInterruptions ? 1 : 0,
         launchPath: body.launchPath === undefined ? undefined : body.launchPath,
+        // Empty means "no address", which is null in the column — a stored ''
+        // would be offered to the shell and refused, so the row would report a
+        // problem for something nobody had set.
+        launchUrl: body.launchUrl === undefined ? undefined : body.launchUrl || null,
       })
       .where(eq(games.exe, exe.toLowerCase()))
       .returning();
@@ -300,8 +337,37 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
     const { exe } = request.params as { exe: string };
     const [row] = await db.select().from(games).where(eq(games.exe, exe.toLowerCase()));
     if (!row) return reply.code(404).send({ error: 'no such game' });
+
+    /*
+     * The URL wins when there is one.
+     *
+     * Running a Steam game's executable directly is frequently the wrong thing:
+     * `Warframe.x64.exe` answers "start warframe from launcher" and quits,
+     * because the binary expects Steam to have set the environment up first.
+     * `steam://rungameid/230410` is what the desktop shortcut holds and what
+     * actually works.
+     *
+     * Validated on the way out as well as on the way in. The two checks are
+     * about different things — the stored value, and the string about to reach
+     * the shell — and they are the same check only while both are right.
+     */
+    if (row.launchUrl) {
+      if (!isLaunchUrl(row.launchUrl)) {
+        return reply.code(409).send({ error: `${row.launchUrl} is not a game address` });
+      }
+      const viaUrl = spawn('cmd.exe', ['/c', 'start', '', row.launchUrl], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      viaUrl.on('error', (error) => request.log.error(error, 'launch failed'));
+      viaUrl.unref();
+      return { ok: true, launched: row.launchUrl };
+    }
+
     if (!row.launchPath) {
-      return reply.code(409).send({ error: 'nowhere to launch it from — run it once and this fills itself in' });
+      return reply
+        .code(409)
+        .send({ error: 'nowhere to launch it from — run it once, or paste its address in' });
     }
     if (!existsSync(row.launchPath)) {
       return reply.code(409).send({ error: `${row.launchPath} is not there any more` });

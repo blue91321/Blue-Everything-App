@@ -4618,6 +4618,41 @@ game removes nothing from `exes`, so hashing only the watch list would leave the
 change never reaching the agent.
 
 
+#### Some games cannot be started by their own executable
+
+Reported from real use: `"start warframe"` ran `Warframe.x64.exe` and got
+**"start warframe from launcher"** back. That is not a Warframe quirk — plenty
+of Steam games are a thin binary behind a launcher that expects Steam to have
+set the environment up first, so the executable is the wrong thing to run even
+though it is exactly what was running when the app saw it.
+
+So a row carries a `launch_url` beside its path, and **the address wins whenever
+there is one**. `steam://rungameid/230410` is what the desktop shortcut holds,
+and it is what works.
+
+**The app id is not in the path, but it is next to the game.** Steam writes an
+`appmanifest_<appid>.acf` per install into the library's `steamapps` folder, and
+each one records its `installdir` — which *is* the folder name in the path. So
+`steamapps/common/Warframe/…` finds the manifest whose `installdir` is
+`Warframe`, and that manifest carries `230410`. The `.acf` is read with a regex
+rather than parsed, the same call `zip.ts` makes about its own format: two quoted
+strings on a line is all that is needed.
+
+**The agent resolves it, and only for games it sees running** — the same rule the
+path already follows, and the same division voice and the Riot reader draw. A row
+that predates this gets its address the next time the game runs, or you paste one
+in: the Games tab has a field for it, because the address is already sitting in
+the properties of a shortcut you have.
+
+**This is the one place the shell is handed a protocol other than http, and the
+guard is a shape rather than a scheme.** Voice commands may open `http:` and
+`https:` only, precisely so a registered handler is never invoked with an
+argument we did not write. `isLaunchUrl` allows `steam://rungameid/<digits>` and
+nothing else — no query, no fragment, no second segment — because `steam://` can
+also install, uninstall and open pages in its own browser. Checked when the value
+is stored, and again by the launcher before the shell sees it: those are two
+different claims, and they agree only while both are right.
+
 #### Run it, or see where it lives
 
 Each row carries the executable's full path, read from the PID the monitor is

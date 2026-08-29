@@ -1174,6 +1174,19 @@ export const games = sqliteTable('games', {
   allowInterruptions: integer('allow_interruptions'),
   /** Where to launch it, when known. */
   launchPath: text('launch_path'),
+  /**
+   * How to *start* it, when that is not the same as running the executable.
+   *
+   * A Steam game is usually a thin binary behind a launcher: running
+   * `Warframe.x64.exe` directly answers "start warframe from launcher" and
+   * quits. `steam://rungameid/230410` is what the desktop shortcut holds and
+   * what actually works, so it wins over the path whenever it is known.
+   *
+   * Filled in by the agent, which can read `appmanifest_*.acf` beside the game
+   * — and editable by hand, since the address is sitting in the properties of a
+   * shortcut you already have.
+   */
+  launchUrl: text('launch_url'),
   /** `builtin`, `seen`, `fullscreen` or `manual` — how it got here. */
   source: text('source').notNull().default('seen'),
   firstSeenAt: integer('first_seen_at').notNull(),

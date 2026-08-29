@@ -55,6 +55,12 @@ export const attentionReportSchema = z.object({
    * the only moment this is cheaply knowable is while the process is running.
    */
   gamePaths: z.record(z.string(), z.string().max(500)).default({}),
+  /*
+   * Optional rather than defaulted-and-required for the reason every field
+   * added to this payload has been: an older agent sends none, and its whole
+   * report must not be refused over a field that postdates it.
+   */
+  gameUrls: z.record(z.string(), z.string().max(300)).default({}),
   /** Windows' own Do Not Disturb / quiet time is switched on right now. */
   windowsDnd: z.boolean().default(false),
   /** Something has played sound recently — a video, a stream, a call. */

@@ -46,6 +46,11 @@ files `npm version` does not touch.
   stopped.
 - **The Voice screen no longer names a .cmd file anywhere.** The stale-server
   card offers the Restart button instead of printing two file names.
+- **Steam games start through Steam.** Running `Warframe.x64.exe` answers "start
+  warframe from launcher" and quits; the app now records
+  `steam://rungameid/230410` beside the path and uses it instead. Found
+  automatically from the `appmanifest` beside the game, and pasteable by hand on
+  the Games tab for anything it cannot work out.
 - **Voice can start a game or an app.** A new command kind, whose target names a
   row on the Games list rather than a path — so what a mis-heard phrase can start
   is bounded by what this PC has already run on its own. A path typed as a target

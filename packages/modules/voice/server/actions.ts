@@ -28,6 +28,7 @@ import {
   type VoiceCandidate,
   type VoiceCommandKind,
 } from '@everything/shared';
+import { isLaunchUrl } from '@everything/shared/games';
 import { db } from '@everything/server/module-api';
 import { games, habits, notes, settings, voiceCommands } from '@everything/server/module-api';
 import { recordHabitDone } from '@everything/server/module-api';
@@ -39,10 +40,14 @@ export type VoiceAction =
   /** A system media key. The agent refuses it when nothing is playing. */
   | { do: 'media'; action: string }
   /**
-   * Start a program. The path is resolved here from the games list, never
-   * carried in the command — see `isLaunchTarget`.
+   * Start a program. Resolved here from the games list, never carried in the
+   * command — see `isLaunchTarget`.
+   *
+   * Either a path or a `steam://` address: for a Steam game the executable is
+   * frequently the wrong thing to run, and the URL is what the desktop shortcut
+   * holds. Exactly one is set.
    */
-  | { do: 'launch'; path: string; name: string }
+  | { do: 'launch'; path?: string; url?: string; name: string }
   | { do: 'pause'; untilMs: number | null }
   /** Drop the sentence in progress. The microphone stays on. */
   | { do: 'cancel' };
@@ -608,8 +613,24 @@ export async function runCommand(
       // Three failures worth telling apart, because they have three different
       // fixes and "it didn't work" has none.
       if (!row) return { outcome: 'no-match', text, say: `${exe} is not on the games list` };
+
+      /*
+       * The URL wins over the path, because for a Steam game the executable is
+       * usually the wrong thing to run: `Warframe.x64.exe` answers "start
+       * warframe from launcher" and quits. Reported from real use, by exactly
+       * that command.
+       */
+      if (row.launchUrl && isLaunchUrl(row.launchUrl)) {
+        return {
+          outcome: 'launched',
+          text,
+          action: { do: 'launch', url: row.launchUrl, name: row.label },
+          say: `Starting ${row.label}`,
+        };
+      }
+
       if (!row.launchPath) {
-        return { outcome: 'no-match', text, say: `I do not know where ${row.label} is — run it once and I will` };
+        return { outcome: 'no-match', text, say: `I do not know how to start ${row.label} — run it once and I will` };
       }
 
       return {

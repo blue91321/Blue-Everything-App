@@ -731,6 +731,14 @@ export interface Game {
   /** 1 yes, 0 no, null follows `interruptDuringGames` — three states on purpose. */
   allowInterruptions: number | null;
   launchPath: string | null;
+  /**
+   * A `steam://` address, when running the executable is not how you start it.
+   *
+   * Wins over the path. Optional because the server and the PWA update
+   * independently, and a bundle newer than the process serving it must not
+   * throw over a field that predates it.
+   */
+  launchUrl?: string | null;
   source: string;
   firstSeenAt: number;
   lastSeenAt: number;
@@ -1189,7 +1197,17 @@ export const api = {
    */
   games: {
     list: () => request<Game[]>('/api/games'),
-    update: (exe: string, patch: { label?: string; isGame?: boolean; allowInterruptions?: boolean | null; launchPath?: string | null }) =>
+    update: (
+      exe: string,
+      patch: {
+        label?: string;
+        isGame?: boolean;
+        allowInterruptions?: boolean | null;
+        launchPath?: string | null;
+        /** `''` clears it and falls back to the path. */
+        launchUrl?: string | null;
+      }
+    ) =>
       patch2<Game>(`/api/games/${encodeURIComponent(exe)}`, patch),
     add: (exe: string, extra: { label?: string; launchPath?: string } = {}) => post<Game>('/api/games', { exe, ...extra }),
     forget: (exe: string) => request<{ ok: boolean }>(`/api/games/${encodeURIComponent(exe)}`, { method: 'DELETE' }),

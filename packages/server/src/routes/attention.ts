@@ -122,7 +122,13 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
      * about.
      */
     await recordSeen([
-      ...report.liveGames.map((exe) => ({ exe, source: 'seen' as const, isGame: true, path: report.gamePaths[exe] })),
+      ...report.liveGames.map((exe) => ({
+        exe,
+        source: 'seen' as const,
+        isGame: true,
+        path: report.gamePaths[exe],
+        url: report.gameUrls?.[exe],
+      })),
       /*
        * The shell never becomes a row, checked here as well as in the agent.
        * The two are about different things: the agent's copy stops it being
@@ -147,6 +153,7 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
                */
               isGame: looksLikeGameInstall(report.gamePaths[report.fullscreenApp] ?? ''),
               path: report.gamePaths[report.fullscreenApp],
+              url: report.gameUrls?.[report.fullscreenApp],
             },
           ]
         : []),

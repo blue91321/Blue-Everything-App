@@ -32,6 +32,7 @@ import {
   exePathForPid,
 } from './win32.js';
 import { audioRecentlyPlaying } from './audio.js';
+import { steamUrlFor } from './steam.js';
 import { looksLikeSystemApp } from '@everything/shared/games';
 import { isGame, isLauncher } from './games.js';
 
@@ -90,6 +91,12 @@ export interface AttentionSnapshot {
    * to recognise a game and useless for launching one.
    */
   gamePaths: Record<string, string>;
+  /**
+   * How to *start* each one, where that is not the same as running its
+   * executable — today, Steam games. Absent for anything installed elsewhere,
+   * which launches by path exactly as before.
+   */
+  gameUrls: Record<string, string>;
 }
 
 /**
@@ -282,13 +289,22 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
     this.lastCovering = covering;
     const fullscreenApp = sustained ? covering : null;
     const gamePaths: Record<string, string> = {};
+    const gameUrls: Record<string, string> = {};
     for (const [exe, pid] of this.trackedGames) {
       const path = exePathForPid(pid);
-      if (path) gamePaths[exe] = path;
+      if (path) {
+        gamePaths[exe] = path;
+        const url = steamUrlFor(path);
+        if (url) gameUrls[exe] = url;
+      }
     }
     if (fullscreenApp && foreground?.pid) {
       const path = exePathForPid(foreground.pid);
-      if (path) gamePaths[fullscreenApp] = path;
+      if (path) {
+        gamePaths[fullscreenApp] = path;
+        const url = steamUrlFor(path);
+        if (url) gameUrls[fullscreenApp] = url;
+      }
     }
 
     const base = {
@@ -301,6 +317,7 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
       liveGames,
       fullscreenApp,
       gamePaths,
+      gameUrls,
     };
 
     // Order matters. A live game outranks idleness: sitting in a death-cam
