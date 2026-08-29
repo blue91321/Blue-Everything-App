@@ -54,6 +54,14 @@ export interface VoiceConfig {
   enrolUntil?: number;
   /** How long to reopen after a miss. Read by the voice feature, not used here. */
   retryMs?: number;
+  /**
+   * System-wide key combinations, or null for unset.
+   *
+   * Sent whether or not voice is switched on, because one of them is how you
+   * switch it on — the agent registers them from the same config either way.
+   */
+  toggleHotkey?: string | null;
+  listenHotkey?: string | null;
   /** How long to keep listening after answering. 0 switches follow-ups off. */
   followUpMs?: number;
 }
@@ -231,6 +239,17 @@ export class ServerClient {
    */
   watchedGames(): Promise<WatchedGames> {
     return this.request<WatchedGames>('/api/games/watching');
+  }
+
+  /**
+   * Flip voice on or off, for the hotkey.
+   *
+   * The server owns the flip rather than this reading the value and writing the
+   * opposite back: two presses in quick succession would otherwise both read
+   * the same "before", and the second would undo nothing.
+   */
+  voiceToggle(): Promise<{ enabled: boolean }> {
+    return this.request('/api/voice/toggle', { method: 'POST', body: '{}' });
   }
 
   /**

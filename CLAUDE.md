@@ -2367,6 +2367,73 @@ deliberate and not a bug to tighten: the agent long-polls, so an idle report
 arrives about every twenty seconds, and a window much under a minute would
 flicker the screen into "the agent is down" on an ordinary slow tick.
 
+### Two keys, for what the wake word cannot do
+
+**Voice → Keyboard shortcuts.** Both unset by default, both system-wide, so they
+work from inside a game.
+
+- **Turn voice on and off.** This is the one that had no alternative: a
+  microphone that is off cannot hear you ask for it to be switched on, so before
+  this the only ways back were the tray, a browser tab, or the phone.
+- **Listen now, without the wake word.** Same tone, same popup, same command
+  window — reached by a route that cannot be misheard. Strictly more reliable
+  than the wake word, since nothing has to be recognised before it works.
+
+**Neither ships set.** Registering one takes that combination away from every
+other program on the machine, which is not a thing to do to somebody who has not
+asked for it.
+
+**It lives in the voice package, and works while voice is off.** Those are only
+compatible because switching voice off does not *unload* the module — it disposes
+the models and closes the microphone, while the agent half keeps polling, which
+is how it learns to turn back on. Deleting the package takes the hotkeys with it,
+which is right. It also keeps the virtual-key table in one place: `actions.ts`
+already owns one for sending keystrokes.
+
+**`RegisterHotKey` is given a window, not null.** With a window, `WM_HOTKEY` is
+posted to it and `DispatchMessageW` routes it to a window procedure like any
+other message. Registered against a null window the message lands in the bare
+*thread* queue, where `DispatchMessageW` has nowhere to send it — and with three
+pumps in this process, whichever peeked first would silently eat it.
+
+**`MOD_NOREPEAT` is not optional.** Without it, holding the combination repeats
+at the keyboard's autorepeat rate, which for "toggle voice" means flipping it
+thirty times a second.
+
+**A combination another program owns is reported, not logged.** `RegisterHotKey`
+simply returns false, and a hotkey that does nothing is indistinguishable from
+one that was never saved. Windows will not say *which* program has it, so the
+message says what to do instead of pretending to diagnose it. Verified by asking
+for `ctrl+alt+delete`, which Windows reserves.
+
+**The server owns the flip.** `POST /api/voice/toggle` reads and writes in one
+place, so two presses in quick succession cannot both read the same "before" and
+have the second undo nothing. Local-only, like every other write that decides how
+this machine behaves.
+
+#### The hotkey outranks the speaker check
+
+`requireKnownSpeaker` does not apply to a manually started exchange, and that is
+a deliberate widening. It is a filter against the *room* — the television, a
+video, somebody else talking — and none of those can press a key on this
+keyboard. Holding it to a voiceprint would fail every time regardless, since
+there is no wake word to take an embedding from, so the feature would read as
+broken for exactly the people who had switched the protection on. The Voice
+screen says so where the setting is, rather than leaving it to be discovered.
+
+#### It worked exactly once
+
+The first version toggled voice off and then the key stopped working. Switching
+voice off rebuilds the agent's config from `EMPTY_VOICE_CONFIG` — which is how it
+forgets everything about a feature that is not running, and it dropped the
+hotkeys with everything else. So the press that turned voice off also
+unregistered the key that turns it back on, one poll later.
+
+The code carried a comment saying the registration is deliberately *not* gated on
+`enabled`. It was not; the config it read from had simply been emptied. **A
+guard is only as good as the data still being there to guard**, and that is the
+kind of gap only pressing the thing twice will find.
+
 ### Testing it
 
 **Test it** arms a 45-second window in which the agent *reports* what it hears

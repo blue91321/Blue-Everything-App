@@ -505,6 +505,29 @@ export const settings = sqliteTable('settings', {
   voiceRetryMatchesFollowUp: integer('voice_retry_matches_follow_up').notNull().default(0),
 
   /**
+   * A key combination that switches voice on and off, from anywhere.
+   *
+   * Null is unset, which is the default: this registers a *system-wide* hotkey,
+   * so shipping one would take a combination away from every other program on
+   * the machine for a feature you had not asked for.
+   *
+   * Stored as the same `ctrl+shift+m` spelling a `hotkey` voice command uses,
+   * and validated by the same `parseHotkey` — which already requires a modifier,
+   * and matters twice as much here: a bare letter registered globally would
+   * swallow that key everywhere.
+   */
+  voiceToggleHotkey: text('voice_toggle_hotkey'),
+
+  /**
+   * A key combination that starts listening without the wake word.
+   *
+   * The wake word is for when your hands are busy; this is for when they are
+   * not, and it is strictly more reliable — nothing has to be heard correctly
+   * before it works.
+   */
+  voiceListenHotkey: text('voice_listen_hotkey'),
+
+  /**
    * Watch for games at all.
    *
    * Off means the attention monitor never reports `in-game`, so a match looks

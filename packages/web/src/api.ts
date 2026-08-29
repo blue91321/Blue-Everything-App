@@ -366,6 +366,9 @@ export interface AppSettings {
    * `boolean` made `=== true` quietly false and the card never hid.
    */
   voiceRetryMatchesFollowUp?: number;
+  /** System-wide key combinations. Null or absent means none is set. */
+  voiceToggleHotkey?: string | null;
+  voiceListenHotkey?: string | null;
   gameDetectionEnabled?: number;
   interruptDuringGames?: number;
   overlayPlacement?: string;
@@ -442,6 +445,12 @@ export interface VoiceStatus {
   enrolAgreement: number | null;
   /** Phrase words the speech model cannot pronounce, so can never be heard. */
   unknownWords: string[];
+  /**
+   * Key combinations the agent could not register — nearly always taken by
+   * another program. Optional so a newer bundle against an older server reads
+   * as "none" rather than throwing.
+   */
+  hotkeyProblems?: string[];
   followUpSeconds: number;
   retrySeconds: number;
   overlayPlacement: string;
@@ -1285,6 +1294,9 @@ export const api = {
       voiceInputDevice?: string | null;
       voiceFollowUpSeconds?: number;
       voiceRetryMatchesFollowUp?: boolean;
+      /** '' clears it. */
+      voiceToggleHotkey?: string | null;
+      voiceListenHotkey?: string | null;
       gameDetectionEnabled?: boolean;
       interruptDuringGames?: boolean;
       voiceRetrySeconds?: number;

@@ -189,6 +189,48 @@ function VoiceSettings({
 
         <LiveStatus enabled={Boolean(current.voiceEnabled)} selectedDevice={current.voiceInputDevice ?? null} onPick={(device) => update({ voiceInputDevice: device })} saving={saving} />
 
+        {/*
+          Directly under the live status, because these are the two things that
+          work when the wake word does not — and one of them is how you switch
+          voice on at all, which the microphone can never do for itself.
+        */}
+        <div className="card">
+          <div className="title">Keyboard shortcuts</div>
+          <div className="meta" style={{ marginTop: 4 }}>
+            System-wide, so they work from inside a game. Neither is set by default: these take the
+            combination away from every other program on this PC, which is not something to do to somebody
+            who has not asked for it.
+          </div>
+
+          <HotkeyField
+            label="Turn voice on and off"
+            hint="Works while voice is off — that is the point of it. The microphone cannot hear you ask for it to be switched on."
+            value={current.voiceToggleHotkey ?? ''}
+            saving={saving}
+            onSave={(value) => update({ voiceToggleHotkey: value })}
+          />
+
+          <HotkeyField
+            label="Listen now, without the wake word"
+            hint="Starts an exchange as though you had said it. More reliable than the wake word, because nothing has to be heard correctly first."
+            value={current.voiceListenHotkey ?? ''}
+            saving={saving}
+            onSave={(value) => update({ voiceListenHotkey: value })}
+          />
+
+          {/*
+            The speaker check does not apply to a hotkey, and saying so matters:
+            somebody who switched "only my voice" on has a reasonable claim to
+            know where it stops applying.
+          */}
+          {Boolean(current.requireKnownSpeaker) && (
+            <div className="meta" style={{ marginTop: 8 }}>
+              "Only respond to my voice" does not apply to the second one. It is a filter against the room —
+              the television, someone else talking — and none of those can press a key on this keyboard.
+            </div>
+          )}
+        </div>
+
         <div className="card">
           <div className="title">Wake word</div>
           <div className="meta" style={{ marginTop: 4 }}>
@@ -707,6 +749,18 @@ function LiveStatus({
         )}
       </div>
 
+      {/*
+        A hotkey another program already owns registers as a failure and then
+        does nothing at all — which is indistinguishable from one that was never
+        saved. Windows will not say *which* program, so this says what to do
+        rather than pretending to diagnose it.
+      */}
+      {(status.hotkeyProblems ?? []).map((problem) => (
+        <div className="meta urgent" key={problem} style={{ marginTop: 8 }}>
+          ⚠ {problem}
+        </div>
+      ))}
+
       {/* The level meter answers "is this microphone picking me up at all",
           which is the first thing to check and the hardest to guess at. */}
       {enabled && status.listening && (
@@ -953,4 +1007,114 @@ function StartAgent({ onStarted }: { onStarted: () => void }) {
       )}
     </div>
   );
+}
+
+/**
+ * One key combination, typed rather than captured.
+ *
+ * **Typed, deliberately.** A "press the keys now" capture box is the nicer
+ * interaction right up against the thing this actually sets: a *system-wide*
+ * hotkey, which means the capture box has to swallow combinations the browser
+ * and Windows already own — ctrl+w closes the tab, alt+f4 closes the window, and
+ * neither ever reaches a keydown handler. A text box has no such holes, and the
+ * spelling is the same one a `hotkey` voice command already uses.
+ *
+ * Validated with the same rule the server applies, so an impossible combination
+ * is refused here rather than round-tripping to a 400.
+ */
+function HotkeyField({
+  label,
+  hint,
+  value,
+  saving,
+  onSave,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  saving: boolean;
+  onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const current = draft ?? value;
+  const trimmed = current.trim().toLowerCase();
+  // Empty is a legitimate value — it is how you clear one — so it is not
+  // "invalid", it is "none".
+  const valid = trimmed === '' || looksLikeHotkey(trimmed);
+  const dirty = trimmed !== value;
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="title" style={{ fontSize: '.95em' }}>
+        {label}
+      </div>
+      <div className="meta" style={{ marginTop: 2 }}>
+        {hint}
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <div className="grow">
+          <input
+            value={current}
+            placeholder="ctrl+alt+v"
+            aria-label={label}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+        </div>
+        <button
+          className="btn primary"
+          disabled={saving || !valid || !dirty}
+          onClick={() => {
+            onSave(trimmed);
+            setDraft(null);
+          }}
+        >
+          Save
+        </button>
+        {value !== '' && (
+          <button
+            className="btn subtle"
+            disabled={saving}
+            onClick={() => {
+              onSave('');
+              setDraft(null);
+            }}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      {!valid && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          Needs at least one modifier and one key — <code>ctrl+alt+v</code>, <code>ctrl+shift+space</code>.
+          A bare letter is refused on purpose: registered system-wide it would swallow that key everywhere.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The same shape `parseHotkey` accepts, checked again here.
+ *
+ * A second copy of the rule, and the reason is the one this file already lives
+ * with: the PWA cannot import `@everything/shared` without pulling zod into a
+ * bundle that is almost entirely framework. The server is the side that
+ * enforces it — this only decides whether to grey out the Save button.
+ */
+const HOTKEY_MODIFIERS = ['ctrl', 'control', 'alt', 'shift', 'win', 'super', 'meta'];
+const HOTKEY_KEYS = [
+  ...'abcdefghijklmnopqrstuvwxyz0123456789'.split(''),
+  ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`),
+  'space', 'enter', 'tab', 'escape', 'backspace', 'delete', 'insert', 'home', 'end',
+  'pageup', 'pagedown', 'up', 'down', 'left', 'right', 'minus', 'plus', 'comma', 'period',
+];
+
+function looksLikeHotkey(value: string): boolean {
+  const parts = value.split('+').map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return false;
+  const key = parts[parts.length - 1];
+  const modifiers = parts.slice(0, -1);
+  if (!HOTKEY_KEYS.includes(key)) return false;
+  if (modifiers.some((m) => !HOTKEY_MODIFIERS.includes(m))) return false;
+  return new Set(modifiers).size === modifiers.length;
 }

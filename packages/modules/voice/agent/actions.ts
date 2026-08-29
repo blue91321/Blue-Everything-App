@@ -43,8 +43,13 @@ const keybd_event = user32.func('void __stdcall keybd_event(uint8_t vk, uint8_t 
 
 const KEYEVENTF_KEYUP = 0x0002;
 
-/** Virtual-key codes for everything `HOTKEY_KEYS` allows. */
-const VK: Record<string, number> = {
+/**
+ * Virtual-key codes for everything `HOTKEY_KEYS` allows.
+ *
+ * Exported because `hotkeys.ts` registers the same spellings system-wide, and a
+ * second copy of this table is one nobody would think to keep in step.
+ */
+export const VK: Record<string, number> = {
   ctrl: 0x11, control: 0x11, alt: 0x12, shift: 0x10, win: 0x5b, super: 0x5b, meta: 0x5b,
   space: 0x20, enter: 0x0d, tab: 0x09, escape: 0x1b, backspace: 0x08, delete: 0x2e,
   insert: 0x2d, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22,

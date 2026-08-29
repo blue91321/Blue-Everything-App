@@ -20,6 +20,13 @@ files `npm version` does not touch.
 - **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
   the setting above. The most restrictive running game wins — being interrupted
   mid-match is the failure this app exists to prevent.
+- **Two keyboard shortcuts for voice.** One turns it on and off — the thing a
+  microphone can never do for itself — and one starts listening without the wake
+  word. Both system-wide, so they work from inside a game; neither set by
+  default, because registering one takes that combination from every other
+  program on the PC.
+- **A shortcut another program already owns says so**, rather than silently doing
+  nothing.
 - **A friend's status now goes off, while their name keeps.** Somebody was still
   shown playing a match hours after the Riot client had been shut. A state
   nothing has confirmed for three minutes decays to "cannot tell" — a hollow

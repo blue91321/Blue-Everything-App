@@ -786,6 +786,13 @@ export const voiceAgentReportSchema = z.object({
   enrolSamples: z.number().int().min(0).max(200).optional(),
   /** How well the last sample agreed with the ones before it, 0-1. */
   enrolAgreement: z.number().min(-1).max(1).nullish(),
+  /*
+   * Key combinations the agent could not register, nearly always because
+   * another program already owns them. Optional so an older agent — which sends
+   * no such field — is read as "none" rather than having its whole report
+   * refused, the treatment every field added to this payload has had.
+   */
+  hotkeyProblems: z.array(z.string().max(200)).max(8).optional(),
 });
 export type VoiceAgentReport = z.infer<typeof voiceAgentReportSchema>;
 
@@ -1894,6 +1901,22 @@ export const updateSettingsSchema = z.object({
   /** Seconds to keep listening after a miss. 0 means don't wait for a retry. */
   voiceRetrySeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
   voiceRetryMatchesFollowUp: z.boolean().optional(),
+  /*
+   * Empty string clears; a combination is validated by the same `parseHotkey` a
+   * `hotkey` voice command uses. Nullable so "unset" survives a round trip as
+   * itself rather than as the empty string, which the PWA would render in the
+   * box as though something had been typed there.
+   */
+  voiceToggleHotkey: z
+    .string()
+    .max(60)
+    .refine((v) => v === '' || parseHotkey(v) !== null, 'needs a key combination with at least one modifier')
+    .nullish(),
+  voiceListenHotkey: z
+    .string()
+    .max(60)
+    .refine((v) => v === '' || parseHotkey(v) !== null, 'needs a key combination with at least one modifier')
+    .nullish(),
   gameDetectionEnabled: z.boolean().optional(),
   interruptDuringGames: z.boolean().optional(),
   overlayPlacement: overlayPlacementSchema.optional(),

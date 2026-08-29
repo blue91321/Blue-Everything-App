@@ -33,6 +33,7 @@ import { listScreens, forgetAvatar, type Avatar, type Placement } from '../../..
 import * as popup from '../../../agent/src/popup.js';
 import { playSound } from '../../../agent/src/sound.js';
 import { createVoiceListener } from './voice.js';
+import { createHotkeys, type HotkeyAction, type Hotkeys } from './hotkeys.js';
 import { unknownWords, VoskUnavailable } from './vosk.js';
 
 const OVERLAY_RESULT_MS = popup.POPUP_RESULT_MS;
@@ -544,8 +545,73 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
    * either. Reloading costs 0.2s, paid when you sit back down, which is a
    * rounding error against the fifteen minutes it took to decide you had gone.
    */
+  /**
+   * System-wide key combinations, or null if this session has no desktop.
+   *
+   * Created lazily on the first config that asks for one, so an install that
+   * sets neither hotkey never registers a window class or a message pump at
+   * all. A failure is logged once and then left alone — a missing hotkey is a
+   * poor reason to lose the wake word.
+   */
+  let hotkeys: Hotkeys | null = null;
+  let hotkeysBroken = false;
+
+  async function onHotkey(action: HotkeyAction): Promise<void> {
+    if (action === 'toggle') {
+      /*
+       * Straight to the server, which owns the flip. The answer comes back on the
+       * next poll like any other settings change, so nothing here has to model
+       * what the new state is.
+       */
+      const { enabled } = await client.voiceToggle();
+      popup.show({
+        title: enabled ? 'Voice on' : 'Voice off',
+        lines: [{ text: enabled ? 'listening for the wake word' : 'the microphone is closed', tone: 'muted' }],
+        forMs: 1400,
+        sound: enabled ? 'wake' : 'miss',
+      });
+      return;
+    }
+
+    // `listenNow` refuses when there is nothing to start — voice off, paused,
+    // or the models not loaded. Saying so beats a key that does nothing.
+    if (!voice.listenNow()) {
+      popup.show({
+        title: 'Voice is off',
+        lines: [{ text: 'switch it on first, or use the other hotkey', tone: 'muted' }],
+        forMs: 1800,
+      });
+    }
+  }
+
+  function applyHotkeys(): void {
+    const wantsAny = Boolean(wanted.toggleHotkey || wanted.listenHotkey);
+    if (!hotkeys && (!wantsAny || hotkeysBroken)) return;
+
+    if (!hotkeys) {
+      try {
+        hotkeys = createHotkeys((action) => void onHotkey(action));
+      } catch (error) {
+        hotkeysBroken = true;
+        console.log(`[${clock()}] hotkeys unavailable: ${(error as Error).message}`);
+        return;
+      }
+    }
+
+    hotkeys.apply([
+      { action: 'toggle', combo: wanted.toggleHotkey ?? '' },
+      { action: 'listen', combo: wanted.listenHotkey ?? '' },
+    ]);
+  }
+
   function applyConfig(): void {
     voice.configure(present ? wanted : { ...wanted, enabled: false });
+    /*
+     * Registered from the same config, and **not** gated on `enabled`. One of
+     * them is the switch that turns voice on, so unregistering it while voice is
+     * off would make it a hotkey that works only when it is not needed.
+     */
+    applyHotkeys();
   }
 
   async function voiceTick(): Promise<number> {
@@ -569,6 +635,9 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       since: voiceVersion,
       enrolSamples: enrolSamples.length,
       enrolAgreement,
+      // Combinations another program already owns. A hotkey that silently does
+      // nothing is indistinguishable from one that was never saved.
+      hotkeyProblems: hotkeys?.problems() ?? [],
     });
 
     voiceVersion = answer.version;
@@ -614,7 +683,20 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
 
       wanted = { ...full, ...answer };
     } else {
-      wanted = { ...EMPTY_VOICE_CONFIG, wakeWord: answer.wakeWord ?? '' };
+      /*
+       * **The hotkeys survive being switched off, and that is load-bearing.**
+       * `EMPTY_VOICE_CONFIG` is how the agent forgets everything about a feature
+       * that is not running — which dropped these too, so the very first press
+       * of "toggle voice" unregistered the key that turns it back on. It
+       * worked exactly once, then the next poll took it away. Caught by pressing
+       * it twice.
+       */
+      wanted = {
+        ...EMPTY_VOICE_CONFIG,
+        wakeWord: answer.wakeWord ?? '',
+        toggleHotkey: answer.toggleHotkey ?? null,
+        listenHotkey: answer.listenHotkey ?? null,
+      };
     }
     applyConfig();
 
