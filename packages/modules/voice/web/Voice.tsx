@@ -1048,12 +1048,44 @@ function HotkeyField({
   onSave: (value: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
   const current = draft ?? value;
   const trimmed = current.trim().toLowerCase();
   // Empty is a legitimate value — it is how you clear one — so it is not
   // "invalid", it is "none".
   const valid = trimmed === '' || looksLikeHotkey(trimmed);
   const dirty = trimmed !== value;
+
+  /*
+   * Recording listens on the window rather than on an input, and captures.
+   *
+   * On the *capture* phase and on `window` so nothing downstream has a chance to
+   * act on the key first, and `preventDefault` so the page does not scroll on
+   * space or tab away on tab.
+   */
+  useEffect(() => {
+    if (!recording) return;
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        setRecording(false);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+
+      const combo = comboFromEvent(event);
+      // Null is a modifier on its own — still mid-press, so keep listening
+      // rather than treating a held Ctrl as a failed attempt.
+      if (!combo) return;
+
+      setDraft(combo);
+      setRecording(false);
+    };
+
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [recording]);
 
   return (
     <div style={{ marginTop: 12 }}>
@@ -1066,15 +1098,23 @@ function HotkeyField({
       <div className="row" style={{ marginTop: 6 }}>
         <div className="grow">
           <input
-            value={current}
-            placeholder="ctrl+alt+v"
+            value={recording ? '' : current}
+            placeholder={recording ? 'press the keys…' : 'ctrl+alt+numpad5'}
             aria-label={label}
+            disabled={recording}
             onChange={(e) => setDraft(e.target.value)}
           />
         </div>
         <button
+          className={recording ? 'btn' : 'btn subtle'}
+          disabled={saving}
+          onClick={() => setRecording(!recording)}
+        >
+          {recording ? 'Cancel' : 'Record'}
+        </button>
+        <button
           className="btn primary"
-          disabled={saving || !valid || !dirty}
+          disabled={saving || !valid || !dirty || recording}
           onClick={() => {
             onSave(trimmed);
             setDraft(null);
@@ -1085,7 +1125,7 @@ function HotkeyField({
         {value !== '' && (
           <button
             className="btn subtle"
-            disabled={saving}
+            disabled={saving || recording}
             onClick={() => {
               onSave('');
               setDraft(null);
@@ -1095,10 +1135,49 @@ function HotkeyField({
           </button>
         )}
       </div>
-      {!valid && (
+
+      {recording ? (
+        /*
+          Said while recording rather than in the help text, because this is the
+          moment somebody presses ctrl+w, loses the tab, and concludes the
+          feature is broken. The browser never sees those: Windows and Chrome
+          take them first, which is precisely why the box stays typeable.
+        */
+        <div className="meta" style={{ marginTop: 6 }}>
+          Press the combination now. Escape cancels. Some are taken before the page sees them —
+          <code>ctrl+w</code>, <code>alt+f4</code>, anything with the Windows key — so type those in
+          instead; recording cannot capture what it is never shown.
+        </div>
+      ) : (
+        <div className="meta" style={{ marginTop: 6 }}>
+          <strong>modifier + key</strong>, joined by <code>+</code>. Modifiers are <code>ctrl</code>,{' '}
+          <code>alt</code>, <code>shift</code> and <code>win</code>; keys are <code>a</code>–<code>z</code>,{' '}
+          <code>0</code>–<code>9</code>, <code>f1</code>–<code>f12</code>, <code>numpad0</code>–
+          <code>numpad9</code>, <code>numpadplus</code>, <code>numpadminus</code>,{' '}
+          <code>numpadmultiply</code>, <code>numpaddivide</code>, <code>numpaddecimal</code>, the arrows
+          (<code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>) and{' '}
+          <code>space</code>, <code>enter</code>, <code>tab</code>, <code>escape</code>,{' '}
+          <code>backspace</code>, <code>delete</code>, <code>insert</code>, <code>home</code>,{' '}
+          <code>end</code>, <code>pageup</code>, <code>pagedown</code>, <code>minus</code>,{' '}
+          <code>plus</code>, <code>comma</code>, <code>period</code>.
+        </div>
+      )}
+
+      {/*
+        Worth saying next to the number pad rather than in a footnote: with Num
+        Lock off the keyboard sends the navigation codes instead, so the hotkey
+        simply stops answering and nothing on screen would explain why.
+      */}
+      {!recording && trimmed.includes('numpad') && (
+        <div className="meta" style={{ marginTop: 6 }}>
+          Number-pad keys follow Num Lock — with it off this will not answer.
+        </div>
+      )}
+
+      {!valid && !recording && (
         <div className="meta urgent" style={{ marginTop: 6 }}>
-          Needs at least one modifier and one key — <code>ctrl+alt+v</code>, <code>ctrl+shift+space</code>.
-          A bare letter is refused on purpose: registered system-wide it would swallow that key everywhere.
+          Needs at least one modifier and one key — <code>ctrl+alt+v</code>, <code>ctrl+alt+numpad5</code>.
+          A bare key is refused on purpose: registered system-wide it would swallow that key everywhere.
         </div>
       )}
     </div>
@@ -1119,16 +1198,66 @@ const HOTKEY_KEYS = [
   ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`),
   'space', 'enter', 'tab', 'escape', 'backspace', 'delete', 'insert', 'home', 'end',
   'pageup', 'pagedown', 'up', 'down', 'left', 'right', 'minus', 'plus', 'comma', 'period',
+  ...Array.from({ length: 10 }, (_, i) => `numpad${i}`),
+  'numpadplus', 'numpadminus', 'numpadmultiply', 'numpaddivide', 'numpaddecimal',
 ];
 
 function looksLikeHotkey(value: string): boolean {
   const parts = value.split('+').map((p) => p.trim()).filter(Boolean);
+  // At least one modifier, always. Registering a bare key takes it away from
+  // every program on the machine.
   if (parts.length < 2) return false;
   const key = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1);
   if (!HOTKEY_KEYS.includes(key)) return false;
   if (modifiers.some((m) => !HOTKEY_MODIFIERS.includes(m))) return false;
   return new Set(modifiers).size === modifiers.length;
+}
+
+/**
+ * A browser key event in the spelling the rest of the app uses.
+ *
+ * Reads `event.code`, which is the *physical* key, rather than `event.key`,
+ * which is what that key produces — the two differ exactly where it matters
+ * here. `event.key` for the number pad is `"5"` whether you pressed the digit
+ * row or the pad, and it is the empty-ish `"Dead"` or an accented letter under
+ * some layouts; `code` says `Numpad5` or `Digit5` and says the same thing on
+ * every layout, which is what a virtual-key code needs.
+ */
+function comboFromEvent(event: KeyboardEvent): string | null {
+  const code = event.code;
+
+  let key: string | null = null;
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3).toLowerCase();
+  else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);
+  else if (/^F([1-9]|1[0-2])$/.test(code)) key = code.toLowerCase();
+  else if (/^Numpad[0-9]$/.test(code)) key = code.toLowerCase();
+  else {
+    const named: Record<string, string> = {
+      Space: 'space', Enter: 'enter', Tab: 'tab', Escape: 'escape',
+      Backspace: 'backspace', Delete: 'delete', Insert: 'insert',
+      Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown',
+      ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+      Minus: 'minus', Equal: 'plus', Comma: 'comma', Period: 'period',
+      NumpadAdd: 'numpadplus', NumpadSubtract: 'numpadminus',
+      NumpadMultiply: 'numpadmultiply', NumpadDivide: 'numpaddivide',
+      NumpadDecimal: 'numpaddecimal',
+    };
+    key = named[code] ?? null;
+  }
+
+  // A modifier on its own is not a combination yet — it is somebody still
+  // reaching for the second key, so the recorder waits rather than refusing.
+  if (!key) return null;
+
+  const modifiers: string[] = [];
+  if (event.ctrlKey) modifiers.push('ctrl');
+  if (event.altKey) modifiers.push('alt');
+  if (event.shiftKey) modifiers.push('shift');
+  if (event.metaKey) modifiers.push('win');
+  if (modifiers.length === 0) return null;
+
+  return [...modifiers, key].join('+');
 }
 
 /**

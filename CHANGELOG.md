@@ -25,6 +25,12 @@ files `npm version` does not touch.
   everything set once and left. *Commands* is the phrase list.
 - **The wake word appears on both General and Settings**, as one component
   rendered twice rather than two copies that could drift.
+- **Number-pad keys work as shortcuts** — `ctrl+alt+numpad5` and the rest. They
+  follow Num Lock, and the field says so.
+- **A Record button** captures the combination you press, beside the text box for
+  the ones a browser never sees (`ctrl+w`, `alt+f4`, anything with the Windows
+  key).
+- **The syntax is written under the field**, rather than left to a placeholder.
 - **Two keyboard shortcuts for voice.** One turns it on and off — the thing a
   microphone can never do for itself — and one starts listening without the wake
   word. Both system-wide, so they work from inside a game; neither set by

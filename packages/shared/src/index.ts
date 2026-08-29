@@ -1257,11 +1257,46 @@ export const HOTKEY_KEYS = [
   'space', 'enter', 'tab', 'escape', 'backspace', 'delete', 'insert', 'home', 'end',
   'pageup', 'pagedown', 'up', 'down', 'left', 'right',
   'minus', 'plus', 'comma', 'period',
+  /*
+   * The number pad, which is the natural home for a global hotkey: the keys are
+   * far from anything a game binds and most keyboards have them spare.
+   *
+   * Spelled `numpad*` rather than reusing the digit names because they are
+   * genuinely different keys — `5` and `numpad5` are separate virtual-key codes,
+   * and registering one does nothing for the other.
+   *
+   * **Numpad Enter is deliberately absent.** Windows gives it the same
+   * virtual-key code as the main Enter and tells them apart only by an extended
+   * flag that `RegisterHotKey` cannot see — so offering it would be offering a
+   * key that silently binds a different one.
+   *
+   * **They follow Num Lock.** With it off the keyboard sends the navigation
+   * codes instead, so a `numpad5` hotkey answers only while Num Lock is on. The
+   * screen says so rather than leaving it to be discovered.
+   */
+  'numpad0', 'numpad1', 'numpad2', 'numpad3', 'numpad4',
+  'numpad5', 'numpad6', 'numpad7', 'numpad8', 'numpad9',
+  'numpadplus', 'numpadminus', 'numpadmultiply', 'numpaddivide', 'numpaddecimal',
 ] as const;
 
 export interface Hotkey {
   modifiers: string[];
   key: string;
+}
+
+/**
+ * A combination fit to register *system-wide*, which is stricter than one fit
+ * to be sent.
+ *
+ * `parseHotkey` refuses a bare letter, because sending one into whatever window
+ * has focus is far too easy to do by accident. Registering has a wider problem:
+ * a bare `f5` or `numpad5` would take that key away from **every** program on
+ * the machine, so a modifier is required outright rather than only for
+ * single-character keys.
+ */
+export function isGlobalHotkey(value: string): boolean {
+  const parsed = parseHotkey(value);
+  return parsed !== null && parsed.modifiers.length > 0;
 }
 
 /** `"ctrl+shift+m"` to its parts, or null if it isn't one. */
@@ -1916,12 +1951,12 @@ export const updateSettingsSchema = z.object({
   voiceToggleHotkey: z
     .string()
     .max(60)
-    .refine((v) => v === '' || parseHotkey(v) !== null, 'needs a key combination with at least one modifier')
+    .refine((v) => v === '' || isGlobalHotkey(v), 'needs a key combination with at least one modifier')
     .nullish(),
   voiceListenHotkey: z
     .string()
     .max(60)
-    .refine((v) => v === '' || parseHotkey(v) !== null, 'needs a key combination with at least one modifier')
+    .refine((v) => v === '' || isGlobalHotkey(v), 'needs a key combination with at least one modifier')
     .nullish(),
   gameDetectionEnabled: z.boolean().optional(),
   interruptDuringGames: z.boolean().optional(),

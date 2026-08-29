@@ -61,6 +61,13 @@ export const VK: Record<string, number> = {
 for (let i = 0; i < 26; i++) VK[String.fromCharCode(97 + i)] = 0x41 + i; // a-z
 for (let i = 0; i < 10; i++) VK[String(i)] = 0x30 + i; // 0-9
 for (let i = 1; i <= 12; i++) VK[`f${i}`] = 0x6f + i; // F1-F12
+for (let i = 0; i < 10; i++) VK[`numpad${i}`] = 0x60 + i; // VK_NUMPAD0-9
+// The operator keys, which are their own codes rather than shifted digits.
+VK.numpadmultiply = 0x6a;
+VK.numpadplus = 0x6b;
+VK.numpadminus = 0x6d;
+VK.numpaddecimal = 0x6e;
+VK.numpaddivide = 0x6f;
 
 /**
  * The system media keys.

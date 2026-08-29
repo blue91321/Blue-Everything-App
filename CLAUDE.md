@@ -2440,6 +2440,51 @@ place, so two presses in quick succession cannot both read the same "before" and
 have the second undo nothing. Local-only, like every other write that decides how
 this machine behaves.
 
+#### The number pad, and a Record button
+
+`numpad0`–`numpad9` and the five operator keys are in `HOTKEY_KEYS`. They are the
+natural home for a global hotkey — far from anything a game binds, and spare on
+most keyboards — and they are spelled `numpad*` rather than reusing the digit
+names because they are genuinely different virtual-key codes: registering `5`
+does nothing for the pad.
+
+Two things about them are worth stating on screen rather than leaving to be
+found:
+
+- **Numpad Enter is deliberately absent.** Windows gives it the same virtual-key
+  code as the main Enter and separates them only by an extended flag
+  `RegisterHotKey` cannot see, so offering it would be offering a key that
+  silently binds a different one.
+- **They follow Num Lock.** With it off the keyboard sends navigation codes
+  instead, so the hotkey simply stops answering — and nothing else on screen
+  would explain why. The field says so whenever the value contains `numpad`.
+
+**`isGlobalHotkey` is stricter than `parseHotkey`, and the difference is real.**
+`parseHotkey` refuses a bare *letter*, because sending one into whatever window
+has focus is too easy to do by accident — but it allows a bare `f5`, which is
+fine to *send* and disastrous to *register*: it would take F5 from every program
+on the machine. Registering therefore requires a modifier outright. The screen
+enforced this all along and the schema did not, which is the sort of gap that
+holds until somebody uses the API directly.
+
+**There is a Record button, and it reverses an earlier decision.** This shipped
+as a text box only, on the reasoning that a capture box cannot see the
+combinations Windows and the browser take first — `ctrl+w` closes the tab,
+`alt+f4` the window, and neither reaches a `keydown` handler. That reasoning is
+still true; it just is not a reason to withhold the button. **Both exist**: the
+recorder for the ordinary case, the box for what it cannot capture, and a line
+while recording saying which is which.
+
+It reads `event.code`, the physical key, rather than `event.key`, which is what
+that key produces. They differ exactly where it matters: `key` for the number pad
+is `"5"` whether you pressed the digit row or the pad, and varies by layout;
+`code` says `Numpad5` on every keyboard.
+
+Three behaviours, all verified in the browser: a modifier on its own keeps
+waiting rather than failing, since it is somebody still reaching for the second
+key; a key with no modifier is ignored, matching what can actually be
+registered; and Escape cancels.
+
 #### The hotkey outranks the speaker check
 
 `requireKnownSpeaker` does not apply to a manually started exchange, and that is
