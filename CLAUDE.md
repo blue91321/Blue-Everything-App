@@ -2292,6 +2292,35 @@ before trusting any change to the phrase logic.
 microphone open, so the switch that turns it off must never be something you
 have to go hunting through another screen for.
 
+### Three tabs, split by how often you touch them
+
+This screen grew from a switch and a text box into appearance, reminders,
+shortcuts, enrolment, the vocabulary and every phrase you can say — one long
+scroll in which whatever you came to change was always in the middle. It is
+*General*, *Settings* and *Commands* now, the same idiom the Settings screen
+uses, with the open tab in `useState` like every other bit of navigation here.
+
+**The split is by how often you touch something, not by subject.** General is
+what you actually open this screen for — is it on, is it hearing me, which
+microphone, and the wake word. Everything set once and left is behind Settings.
+The phrase list is long enough to deserve its own tab, and the two questions
+"why is it not hearing me" and "what can I say" were never the same visit.
+
+**The wake word is on two tabs, and it is one component rendered twice.** It
+earns the duplication by being the setting people come back to: everything else
+here is set once, while a wake word that keeps mishearing gets tried three or
+four times in an evening — and somebody on Settings changing the decoys should
+not have to switch tabs to change the word those decoys are about. What must not
+happen is the two drifting, so there is one `WakeWordCard`; the version that
+warns about a word the model cannot pronounce is the whole reason the box is
+worth looking at, and a copy-pasted second one would be the one that quietly
+lost it.
+
+**The draft lives in the card, so switching tabs mid-edit discards it.** That is
+the right loss rather than a bug: the two boxes are the same setting, and a
+half-typed value appearing somewhere you did not type it is worse than starting
+again.
+
 ### The screen must not be write-only
 
 A switch reading "on" while the agent is stopped, the models are missing, or the

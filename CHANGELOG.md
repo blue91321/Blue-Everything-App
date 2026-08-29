@@ -20,6 +20,11 @@ files `npm version` does not touch.
 - **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
   the setting above. The most restrictive running game wins — being interrupted
   mid-match is the failure this app exists to prevent.
+- **The Voice screen has tabs.** *General* is what you open it for — on/off,
+  whether it is hearing you, the microphone, and the wake word. *Settings* holds
+  everything set once and left. *Commands* is the phrase list.
+- **The wake word appears on both General and Settings**, as one component
+  rendered twice rather than two copies that could drift.
 - **Two keyboard shortcuts for voice.** One turns it on and off — the thing a
   microphone can never do for itself — and one starts listening without the wake
   word. Both system-wide, so they work from inside a game; neither set by

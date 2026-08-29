@@ -68,6 +68,28 @@ export function Voice({ local }: { local: boolean }) {
   return <VoiceSettings settings={settings.data} local={local} reload={settings.reload} />;
 }
 
+/**
+ * The three tabs.
+ *
+ * This screen grew from a switch and a text box into appearance, reminders,
+ * shortcuts, enrolment, the vocabulary and every phrase you can say — one long
+ * scroll in which whatever you came to change was always in the middle.
+ *
+ * The split is by *how often you touch it*, not by subject. **General** is what
+ * you open the screen for: is it on, is it hearing me, which microphone, and
+ * the wake word. Everything set once and left is behind **Settings**, and the
+ * phrase list is long enough to deserve a tab of its own.
+ *
+ * Which tab is open is `useState`, like every other bit of navigation here.
+ */
+const VOICE_TABS = [
+  { id: 'general', label: 'General', hint: 'Is it on, is it hearing you, and what wakes it' },
+  { id: 'settings', label: 'Settings', hint: 'Shortcuts, the popup, and only responding to your voice' },
+  { id: 'commands', label: 'Commands', hint: 'Everything you can say' },
+] as const;
+
+type VoiceTabId = (typeof VOICE_TABS)[number]['id'];
+
 function VoiceSettings({
   settings: current,
   local,
@@ -78,7 +100,7 @@ function VoiceSettings({
   reload: () => void;
 }) {
   const [saving, setSaving] = useState(false);
-  const [draftWakeWord, setDraftWakeWord] = useState<string | null>(null);
+  const [tab, setTab] = useState<VoiceTabId>('general');
   const [draftDecoys, setDraftDecoys] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -127,19 +149,8 @@ function VoiceSettings({
     void update({ voiceRetrySeconds: draftRetry }).then(() => setDraftRetry(null));
   }
 
-  const wakeWord = draftWakeWord ?? current.wakeWord;
   const decoys = draftDecoys ?? current.wakeDecoys ?? '';
-  // One word is allowed. It is a worse choice, not an invalid one — and it is
-  // the choice that survives the recogniser dropping half the phrase, so the
-  // screen advises rather than refuses.
-  const wakeWordValid = /^[a-z]+(?: [a-z]+)*$/i.test(wakeWord.trim()) && wakeWord.trim().length >= 3;
-  const advice = wakeWordValid ? wakeWordAdvice(wakeWord) : null;
 
-  /*
-   * A wake word the model cannot pronounce is the worst version of this bug:
-   * nothing wakes at all, and every other diagnostic on this screen looks fine.
-   * Only checks the *saved* one, since that is what the agent was asked about.
-   */
   /*
    * A decoy the model cannot pronounce is dropped by Vosk without a word, which
    * is the same silent failure the wake word already has a warning for — so it
@@ -151,12 +162,24 @@ function VoiceSettings({
       .split(/[,\s]+/)
       .includes(word)
   );
-  const wakeWordUnknown = (look?.unknownWords ?? []).filter((word) =>
-    current.wakeWord.toLowerCase().split(/\s+/).includes(word)
-  );
-
   return (
     <>
+      <div className="tabs" role="tablist" aria-label="Voice sections">
+        {VOICE_TABS.map((entry) => (
+          <button
+            key={entry.id}
+            role="tab"
+            className={`tab${tab === entry.id ? ' on' : ''}`}
+            aria-selected={tab === entry.id}
+            title={entry.hint}
+            onClick={() => setTab(entry.id)}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'general' && (
       <section>
         <div className="card">
           <div className="row between">
@@ -190,9 +213,40 @@ function VoiceSettings({
         <LiveStatus enabled={Boolean(current.voiceEnabled)} selectedDevice={current.voiceInputDevice ?? null} onPick={(device) => update({ voiceInputDevice: device })} saving={saving} />
 
         {/*
-          Directly under the live status, because these are the two things that
-          work when the wake word does not — and one of them is how you switch
-          voice on at all, which the microphone can never do for itself.
+          The wake word is on this tab *as well as* Settings, and it is the same
+          component rather than a second copy of the markup — the one thing that
+          must not happen is the two drifting apart. It earns the duplication by
+          being the setting people come here to change: everything else on this
+          screen is set once and left, while a wake word that keeps mishearing
+          gets tried three or four times in an evening.
+        */}
+        <WakeWordCard
+          current={current}
+          saving={saving}
+          unknown={look?.unknownWords ?? []}
+          update={update}
+        />
+      </section>
+      )}
+
+      {tab === 'settings' && (
+      <section>
+        {/*
+          Here too. The General tab is the short version of this screen, so
+          somebody who came to Settings for the decoys should not have to go back
+          a tab to change the word those decoys are about.
+        */}
+        <WakeWordCard
+          current={current}
+          saving={saving}
+          unknown={look?.unknownWords ?? []}
+          update={update}
+        />
+
+        {/*
+          The two things that work when the wake word does not — and one of them
+          is how you switch voice on at all, which the microphone can never do
+          for itself.
         */}
         <div className="card">
           <div className="title">Keyboard shortcuts</div>
@@ -231,52 +285,10 @@ function VoiceSettings({
           )}
         </div>
 
-        <div className="card">
-          <div className="title">Wake word</div>
-          <div className="meta" style={{ marginTop: 4 }}>
-            Pick something you would never say by accident. Two words are safer, but a leading "hey" or "ok"
-            is optional when it's heard — so "hey jarvis" also answers to just "jarvis".
-          </div>
-          <div className="row" style={{ marginTop: 10 }}>
-            <div className="grow">
-              <input value={wakeWord} aria-label="Wake word" onChange={(e) => setDraftWakeWord(e.target.value)} />
-            </div>
-            <button
-              className="btn primary"
-              disabled={saving || !wakeWordValid || wakeWord.trim() === current.wakeWord}
-              onClick={() =>
-                update({ wakeWord: wakeWord.trim().toLowerCase() }).then(() => setDraftWakeWord(null))
-              }
-            >
-              Save
-            </button>
-          </div>
-          {!wakeWordValid && (
-            <div className="meta urgent" style={{ marginTop: 6 }}>
-              Letters and spaces only, three characters or more.
-            </div>
-          )}
-          {advice && (
-            <div className="meta urgent" style={{ marginTop: 6 }}>
-              {advice}
-            </div>
-          )}
-          {wakeWordUnknown.length > 0 && (
-            <div className="meta urgent" style={{ marginTop: 6 }}>
-              ⚠ {wakeWordUnknown.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so this
-              wake word can never be heard. Compounds and invented names are the usual cause — separating one into
-              two ordinary words almost always fixes it.
-            </div>
-          )}
-          <div className="meta" style={{ marginTop: 6 }}>
-            Takes effect straight away — the status above will say what it's listening for.
-          </div>
-        </div>
-
         {/*
-          Its own card, directly under the wake word, because it is only ever
-          about the wake word — not about commands, which have their own screen
-          and their own matcher.
+          Directly after the wake word, because it is only ever about the wake
+          word — not about commands, which have their own tab and their own
+          matcher.
         */}
         <div className="card">
           <div className="title">Words that keep waking it by mistake</div>
@@ -411,11 +423,9 @@ function VoiceSettings({
           </div>
         </div>
         )}
-      </section>
 
       <VoiceLook settings={current} status={look} saving={saving} onChange={update} />
 
-      <section>
         <h2>Only respond to my voice</h2>
         <div className="card">
           <div className="row between">
@@ -474,12 +484,14 @@ function VoiceSettings({
           )}
         </div>
       </section>
+      )}
 
+      {tab === 'commands' && (
       <section>
-        <h2>What can I say?</h2>
         <VoicePhrases />
         <PhraseTester />
       </section>
+      )}
 
       {error && <div className="banner">{error}</div>}
     </>
@@ -1117,4 +1129,86 @@ function looksLikeHotkey(value: string): boolean {
   if (!HOTKEY_KEYS.includes(key)) return false;
   if (modifiers.some((m) => !HOTKEY_MODIFIERS.includes(m))) return false;
   return new Set(modifiers).size === modifiers.length;
+}
+
+/**
+ * The wake word, on two tabs at once.
+ *
+ * A component rather than the markup twice, because the one thing that must not
+ * happen is the copies drifting — the version that warns about a word the model
+ * cannot pronounce is the whole reason this box is worth looking at, and a
+ * second copy would be the one that quietly lost it.
+ *
+ * The draft lives here, so switching tabs mid-edit discards it rather than
+ * carrying half a wake word to the other tab. That is the right loss: the two
+ * boxes are the same setting, and a half-typed value showing up somewhere you
+ * did not type it would be worse than starting again.
+ */
+function WakeWordCard({
+  current,
+  saving,
+  unknown,
+  update,
+}: {
+  current: VoiceSettings;
+  saving: boolean;
+  /** Words the speech model has no pronunciation for. */
+  unknown: string[];
+  update: (patch: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const wakeWord = draft ?? current.wakeWord;
+  // One word is allowed. It is a worse choice, not an invalid one — and it is
+  // the choice that survives the recogniser dropping half the phrase, so the
+  // screen advises rather than refuses.
+  const valid = /^[a-z]+(?: [a-z]+)*$/i.test(wakeWord.trim()) && wakeWord.trim().length >= 3;
+  const advice = valid ? wakeWordAdvice(wakeWord) : null;
+  /*
+   * A wake word the model cannot pronounce is the worst version of this bug:
+   * nothing wakes at all, and every other diagnostic on this screen looks fine.
+   * Only checks the *saved* one, since that is what the agent was asked about.
+   */
+  const broken = unknown.filter((word) => current.wakeWord.toLowerCase().split(/\s+/).includes(word));
+
+  return (
+    <div className="card">
+      <div className="title">Wake word</div>
+      <div className="meta" style={{ marginTop: 4 }}>
+        Pick something you would never say by accident. Two words are safer, but a leading "hey" or "ok"
+        is optional when it's heard — so "hey jarvis" also answers to just "jarvis".
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <div className="grow">
+          <input value={wakeWord} aria-label="Wake word" onChange={(e) => setDraft(e.target.value)} />
+        </div>
+        <button
+          className="btn primary"
+          disabled={saving || !valid || wakeWord.trim() === current.wakeWord}
+          onClick={() => void update({ wakeWord: wakeWord.trim().toLowerCase() }).then(() => setDraft(null))}
+        >
+          Save
+        </button>
+      </div>
+      {!valid && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          Letters and spaces only, three characters or more.
+        </div>
+      )}
+      {advice && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          {advice}
+        </div>
+      )}
+      {broken.length > 0 && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          ⚠ {broken.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so this wake
+          word can never be heard. Compounds and invented names are the usual cause — separating one into
+          two ordinary words almost always fixes it.
+        </div>
+      )}
+      <div className="meta" style={{ marginTop: 6 }}>
+        Takes effect straight away — the status on General will say what it's listening for.
+      </div>
+    </div>
+  );
 }
