@@ -2485,6 +2485,53 @@ waiting rather than failing, since it is somebody still reaching for the second
 key; a key with no modifier is ignored, matching what can actually be
 registered; and Escape cancels.
 
+#### Borrowing the microphone while voice is off
+
+**Voice → "Let it work while voice is off"**, under the listen shortcut, off by
+default. Switched on, that key is push-to-talk: voice stays off, the wake word
+stays silent, and the key opens the microphone for **one exchange** before
+closing it again. The setting is never changed — pressing it does not turn voice
+on.
+
+It is affordable only because of a number this project already measured. The
+198MB resident cost is the price of an *always-on wake word*, not of listening,
+and the models load in about 0.2s — which the leanness note names as exactly the
+trade push-to-talk would make. Verified on this machine: **91MB with voice off,
+222MB within a second of the press, back to 100MB when the window closed**, with
+`voiceEnabled` still 0 throughout.
+
+**A pause is borrowed through as well.** The agent cannot tell "off" from
+"paused" — the server folds both into `enabled: false` — but the answer would be
+the same either way: a pause silences the *wake word*, which is something the
+room can trigger, and pressing a key on this keyboard is not. The pause is not
+cleared.
+
+**The window is a timer, not an event.** An exchange can end four ways — a
+command lands, nothing usable is said, a retry reopens it, a follow-up reopens it
+again — and hooking each would be four places that must all remember to close the
+microphone. One bound that outlasts every path is a single thing to get right,
+and being generous costs a few seconds of microphone rather than a leak.
+
+#### Three ways it did nothing at all
+
+Worth keeping, because each was silent and each looked identical from outside.
+
+- **`EMPTY_VOICE_CONFIG` dropped the flag.** The agent rebuilds its config from
+  that shell whenever voice is off — and this setting is *only ever read* in that
+  state, so it was discarded in exactly the case it exists for. The hotkeys
+  themselves had already been lost this way once.
+- **`configure()` loads nothing.** It arms the listener's poll, and the models
+  are pulled in on the first tick — so `listenNow()` on the next line found no
+  recognisers and refused, every time. It is retried for up to
+  `LISTEN_READY_MS` now rather than assumed.
+- **The handler is `async`, so its rejection escaped the pump's `try/catch`**
+  and landed as an unhandled rejection nobody prints. For the most consequential
+  key on the machine, that is the worst available failure: indistinguishable from
+  the key never being registered. It logs now, and so does every press.
+
+All three were found the same way — by watching the agent's resident memory not
+move — because none of them produced a message anywhere.
+
 #### The hotkey outranks the speaker check
 
 `requireKnownSpeaker` does not apply to a manually started exchange, and that is

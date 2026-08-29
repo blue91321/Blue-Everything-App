@@ -342,6 +342,7 @@ ${decoys.join(' ')}`)
        */
       toggleHotkey: row.voiceToggleHotkey ?? null,
       listenHotkey: row.voiceListenHotkey ?? null,
+      listenHotkeyWhileOff: Boolean(row.voiceListenHotkeyWhileOff),
       overlayPlacement: row.overlayPlacement,
       overlayScreen: row.overlayScreen,
       overlayAvatar: row.overlayAvatar,

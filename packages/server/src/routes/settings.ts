@@ -148,6 +148,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
           body.voiceListenHotkey === undefined
             ? undefined
             : (body.voiceListenHotkey?.trim().toLowerCase() || null),
+        voiceListenHotkeyWhileOff: toInt(body.voiceListenHotkeyWhileOff),
         gameDetectionEnabled: toInt(body.gameDetectionEnabled),
         interruptDuringGames: toInt(body.interruptDuringGames),
         overlayPlacement: body.overlayPlacement,

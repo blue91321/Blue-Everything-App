@@ -1011,6 +1011,33 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
    * disabled one. The route's own refusal is the same `request.isLocal` check
    * every other write on this machine uses, and the unit checks above cover it.
    */
+  /*
+   * The listen shortcut, and whether it works while voice is off.
+   *
+   * The flag has to reach the agent's config *in the off state*, which is the
+   * only state it is ever read in — and the agent rebuilds that config from
+   * EMPTY_VOICE_CONFIG, which has now dropped a hotkey field twice.
+   */
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/settings',
+    payload: { voiceListenHotkey: 'ctrl+alt+numpad9', voiceListenHotkeyWhileOff: true, voiceEnabled: false },
+  });
+  const offConfig = (
+    await post('/api/voice/agent', {
+      listening: false, devices: [], screens: [], unknownWords: [], peak: 0,
+      awayFromPc: false, waitMs: 0, since: 0,
+    })
+  ).json();
+  check('voice is off in the agent config', offConfig.enabled === false);
+  check('  ...but the listen shortcut still reaches it', offConfig.listenHotkey === 'ctrl+alt+numpad9', offConfig.listenHotkey);
+  check('  ...and so does whether it may work while off', offConfig.listenHotkeyWhileOff === true, String(offConfig.listenHotkeyWhileOff));
+
+  const numpadRefused = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceListenHotkey: 'numpad5' } });
+  check('a bare number-pad key is refused', numpadRefused.statusCode === 400, `HTTP ${numpadRefused.statusCode}`);
+  const f5Refused = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceListenHotkey: 'f5' } });
+  check('  ...and so is a bare f5, which parseHotkey alone would allow', f5Refused.statusCode === 400, `HTTP ${f5Refused.statusCode}`);
+
   const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
   check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);
   check('  ...and knows whether it actually can', typeof canStart.json().available === 'boolean');

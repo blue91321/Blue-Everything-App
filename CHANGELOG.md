@@ -25,6 +25,10 @@ files `npm version` does not touch.
   everything set once and left. *Commands* is the phrase list.
 - **The wake word appears on both General and Settings**, as one component
   rendered twice rather than two copies that could drift.
+- **"Listen now" can work while voice is off**, as a toggle beside the shortcut.
+  It is push-to-talk: voice stays off and the wake word stays silent, and the key
+  opens the microphone for one command before closing it and giving back the
+  ~123MB of speech models.
 - **Number-pad keys work as shortcuts** — `ctrl+alt+numpad5` and the rest. They
   follow Num Lock, and the field says so.
 - **A Record button** captures the combination you press, beside the text box for

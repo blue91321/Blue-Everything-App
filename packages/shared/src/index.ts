@@ -1958,6 +1958,7 @@ export const updateSettingsSchema = z.object({
     .max(60)
     .refine((v) => v === '' || isGlobalHotkey(v), 'needs a key combination with at least one modifier')
     .nullish(),
+  voiceListenHotkeyWhileOff: z.boolean().optional(),
   gameDetectionEnabled: z.boolean().optional(),
   interruptDuringGames: z.boolean().optional(),
   overlayPlacement: overlayPlacementSchema.optional(),

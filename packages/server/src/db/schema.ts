@@ -528,6 +528,21 @@ export const settings = sqliteTable('settings', {
   voiceListenHotkey: text('voice_listen_hotkey'),
 
   /**
+   * Whether that shortcut works while voice is switched *off*.
+   *
+   * Off by default, because the whole meaning of switching voice off is that
+   * the microphone is closed — a key that quietly reopens it is not something
+   * to hand somebody who has not asked for it.
+   *
+   * Switched on it is push-to-talk: voice stays off, the models stay unloaded,
+   * and the key opens the microphone for **one exchange** before closing it
+   * again. That is affordable only because the models load in about 0.2s, which
+   * is exactly the trade this project's leanness note describes — the 198MB
+   * resident cost is the price of an always-on wake word, not of listening.
+   */
+  voiceListenHotkeyWhileOff: integer('voice_listen_hotkey_while_off').notNull().default(0),
+
+  /**
    * Watch for games at all.
    *
    * Off means the attention monitor never reports `in-game`, so a match looks

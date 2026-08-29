@@ -273,6 +273,38 @@ function VoiceSettings({
           />
 
           {/*
+            Directly under the shortcut it changes, and only once one is set —
+            a switch governing a key you have not chosen is a question about
+            nothing.
+          */}
+          {(current.voiceListenHotkey ?? '') !== '' && (
+            <div className="row between" style={{ marginTop: 10, alignItems: 'flex-start', gap: '.6rem' }}>
+              <div className="grow">
+                <div className="title" style={{ fontSize: '.95em' }}>
+                  Let it work while voice is off
+                </div>
+                <div className="meta" style={{ marginTop: 2 }}>
+                  {Boolean(current.voiceListenHotkeyWhileOff)
+                    ? 'Push-to-talk: voice stays off and the microphone stays shut, and this key opens it for one command before closing it again. The wake word is still silent.'
+                    : 'Off — the key does nothing while voice is switched off, and says so.'}
+                </div>
+                {Boolean(current.voiceListenHotkeyWhileOff) && (
+                  <div className="meta" style={{ marginTop: 4 }}>
+                    Takes about a fifth of a second longer to start, because the speech models are loaded
+                    when you press it rather than kept in memory — which is the whole saving.
+                  </div>
+                )}
+              </div>
+              <Toggle
+                on={Boolean(current.voiceListenHotkeyWhileOff)}
+                disabled={saving}
+                label="Let it work while voice is off"
+                onChange={(on) => update({ voiceListenHotkeyWhileOff: on })}
+              />
+            </div>
+          )}
+
+          {/*
             The speaker check does not apply to a hotkey, and saying so matters:
             somebody who switched "only my voice" on has a reasonable claim to
             know where it stops applying.

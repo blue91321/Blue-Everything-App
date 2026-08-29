@@ -62,6 +62,13 @@ export interface VoiceConfig {
    */
   toggleHotkey?: string | null;
   listenHotkey?: string | null;
+  /**
+   * Whether the listen shortcut works while voice is off.
+   *
+   * Sent whatever `enabled` says, for the same reason the combinations
+   * themselves are: the whole point is the case where voice is off.
+   */
+  listenHotkeyWhileOff?: boolean;
   /** How long to keep listening after answering. 0 switches follow-ups off. */
   followUpMs?: number;
 }

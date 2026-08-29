@@ -369,6 +369,8 @@ export interface AppSettings {
   /** System-wide key combinations. Null or absent means none is set. */
   voiceToggleHotkey?: string | null;
   voiceListenHotkey?: string | null;
+  /** Whether the listen shortcut works while voice is off. A row value, so 0/1. */
+  voiceListenHotkeyWhileOff?: number;
   gameDetectionEnabled?: number;
   interruptDuringGames?: number;
   overlayPlacement?: string;
@@ -1315,6 +1317,7 @@ export const api = {
       /** '' clears it. */
       voiceToggleHotkey?: string | null;
       voiceListenHotkey?: string | null;
+      voiceListenHotkeyWhileOff?: boolean;
       gameDetectionEnabled?: boolean;
       interruptDuringGames?: boolean;
       voiceRetrySeconds?: number;
