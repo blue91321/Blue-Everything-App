@@ -892,6 +892,16 @@ export interface FriendRow {
   detail: string | null;
   lastOnlineAt: number | null;
   seenAt: number;
+  /**
+   * When this state started, as far as this app has seen.
+   *
+   * Null means it has not been observed changing yet, and the screen shows no
+   * timer rather than guessing. Every value is a lower bound — measured from
+   * when the app noticed, not from when the person actually walked away.
+   *
+   * Optional because the server and the PWA update independently.
+   */
+  stateSince?: number | null;
   /** Set when the status came from a different account than the name. */
   statusFrom: string | null;
   accounts: Array<{

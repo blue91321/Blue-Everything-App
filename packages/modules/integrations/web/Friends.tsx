@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import { api, type FriendRow, type FriendSource } from '@app/api';
 import { useAsync } from '@app/useAsync';
-import { STATE_LABEL } from './presence';
+import { awayFor, STATE_LABEL } from './presence';
 import { relativeTime } from './Integrations';
 
 
@@ -513,6 +513,14 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
             {friend.state === 'offline' && friend.lastOnlineAt
               ? ` · last on ${relativeTime(friend.lastOnlineAt)}`
               : ''}
+            {/*
+              How long they have been away, which is the difference between
+              "away" and a useful answer to whether it is worth messaging them.
+              Only for the two away states: "online for 20 minutes" is a fact
+              about nothing, and for `offline` the last-seen line above already
+              says it better.
+            */}
+            {awayFor(friend) ? ` · away ${awayFor(friend)}` : ''}
             {/* The handles this was merged from, so a name you do not recognise
                 on one service can still be placed by the other. */}
             {friend.accounts.length > 1

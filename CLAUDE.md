@@ -4340,6 +4340,57 @@ quietly absorbing whatever was linked to that id next. `unlinkPerson` remains
 on the server for dissolving a whole group in one call; nothing on screen needs
 it now that the panel lists the accounts.
 
+### How long they have been away
+
+"Away" and "away for three hours" are different answers to whether it is worth
+messaging somebody, and only the second is useful. `friends.state_since` records
+when an account was first seen in the state it is in now, and the row says
+`· away 25m`.
+
+**The whole difficulty is one line of the upsert.** `replaceFriends` runs on
+every read of the friends list, so writing `now` unconditionally would peg every
+timer to zero several times a minute and the screen would report everyone as
+having just stepped away. The column takes `now` only when the state actually
+differs — a `CASE` in `onConflictDoUpdate`, so a rename or a changed game leaves
+it alone.
+
+**Null means "not seen changing yet", and draws nothing.** Every value is a lower
+bound anyway: it is measured from when this app noticed, not from when the person
+walked away. Guessing a duration for a row we have never watched change would be
+the confident kind of wrong this screen exists to avoid.
+
+**Only the two away states get one.** `online` for twenty minutes is a fact about
+nothing, `offline` already has the better line in "last on Tuesday", and
+`unknown` is specifically the state meaning nobody can vouch for anything.
+Anything under five minutes shows nothing either — that is "they just stepped
+away", and a number there would tick distractingly on a list that reloads every
+minute.
+
+**`presence.ts` now has no imports at all, and that is load-bearing twice.** It
+was already split out of `Friends.tsx` so the Dashboard panel would not drag in
+the 9.5KB Connections chunk to render six words. Having nothing to resolve is
+what additionally lets `smoke` import it and check the formatting — `@app/api` is
+a Vite alias, so one type import from it put the file beyond the server's
+typechecker the moment the suite reached for it.
+
+#### The test that deleted a friends list
+
+Written down because it cost real data. The first attempt at verifying this drove
+`POST /api/integrations/presence` against the **running app** with one fabricated
+friend — and `replaceFriends` prunes anything absent from a snapshot, so that one
+row replaced a 163-strong Riot list and every Riot↔Discord link went with it.
+The same failure this document already describes one section below, reproduced by
+hand.
+
+It was invisible for a second reason worth knowing: `riot` was in
+`hidden_providers`, so the probe never appeared in the response either, and
+"nothing showed up" read as the write having failed rather than having worked.
+
+The suite drives `replaceFriends` directly against smoke's own throwaway
+database now, and the section ends by asserting that an empty snapshot prunes —
+the very behaviour that makes the endpoint dangerous, stated where somebody
+reaching for it will read it.
+
 ### A name keeps; a status goes off
 
 Reported from real use: the Riot client had been shut for hours and somebody was

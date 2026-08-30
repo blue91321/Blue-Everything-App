@@ -946,6 +946,26 @@ export const friends = sqliteTable(
     detail: text('detail'),
     lastOnlineAt: integer('last_online_at'),
     /**
+     * When this account was *first seen in the state it is in now*.
+     *
+     * The column exists so the screen can say how long somebody has been away
+     * rather than only that they are — "away" and "away for three hours" are
+     * different answers to "should I bother them", and only the second one is
+     * useful.
+     *
+     * Kept across an unchanged sync and reset the moment the state differs,
+     * which is the whole trick: `replaceFriends` runs every time the list is
+     * read, so writing `now` unconditionally would peg every timer to zero
+     * forever.
+     *
+     * **Null means "we have not seen it change yet"**, and the screen shows no
+     * timer for it rather than guessing. Every value is really a lower bound —
+     * it is measured from when this app first noticed, not from when the person
+     * actually walked away — and pretending otherwise would be the confident
+     * kind of wrong this screen exists to avoid.
+     */
+    stateSince: integer('state_since'),
+    /**
      * Which real person this account belongs to, when you have said.
      *
      * Two rows sharing one of these are the same human on two services — a

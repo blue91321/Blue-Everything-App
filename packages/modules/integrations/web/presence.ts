@@ -10,9 +10,29 @@
  * Rollup cannot tree-shake that away: `Friends.tsx` is one module and importing
  * any part of it pulls the module in.
  */
-import type { FriendRow } from '@app/api';
+/**
+ * The states, declared here rather than imported.
+ *
+ * **This file has no imports, and that is now load-bearing twice over.** It was
+ * already split out so the Dashboard panel would not drag in the Connections
+ * chunk; having nothing to resolve is what additionally lets `smoke` import it
+ * and check the formatting below, which is the half that ends up on screen.
+ * `@app/api` is a Vite alias, so a single type import from it put this file
+ * beyond the server's typechecker the moment the suite reached for it.
+ *
+ * Mirrors `PRESENCE_STATES` in shared, which this package cannot import — the
+ * same duplication, for the same reason, that `api.ts` already carries.
+ */
+export type PresenceState =
+  | 'offline'
+  | 'online'
+  | 'away'
+  | 'in-game'
+  | 'in-game-away'
+  | 'dnd'
+  | 'unknown';
 
-export const STATE_LABEL: Record<FriendRow['state'], string> = {
+export const STATE_LABEL: Record<PresenceState, string> = {
   'in-game': 'playing',
   online: 'online',
   /*
@@ -35,3 +55,33 @@ export const STATE_LABEL: Record<FriendRow['state'], string> = {
    */
   unknown: 'discord',
 };
+
+/**
+ * How long somebody has been away, or empty when nobody can say.
+ *
+ * Only the two away states. `online` for twenty minutes is a fact about
+ * nothing, `offline` already has a better line in "last on Tuesday", and
+ * `unknown` is specifically the state that means we cannot vouch for anything —
+ * putting a duration on it would be the confident wrong answer this screen
+ * exists to avoid.
+ *
+ * Deliberately coarse. The point is "long enough to bother?", and to a minute is
+ * a precision this number does not have: it is measured from when the app first
+ * noticed the state, not from when the person walked away.
+ */
+export function awayFor(friend: { state: PresenceState; stateSince?: number | null }): string {
+  if (friend.state !== 'away' && friend.state !== 'in-game-away') return '';
+  if (!friend.stateSince) return '';
+
+  const minutes = Math.floor((Date.now() - friend.stateSince) / 60_000);
+  // Under five minutes is "they just stepped away", which is not worth a number
+  // and would tick distractingly on a list that reloads every minute.
+  if (minutes < 5) return '';
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
+
+  const days = Math.floor(hours / 24);
+  return days === 1 ? '1 day' : `${days} days`;
+}

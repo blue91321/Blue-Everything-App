@@ -577,6 +577,15 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
         game: speaking.game,
         detail: speaking.detail,
         lastOnlineAt: speaking.lastOnlineAt,
+        /*
+         * From whichever account is actually speaking, not from the identity
+         * one — the name may come from Discord while the status comes from
+         * Steam, and it is the Steam row that knows when this started.
+         *
+         * Sent as a timestamp rather than a duration: the browser can subtract,
+         * and a number computed here would be stale the moment it arrived.
+         */
+        stateSince: speaking.stateSince,
         seenAt: identity.seenAt,
         /** Named when the status came from a different account than the name. */
         statusFrom: knows && knows.provider !== identity.provider ? knows.provider : null,

@@ -1157,6 +1157,128 @@ console.log('\nstarred live channels, and narrowing the panel to them');
 
 /* ------------------------------------------------------------------ */
 
+console.log('\nhow long somebody has been away');
+
+{
+  /*
+   * `friends.state_since` exists so the screen can say *how long* rather than
+   * only that somebody is away — "away" and "away for three hours" are
+   * different answers to whether it is worth messaging them.
+   *
+   * The whole difficulty is in one line of the upsert. `replaceFriends` runs on
+   * every read of the friends list, so writing `now` unconditionally would peg
+   * every timer to zero several times a minute and the screen would report
+   * everybody as having just stepped away. It has to survive an unchanged sync
+   * and reset only when the state genuinely differs.
+   *
+   * Driven through the store rather than `POST /api/integrations/presence`
+   * deliberately: that endpoint replaces a provider's whole list, and pointing
+   * it at a real database is how you delete somebody's friends.
+   */
+  const { replaceFriends, allFriends } = await import('../../../modules/integrations/server/store.js');
+
+  const sinceOf = async (id: string) =>
+    (await allFriends()).find((f) => f.providerUserId === id)?.stateSince ?? null;
+  const stateOf = async (id: string) =>
+    (await allFriends()).find((f) => f.providerUserId === id)?.state ?? null;
+
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
+  ]);
+
+  const firstSeen = await sinceOf('afk-1');
+  check('a friend gets a clock the first time we see them', firstSeen !== null, String(firstSeen));
+
+  /*
+   * The one that matters. A few milliseconds is enough to detect a reset, since
+   * the column would take the new `Date.now()`.
+   */
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
+  ]);
+  check('an unchanged sync leaves the clock alone', (await sinceOf('afk-1')) === firstSeen, `${await sinceOf('afk-1')} vs ${firstSeen}`);
+
+  // ...and again, because a bug that resets on the *second* identical sync would
+  // pass a single repeat.
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
+  ]);
+  check('  ...and a third sync too', (await sinceOf('afk-1')) === firstSeen);
+
+  // Something else about the row changing is not the state changing.
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Ida Renamed', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Ranked' },
+  ]);
+  check('a rename does not restart it', (await sinceOf('afk-1')) === firstSeen);
+  check('  ...nor does the game changing', (await sinceOf('busy-1')) !== null);
+
+  // A real change does restart it.
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Ida Renamed', state: 'online' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Ranked' },
+  ]);
+  const afterChange = await sinceOf('afk-1');
+  check('going from away to online restarts it', afterChange !== null && afterChange > (firstSeen ?? 0), `${afterChange} vs ${firstSeen}`);
+  check('  ...while the friend who did not change keeps theirs', (await stateOf('busy-1')) === 'in-game');
+
+  /* And it reaches the browser, which is where the number is drawn. */
+  const view = (await app.inject({ method: 'GET', url: '/api/integrations/friends' })).json();
+  const ida = view.friends.find((f: { name: string }) => f.name === 'Ida Renamed');
+  check('the timestamp reaches the client', typeof ida?.stateSince === 'number', JSON.stringify(ida?.stateSince));
+
+  /*
+   * Cleaned up, and the pruning that does it is the same behaviour that makes
+   * this endpoint dangerous against real data: anything absent from a snapshot
+   * is deleted.
+   */
+  await replaceFriends('riot', []);
+  check('an empty snapshot prunes the provider', (await allFriends()).filter((f) => f.provider === 'riot').length === 0);
+
+  /*
+   * And the half that is actually on screen. It lives in `presence.ts` rather
+   * than in `Friends.tsx` — the same move `STATE_LABEL` made, so the Dashboard
+   * panel does not drag in the whole Connections chunk — which is also what
+   * makes it reachable from here at all: that file's only import is a type.
+   */
+  const { awayFor } = await import('../../../modules/integrations/web/presence.js');
+  const ago = (minutes: number) => Date.now() - minutes * 60_000;
+  const row = (over: Record<string, unknown>) =>
+    ({ state: 'away', stateSince: ago(30), ...over }) as Parameters<typeof awayFor>[0];
+
+  check('it says nothing without a clock', awayFor(row({ stateSince: null })) === '');
+  // Under five minutes is "they just stepped away" — not worth a number, and it
+  // would tick distractingly on a list that reloads every minute.
+  check('  ...nor for somebody who just stepped away', awayFor(row({ stateSince: ago(2) })) === '');
+  check('minutes, then hours, then days', awayFor(row({ stateSince: ago(25) })) === '25m', awayFor(row({ stateSince: ago(25) })));
+  check('  ...an exact hour has no stray minutes', awayFor(row({ stateSince: ago(120) })) === '2h', awayFor(row({ stateSince: ago(120) })));
+  check('  ...and a part hour keeps them', awayFor(row({ stateSince: ago(95) })) === '1h 35m', awayFor(row({ stateSince: ago(95) })));
+  check('  ...one day is singular', awayFor(row({ stateSince: ago(60 * 30) })) === '1 day', awayFor(row({ stateSince: ago(60 * 30) })));
+  check('  ...and more are not', awayFor(row({ stateSince: ago(60 * 24 * 3) })) === '3 days', awayFor(row({ stateSince: ago(60 * 24 * 3) })));
+
+  /*
+   * Only the two away states. `online for 20 minutes` is a fact about nothing,
+   * `offline` already has a better line in "last on Tuesday", and `unknown` is
+   * specifically the state meaning nobody can vouch for anything — a duration on
+   * that would be the confident wrong answer this screen exists to avoid.
+   */
+  check('a friend in a game but idle gets one too', awayFor(row({ state: 'in-game-away' })) === '30m');
+  for (const state of ['online', 'offline', 'in-game', 'dnd', 'unknown']) {
+    check(`  ...and ${state} does not`, awayFor(row({ state })) === '');
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
 console.log('\nthe side column holds a list, in order');
 
 {

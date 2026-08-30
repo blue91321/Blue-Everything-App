@@ -42,6 +42,9 @@ files `npm version` does not touch.
   program on the PC.
 - **A shortcut another program already owns says so**, rather than silently doing
   nothing.
+- **The friends list says how long somebody has been away** — `· away 25m`,
+  coarse on purpose and hidden under five minutes. Measured from when the app
+  first noticed the state, so it is a lower bound rather than a claim.
 - **A friend's status now goes off, while their name keeps.** Somebody was still
   shown playing a match hours after the Riot client had been shut. A state
   nothing has confirmed for three minutes decays to "cannot tell" — a hollow

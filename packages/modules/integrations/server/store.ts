@@ -394,6 +394,11 @@ export async function replaceFriends(provider: ProviderId, incoming: ReportedFri
     detail: f.detail ?? null,
     lastOnlineAt: f.lastOnlineAt ?? null,
     seenAt: now,
+    // A row we have never seen before starts its clock now. That is a lower
+    // bound rather than the truth — they may have been away for hours before
+    // this app existed — which is why the screen phrases it as "since we
+    // noticed" rather than as a fact about them.
+    stateSince: now,
   }));
 
   for (let i = 0; i < rows.length; i += 100) {
@@ -409,6 +414,14 @@ export async function replaceFriends(provider: ProviderId, incoming: ReportedFri
           game: sql`excluded.game`,
           detail: sql`excluded.detail`,
           lastOnlineAt: sql`excluded.last_online_at`,
+          /*
+           * **Only when the state actually changed**, which is the entire point
+           * of the column. This upsert runs on every read of the friends list,
+           * so `now` unconditionally would reset every timer to zero several
+           * times a minute and the screen would report everybody as having just
+           * gone away.
+           */
+          stateSince: sql`CASE WHEN ${friends.state} = excluded.state THEN ${friends.stateSince} ELSE ${now} END`,
           seenAt: now,
           updatedAt: now,
         },
