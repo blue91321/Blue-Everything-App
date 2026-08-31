@@ -32,7 +32,7 @@
  * setting would be one more thing to work out.
  */
 import type { FastifyInstance } from 'fastify';
-import { findPlaces, isDue, read, refresh, write, WeatherError, type Place } from './weather.js';
+import { findPlaces, isDue, nowFromReading, read, refresh, write, WeatherError, type Place } from './weather.js';
 
 /** Everything the screen needs, in one shape both the tab and the panel read. */
 function present(store: ReturnType<typeof read>) {
@@ -41,6 +41,20 @@ function present(store: ReturnType<typeof read>) {
     units: store.units,
     place: store.place,
     reading: store.reading,
+    /**
+     * What it is doing *now*, which is not always what the reading says.
+     *
+     * Read forward out of the stored hours, so a reading taken this morning
+     * still shows this afternoon's temperature without a second request —
+     * which is the whole point of a once-a-day fetch. `forecast` says which of
+     * the two it is, because an expectation presented as a measurement is the
+     * quiet sort of wrong this project keeps refusing.
+     *
+     * Resolved here rather than in the browser for the reason the gauge level
+     * is: in the browser it would depend on the *device's* clock, and a phone a
+     * few minutes out would disagree with the PC about which hour it is.
+     */
+    now: nowFromReading(store.reading, store.place?.timezone),
     fetchedAt: store.fetchedAt,
     error: store.error,
     /**
@@ -148,7 +162,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const store = read();
 
     const mode = body?.mode === undefined ? store.mode : body.mode;
-    if (mode !== 'daily' && mode !== 'manual') return reply.code(400).send({ error: 'mode must be daily or manual' });
+    if (mode !== 'hourly' && mode !== 'daily' && mode !== 'manual') {
+      return reply.code(400).send({ error: 'mode must be hourly, daily or manual' });
+    }
 
     const units = body?.units === undefined ? store.units : body.units;
     if (units !== 'c' && units !== 'f') return reply.code(400).send({ error: 'units must be c or f' });

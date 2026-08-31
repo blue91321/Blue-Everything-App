@@ -70,10 +70,14 @@ export default function WeatherPanel() {
               {data.reading ? (
                 <>
                   <div style={{ fontSize: '1.6rem', lineHeight: 1.2 }}>
-                    {data.reading.glyph} {data.reading.temperature}°{data.units.toUpperCase()}
+                    {(data.now ?? data.reading).glyph} {(data.now ?? data.reading).temperature}°
+                    {data.units.toUpperCase()}
                   </div>
                   <div className="meta truncate" style={{ marginTop: 2 }}>
-                    {data.reading.label} · feels like {data.reading.feelsLike}°
+                    {(data.now ?? data.reading).label}
+                    {(data.now ? data.now.feelsLike : data.reading.feelsLike) !== null
+                      ? ` · feels like ${data.now ? data.now.feelsLike : data.reading.feelsLike}°`
+                      : ''}
                   </div>
                 </>
               ) : (

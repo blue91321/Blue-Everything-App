@@ -264,6 +264,40 @@ is "about once a day", and a PC left alone makes no requests at all.
 The screen says so rather than letting you infer it, because somebody watching
 for a fetch at midnight should know it will not come.
 
+**Once an hour is a third window, not a third mechanism.** `STALE_AFTER` maps
+each mode to its window and `manual` to null — null rather than Infinity, since
+"only when I ask" is the *absence* of a window rather than a very long one. A PC
+nobody is looking at still makes no requests in any mode.
+
+#### The number moves without fetching again
+
+A once-a-day reading taken at eight in the morning was still showing eight in the
+morning's temperature at four in the afternoon — stale in the one way anybody
+notices, and refetching to fix it would throw away the reason the mode exists.
+
+But the reading already contains the answer: `hours` is the next twenty-four and
+one of them is now. `nowFromReading()` reads it forward, at no request, matching
+the hour by string for the reason `sliceHours` does — the timestamps are local to
+the place with no offset, so arithmetic against `Date.now()` is right only while
+the server and the place agree. Verified on this install: a reading fetched 100
+minutes earlier said 76°, and the screen said 71°.
+
+**It is a forecast, not a measurement, and it says so.** The hour the fetch
+happened in is the real observation and keeps its own values — it is a
+measurement, and it carries the humidity and wind the hourly rows do not. Every
+hour after it is what the service expected, and the screen labels it rather than
+presenting an expectation as a reading.
+
+**"Feels like" had to move with it, and that took a new field.** The first
+version moved the temperature and left the fetched comfort beside it, so the line
+read *"71°, feels like 76°"* — contradicting itself. `apparent_temperature` is
+now requested hourly and stored per hour; a reading written before that field
+existed has none, so the clause is **omitted rather than guessed**.
+
+Resolved server-side, like the gauge level: in the browser it would depend on the
+*device's* clock, and a phone a few minutes out would disagree with the PC about
+which hour it is.
+
 **Manual mode never does this.** `isDue` returns false outright — a setting
 called "only when I ask" has to mean it or it is not worth having, the same rule
 `quietHoursEnabled` follows. `weather-check` asserts both tempting cases: never

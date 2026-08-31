@@ -15,7 +15,7 @@
  * Pass `--live` to also fetch a real forecast. Off by default: a suite that
  * needs the internet is a suite that fails on a train.
  */
-import { describe, isDue, sliceHours, HOURLY_SPAN, DAILY_MS, findPlaces, fetchReading, type Place } from '../weather.js';
+import { describe, isDue, nowFromReading, sliceHours, HOURLY_SPAN, DAILY_MS, HOURLY_MS, findPlaces, fetchReading, type Place } from '../weather.js';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -65,6 +65,116 @@ check(
 check(
   'no place set — not due, whatever the mode',
   !isDue({ ...base, place: null, mode: 'daily', fetchedAt: null }, NOW)
+);
+
+/*
+ * The third mode, which differs from `daily` in one number and in nothing else
+ * — including the part that matters, that it is still a staleness window
+ * checked on a read rather than anything on a timer.
+ */
+console.log('');
+console.log('once an hour');
+check('hourly, never fetched — due', isDue({ ...base, mode: 'hourly', fetchedAt: null }, NOW));
+check('hourly, fetched a minute ago — not due', !isDue({ ...base, mode: 'hourly', fetchedAt: NOW - 60_000 }, NOW));
+check(
+  'hourly, fetched 59 minutes ago — not due',
+  !isDue({ ...base, mode: 'hourly', fetchedAt: NOW - 59 * 60_000 }, NOW)
+);
+check('hourly, fetched an hour ago — due', isDue({ ...base, mode: 'hourly', fetchedAt: NOW - HOURLY_MS }, NOW));
+check(
+  'and a daily install is not due at an hour',
+  !isDue({ ...base, mode: 'daily', fetchedAt: NOW - HOURLY_MS }, NOW)
+);
+check('no place set — hourly is not due either', !isDue({ ...base, place: null, mode: 'hourly', fetchedAt: null }, NOW));
+
+/*
+ * Reading the current hour forward out of a stored reading.
+ *
+ * This is what makes a once-a-day fetch follow the day: the reading already
+ * contains the next twenty-four hours, so the temperature on screen can move
+ * without a second request. The distinction that has to survive is between the
+ * hour that was *measured* and the ones that were *predicted*.
+ */
+console.log('');
+console.log('the temperature moves with the forecast');
+
+const hour = (time: string, temperature: number, label = 'Clear') => ({
+  time,
+  temperature,
+  rain: null,
+  isDay: true,
+  label,
+  glyph: '☀️',
+});
+
+const reading = {
+  temperature: 60,
+  feelsLike: 59,
+  humidity: 50,
+  windSpeed: 5,
+  code: 0,
+  label: 'Measured',
+  glyph: '🌡️',
+  isDay: true,
+  hours: [
+    hour('2026-08-22T08:00', 60),
+    hour('2026-08-22T09:00', 64),
+    hour('2026-08-22T14:00', 77, 'Sunny'),
+  ],
+  days: [],
+};
+// The third entry is deliberately not 10:00 — the hour is found by matching the
+// timestamp, never by indexing off the first one.
+reading.hours[2] = hour('2026-08-22T14:00', 77, 'Sunny');
+
+const at = (iso: string) => new Date(iso);
+
+check(
+  'the hour it was fetched in is the measurement, not the forecast',
+  nowFromReading(reading, 'UTC', at('2026-08-22T08:30:00Z'))?.forecast === false
+);
+check(
+  '  ...and it reads the measured temperature',
+  nowFromReading(reading, 'UTC', at('2026-08-22T08:30:00Z'))?.temperature === 60
+);
+
+check(
+  'an hour later it moves to that hour',
+  nowFromReading(reading, 'UTC', at('2026-08-22T09:30:00Z'))?.temperature === 64,
+  String(nowFromReading(reading, 'UTC', at('2026-08-22T09:30:00Z'))?.temperature)
+);
+check(
+  '  ...and says it is a forecast',
+  nowFromReading(reading, 'UTC', at('2026-08-22T09:30:00Z'))?.forecast === true
+);
+check(
+  '  ...six hours later, matched by timestamp rather than by counting',
+  nowFromReading(reading, 'UTC', at('2026-08-22T14:05:00Z'))?.temperature === 77
+);
+check(
+  "  ...bringing that hour's own description with it",
+  nowFromReading(reading, 'UTC', at('2026-08-22T14:05:00Z'))?.label === 'Sunny'
+);
+
+/*
+ * The zone is the place's, not the server's — the same trap `sliceHours`
+ * documents. At 14:00 UTC it is 15:00 in Berlin, which this reading has no hour
+ * for, so it falls back to the measurement rather than showing a wrong hour.
+ */
+check(
+  'an hour the reading does not carry falls back to the measurement',
+  nowFromReading(reading, 'UTC', at('2026-08-22T23:00:00Z'))?.forecast === false
+);
+check(
+  "the zone is the place's, not the server's",
+  nowFromReading(reading, 'Europe/Berlin', at('2026-08-22T07:30:00Z'))?.temperature === 64,
+  String(nowFromReading(reading, 'Europe/Berlin', at('2026-08-22T07:30:00Z'))?.temperature)
+);
+
+check('no reading at all is null, not a zero', nowFromReading(null, 'UTC', at('2026-08-22T09:30:00Z')) === null);
+check(
+  'a reading with no hours is just the measurement',
+  nowFromReading({ ...reading, hours: [] }, 'UTC', at('2026-08-22T09:30:00Z'))?.forecast === false
 );
 
 /*
