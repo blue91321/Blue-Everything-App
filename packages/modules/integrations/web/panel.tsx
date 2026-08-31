@@ -12,6 +12,7 @@
  * else is a click away on the tab it belongs to.
  */
 import { api, type FriendRow } from '@app/api';
+import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { awayFor, AWAY_TITLE, STATE_LABEL } from './presence';
 import { goTo } from '@app/nav';
@@ -152,6 +153,15 @@ function LivePanel() {
 }
 
 function FriendsPanel() {
+  /*
+   * Redraws the durations on screen — an away timer counting up, a "last seen"
+   * ageing — without asking the server anything. The refresh interval decides
+   * how often to *fetch*; this decides how often what is already here is
+   * redrawn, which is what makes "only when something changes" true rather than
+   * a screen that freezes the moment nothing is announced.
+   */
+  useNow();
+
   /*
    * The same request the Friends screen makes, which refreshes anything staler
    * than 60 seconds as a side effect of being read. That is why this needs no

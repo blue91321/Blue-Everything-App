@@ -124,7 +124,7 @@ export function Dashboard() {
         <h2>Habits left</h2>
         {habitsLeft.length === 0 && !habits.loading && <div className="empty">All done for now.</div>}
         {habitsLeft.map((habit) => (
-          <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} />
+          <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} receivedAt={habits.receivedAt} />
         ))}
       </section>
 
@@ -132,7 +132,7 @@ export function Dashboard() {
         <section className="done-area">
           <h2>Finished today</h2>
           {habitsDone.map((habit) => (
-            <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} />
+            <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} receivedAt={habits.receivedAt} />
           ))}
           {finished.map((task) => (
             <TaskRow key={task.id} task={task} onChange={reloadAll} settling={settling} />

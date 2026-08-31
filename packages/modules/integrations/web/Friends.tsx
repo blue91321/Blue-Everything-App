@@ -9,7 +9,8 @@
  * fixes, so the sources panel sits under the list and names the one that
  * applies.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNow } from '@app/clock';
 import { api, type FriendRow, type FriendSource } from '@app/api';
 import { useAsync } from '@app/useAsync';
 import { awayFor, AWAY_TITLE, STATE_LABEL } from './presence';
@@ -48,6 +49,15 @@ function matchesSearch(friend: FriendRow, needle: string): boolean {
 }
 
 export function Friends({ seed }: { seed?: string | null } = {}) {
+  /*
+   * Redraws the durations on screen — an away timer counting up, a "last seen"
+   * ageing — without asking the server anything. The refresh interval decides
+   * how often to *fetch*; this decides how often what is already here is
+   * redrawn, which is what makes "only when something changes" true rather than
+   * a screen that freezes the moment nothing is announced.
+   */
+  useNow();
+
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');

@@ -1701,6 +1701,51 @@ the bearer token in a query string where it lands in history and proxy logs.
 backoff, and refetches on `visibilitychange` — iOS suspends a backgrounded PWA
 and kills the stream with it.
 
+### Time passing is something changing
+
+"Only when something changes" was the default and was not quite true: *time* was
+changing and the screen was not showing it. A friend read "away 25m" for an hour,
+a gauge said "empty in 4 hours" all evening, and the weather said "1 hour ago"
+long after it was three. Every one of those is arithmetic on data already in
+hand, so the fix is not a refetch — the screen only needs telling that the clock
+moved.
+
+`clock.ts` is **one interval with a subscriber list**, started when the first
+component asks and stopped when the last goes, so a screen with no durations
+pays nothing. Ten seconds, which is finer than anything displayed: nothing shows
+seconds, so a number is never more than ten seconds late, and a minute-long tick
+would leave "away 4m" standing for up to a minute after it became five — the
+sort of small wrongness that is hard to notice and impossible to trust.
+
+**It makes no requests, and that is the distinction the two settings draw.** The
+refresh interval decides how often to ask the *server* anything; this decides how
+often what is already on screen is redrawn. Leaving refresh off and still having
+the timers tick is what "only when something changes" should have meant.
+
+#### Ageing a value the server resolved
+
+A gauge is the harder half, because its level and both countdowns are computed
+server-side and are correct only as of the response. `useAsync` therefore reports
+`receivedAt`, and the row ages the numbers forward by `Date.now() - receivedAt`.
+
+**That is a duration, not a comparison, and the difference is what keeps it
+compatible with the rule that the level is resolved on the server.** The
+objection there was that a phone a few minutes out would draw a different gauge
+from the PC — true, because comparing a server timestamp against a local clock
+inherits the offset. A stopwatch started when the bytes arrived is the same
+length on both devices however wrong either clock is, and it re-syncs to the
+server's answer on the next fetch.
+
+Verified with the refresh setting **off**: a gauge went 38% → 37%, away timers
+went 23m → 28m and 4h 4m → 4h 9m, and the only requests in that window were the
+handful the server announced.
+
+**One thing still needs a fetch**, and is worth knowing rather than discovering:
+the weather's *temperature* is picked from the stored hours server-side, so
+crossing an hour boundary changes it only on the next read. The age beside it
+ticks; the number waits. Doing that in the browser would mean a second copy of
+the timezone matching `sliceHours` documents at length.
+
 ### Refreshing the Dashboard on a clock, if you ask
 
 **Nothing here polls, and that is worth stating before the exception.** A change

@@ -12,11 +12,21 @@
  * worth choosing.
  */
 import { useState } from 'react';
+import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { goTo } from '@app/nav';
 import { ageOf, weather } from './weather-api';
 
 export default function WeatherPanel() {
+  /*
+   * Redraws the durations on screen — an away timer counting up, a "last seen"
+   * ageing — without asking the server anything. The refresh interval decides
+   * how often to *fetch*; this decides how often what is already here is
+   * redrawn, which is what makes "only when something changes" true rather than
+   * a screen that freezes the moment nothing is announced.
+   */
+  useNow();
+
   /*
    * Reading this *is* the refresh in `daily` mode: the endpoint fetches when the
    * reading is a day old. So having the panel open is the poll, and closing it

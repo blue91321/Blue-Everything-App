@@ -6,7 +6,8 @@
  * division the Voice tab draws between the switch and the screen that explains
  * what the switch is doing.
  */
-import { useState } from 'react';
+import { useState } from 'react';
+import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { HourlyGraph } from './HourlyGraph';
 import { ageOf, dayName, weather, type Place, type RefreshMode, type Units } from './weather-api';
@@ -18,6 +19,15 @@ const MODES: Array<{ id: RefreshMode; label: string; hint: string }> = [
 ];
 
 export default function Weather() {
+  /*
+   * Redraws the durations on screen — an away timer counting up, a "last seen"
+   * ageing — without asking the server anything. The refresh interval decides
+   * how often to *fetch*; this decides how often what is already here is
+   * redrawn, which is what makes "only when something changes" true rather than
+   * a screen that freezes the moment nothing is announced.
+   */
+  useNow();
+
   /*
    * No scope: this package's data is not one core announces about, so there is
    * nothing to subscribe to. Refreshing is explicit here — the button, or a read

@@ -1,3 +1,4 @@
+import { useNow } from './clock';
 import { api, type Habit, type Task } from './api';
 import { dueLabel, isOverdue, relative } from './format';
 import { useCallback } from 'react';
@@ -132,9 +133,26 @@ function roughly(ms: number): string {
  * temptation worth resisting: "1 of 1 this day" under a plant you water every
  * four days is not merely useless, it is wrong about what the habit is.
  */
-function habitLine(habit: Habit): string {
+function habitLine(habit: Habit, agedMs = 0): string {
   if (habit.mode === 'gauge') {
-    const level = habit.gaugeNow ?? 100;
+    /*
+     * Aged forward from what the server resolved.
+     *
+     * The level and both countdowns are correct *as of the response* and stale
+     * a minute later, so a Dashboard left open showed "empty in 4 hours" all
+     * evening. `agedMs` is how long ago that response arrived, measured on this
+     * device from receipt — a **duration**, not a comparison of a server
+     * timestamp against a local clock.
+     *
+     * That distinction is what keeps this compatible with the rule that the
+     * level is resolved on the server: the objection there was that a phone a
+     * few minutes out would draw a different gauge from the PC, and it would,
+     * because that is an absolute comparison. A stopwatch started when the
+     * bytes arrived is the same length on both devices however wrong either
+     * clock is, and it re-syncs to the server's answer on the next fetch.
+     */
+    const drainPerMs = (habit.gaugeDrainPerDay ?? 0) / (24 * 60 * 60 * 1000);
+    const level = Math.max(0, Math.round((habit.gaugeNow ?? 100) - drainPerMs * agedMs));
     const remindAt = habit.gaugeRemindAt ?? 0;
     const parts: string[] = [level <= 0 ? 'empty' : `${level}% full`];
 
@@ -147,10 +165,12 @@ function habitLine(habit: Habit): string {
     if (level <= remindAt) {
       parts.push('needs doing');
     } else if (remindAt > 0 && habit.gaugeRemindInMs != null) {
-      parts.push(`reminds in ${roughly(habit.gaugeRemindInMs)}`);
+      parts.push(`reminds in ${roughly(Math.max(0, habit.gaugeRemindInMs - agedMs))}`);
     }
 
-    if (level > 0 && habit.gaugeEmptyInMs != null) parts.push(`empty in ${roughly(habit.gaugeEmptyInMs)}`);
+    if (level > 0 && habit.gaugeEmptyInMs != null) {
+      parts.push(`empty in ${roughly(Math.max(0, habit.gaugeEmptyInMs - agedMs))}`);
+    }
 
     return parts.join(' · ');
   }
@@ -170,11 +190,29 @@ export function HabitRow({
   habit,
   onChange,
   settling,
+  receivedAt,
 }: {
   habit: Habit;
   onChange: () => void;
   settling?: Settling;
+  /**
+   * When this habit's data arrived, so a gauge can go on draining on screen.
+   *
+   * Optional: a caller that does not pass it gets the server's numbers frozen,
+   * which is what every caller did before this and is never *wrong*, only
+   * increasingly out of date.
+   */
+  receivedAt?: number;
 }) {
+  /*
+   * Subscribing to the clock re-renders this row every ten seconds, at no
+   * request. The refresh interval decides how often to ask the server anything;
+   * this decides how often what is already on screen is redrawn — which is what
+   * makes "only when something changes" honest rather than an app that freezes
+   * the moment nothing is announced.
+   */
+  const now = useNow();
+  const agedMs = receivedAt ? Math.max(0, now - receivedAt) : 0;
   const isSettling = settling?.has(habit.id) ?? false;
   const isGauge = habit.mode === 'gauge';
 
@@ -224,7 +262,7 @@ export function HabitRow({
             which is the whole idea of it.
           */}
           <div className={`title${habit.met && !isGauge ? ' struck' : ''}`}>{habit.name}</div>
-          <div className="meta">{habitLine(habit)}</div>
+          <div className="meta">{habitLine(habit, agedMs)}</div>
         </div>
       </div>
     </div>
