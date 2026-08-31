@@ -504,8 +504,14 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
           <div className="title truncate">{friend.name}</div>
           <div className="meta">
             {/* What they are playing outranks the status word: "playing Deep Rock
-                Galactic" is the answer, and "online" is the less useful half of it. */}
-            {friend.game ?? friend.detail ?? STATE_LABEL[friend.state]}
+                Galactic" is the answer, and "online" is the less useful half of it.
+
+                With nothing to play, the duration joins the status word rather
+                than following it — the first version read "away · away 2h 15m",
+                which only showed up against real data. */}
+            {friend.game ??
+              friend.detail ??
+              (awayFor(friend) ? `${STATE_LABEL[friend.state]} ${awayFor(friend)}` : STATE_LABEL[friend.state])}
             {/* Where a borrowed status came from. Without it, a Discord row
                 showing a game looks like Discord told us, and the next person to
                 wonder why the others are blank has nothing to go on. */}
@@ -514,13 +520,11 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
               ? ` · last on ${relativeTime(friend.lastOnlineAt)}`
               : ''}
             {/*
-              How long they have been away, which is the difference between
-              "away" and a useful answer to whether it is worth messaging them.
-              Only for the two away states: "online for 20 minutes" is a fact
-              about nothing, and for `offline` the last-seen line above already
-              says it better.
+              And when there *is* a game, the duration follows it instead —
+              "Warframe · away 2h 15m", which is the whole point of
+              `in-game-away`: a match is running and they are still not there.
             */}
-            {awayFor(friend) ? ` · away ${awayFor(friend)}` : ''}
+            {(friend.game ?? friend.detail) && awayFor(friend) ? ` · away ${awayFor(friend)}` : ''}
             {/* The handles this was merged from, so a name you do not recognise
                 on one service can still be placed by the other. */}
             {friend.accounts.length > 1
