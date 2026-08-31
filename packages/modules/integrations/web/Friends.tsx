@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import { api, type FriendRow, type FriendSource } from '@app/api';
 import { useAsync } from '@app/useAsync';
-import { awayFor, STATE_LABEL } from './presence';
+import { awayFor, AWAY_TITLE, STATE_LABEL } from './presence';
 import { relativeTime } from './Integrations';
 
 
@@ -502,7 +502,7 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
 
         <div className="grow friend-text">
           <div className="title truncate">{friend.name}</div>
-          <div className="meta">
+          <div className="meta" title={awayFor(friend) ? AWAY_TITLE : undefined}>
             {/* What they are playing outranks the status word: "playing Deep Rock
                 Galactic" is the answer, and "online" is the less useful half of it.
 

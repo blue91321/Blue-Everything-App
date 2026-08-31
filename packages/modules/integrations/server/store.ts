@@ -421,7 +421,20 @@ export async function replaceFriends(provider: ProviderId, incoming: ReportedFri
            * times a minute and the screen would report everybody as having just
            * gone away.
            */
-          stateSince: sql`CASE WHEN ${friends.state} = excluded.state THEN ${friends.stateSince} ELSE ${now} END`,
+          /*
+           * **Or has no clock at all**, which is the case that left rows without
+           * a timer indefinitely: everything that predates the column starts
+           * null, and a row only got a value when its state *changed* — so
+           * somebody who has been away since before this shipped would wait for
+           * a transition that might never come. 120 rows were in that state.
+           *
+           * With the null arm, the rule is one sentence for every row: this is
+           * when we first saw them in the state they are in now. A backfilled
+           * value understates — they may have been away for hours already — but
+           * it is a lower bound that becomes exact at their next transition, and
+           * the screen says which it is.
+           */
+          stateSince: sql`CASE WHEN ${friends.state} = excluded.state AND ${friends.stateSince} IS NOT NULL THEN ${friends.stateSince} ELSE ${now} END`,
           seenAt: now,
           updatedAt: now,
         },

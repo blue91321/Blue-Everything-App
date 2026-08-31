@@ -69,14 +69,33 @@ export const STATE_LABEL: Record<PresenceState, string> = {
  * a precision this number does not have: it is measured from when the app first
  * noticed the state, not from when the person walked away.
  */
+/**
+ * What the duration actually means, for a `title`.
+ *
+ * Every value here is a lower bound: it is counted from when this app first saw
+ * somebody in the state they are in now, not from when they walked away. That
+ * is usually the same thing and sometimes very much not — a row backfilled on
+ * the sync after an update starts from zero however long they had already been
+ * gone — so the number says so on hover rather than presenting itself as a fact
+ * about the person.
+ */
+export const AWAY_TITLE = 'Counted from when this app first saw them this way, so it may be an undercount.';
+
 export function awayFor(friend: { state: PresenceState; stateSince?: number | null }): string {
   if (friend.state !== 'away' && friend.state !== 'in-game-away') return '';
   if (!friend.stateSince) return '';
 
   const minutes = Math.floor((Date.now() - friend.stateSince) / 60_000);
-  // Under five minutes is "they just stepped away", which is not worth a number
-  // and would tick distractingly on a list that reloads every minute.
-  if (minutes < 5) return '';
+  /*
+   * Only the first minute is silent, and it was five.
+   *
+   * Five was reasoning about the wrong thing — that a fresh "away 1m" is noise
+   * — but on a real list it meant rows sitting in the away section with nothing
+   * against them for five minutes, which reads as the feature being broken
+   * rather than as restraint. "away 2m" is a small fact; a blank where every
+   * neighbour has a number is a puzzle.
+   */
+  if (minutes < 1) return '';
   if (minutes < 60) return `${minutes}m`;
 
   const hours = Math.floor(minutes / 60);

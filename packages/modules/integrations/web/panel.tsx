@@ -13,7 +13,7 @@
  */
 import { api, type FriendRow } from '@app/api';
 import { useAsync } from '@app/useAsync';
-import { awayFor, STATE_LABEL } from './presence';
+import { awayFor, AWAY_TITLE, STATE_LABEL } from './presence';
 import { goTo } from '@app/nav';
 import type { PanelProps } from '@app/features/index';
 
@@ -243,7 +243,7 @@ function FriendsPanel() {
                   shape as the row on the Friends screen — joined to the status
                   word when there is nothing else on the line, following the
                   game when there is. */}
-              <div className="meta truncate">
+              <div className="meta truncate" title={awayFor(friend) ? AWAY_TITLE : undefined}>
                 {friend.game ?? friend.detail
                   ? `${friend.game ?? friend.detail}${awayFor(friend) ? ` · away ${awayFor(friend)}` : ''}`
                   : awayFor(friend)

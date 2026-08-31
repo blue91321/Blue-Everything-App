@@ -4354,7 +4354,26 @@ having just stepped away. The column takes `now` only when the state actually
 differs — a `CASE` in `onConflictDoUpdate`, so a rename or a changed game leaves
 it alone.
 
-**Null means "not seen changing yet", and draws nothing.** Every value is a lower
+**A row with no clock gets one on the next sync**, rather than waiting for a
+state change that may never come. Everything predating the column starts null,
+and on the real install 120 rows sat that way — visible as friends in the away
+section with nothing beside them while their neighbours had numbers, which reads
+as broken rather than as restraint. The `CASE` therefore fires on a differing
+state *or* a null one, which makes the rule one sentence for every row: this is
+when we first saw them in the state they are in now.
+
+**That means a backfilled value understates**, and the row says so on hover
+rather than presenting itself as a fact about the person — `AWAY_TITLE` lives
+beside the formatter so the tab and the panel cannot word it differently. It
+becomes exact at their next transition.
+
+**Only the first minute is silent, and it was five.** Five was reasoning about
+the wrong thing — that a fresh "away 1m" is noise — but on a real list it left
+rows blank for five minutes among neighbours that had numbers. A small fact beats
+a puzzle.
+
+**Null still draws nothing**, which is now only ever the case for a provider that
+has never reported presence at all. Every value is a lower
 bound anyway: it is measured from when this app noticed, not from when the person
 walked away. Guessing a duration for a row we have never watched change would be
 the confident kind of wrong this screen exists to avoid.

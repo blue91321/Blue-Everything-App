@@ -1176,6 +1176,9 @@ console.log('\nhow long somebody has been away');
    * it at a real database is how you delete somebody's friends.
    */
   const { replaceFriends, allFriends } = await import('../../../modules/integrations/server/store.js');
+  const { friends: friendsTable } = await import('../db/schema.js');
+  const { db: database } = await import('../db/client.js');
+  const { eq: whereIs } = await import('drizzle-orm');
 const { awayFor } = await import('../../../modules/integrations/web/presence.js');
 
   const sinceOf = async (id: string) =>
@@ -1194,6 +1197,31 @@ const { awayFor } = await import('../../../modules/integrations/web/presence.js'
   check('a friend gets a clock the first time we see them', firstSeen !== null, String(firstSeen));
 
   /*
+   * And a row that already exists without one gets it on the next sync rather
+   * than waiting for a state change that may never come. Everything predating
+   * the column starts null, and 120 rows on the real install sat that way —
+   * visible as friends in the away section with no timer beside their
+   * neighbours' timers.
+   */
+  await database.update(friendsTable).set({ stateSince: null }).where(whereIs(friendsTable.providerUserId, 'afk-1'));
+  check('  ...even one that lost its clock has none for a moment', (await sinceOf('afk-1')) === null);
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
+  ]);
+  const backfilled = await sinceOf('afk-1');
+  check('  ...and the next sync gives it one, unchanged state or not', backfilled !== null, String(backfilled));
+
+  /*
+   * The baseline for everything below is taken *after* that, because the
+   * backfill is itself a legitimate change to the clock — comparing the later
+   * syncs against the value from before it would fail for the right reason and
+   * look like the wrong one.
+   */
+  const settled = backfilled;
+
+  /*
    * The one that matters. A few milliseconds is enough to detect a reset, since
    * the column would take the new `Date.now()`.
    */
@@ -1202,7 +1230,7 @@ const { awayFor } = await import('../../../modules/integrations/web/presence.js'
     { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
     { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
   ]);
-  check('an unchanged sync leaves the clock alone', (await sinceOf('afk-1')) === firstSeen, `${await sinceOf('afk-1')} vs ${firstSeen}`);
+  check('an unchanged sync leaves the clock alone', (await sinceOf('afk-1')) === settled, `${await sinceOf('afk-1')} vs ${settled}`);
 
   // ...and again, because a bug that resets on the *second* identical sync would
   // pass a single repeat.
@@ -1211,7 +1239,7 @@ const { awayFor } = await import('../../../modules/integrations/web/presence.js'
     { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
     { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
   ]);
-  check('  ...and a third sync too', (await sinceOf('afk-1')) === firstSeen);
+  check('  ...and a third sync too', (await sinceOf('afk-1')) === settled);
 
   // Something else about the row changing is not the state changing.
   await wait(25);
@@ -1219,7 +1247,7 @@ const { awayFor } = await import('../../../modules/integrations/web/presence.js'
     { providerUserId: 'afk-1', name: 'Ida Renamed', state: 'away' },
     { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Ranked' },
   ]);
-  check('a rename does not restart it', (await sinceOf('afk-1')) === firstSeen);
+  check('a rename does not restart it', (await sinceOf('afk-1')) === settled);
   check('  ...nor does the game changing', (await sinceOf('busy-1')) !== null);
 
   // A real change does restart it.
@@ -1229,7 +1257,7 @@ const { awayFor } = await import('../../../modules/integrations/web/presence.js'
     { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Ranked' },
   ]);
   const afterChange = await sinceOf('afk-1');
-  check('going from away to online restarts it', afterChange !== null && afterChange > (firstSeen ?? 0), `${afterChange} vs ${firstSeen}`);
+  check('going from away to online restarts it', afterChange !== null && afterChange > (settled ?? 0), `${afterChange} vs ${settled}`);
   check('  ...while the friend who did not change keeps theirs', (await stateOf('busy-1')) === 'in-game');
 
   /* And it reaches the browser, which is where the number is drawn. */
@@ -1255,9 +1283,6 @@ const { awayFor } = await import('../../../modules/integrations/web/presence.js'
    * name, or every linked person would silently lose their timer.
    */
   const { linkFriends } = await import('../../../modules/integrations/server/store.js');
-  const { friends: friendsTable } = await import('../db/schema.js');
-  const { db: database } = await import('../db/client.js');
-  const { eq: whereIs } = await import('drizzle-orm');
 
   await replaceFriends('steam', [{ providerUserId: 'multi-s', name: 'SteamPersona', state: 'away' }]);
   await replaceFriends('discord', [{ providerUserId: 'multi-d', name: 'RealName', state: 'unknown' }]);
@@ -1299,7 +1324,11 @@ const { awayFor } = await import('../../../modules/integrations/web/presence.js'
   check('it says nothing without a clock', awayFor(row({ stateSince: null })) === '');
   // Under five minutes is "they just stepped away" — not worth a number, and it
   // would tick distractingly on a list that reloads every minute.
-  check('  ...nor for somebody who just stepped away', awayFor(row({ stateSince: ago(2) })) === '');
+  // Only the first minute is silent. Five left rows sitting in the away section
+  // with nothing against them while their neighbours had numbers, which reads as
+  // broken rather than restrained.
+  check('  ...nor in the first minute', awayFor(row({ stateSince: ago(0.5) })) === '', awayFor(row({ stateSince: ago(0.5) })));
+  check('  ...but a couple of minutes counts', awayFor(row({ stateSince: ago(2) })) === '2m', awayFor(row({ stateSince: ago(2) })));
   check('minutes, then hours, then days', awayFor(row({ stateSince: ago(25) })) === '25m', awayFor(row({ stateSince: ago(25) })));
   check('  ...an exact hour has no stray minutes', awayFor(row({ stateSince: ago(120) })) === '2h', awayFor(row({ stateSince: ago(120) })));
   check('  ...and a part hour keeps them', awayFor(row({ stateSince: ago(95) })) === '1h 35m', awayFor(row({ stateSince: ago(95) })));
