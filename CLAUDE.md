@@ -4373,6 +4373,27 @@ what additionally lets `smoke` import it and check the formatting — `@app/api`
 a Vite alias, so one type import from it put the file beyond the server's
 typechecker the moment the suite reached for it.
 
+**It is on the Dashboard panel too**, where it matters more rather than less:
+that column is the glance that decides whether to bother somebody, and "away"
+alone does not answer it.
+
+**And it survives being two accounts.** A merged row wears one account's name
+and another's status — Discord leads for identity because that is where somebody
+chose a name for themselves, and Discord's REST API carries no presence at all,
+so the status always comes from elsewhere. The clock follows the *status*, not
+the name, or every linked person would silently lose their timer. Asserted end to
+end: a Steam↔Discord pair renders the Discord name, the Steam state, and the
+Steam clock.
+
+Two things only real data showed:
+
+- **"away · away 2h 15m".** The duration was appended after the status word. It
+  joins the word when there is nothing else on the line, and follows a game when
+  there is — which is what `in-game-away` is for: "Warframe · away 2h 15m".
+- **A row ending in a bare `·`.** The merged-handles list renders after a
+  separator, and the filter that drops the name already shown can empty it —
+  which it does whenever somebody uses the same handle on both services.
+
 #### The test that deleted a friends list
 
 Written down because it cost real data. The first attempt at verifying this drove

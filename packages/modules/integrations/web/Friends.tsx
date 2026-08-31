@@ -526,13 +526,12 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
             */}
             {(friend.game ?? friend.detail) && awayFor(friend) ? ` · away ${awayFor(friend)}` : ''}
             {/* The handles this was merged from, so a name you do not recognise
-                on one service can still be placed by the other. */}
-            {friend.accounts.length > 1
-              ? ` · ${friend.accounts
-                  .filter((account) => account.name !== friend.name)
-                  .map((account) => `${account.provider}: ${account.name}`)
-                  .join(', ')}`
-              : ''}
+                on one service can still be placed by the other.
+
+                Built before it is rendered, because the filter can empty it:
+                somebody using the same handle on both services left a row
+                ending in a bare "·" with nothing after it. */}
+            {otherHandles(friend) ? ` · ${otherHandles(friend)}` : ''}
           </div>
         </div>
 
@@ -879,4 +878,18 @@ function Sources({ sources, anyFriends }: { sources: FriendSource[]; anyFriends:
       ))}
     </details>
   );
+}
+
+/**
+ * The handles this row was merged from, other than the one it is wearing.
+ *
+ * Empty when there are none to name — which happens whenever somebody uses the
+ * same handle on both services, and is why this is a function rather than an
+ * expression inline in the row.
+ */
+function otherHandles(friend: FriendRow): string {
+  return friend.accounts
+    .filter((account) => account.name !== friend.name)
+    .map((account) => `${account.provider}: ${account.name}`)
+    .join(', ');
 }

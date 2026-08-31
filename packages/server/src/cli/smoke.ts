@@ -1176,6 +1176,7 @@ console.log('\nhow long somebody has been away');
    * it at a real database is how you delete somebody's friends.
    */
   const { replaceFriends, allFriends } = await import('../../../modules/integrations/server/store.js');
+const { awayFor } = await import('../../../modules/integrations/web/presence.js');
 
   const sinceOf = async (id: string) =>
     (await allFriends()).find((f) => f.providerUserId === id)?.stateSince ?? null;
@@ -1245,12 +1246,52 @@ console.log('\nhow long somebody has been away');
   check('an empty snapshot prunes the provider', (await allFriends()).filter((f) => f.provider === 'riot').length === 0);
 
   /*
+   * **And it survives being two accounts.**
+   *
+   * A merged row wears one account's name and another's status — Discord leads
+   * for identity because that is where somebody chose a name for themselves,
+   * and Discord's REST API carries no presence at all, so the status always
+   * comes from somewhere else. The clock has to follow the *status*, not the
+   * name, or every linked person would silently lose their timer.
+   */
+  const { linkFriends } = await import('../../../modules/integrations/server/store.js');
+  const { friends: friendsTable } = await import('../db/schema.js');
+  const { db: database } = await import('../db/client.js');
+  const { eq: whereIs } = await import('drizzle-orm');
+
+  await replaceFriends('steam', [{ providerUserId: 'multi-s', name: 'SteamPersona', state: 'away' }]);
+  await replaceFriends('discord', [{ providerUserId: 'multi-d', name: 'RealName', state: 'unknown' }]);
+
+  const rowsNow = await allFriends();
+  const steamRow = rowsNow.find((f) => f.providerUserId === 'multi-s')!;
+  const discordRow = rowsNow.find((f) => f.providerUserId === 'multi-d')!;
+  await linkFriends(steamRow.id, discordRow.id);
+
+  // Backdated so the formatter has something to say. Ninety minutes is a
+  // duration no other assertion here uses, so a wrong row cannot pass by luck.
+  const ninetyAgo = Date.now() - 90 * 60_000;
+  await database.update(friendsTable).set({ stateSince: ninetyAgo }).where(whereIs(friendsTable.id, steamRow.id));
+
+  const merged = (await app.inject({ method: 'GET', url: '/api/integrations/friends' }))
+    .json()
+    .friends.find((f: { accounts: { provider: string }[] }) => f.accounts.length > 1);
+
+  check('two accounts become one row', merged !== undefined && merged.accounts.length === 2, JSON.stringify(merged?.accounts?.length));
+  check('  ...wearing the Discord name', merged?.name === 'RealName', merged?.name);
+  check('  ...and the Steam status', merged?.state === 'away', merged?.state);
+  check('  ...with the clock from whichever account knew', merged?.stateSince === ninetyAgo, `${merged?.stateSince} vs ${ninetyAgo}`);
+  check('  ...so a linked person still shows a timer', awayFor(merged) === '1h 30m', awayFor(merged));
+
+  await replaceFriends('steam', []);
+  await replaceFriends('discord', []);
+
+  /*
    * And the half that is actually on screen. It lives in `presence.ts` rather
    * than in `Friends.tsx` — the same move `STATE_LABEL` made, so the Dashboard
    * panel does not drag in the whole Connections chunk — which is also what
    * makes it reachable from here at all: that file's only import is a type.
    */
-  const { awayFor } = await import('../../../modules/integrations/web/presence.js');
+
   const ago = (minutes: number) => Date.now() - minutes * 60_000;
   const row = (over: Record<string, unknown>) =>
     ({ state: 'away', stateSince: ago(30), ...over }) as Parameters<typeof awayFor>[0];

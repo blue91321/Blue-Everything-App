@@ -42,6 +42,9 @@ files `npm version` does not touch.
   program on the PC.
 - **A shortcut another program already owns says so**, rather than silently doing
   nothing.
+- **The away timer is on the Dashboard panel as well as the tab**, and shows for
+  people linked across two services — the clock follows whichever account knew
+  the status, not the one supplying the name.
 - **The friends list says how long somebody has been away** — `· away 25m`,
   coarse on purpose and hidden under five minutes. Measured from when the app
   first noticed the state, so it is a lower bound rather than a claim.
