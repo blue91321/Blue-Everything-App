@@ -1701,6 +1701,47 @@ the bearer token in a query string where it lands in history and proxy logs.
 backoff, and refetches on `visibilitychange` — iOS suspends a backgrounded PWA
 and kills the stream with it.
 
+### Refreshing the Dashboard on a clock, if you ask
+
+**Nothing here polls, and that is worth stating before the exception.** A change
+made anywhere announces itself over `/api/events` and every reader refetches
+when one lands — which is why a habit ticked off on the phone appears on the PC
+with no timer involved. There is no interval anywhere in the PWA.
+
+What that cannot cover is data moving at *somebody else's* server with nobody to
+tell us: a friend going idle on Steam, an hour passing inside a stored forecast,
+a duration on screen counting up. Those advance only when something happens to
+trigger a read, so a Dashboard left open sits still — which is what prompted
+this.
+
+`settings.dashboard_refresh_seconds`, **0 and off by default**, offered as five
+named options rather than a slider: a slider is right for a number on a
+continuum and wrong for a handful of alternatives where every position between
+them is a worse version of a neighbour.
+
+**It reuses `notify('all')`, which is the whole design.** That is exactly what
+`visibilitychange` already does when the app returns from being backgrounded —
+the same claim, "anything could have changed", through the same path. Nothing
+new subscribes, and no reader learns a timer exists.
+
+**Only while the tab is visible.** A background tab that kept refetching would
+spend requests on a screen nobody is looking at, and coming back to the app
+refetches anyway through the visibility handler.
+
+**One tick is one request per endpoint, not per reader**, because `api.ts`
+coalesces concurrent GETs of the same path. Measured in the browser at a 30s
+setting: two ticks exactly thirty seconds apart, seven requests each, against a
+Dashboard whose readers number rather more than seven.
+
+Bounded 0–3600 and integer-only. Below ten seconds this stops being a refresh
+and becomes the polling the attention loop was tuned to avoid; above an hour it
+is off with extra steps.
+
+Verifying the visible branch needed the pane's `visibilityState` overridden,
+because a browser pane that is not compositing reports `hidden` forever — the
+same limitation that makes `requestAnimationFrame` and `ResizeObserver` measure
+nothing there.
+
 ### The one endpoint that matters
 
 `POST /api/attention` is the agent's heartbeat and does everything in one round

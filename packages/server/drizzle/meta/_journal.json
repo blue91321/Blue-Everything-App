@@ -337,6 +337,13 @@
       "when": 1786064304000,
       "tag": "0047_friend_state_since",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1786064305000,
+      "tag": "0048_dashboard_refresh",
+      "breakpoints": true
     }
   ]
 }

@@ -543,6 +543,23 @@ export const settings = sqliteTable('settings', {
   voiceListenHotkeyWhileOff: integer('voice_listen_hotkey_while_off').notNull().default(0),
 
   /**
+   * How often an open Dashboard refetches on its own, in seconds. 0 is off.
+   *
+   * **Off is the default, and it is not laziness.** Nothing in this app polls:
+   * the server announces changes over `/api/events` and every reader refetches
+   * the moment one lands, which is why a task ticked off on the phone appears
+   * on the PC immediately without anything running on a clock.
+   *
+   * What that cannot cover is data that changes *at somebody else's server*
+   * without anybody telling us — a friend going idle on Steam, an hour passing
+   * in the weather forecast, a timer on screen counting up. Those only move
+   * when something happens to trigger a read, so a Dashboard left open sits
+   * still. This is the switch for that, and it is opt-in because it is the one
+   * thing here that spends requests on a clock.
+   */
+  dashboardRefreshSeconds: integer('dashboard_refresh_seconds').notNull().default(0),
+
+  /**
    * Watch for games at all.
    *
    * Off means the attention monitor never reports `in-game`, so a match looks

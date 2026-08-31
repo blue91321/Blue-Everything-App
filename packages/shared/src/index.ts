@@ -1959,6 +1959,12 @@ export const updateSettingsSchema = z.object({
     .refine((v) => v === '' || isGlobalHotkey(v), 'needs a key combination with at least one modifier')
     .nullish(),
   voiceListenHotkeyWhileOff: z.boolean().optional(),
+  /*
+   * Capped at an hour, floored at ten seconds. Below ten this stops being a
+   * refresh and becomes a poll, against a project that tuned its attention loop
+   * down to ~1,500 rows a day; above an hour it is indistinguishable from off.
+   */
+  dashboardRefreshSeconds: z.number().int().min(0).max(3600).optional(),
   gameDetectionEnabled: z.boolean().optional(),
   interruptDuringGames: z.boolean().optional(),
   overlayPlacement: overlayPlacementSchema.optional(),

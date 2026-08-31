@@ -371,6 +371,11 @@ export interface AppSettings {
   voiceListenHotkey?: string | null;
   /** Whether the listen shortcut works while voice is off. A row value, so 0/1. */
   voiceListenHotkeyWhileOff?: number;
+  /**
+   * How often an open Dashboard refetches on its own, in seconds. 0 is off,
+   * which is the default — see the column for why nothing polls by default.
+   */
+  dashboardRefreshSeconds?: number;
   gameDetectionEnabled?: number;
   interruptDuringGames?: number;
   overlayPlacement?: string;
@@ -1328,6 +1333,7 @@ export const api = {
       voiceToggleHotkey?: string | null;
       voiceListenHotkey?: string | null;
       voiceListenHotkeyWhileOff?: boolean;
+      dashboardRefreshSeconds?: number;
       gameDetectionEnabled?: boolean;
       interruptDuringGames?: boolean;
       voiceRetrySeconds?: number;

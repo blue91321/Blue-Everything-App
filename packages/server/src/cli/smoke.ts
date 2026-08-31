@@ -1038,6 +1038,26 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   const f5Refused = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceListenHotkey: 'f5' } });
   check('  ...and so is a bare f5, which parseHotkey alone would allow', f5Refused.statusCode === 400, `HTTP ${f5Refused.statusCode}`);
 
+  /*
+   * How often an open Dashboard refetches on its own. Off by default, because
+   * nothing else here polls — the bounds are what stop it becoming one.
+   */
+  const refreshNow = async () => (await app.inject({ method: 'GET', url: '/api/settings' })).json().dashboardRefreshSeconds;
+  check('the dashboard does not refresh on a clock by default', (await refreshNow()) === 0, String(await refreshNow()));
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 60 } });
+  check('  ...but it can be asked to', (await refreshNow()) === 60, String(await refreshNow()));
+
+  const tooOften = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: -1 } });
+  check('  ...never a negative interval', tooOften.statusCode === 400, `HTTP ${tooOften.statusCode}`);
+  const tooLong = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 3601 } });
+  check('  ...nor longer than an hour, which is off with extra steps', tooLong.statusCode === 400, `HTTP ${tooLong.statusCode}`);
+  const fractional = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 2.5 } });
+  check('  ...nor a fraction of a second', fractional.statusCode === 400, `HTTP ${fractional.statusCode}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 0 } });
+  check('  ...and zero turns it back off', (await refreshNow()) === 0);
+
   const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
   check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);
   check('  ...and knows whether it actually can', typeof canStart.json().available === 'boolean');
