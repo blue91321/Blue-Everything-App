@@ -1,6 +1,9 @@
 import { desc, lt } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { attentionReportSchema, isAwayFromPc } from '@everything/shared';
+import { attentionReportSchema, isAwayFromPc,
+  ACCENT_HEX,
+  type AccentColor,
+} from '@everything/shared';
 import { db } from '../db/client.js';
 import { attentionSamples } from '../db/schema.js';
 import { changes } from '../events.js';
@@ -182,6 +185,13 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
        * only request the agent always makes.
        */
       soundEnabled: Boolean(prefs.soundEnabled),
+      /*
+       * So the popup drawn over a fullscreen game is the colour the rest of the
+       * app is. The dark value, always: the overlay has one background and it is
+       * the dark one, so the light-theme variant would be the pair that was
+       * darkened to carry white text.
+       */
+      accentHex: ACCENT_HEX[(prefs.accentColor as AccentColor) ?? 'blue'] ?? ACCENT_HEX.blue,
       /*
        * Game detection rides here for the same reason `soundEnabled` does: this
        * is the one request the agent always makes, whatever is installed.

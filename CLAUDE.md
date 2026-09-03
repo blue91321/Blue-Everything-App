@@ -1319,6 +1319,30 @@ What is genuinely lost is the Action Centre entry: a nudge you miss is now
 missed rather than waiting in a list. The queue still holds it, and an
 undelivered nudge is on the Dashboard either way.
 
+**The popup wears the app's accent, and did not.** `COLOR.accent` was
+`#ffb454` hard-coded — amber, the default — so every popup title came up orange
+whatever the Settings screen said, and the one window that draws above a
+fullscreen game was the one place the app did not look like itself.
+
+The colour rides the **attention heartbeat** rather than the voice config, for
+the reason `soundEnabled` does: the popup is core, an install with the voice
+package deleted still raises nudges through it, and that is the only request the
+agent always makes. Applied every heartbeat, so picking a colour reaches the
+overlay without restarting the agent.
+
+The **dark** value always, since the overlay has one background and it is the
+dark one — the light-theme variants are the pair darkened to carry white text.
+
+`accentFromHex` is split out from `setAccent` purely so it can be asserted:
+**GDI wants `0x00BBGGRR`**, so a byte-order slip does not throw, it draws blue as
+orange — which is the bug being fixed, and would be a poor thing to reintroduce
+inside the fix. `popup-check` covers all eight accents, a missing `#`, capitals,
+and that no two collide.
+
+`overlay-try` reads the accent from the server too. Without that the diagnostic
+would be the last place still showing amber, and would "prove" a bug that had
+been fixed.
+
 **The popup reads as a conversation.** Within one exchange each turn is appended
 rather than replacing the last, and the window grows — measured at 76px for a
 bare "Listening…" up to 164px for a wake, a command, a reply and a follow-up.

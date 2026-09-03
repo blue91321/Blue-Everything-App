@@ -27,6 +27,7 @@ import { ServerClient, ServerUnreachable } from './client.js';
 import { agentConfig, assertConfigured } from './config.js';
 import { applyServerGames, registerExtraGames, setGameDetection } from './games.js';
 import * as popup from './popup.js';
+import { setAccent } from './overlay.js';
 import { setSoundEnabled, setTones } from './sound.js';
 import { createTray, runAppScript, type Tray } from './tray.js';
 
@@ -109,7 +110,7 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
   inFlight = true;
 
   try {
-    const { deliver, soundEnabled, tones, gameDetectionEnabled, gamesVersion } = await client.report(
+    const { deliver, soundEnabled, accentHex, tones, gameDetectionEnabled, gamesVersion } = await client.report(
       toReport(snapshot, stoppingPoint)
     );
 
@@ -147,6 +148,13 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
     // A server that predates the column sends nothing; on rather than off is the
     // right reading of silence for a setting whose default is on.
     setSoundEnabled(soundEnabled ?? true);
+    /*
+     * The popup follows the app's accent. Applied on every heartbeat rather
+     * than once at startup: picking a colour on the Settings screen should
+     * reach the one window that appears over a fullscreen game without
+     * restarting the agent, and this costs a regex on six characters.
+     */
+    if (accentHex) setAccent(accentHex);
     // Likewise: an absent map leaves every event on its default rather than
     // silencing the app because an older server did not know about tones.
     setTones(tones ?? {});

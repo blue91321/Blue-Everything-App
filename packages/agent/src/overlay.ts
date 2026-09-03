@@ -244,11 +244,52 @@ const COLOR = {
   border: rgb(0x2b, 0x30, 0x3c),
   text: rgb(0xe8, 0xe9, 0xed),
   muted: rgb(0x8b, 0x90, 0xa0),
+  /**
+   * The accent, which **follows the app's** rather than being a colour of its
+   * own.
+   *
+   * It was `#ffb454` hard-coded — amber, the default — so every popup title
+   * came up orange whatever you had chosen on the Settings screen, and the one
+   * window that appears over a fullscreen game was the one place the app did
+   * not look like itself.
+   *
+   * Mutable rather than a constant because the agent learns the accent from the
+   * heartbeat, which arrives after this module loads. It starts on the default
+   * so a popup raised before the first heartbeat is not black-on-black.
+   */
   accent: rgb(0xff, 0xb4, 0x54),
   good: rgb(0x5f, 0xd1, 0x8c),
   bad: rgb(0xff, 0x6b, 0x6b),
   button: rgb(0x23, 0x27, 0x34),
 };
+
+/**
+ * Point the overlay at the app's accent colour.
+ *
+ * Takes the `#rrggbb` the rest of the app uses and converts once, rather than
+ * asking every caller to know that GDI wants its bytes the other way round.
+ * An unparseable value is ignored, because a popup in the wrong colour is a far
+ * better outcome than one that throws while a nudge is being delivered.
+ */
+export function setAccent(hex: string): void {
+  const packed = accentFromHex(hex);
+  if (packed !== null) COLOR.accent = packed;
+}
+
+/**
+ * `#rrggbb` to what GDI wants, which is the bytes the other way round.
+ *
+ * Split out from `setAccent` so it can be asserted: a byte-order mistake here
+ * does not throw, it just draws blue as orange — which is the bug this whole
+ * change is fixing, so getting it wrong in the fix would be a poor joke. Null
+ * for anything unparseable, and the caller then leaves the colour alone rather
+ * than drawing in black.
+ */
+export function accentFromHex(hex: string): number | null {
+  const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  if (!match) return null;
+  return rgb(parseInt(match[1], 16), parseInt(match[2], 16), parseInt(match[3], 16));
+}
 
 const WIDTH = 380;
 const PADDING = 14;

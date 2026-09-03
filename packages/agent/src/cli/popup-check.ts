@@ -57,6 +57,35 @@ console.log('\nhide(0) still means now');
 popup.hide(0);
 check('hidden immediately', popup.visible(), false);
 
+/*
+ * The accent the popup draws its title in, which follows the app's rather than
+ * being a colour of its own.
+ *
+ * It was `#ffb454` hard-coded, so every popup came up amber whatever the
+ * Settings screen said — and the window that appears over a fullscreen game was
+ * the one place the app did not look like itself.
+ *
+ * The conversion is what is asserted, because getting it wrong does not throw:
+ * GDI wants 0x00BBGGRR, so a byte-order slip silently draws blue as orange,
+ * which is exactly the bug being fixed.
+ */
+console.log('\nthe accent follows the app');
+const { accentFromHex } = await import('../overlay.js');
+const { ACCENT_HEX } = await import('@everything/shared');
+
+check('blue packs to GDI order', accentFromHex('#4c8dff'), 0xff8d4c);
+check('  ...and amber, which is a different number', accentFromHex('#ffb454'), 0x54b4ff);
+check('a missing # is fine', accentFromHex('4c8dff'), 0xff8d4c);
+check('capitals are fine', accentFromHex('#4C8DFF'), 0xff8d4c);
+check('every accent the app offers converts', Object.values(ACCENT_HEX).every((hex) => accentFromHex(hex) !== null), true);
+check(
+  '  ...and no two land on the same number',
+  new Set(Object.values(ACCENT_HEX).map(accentFromHex)).size,
+  Object.keys(ACCENT_HEX).length
+);
+check('nonsense is refused rather than drawn black', accentFromHex('not a colour'), null);
+check('  ...and so is a short hex', accentFromHex('#abc'), null);
+
 popup.stopPopups();
 console.log(failures === 0 ? '\nPopup timing is correct.\n' : `\n${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

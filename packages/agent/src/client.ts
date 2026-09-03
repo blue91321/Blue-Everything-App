@@ -87,6 +87,18 @@ export interface AttentionResponse {
    */
   soundEnabled?: boolean;
   /**
+   * The app's accent colour, as `#rrggbb`.
+   *
+   * On the heartbeat rather than the voice config because the popup is core:
+   * an install with the voice package deleted still raises nudges through it,
+   * and this is the only request the agent always makes — the same reasoning
+   * `soundEnabled` rides on.
+   *
+   * Optional, so a server older than this leaves the overlay on the default
+   * rather than being handed nothing and drawing in black.
+   */
+  accentHex?: string;
+  /**
    * Whether to watch for games at all, and a hash of which ones.
    *
    * Optional: a server older than the Games screen sends neither, and the agent

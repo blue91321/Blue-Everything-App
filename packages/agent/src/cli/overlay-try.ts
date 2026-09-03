@@ -8,7 +8,34 @@
  * microphone is a slow way to debug a CreateWindowEx flag.
  */
 import koffi from 'koffi';
-import { createOverlay, listScreens } from '../overlay.js';
+import { createOverlay, listScreens, setAccent } from '../overlay.js';
+import { agentConfig } from '../config.js';
+
+/**
+ * Draw it in the accent the app is actually set to.
+ *
+ * The agent learns this from the heartbeat, which this script does not make —
+ * so without it the diagnostic would be the one place still showing the old
+ * hard-coded amber, and would "prove" a bug that had been fixed.
+ */
+async function useAppAccent(): Promise<void> {
+  try {
+    const response = await fetch(`${agentConfig.serverUrl}/api/settings`, {
+      headers: agentConfig.token ? { authorization: `Bearer ${agentConfig.token}` } : {},
+    });
+    if (!response.ok) return;
+    const { accentColor } = (await response.json()) as { accentColor?: string };
+    const { ACCENT_HEX } = await import('@everything/shared');
+    const hex = ACCENT_HEX[(accentColor ?? 'blue') as keyof typeof ACCENT_HEX];
+    if (hex) {
+      setAccent(hex);
+      console.log(`  accent         ${accentColor} (${hex})`);
+    }
+  } catch {
+    // No server, no token, no matter — the default is a perfectly good colour
+    // to show a window in.
+  }
+}
 
 /* Asking Windows whether the window is really there, rather than trusting that
  * no exception was thrown. "It did not crash" is not "it appeared". */
@@ -37,6 +64,8 @@ console.log('\nScreens Windows can see:');
 for (const screen of listScreens()) {
   console.log(`  ${screen.id}  ${screen.label}  work ${screen.work.left},${screen.work.top} -> ${screen.work.right},${screen.work.bottom}`);
 }
+
+await useAppAccent();
 
 const overlay = createOverlay({
   onChoice: (id) => console.log(`  clicked: ${id}`),
