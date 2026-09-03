@@ -43,6 +43,10 @@ const report = (over: Partial<AttentionReport>): AttentionReport => ({
   // was not actually an AttentionReport. Silent until the server was typechecked.
   audioPlaying: false,
   windowsDnd: false,
+  // Likewise: required on the report, so leaving it out makes this helper's
+  // return type a claim it does not meet.
+  gamePaths: {},
+  gameUrls: {},
   ...over,
 });
 
@@ -935,6 +939,133 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   check('and leaves it full rather than overflowing', (await listOf(voiceGaugeId)).gaugeNow === 100);
 
   /*
+   * Starting a game by voice. The whole safety property of this kind is that a
+   * stored target names a *row on the games list* and the path is read from
+   * that row — so what a mis-heard phrase can start is bounded by what this
+   * machine has already run on its own.
+   */
+  const sep = String.fromCharCode(92);
+  const gamePath = `D:${sep}SteamLibrary${sep}steamapps${sep}common${sep}Deep Rock Galactic${sep}FSD.exe`;
+  await post('/api/games', { exe: 'fsd.exe', label: 'Deep Rock Galactic', launchPath: gamePath });
+  await post('/api/voice/commands', { kind: 'launch', target: 'fsd.exe', phrases: ['rock and stone'] });
+
+  const started = (await post('/api/voice/command', { text: 'hey everything rock and stone', speakerScore: null })).json();
+  check('a spoken phrase can start a game', started.outcome === 'launched', JSON.stringify(started));
+  check('  ...and the path comes off the row, not the command', started.action?.path === gamePath, started.action?.path);
+  check('  ...and it says which one', started.say === 'Starting Deep Rock Galactic', started.say);
+
+  /*
+   * And when the row knows a `steam://` address, that wins over the path.
+   *
+   * This is the whole point of the address existing: running a Steam game's own
+   * executable frequently answers "start <game> from launcher" and quits, which
+   * is what was reported. The action the agent receives has to carry the URL and
+   * not the path, or the fix reaches the database and stops there.
+   */
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/games/fsd.exe',
+    payload: { launchUrl: 'steam://rungameid/548430' },
+  });
+  const viaSteam = (await post('/api/voice/command', { text: 'hey everything rock and stone', speakerScore: null })).json();
+  check('a Steam game starts through Steam, not through its exe', viaSteam.action?.url === 'steam://rungameid/548430', JSON.stringify(viaSteam.action));
+  check('  ...and the path is not sent instead', viaSteam.action?.path === undefined);
+
+  /*
+   * A path as the target is refused by the schema rather than merely failing to
+   * find a row. Working by accident is not the same as working by rule, and the
+   * rule is what has to hold when somebody edits this next.
+   */
+  const asPath = await post('/api/voice/commands', {
+    kind: 'launch',
+    target: `C:${sep}Windows${sep}System32${sep}cmd.exe`,
+    phrases: ['open a shell'],
+  });
+  check('a path is refused as a launch target', asPath.statusCode === 400, `HTTP ${asPath.statusCode}`);
+
+  const bareName = await post('/api/voice/commands', { kind: 'launch', target: 'cmd.exe', phrases: ['open a shell'] });
+  check('  ...and a name with no row is stored but starts nothing', bareName.statusCode === 201, `HTTP ${bareName.statusCode}`);
+  const missing = (await post('/api/voice/command', { text: 'hey everything open a shell', speakerScore: null })).json();
+  check('  ...saying so rather than pretending', missing.outcome === 'no-match' && missing.action === undefined, JSON.stringify(missing));
+
+  /*
+   * A row whose path is not known yet: it saves, and says what to do about it.
+   * "It did not work" is not a fix; "run it once" is.
+   */
+  await post('/api/games', { exe: 'nopath.exe', label: 'Not Run Yet' });
+  await post('/api/voice/commands', { kind: 'launch', target: 'nopath.exe', phrases: ['start the other one'] });
+  const noPath = (await post('/api/voice/command', { text: 'hey everything start the other one', speakerScore: null })).json();
+  check('a game never run here says where the gap is', /run it once/.test(noPath.say ?? ''), noPath.say);
+
+  await app.inject({ method: 'DELETE', url: '/api/games/fsd.exe' });
+  await app.inject({ method: 'DELETE', url: '/api/games/nopath.exe' });
+
+  /*
+   * Starting the agent from inside the app. The Voice screen used to answer a
+   * stopped agent with "run Blue Everything.cmd", which is the friction the
+   * double-clickable files exist to remove.
+   *
+   * Only the capability is asserted here, deliberately. `AUTH_REQUIRED=false`
+   * short-circuits `isLocal` to true, so an injected cross-site request is
+   * allowed in this suite — which looks exactly like a broken gate and is a
+   * disabled one. The route's own refusal is the same `request.isLocal` check
+   * every other write on this machine uses, and the unit checks above cover it.
+   */
+  /*
+   * The listen shortcut, and whether it works while voice is off.
+   *
+   * The flag has to reach the agent's config *in the off state*, which is the
+   * only state it is ever read in — and the agent rebuilds that config from
+   * EMPTY_VOICE_CONFIG, which has now dropped a hotkey field twice.
+   */
+  await app.inject({
+    method: 'PATCH',
+    url: '/api/settings',
+    payload: { voiceListenHotkey: 'ctrl+alt+numpad9', voiceListenHotkeyWhileOff: true, voiceEnabled: false },
+  });
+  const offConfig = (
+    await post('/api/voice/agent', {
+      listening: false, devices: [], screens: [], unknownWords: [], peak: 0,
+      awayFromPc: false, waitMs: 0, since: 0,
+    })
+  ).json();
+  check('voice is off in the agent config', offConfig.enabled === false);
+  check('  ...but the listen shortcut still reaches it', offConfig.listenHotkey === 'ctrl+alt+numpad9', offConfig.listenHotkey);
+  check('  ...and so does whether it may work while off', offConfig.listenHotkeyWhileOff === true, String(offConfig.listenHotkeyWhileOff));
+
+  const numpadRefused = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceListenHotkey: 'numpad5' } });
+  check('a bare number-pad key is refused', numpadRefused.statusCode === 400, `HTTP ${numpadRefused.statusCode}`);
+  const f5Refused = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceListenHotkey: 'f5' } });
+  check('  ...and so is a bare f5, which parseHotkey alone would allow', f5Refused.statusCode === 400, `HTTP ${f5Refused.statusCode}`);
+
+  /*
+   * How often an open Dashboard refetches on its own. Off by default, because
+   * nothing else here polls — the bounds are what stop it becoming one.
+   */
+  const refreshNow = async () => (await app.inject({ method: 'GET', url: '/api/settings' })).json().dashboardRefreshSeconds;
+  check('the dashboard does not refresh on a clock by default', (await refreshNow()) === 0, String(await refreshNow()));
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 60 } });
+  check('  ...but it can be asked to', (await refreshNow()) === 60, String(await refreshNow()));
+
+  const tooOften = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: -1 } });
+  check('  ...never a negative interval', tooOften.statusCode === 400, `HTTP ${tooOften.statusCode}`);
+  const tooLong = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 3601 } });
+  check('  ...nor longer than an hour, which is off with extra steps', tooLong.statusCode === 400, `HTTP ${tooLong.statusCode}`);
+  const fractional = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 2.5 } });
+  check('  ...nor a fraction of a second', fractional.statusCode === 400, `HTTP ${fractional.statusCode}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 0 } });
+  check('  ...and zero turns it back off', (await refreshNow()) === 0);
+
+  const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
+  check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);
+  check('  ...and knows whether it actually can', typeof canStart.json().available === 'boolean');
+  const { startScript: startPs1 } = await import('../paths.js');
+  const { existsSync: haveFile } = await import('node:fs');
+  check('  ...by naming the script rather than counting the repo root by hand', haveFile(startPs1), startPs1);
+
+  /*
    * A gauge with no reminder interval is purely something to look at. Nagging
    * about one nobody asked to be nagged about would make the mode unusable as
    * decoration, which is a legitimate way to use it.
@@ -1046,6 +1177,198 @@ console.log('\nstarred live channels, and narrowing the panel to them');
 
 /* ------------------------------------------------------------------ */
 
+console.log('\nhow long somebody has been away');
+
+{
+  /*
+   * `friends.state_since` exists so the screen can say *how long* rather than
+   * only that somebody is away — "away" and "away for three hours" are
+   * different answers to whether it is worth messaging them.
+   *
+   * The whole difficulty is in one line of the upsert. `replaceFriends` runs on
+   * every read of the friends list, so writing `now` unconditionally would peg
+   * every timer to zero several times a minute and the screen would report
+   * everybody as having just stepped away. It has to survive an unchanged sync
+   * and reset only when the state genuinely differs.
+   *
+   * Driven through the store rather than `POST /api/integrations/presence`
+   * deliberately: that endpoint replaces a provider's whole list, and pointing
+   * it at a real database is how you delete somebody's friends.
+   */
+  const { replaceFriends, allFriends } = await import('../../../modules/integrations/server/store.js');
+  const { friends: friendsTable } = await import('../db/schema.js');
+  const { db: database } = await import('../db/client.js');
+  const { eq: whereIs } = await import('drizzle-orm');
+const { awayFor } = await import('../../../modules/integrations/web/presence.js');
+
+  const sinceOf = async (id: string) =>
+    (await allFriends()).find((f) => f.providerUserId === id)?.stateSince ?? null;
+  const stateOf = async (id: string) =>
+    (await allFriends()).find((f) => f.providerUserId === id)?.state ?? null;
+
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
+  ]);
+
+  const firstSeen = await sinceOf('afk-1');
+  check('a friend gets a clock the first time we see them', firstSeen !== null, String(firstSeen));
+
+  /*
+   * And a row that already exists without one gets it on the next sync rather
+   * than waiting for a state change that may never come. Everything predating
+   * the column starts null, and 120 rows on the real install sat that way —
+   * visible as friends in the away section with no timer beside their
+   * neighbours' timers.
+   */
+  await database.update(friendsTable).set({ stateSince: null }).where(whereIs(friendsTable.providerUserId, 'afk-1'));
+  check('  ...even one that lost its clock has none for a moment', (await sinceOf('afk-1')) === null);
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
+  ]);
+  const backfilled = await sinceOf('afk-1');
+  check('  ...and the next sync gives it one, unchanged state or not', backfilled !== null, String(backfilled));
+
+  /*
+   * The baseline for everything below is taken *after* that, because the
+   * backfill is itself a legitimate change to the clock — comparing the later
+   * syncs against the value from before it would fail for the right reason and
+   * look like the wrong one.
+   */
+  const settled = backfilled;
+
+  /*
+   * The one that matters. A few milliseconds is enough to detect a reset, since
+   * the column would take the new `Date.now()`.
+   */
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
+  ]);
+  check('an unchanged sync leaves the clock alone', (await sinceOf('afk-1')) === settled, `${await sinceOf('afk-1')} vs ${settled}`);
+
+  // ...and again, because a bug that resets on the *second* identical sync would
+  // pass a single repeat.
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Idle Ida', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Arena' },
+  ]);
+  check('  ...and a third sync too', (await sinceOf('afk-1')) === settled);
+
+  // Something else about the row changing is not the state changing.
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Ida Renamed', state: 'away' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Ranked' },
+  ]);
+  check('a rename does not restart it', (await sinceOf('afk-1')) === settled);
+  check('  ...nor does the game changing', (await sinceOf('busy-1')) !== null);
+
+  // A real change does restart it.
+  await wait(25);
+  await replaceFriends('riot', [
+    { providerUserId: 'afk-1', name: 'Ida Renamed', state: 'online' },
+    { providerUserId: 'busy-1', name: 'Playing Pat', state: 'in-game', game: 'Ranked' },
+  ]);
+  const afterChange = await sinceOf('afk-1');
+  check('going from away to online restarts it', afterChange !== null && afterChange > (settled ?? 0), `${afterChange} vs ${settled}`);
+  check('  ...while the friend who did not change keeps theirs', (await stateOf('busy-1')) === 'in-game');
+
+  /* And it reaches the browser, which is where the number is drawn. */
+  const view = (await app.inject({ method: 'GET', url: '/api/integrations/friends' })).json();
+  const ida = view.friends.find((f: { name: string }) => f.name === 'Ida Renamed');
+  check('the timestamp reaches the client', typeof ida?.stateSince === 'number', JSON.stringify(ida?.stateSince));
+
+  /*
+   * Cleaned up, and the pruning that does it is the same behaviour that makes
+   * this endpoint dangerous against real data: anything absent from a snapshot
+   * is deleted.
+   */
+  await replaceFriends('riot', []);
+  check('an empty snapshot prunes the provider', (await allFriends()).filter((f) => f.provider === 'riot').length === 0);
+
+  /*
+   * **And it survives being two accounts.**
+   *
+   * A merged row wears one account's name and another's status — Discord leads
+   * for identity because that is where somebody chose a name for themselves,
+   * and Discord's REST API carries no presence at all, so the status always
+   * comes from somewhere else. The clock has to follow the *status*, not the
+   * name, or every linked person would silently lose their timer.
+   */
+  const { linkFriends } = await import('../../../modules/integrations/server/store.js');
+
+  await replaceFriends('steam', [{ providerUserId: 'multi-s', name: 'SteamPersona', state: 'away' }]);
+  await replaceFriends('discord', [{ providerUserId: 'multi-d', name: 'RealName', state: 'unknown' }]);
+
+  const rowsNow = await allFriends();
+  const steamRow = rowsNow.find((f) => f.providerUserId === 'multi-s')!;
+  const discordRow = rowsNow.find((f) => f.providerUserId === 'multi-d')!;
+  await linkFriends(steamRow.id, discordRow.id);
+
+  // Backdated so the formatter has something to say. Ninety minutes is a
+  // duration no other assertion here uses, so a wrong row cannot pass by luck.
+  const ninetyAgo = Date.now() - 90 * 60_000;
+  await database.update(friendsTable).set({ stateSince: ninetyAgo }).where(whereIs(friendsTable.id, steamRow.id));
+
+  const merged = (await app.inject({ method: 'GET', url: '/api/integrations/friends' }))
+    .json()
+    .friends.find((f: { accounts: { provider: string }[] }) => f.accounts.length > 1);
+
+  check('two accounts become one row', merged !== undefined && merged.accounts.length === 2, JSON.stringify(merged?.accounts?.length));
+  check('  ...wearing the Discord name', merged?.name === 'RealName', merged?.name);
+  check('  ...and the Steam status', merged?.state === 'away', merged?.state);
+  check('  ...with the clock from whichever account knew', merged?.stateSince === ninetyAgo, `${merged?.stateSince} vs ${ninetyAgo}`);
+  check('  ...so a linked person still shows a timer', awayFor(merged) === '1h 30m', awayFor(merged));
+
+  await replaceFriends('steam', []);
+  await replaceFriends('discord', []);
+
+  /*
+   * And the half that is actually on screen. It lives in `presence.ts` rather
+   * than in `Friends.tsx` — the same move `STATE_LABEL` made, so the Dashboard
+   * panel does not drag in the whole Connections chunk — which is also what
+   * makes it reachable from here at all: that file's only import is a type.
+   */
+
+  const ago = (minutes: number) => Date.now() - minutes * 60_000;
+  const row = (over: Record<string, unknown>) =>
+    ({ state: 'away', stateSince: ago(30), ...over }) as Parameters<typeof awayFor>[0];
+
+  check('it says nothing without a clock', awayFor(row({ stateSince: null })) === '');
+  // Under five minutes is "they just stepped away" — not worth a number, and it
+  // would tick distractingly on a list that reloads every minute.
+  // Only the first minute is silent. Five left rows sitting in the away section
+  // with nothing against them while their neighbours had numbers, which reads as
+  // broken rather than restrained.
+  check('  ...nor in the first minute', awayFor(row({ stateSince: ago(0.5) })) === '', awayFor(row({ stateSince: ago(0.5) })));
+  check('  ...but a couple of minutes counts', awayFor(row({ stateSince: ago(2) })) === '2m', awayFor(row({ stateSince: ago(2) })));
+  check('minutes, then hours, then days', awayFor(row({ stateSince: ago(25) })) === '25m', awayFor(row({ stateSince: ago(25) })));
+  check('  ...an exact hour has no stray minutes', awayFor(row({ stateSince: ago(120) })) === '2h', awayFor(row({ stateSince: ago(120) })));
+  check('  ...and a part hour keeps them', awayFor(row({ stateSince: ago(95) })) === '1h 35m', awayFor(row({ stateSince: ago(95) })));
+  check('  ...one day is singular', awayFor(row({ stateSince: ago(60 * 30) })) === '1 day', awayFor(row({ stateSince: ago(60 * 30) })));
+  check('  ...and more are not', awayFor(row({ stateSince: ago(60 * 24 * 3) })) === '3 days', awayFor(row({ stateSince: ago(60 * 24 * 3) })));
+
+  /*
+   * Only the two away states. `online for 20 minutes` is a fact about nothing,
+   * `offline` already has a better line in "last on Tuesday", and `unknown` is
+   * specifically the state meaning nobody can vouch for anything — a duration on
+   * that would be the confident wrong answer this screen exists to avoid.
+   */
+  check('a friend in a game but idle gets one too', awayFor(row({ state: 'in-game-away' })) === '30m');
+  for (const state of ['online', 'offline', 'in-game', 'dnd', 'unknown']) {
+    check(`  ...and ${state} does not`, awayFor(row({ state })) === '');
+  }
+}
+
+/* ------------------------------------------------------------------ */
+
 console.log('\nthe side column holds a list, in order');
 
 {
@@ -1136,6 +1459,160 @@ console.log('\nthings that must stay shut');
   const ok = await app.inject({ method: 'GET', url: `/api/habits/${guardId}/image` });
   check('an ordinary id still reads its own picture', ok.statusCode === 200 && ok.headers['content-type'] === 'image/png');
   await app.inject({ method: 'DELETE', url: `/api/habits/${guardId}` });
+}
+
+console.log('');
+console.log('games, and what may interrupt one');
+{
+  const report = (over: Partial<AttentionReport>) =>
+    post('/api/attention', { state: 'free', reason: 'games probe', idleMs: 0, liveGames: [], audioPlaying: false, windowsDnd: false, ...over });
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { quietHoursEnabled: false, gameDetectionEnabled: true, interruptDuringGames: false } });
+
+  /* Discovery: the agent reports what ran, and the list grows by itself. */
+  await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  const listed = async () => (await app.inject({ method: 'GET', url: '/api/games' })).json() as Array<{ exe: string; isGame: number; source: string; allowInterruptions: number | null; launchPath: string | null; launchUrl: string | null }>;
+  const cs2 = (await listed()).find((g) => g.exe === 'cs2.exe');
+  check('a running game puts itself on the list', cs2 !== undefined);
+  check('  ...marked as a game', cs2?.isGame === 1);
+
+  /*
+   * An app covering the screen is recorded but NOT assumed to be a game. Films
+   * and browsers cover the screen too, and guessing wrong means silently holding
+   * nudges back for something nobody would think to blame this list for.
+   */
+  const B = String.fromCharCode(92);
+  await report({
+    state: 'in-game',
+    liveGames: [],
+    fullscreenApp: 'vlc.exe',
+    gamePaths: { 'vlc.exe': `C:${B}Program Files${B}VideoLAN${B}VLC${B}vlc.exe` },
+  });
+  const vlc = (await listed()).find((g) => g.exe === 'vlc.exe');
+  check('an app covering the screen is listed', vlc !== undefined, vlc?.source);
+  check('  ...but not called a game', vlc?.isGame === 0);
+
+  /*
+   * Unless it lives where only games live. This is the signal that actually
+   * matters for a borderless window: nothing about the window shape says
+   * "game", and the install path says it plainly whatever shape it is.
+   */
+  await report({
+    state: 'in-game',
+    liveGames: [],
+    fullscreenApp: 'fsd.exe',
+    gamePaths: { 'fsd.exe': `D:${B}SteamLibrary${B}steamapps${B}common${B}Deep Rock Galactic${B}FSD.exe` },
+  });
+  const drg = (await listed()).find((g) => g.exe === 'fsd.exe');
+  check('one in a game library is switched on for you', drg?.isGame === 1, `isGame=${drg?.isGame}`);
+  check('  ...and the agent is told to watch it', ((await app.inject({ method: 'GET', url: '/api/games/watching' })).json().exes as string[]).includes('fsd.exe'));
+  /*
+   * A Steam game starts through Steam, not by running its executable.
+   *
+   * Reported from real use: `Warframe.x64.exe` answers "start warframe from
+   * launcher" and quits, because the binary expects Steam to have set the
+   * environment up first. The agent resolves the app id from the
+   * `appmanifest_*.acf` beside the game and reports the address; the row keeps
+   * both, and the address wins.
+   */
+  await report({
+    state: 'in-game',
+    liveGames: ['fsd.exe'],
+    gamePaths: { 'fsd.exe': `D:${B}SteamLibrary${B}steamapps${B}common${B}Deep Rock Galactic${B}FSD.exe` },
+    gameUrls: { 'fsd.exe': 'steam://rungameid/548430' },
+  });
+  const steamRow = (await listed()).find((g) => g.exe === 'fsd.exe');
+  check('a Steam game records how to start it', steamRow?.launchUrl === 'steam://rungameid/548430', steamRow?.launchUrl ?? undefined);
+  check('  ...and keeps the path as well', Boolean(steamRow?.launchPath));
+
+  /*
+   * The shape is the guard, not the scheme. `steam://` can install, uninstall
+   * and open pages in its own browser, so only "run this numbered game" is
+   * accepted — by the API on the way in, and again by the launcher on the way
+   * out, because those are two different claims.
+   */
+  for (const bad of ['steam://install/1', 'steam://openurl/http://x', 'http://example.com', 'steam://rungameid/1;calc']) {
+    const refused = await app.inject({
+      method: 'PATCH',
+      url: '/api/games/fsd.exe',
+      payload: { launchUrl: bad },
+    });
+    check(`  ...and refuses ${bad}`, refused.statusCode === 400, `HTTP ${refused.statusCode}`);
+  }
+
+  const cleared = await app.inject({ method: 'PATCH', url: '/api/games/fsd.exe', payload: { launchUrl: '' } });
+  check('  ...while an empty address clears it', cleared.statusCode === 200, `HTTP ${cleared.statusCode}`);
+
+  await app.inject({ method: 'DELETE', url: '/api/games/fsd.exe' });
+
+  /*
+   * The shell is never a candidate, however plainly it covers the screen.
+   * `explorer.exe` was listed on the real machine within a day of this shipping:
+   * the desktop *is* a window filling its monitor, and it is the foreground
+   * window every time you alt-tab out of a game. The geometry check was right
+   * and the conclusion was absurd.
+   */
+  await report({
+    state: 'free',
+    liveGames: [],
+    fullscreenApp: 'explorer.exe',
+    gamePaths: { 'explorer.exe': `C:${B}Windows${B}explorer.exe` },
+  });
+  check('the desktop is not listed as having filled the screen',
+    (await listed()).find((g) => g.exe === 'explorer.exe') === undefined);
+
+  /* The interruption rule. */
+  await post('/api/nudges', { title: 'Mid-match', minQuality: 'any' });
+  const midMatch = await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  check('nothing interrupts a game by default', midMatch.json().deliver.length === 0, `${midMatch.json().deliver.length}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { interruptDuringGames: true } });
+  const allowed = await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  check('unless you say it may', allowed.json().deliver.some((n: { title: string }) => n.title === 'Mid-match'), JSON.stringify(allowed.json().deliver.map((n: {title:string}) => n.title)));
+
+  /* One game saying no outranks the global yes — the conservative direction. */
+  await app.inject({ method: 'PATCH', url: '/api/games/cs2.exe', payload: { allowInterruptions: false } });
+  await post('/api/nudges', { title: 'Held back', minQuality: 'any' });
+  const refused = await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  check('a game may still refuse on its own', !refused.json().deliver.some((n: {title:string}) => n.title === 'Held back'));
+
+  /* Detection off makes a match read as ordinary use. */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { gameDetectionEnabled: false } });
+  const undetected = await report({ state: 'in-game', liveGames: ['cs2.exe'] });
+  check('detection off lets everything through', undetected.json().deliver.some((n: {title:string}) => n.title === 'Held back'));
+
+  /* Not a game any more: unticking it removes it from the decision entirely. */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { gameDetectionEnabled: true, interruptDuringGames: false } });
+  await app.inject({ method: 'PATCH', url: '/api/games/cs2.exe', payload: { isGame: false, allowInterruptions: null } });
+  const watching = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json();
+  check('unticking takes it out of what the agent watches', !(watching.exes as string[]).includes('cs2.exe'), (watching.exes as string[]).join(','));
+
+  /*
+   * Nothing is shipped onto the list. A fresh table is empty, and the agent
+   * still knows the built-in names — the server only ever overrides, which is
+   * what stops "watch exactly these" deadlocking an empty table.
+   */
+  const watchingNow = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json();
+  check('unticking sends it as switched off', (watchingNow.off as string[]).includes('cs2.exe'), (watchingNow.off as string[]).join(','));
+
+  const before = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json().version;
+  await app.inject({ method: 'PATCH', url: '/api/games/cs2.exe', payload: { isGame: true } });
+  const after = (await app.inject({ method: 'GET', url: '/api/games/watching' })).json().version;
+  check('the version moves when the list does', before !== after);
+
+  /* Launching can only ever use the row's own path, never one from the caller. */
+  const noPath = await app.inject({ method: 'POST', url: '/api/games/cs2.exe/launch', payload: {} });
+  check('a game with no known path refuses to launch', noPath.statusCode === 409, `${noPath.statusCode}`);
+  const missing = await app.inject({ method: 'POST', url: '/api/games/nope.exe/launch', payload: {} });
+  check('and an unknown one is a 404', missing.statusCode === 404, `${missing.statusCode}`);
+
+  /* A path the agent reported is remembered, and only the first one. */
+  await report({ state: 'in-game', liveGames: ['cs2.exe'], gamePaths: { 'cs2.exe': 'C:\Games\cs2.exe' } });
+  const withPath = (await listed()).find((g) => g.exe === 'cs2.exe') as { launchPath?: string } | undefined;
+  check('a reported path is stored', withPath?.launchPath === 'C:\Games\cs2.exe', withPath?.launchPath);
+
+  await app.inject({ method: 'DELETE', url: '/api/games/cs2.exe' });
+  await app.inject({ method: 'DELETE', url: '/api/games/vlc.exe' });
 }
 
 console.log('');

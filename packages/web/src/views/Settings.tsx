@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type AppSettings, type Device, type Session } from '../api';
 import { InstalledPackages } from './InstalledPackages';
+import { GamesTab } from './GamesTab';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
 import { panelChoices } from '../panels';
@@ -269,6 +270,7 @@ const TABS = [
   { id: 'general', label: 'General', hint: 'Appearance and reminders' },
   { id: 'notifications', label: 'Notifications', hint: 'Sound, quiet hours and the phone' },
   { id: 'devices', label: 'Devices', hint: 'Phones, browsers and the extension' },
+  { id: 'games', label: 'Games', hint: 'What counts as a game, and what may interrupt one' },
   { id: 'packages', label: 'Packages', hint: 'Which parts of the app run' },
 ] as const;
 
@@ -391,6 +393,7 @@ export function Settings({
       {tab === 'general' && <GeneralTab />}
       {tab === 'notifications' && <NotificationsTab session={session} />}
       {tab === 'devices' && <DevicesTab session={session} onChanged={onChanged} />}
+      {tab === 'games' && <GamesTab session={session} />}
       {tab === 'packages' && <PackagesTab session={session} />}
     </>
   );
@@ -482,6 +485,18 @@ function DashboardPanel() {
   return (
     <section id="dashboard-panel">
       <h2>Beside the Dashboard</h2>
+
+      {/*
+        Its own card above the panel list, because it governs the whole screen
+        rather than the column — but it lives in this section because the column
+        is what it is *for*: the panels are the part of the Dashboard whose
+        content moves without anybody touching it.
+      */}
+      <RefreshRate
+        seconds={settings.data?.dashboardRefreshSeconds ?? 0}
+        onPick={(seconds) => void api.settings.update({ dashboardRefreshSeconds: seconds }).then(settings.reload)}
+      />
+
       <div className="card">
         <div className="meta" style={{ marginBottom: 8 }}>
           A second column on a wide screen, holding as many of these as you like, one under the other in
@@ -1571,6 +1586,64 @@ function AddDeviceGuide({ onAdded }: { onAdded: () => void }) {
           </div>
         </li>
       </ol>
+    </div>
+  );
+}
+
+/**
+ * How often an open Dashboard refetches on its own.
+ *
+ * **Off by default, and the copy leads with why.** Nothing else in this app
+ * polls: the server announces changes over `/api/events` and every reader
+ * refetches when one lands, which is how a habit ticked off on the phone shows
+ * up on the PC without a timer anywhere.
+ *
+ * What that cannot see is data moving at somebody else's server — a friend
+ * going idle on Steam, an hour passing in a stored forecast, a duration
+ * counting up. That is what this is for, and saying so is what stops it reading
+ * as "the app was broken and this fixes it".
+ *
+ * Named options rather than a slider. A slider is right for a number on a
+ * continuum — the gauge drain earns one — and wrong for a handful of
+ * alternatives where every position between them is a worse version of a
+ * neighbour.
+ */
+const REFRESH_RATES = [
+  { seconds: 0, label: 'Only when something changes' },
+  { seconds: 30, label: 'Every 30 seconds' },
+  { seconds: 60, label: 'Every minute' },
+  { seconds: 300, label: 'Every 5 minutes' },
+  { seconds: 900, label: 'Every 15 minutes' },
+] as const;
+
+function RefreshRate({ seconds, onPick }: { seconds: number; onPick: (seconds: number) => void }) {
+  return (
+    <div className="card">
+      <div className="title">Refresh the Dashboard</div>
+      <div className="meta" style={{ marginTop: 4 }}>
+        Anything you change here or on your phone already appears immediately — the server says so and the
+        screen listens. This is for what it cannot be told about: a friend going idle on Steam, an hour
+        passing in the stored forecast, a timer on screen counting up.
+      </div>
+
+      <div className="row wrap" style={{ gap: '.35rem', marginTop: 8 }}>
+        {REFRESH_RATES.map((rate) => (
+          <button
+            key={rate.seconds}
+            type="button"
+            className={seconds === rate.seconds ? 'btn primary' : 'btn subtle'}
+            onClick={() => onPick(rate.seconds)}
+          >
+            {rate.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="meta" style={{ marginTop: 8 }}>
+        {seconds === 0
+          ? 'Off — the Dashboard updates when something tells it to, and not on a clock.'
+          : 'Only while the Dashboard is the screen you are on and the window is in front; a hidden tab costs nothing.'}
+      </div>
     </div>
   );
 }

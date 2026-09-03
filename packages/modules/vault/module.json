@@ -2,7 +2,7 @@
   "id": "vault",
   "label": "Password vault",
   "blurb": "Encrypted password storage, CSV import, and the browser extension that fills them.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": "blue91321",
   "server": "server/index.ts"
 }

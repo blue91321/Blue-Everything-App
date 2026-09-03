@@ -20,7 +20,8 @@ export type ChangeScope =
   | 'time'
   | 'vault'
   | 'integrations'
-  | 'packages';
+  | 'packages'
+  | 'games';
 
 interface ChangeEvent {
   scope: ChangeScope | 'all';
@@ -67,6 +68,8 @@ function scopeForPath(path: string): ChangeScope | 'all' {
      */
     case 'modules':
       return 'packages';
+    case 'games':
+      return 'games';
     case 'integrations':
       return 'integrations';
     default:

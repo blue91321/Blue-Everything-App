@@ -134,6 +134,24 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         voiceFollowUpSeconds: body.voiceFollowUpSeconds,
         voiceRetrySeconds: body.voiceRetrySeconds,
         voiceRetryMatchesFollowUp: toInt(body.voiceRetryMatchesFollowUp),
+        /*
+         * The empty string is how the screen clears one, and it has to reach the
+         * column as null rather than as '' — a stored empty string would be
+         * offered to `RegisterHotKey` as a combination and rejected, so the
+         * screen would show a hotkey problem for a hotkey nobody had set.
+         */
+        voiceToggleHotkey:
+          body.voiceToggleHotkey === undefined
+            ? undefined
+            : (body.voiceToggleHotkey?.trim().toLowerCase() || null),
+        voiceListenHotkey:
+          body.voiceListenHotkey === undefined
+            ? undefined
+            : (body.voiceListenHotkey?.trim().toLowerCase() || null),
+        voiceListenHotkeyWhileOff: toInt(body.voiceListenHotkeyWhileOff),
+        dashboardRefreshSeconds: body.dashboardRefreshSeconds,
+        gameDetectionEnabled: toInt(body.gameDetectionEnabled),
+        interruptDuringGames: toInt(body.interruptDuringGames),
         overlayPlacement: body.overlayPlacement,
         overlayScreen: body.overlayScreen,
         overlayAvatar: body.overlayAvatar,

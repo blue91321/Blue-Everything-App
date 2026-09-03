@@ -12,8 +12,9 @@
  * else is a click away on the tab it belongs to.
  */
 import { api, type FriendRow } from '@app/api';
+import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
-import { STATE_LABEL } from './presence';
+import { awayFor, AWAY_TITLE, STATE_LABEL } from './presence';
 import { goTo } from '@app/nav';
 import type { PanelProps } from '@app/features/index';
 
@@ -153,6 +154,15 @@ function LivePanel() {
 
 function FriendsPanel() {
   /*
+   * Redraws the durations on screen — an away timer counting up, a "last seen"
+   * ageing — without asking the server anything. The refresh interval decides
+   * how often to *fetch*; this decides how often what is already here is
+   * redrawn, which is what makes "only when something changes" true rather than
+   * a screen that freezes the moment nothing is announced.
+   */
+  useNow();
+
+  /*
    * The same request the Friends screen makes, which refreshes anything staler
    * than 60 seconds as a side effect of being read. That is why this needs no
    * poller of its own: having the panel open *is* the read, and the staleness
@@ -235,8 +245,21 @@ function FriendsPanel() {
               <div className="title truncate">{friend.name}</div>
               {/* What they are playing outranks the status word — "playing
                   Deep Rock Galactic" is the answer and "online" is the less
-                  useful half of it. */}
-              <div className="meta truncate">{friend.game ?? friend.detail ?? STATE_LABEL[friend.state]}</div>
+                  useful half of it.
+
+                  How long they have been away matters more here than on the
+                  tab, not less: this column is the glance that decides whether
+                  to bother somebody, and "away" alone does not answer it. Same
+                  shape as the row on the Friends screen — joined to the status
+                  word when there is nothing else on the line, following the
+                  game when there is. */}
+              <div className="meta truncate" title={awayFor(friend) ? AWAY_TITLE : undefined}>
+                {friend.game ?? friend.detail
+                  ? `${friend.game ?? friend.detail}${awayFor(friend) ? ` · away ${awayFor(friend)}` : ''}`
+                  : awayFor(friend)
+                    ? `${STATE_LABEL[friend.state]} ${awayFor(friend)}`
+                    : STATE_LABEL[friend.state]}
+              </div>
             </div>
           </div>
         </button>

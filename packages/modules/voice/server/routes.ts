@@ -335,6 +335,14 @@ ${decoys.join(' ')}`)
        * the agent carries it out.
        */
       retryMs: (row.voiceRetryMatchesFollowUp ? row.voiceFollowUpSeconds : row.voiceRetrySeconds) * 1000,
+      /*
+       * Sent even while voice is off. One of them is the switch, so an agent
+       * that only learned about them once voice was already on would leave the
+       * hotkey that turns it on doing nothing.
+       */
+      toggleHotkey: row.voiceToggleHotkey ?? null,
+      listenHotkey: row.voiceListenHotkey ?? null,
+      listenHotkeyWhileOff: Boolean(row.voiceListenHotkeyWhileOff),
       overlayPlacement: row.overlayPlacement,
       overlayScreen: row.overlayScreen,
       overlayAvatar: row.overlayAvatar,
@@ -345,6 +353,42 @@ ${decoys.join(' ')}`)
       /** Non-zero means "collect wake-word samples instead of obeying them". */
       enrolUntil: enrolUntil > Date.now() ? enrolUntil : 0,
     };
+  });
+
+  /**
+   * Flip voice on or off, for the hotkey.
+   *
+   * The server owns the flip rather than the agent reading the value and
+   * writing the opposite back: two presses in quick succession would otherwise
+   * both read the same "before" and the second would undo nothing.
+   *
+   * Local-only, like every other write that decides how this machine behaves —
+   * and the agent is on this machine by definition.
+   */
+  app.post('/api/voice/toggle', async (request, reply) => {
+    if (!request.isLocal) {
+      return reply.code(403).send({ error: 'voice can only be toggled from the PC running the agent' });
+    }
+
+    const row = await getSettings();
+    const enabled = !row.voiceEnabled;
+
+    await db
+      .update(settings)
+      .set({
+        voiceEnabled: enabled ? 1 : 0,
+        /*
+         * Switching it on clears a pause, the same as the switch on the Voice
+         * screen does. An open-ended pause that survived being switched back on
+         * would be a dead end reachable by pressing one key.
+         */
+        ...(enabled ? { voicePausedUntil: null } : {}),
+      })
+      .where(eq(settings.id, row.id));
+
+    bumpVoice();
+    changes.emitChange('settings');
+    return { enabled };
   });
 
   /** What the Voice screen shows. Polled while that screen is open. */
@@ -360,6 +404,12 @@ ${decoys.join(' ')}`)
       /** -1 means until switched back on by hand; a timestamp means until then. */
       pausedUntil: row.voicePausedUntil,
       agentRunning: fresh,
+      /*
+       * Only while the agent is actually reporting. A stale list would name a
+       * combination as taken by another program long after that program had
+       * been closed, which is worse than saying nothing.
+       */
+      hotkeyProblems: fresh ? (agentState?.hotkeyProblems ?? []) : [],
       listening: fresh ? agentState!.listening : false,
       device: fresh ? (agentState!.device ?? null) : null,
       devices: fresh ? agentState!.devices : [],

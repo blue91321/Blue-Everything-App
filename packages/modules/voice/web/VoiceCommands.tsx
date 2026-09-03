@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, type Habit, type VoiceCommand, type VoiceCommandKind } from '@app/api';
+import { api, type Game, type Habit, type VoiceCommand, type VoiceCommandKind } from '@app/api';
 import { useAsync } from '@app/useAsync';
 import { Toggle } from '@app/controls';
 
@@ -9,6 +9,7 @@ const KIND_LABEL: Record<VoiceCommandKind, string> = {
   url: 'Open a website',
   hotkey: 'Press keys',
   media: 'Control media',
+  launch: 'Start a game or app',
   pause: 'Stop listening',
   // Not offered on its own — see SELECTABLE_KINDS. `cancel` is presented as one
   // of the ways to stop listening, because that is what it is from where you
@@ -23,7 +24,7 @@ const KIND_LABEL: Record<VoiceCommandKind, string> = {
  * than a sixth thing to choose between — offering both side by side made two
  * near-identical entries and left you guessing which one meant "never mind".
  */
-const SELECTABLE_KINDS: VoiceCommandKind[] = ['habit', 'note', 'url', 'hotkey', 'media', 'pause'];
+const SELECTABLE_KINDS: VoiceCommandKind[] = ['habit', 'note', 'url', 'hotkey', 'media', 'launch', 'pause'];
 
 /**
  * The media controls, duplicated from `MEDIA_LABEL` in @everything/shared.
@@ -70,6 +71,7 @@ function describeKind(command: VoiceCommand): string {
   if (command.kind === 'media') {
     return `Control media · ${MEDIA_LABEL[command.target ?? ''] ?? 'unknown control'}`;
   }
+  if (command.kind === 'launch') return `Start a game or app · ${command.target ?? 'nothing chosen'}`;
   if (command.kind === 'cancel') return 'Stop listening · just this sentence';
   if (command.kind === 'pause') {
     return command.pauseMinutes
@@ -86,6 +88,8 @@ const KIND_HELP: Record<VoiceCommandKind, string> = {
   hotkey: 'Sends the keys to whichever window is focused. Needs a modifier — ctrl, alt, shift or win.',
   media:
     'Uses the system media keys, so it reaches whatever is playing without that window being focused. Ignored entirely when nothing is playing, so a mis-heard word cannot skip a track in a silent room.',
+  launch:
+    'Only things on the Games list, which fills itself in as you use this PC. What it starts is whatever that row says, so a mis-heard phrase can only ever open something you have already run yourself.',
   pause: 'Closes the microphone — for a moment, for a few minutes, or until you turn it back on.',
   cancel: 'Closes the microphone.',
 };
@@ -109,6 +113,7 @@ const GROUPS: { id: string; label: string; kinds: VoiceCommandKind[] }[] = [
   { id: 'url', label: 'Websites', kinds: ['url'] },
   { id: 'hotkey', label: 'Hotkeys', kinds: ['hotkey'] },
   { id: 'media', label: 'Media', kinds: ['media'] },
+  { id: 'launch', label: 'Games and apps', kinds: ['launch'] },
   { id: 'stop', label: 'Stop listening', kinds: ['pause', 'cancel'] },
 ];
 
@@ -138,6 +143,7 @@ export function VoicePhrases() {
   // has the model loaded.
   const status = useAsync(() => api.voice.status(), [], ['settings']);
   const habits = useAsync(() => api.habits.list(), [], ['habits']);
+  const games = useAsync(() => api.games.list(), [], ['games']);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
@@ -192,6 +198,7 @@ export function VoicePhrases() {
           key={command.id}
           command={command}
           habits={habits.data ?? []}
+          games={games.data ?? []}
           unknownWords={unknown}
           onDone={() => {
             setEditing(null);
@@ -301,6 +308,7 @@ export function VoicePhrases() {
       {adding ? (
         <CommandEditor
           habits={habits.data ?? []}
+          games={games.data ?? []}
           unknownWords={unknown}
           onDone={(savedKind) => {
             setAdding(false);
@@ -334,11 +342,14 @@ export function VoicePhrases() {
 function CommandEditor({
   command,
   habits,
+  games,
   unknownWords,
   onDone,
 }: {
   command?: VoiceCommand;
   habits: Habit[];
+  /** What this PC has actually run — the only things a `launch` may point at. */
+  games: Game[];
   /** Words the model cannot pronounce, so a phrase using one never matches. */
   unknownWords: Set<string>;
   onDone: (savedKind?: VoiceCommandKind) => void;
@@ -465,6 +476,44 @@ function CommandEditor({
           ))}
         </select>
       )}
+
+      {kind === 'launch' &&
+        (games.length === 0 ? (
+          /*
+            No list means nothing to point at, and an empty dropdown says
+            nothing about why. The list fills itself in from use, so the fix is
+            to go and run the thing once rather than to type its name here.
+          */
+          <div className="meta" style={{ marginTop: 10 }}>
+            Nothing on the Games list yet. Start a game and it appears there within a few seconds —
+            Settings → Games.
+          </div>
+        ) : (
+          <>
+            <select
+              style={{ marginTop: 10 }}
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              aria-label="Which game or app"
+            >
+              <option value="">choose one…</option>
+              {games.map((game) => (
+                <option key={game.exe} value={game.exe}>
+                  {game.label}
+                  {game.launchPath ? '' : ' — location not known yet'}
+                </option>
+              ))}
+            </select>
+            {/* Said here rather than only on failure: a row with no path saves
+                perfectly and then answers "I do not know where that is", which
+                reads as the command being broken. */}
+            {target !== '' && !games.find((game) => game.exe === target)?.launchPath && (
+              <div className="meta" style={{ marginTop: 6 }}>
+                Where that lives is filled in the next time it runs, and this cannot start it until then.
+              </div>
+            )}
+          </>
+        ))}
 
       {kind === 'hotkey' && (
         <input

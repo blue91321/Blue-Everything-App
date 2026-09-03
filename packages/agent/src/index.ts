@@ -25,13 +25,29 @@ import { isAwayFromPc, type AttentionReport } from '@everything/shared';
 import { AttentionMonitor, type AttentionSnapshot, type StoppingPoint } from './attention.js';
 import { ServerClient, ServerUnreachable } from './client.js';
 import { agentConfig, assertConfigured } from './config.js';
-import { registerExtraGames } from './games.js';
+import { applyServerGames, registerExtraGames, setGameDetection } from './games.js';
 import * as popup from './popup.js';
+import { setAccent } from './overlay.js';
 import { setSoundEnabled, setTones } from './sound.js';
 import { createTray, runAppScript, type Tray } from './tray.js';
 
 assertConfigured();
+/*
+ * The config file's list is still honoured, and is now the *fallback* rather
+ * than the source: the server owns this list so the Games screen can edit it,
+ * and `EVERYTHING_EXTRA_GAMES` stays useful for a machine that has not paired
+ * yet or a server that predates the screen.
+ */
 registerExtraGames(agentConfig.extraGames);
+
+/**
+ * What the server last told us, so a list that has not moved costs no request.
+ *
+ * Empty rather than null to start with: an older server sends no version at all,
+ * and the agent must then keep behaving exactly as it did rather than fetching a
+ * list that does not exist.
+ */
+let knownGamesVersion = '';
 
 const client = new ServerClient();
 const monitor = new AttentionMonitor();
@@ -66,6 +82,9 @@ function toReport(snapshot: AttentionSnapshot, stoppingPoint: StoppingPoint | nu
     title: snapshot.foreground?.title ?? null,
     idleMs: snapshot.idleMs,
     liveGames: snapshot.liveGames,
+    fullscreenApp: snapshot.fullscreenApp,
+    gamePaths: snapshot.gamePaths,
+    gameUrls: snapshot.gameUrls,
     windowsDnd: snapshot.windowsDnd,
     audioPlaying: snapshot.audioPlaying,
     stoppingPoint: stoppingPoint ? { quality: stoppingPoint.quality, reason: stoppingPoint.reason } : null,
@@ -91,11 +110,51 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
   inFlight = true;
 
   try {
-    const { deliver, soundEnabled, tones } = await client.report(toReport(snapshot, stoppingPoint));
+    const { deliver, soundEnabled, accentHex, tones, gameDetectionEnabled, gamesVersion } = await client.report(
+      toReport(snapshot, stoppingPoint)
+    );
+
+    /*
+     * Detection, and the list, from the server.
+     *
+     * `?? true` for the switch, because an older server sends nothing and the
+     * default is on — the same reading of silence `soundEnabled` takes.
+     *
+     * The list is only fetched when the *hash* has moved, so the ordinary cost
+     * of this block is one comparison. An older server sends no version, which
+     * leaves `knownGamesVersion` empty and this never fires: the agent then
+     * keeps the shipped list and whatever the config file added, which is
+     * exactly what it did before any of this existed.
+     */
+    setGameDetection(gameDetectionEnabled ?? true);
+    if (gamesVersion && gamesVersion !== knownGamesVersion) {
+      try {
+        const watched = await client.watchedGames();
+        applyServerGames(watched.exes, watched.off ?? []);
+        knownGamesVersion = watched.version;
+        console.log(
+          `[${clock()}] games: ${watched.exes.length} added, ${(watched.off ?? []).length} switched off`
+        );
+      } catch {
+        /*
+         * Left for the next tick rather than retried here. The version is
+         * unchanged, so this simply happens again in a few seconds — and
+         * failing to update a game list must never cost the heartbeat, which is
+         * what actually delivers nudges.
+         */
+      }
+    }
 
     // A server that predates the column sends nothing; on rather than off is the
     // right reading of silence for a setting whose default is on.
     setSoundEnabled(soundEnabled ?? true);
+    /*
+     * The popup follows the app's accent. Applied on every heartbeat rather
+     * than once at startup: picking a colour on the Settings screen should
+     * reach the one window that appears over a fullscreen game without
+     * restarting the agent, and this costs a regex on six characters.
+     */
+    if (accentHex) setAccent(accentHex);
     // Likewise: an absent map leaves every event on its default rather than
     // silencing the app because an older server did not know about tones.
     setTones(tones ?? {});
@@ -166,9 +225,6 @@ monitor.on('stopping-point', (sp) => {
   console.log(`[${clock()}] stopping point (${sp.quality}): ${sp.reason}`);
 });
 
-monitor.on('unknown-fullscreen-app', (exe) => {
-  console.log(`[${clock()}] ${exe} held exclusive fullscreen but isn't in games.ts`);
-});
 
 /* ------------------------------------------------------------------ */
 /* Voice — optional, and loaded only if it is actually here            */

@@ -19,13 +19,14 @@ import {
   averageVoiceprint,
   cosineSimilarity,
   type VoiceHeard,
+  VOICE_COMMAND_TIMEOUT_MS,
 } from '@everything/shared';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { ServerUnreachable, type ServerClient, type VoiceConfig, type VoiceOutcome } from '../../../agent/src/client.js';
 import { mediaIsPlaying } from '../../../agent/src/audio.js';
-import { openUrl, pressKeys, pressMediaKey } from './actions.js';
+import { launchProgram, openUrl, pressKeys, pressMediaKey } from './actions.js';
 import { listScreens, forgetAvatar, type Avatar, type Placement } from '../../../agent/src/overlay.js';
 // The popup is core now, and voice is one of its callers rather than its owner.
 // Nudges use the same window, which is the point: it is the only surface here
@@ -33,6 +34,7 @@ import { listScreens, forgetAvatar, type Avatar, type Placement } from '../../..
 import * as popup from '../../../agent/src/popup.js';
 import { playSound } from '../../../agent/src/sound.js';
 import { createVoiceListener } from './voice.js';
+import { createHotkeys, type HotkeyAction, type Hotkeys } from './hotkeys.js';
 import { unknownWords, VoskUnavailable } from './vosk.js';
 
 const OVERLAY_RESULT_MS = popup.POPUP_RESULT_MS;
@@ -83,6 +85,16 @@ const EMPTY_VOICE_CONFIG: VoiceConfig = {
  * the screen doesn't look stuck. Several ticks of the 100ms loop.
  */
 const VOICE_SETTLE_MS = 600;
+
+/**
+ * How long a borrowed exchange waits for the speech models.
+ *
+ * They load on the listener's first poll rather than inside `configure`, and
+ * take about 0.2s on this machine. Three seconds is fifteen times that, which is
+ * the right shape for a bound: generous enough never to be the reason it fails,
+ * short enough that a genuine failure still answers while you are looking at it.
+ */
+const LISTEN_READY_MS = 3000;
 
 /** Backoff while the server is down, so a stopped server isn't a hot loop. */
 const VOICE_RETRY_MS = 15_000;
@@ -149,6 +161,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     try {
       if (result.action.do === 'open-url') openUrl(result.action.url);
       if (result.action.do === 'press-keys') pressKeys(result.action.keys);
+      if (result.action.do === 'launch') launchProgram(result.action, result.action.name);
 
       if (result.action.do === 'media') {
         if (!mediaAllowed()) {
@@ -543,8 +556,200 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
    * either. Reloading costs 0.2s, paid when you sit back down, which is a
    * rounding error against the fifteen minutes it took to decide you had gone.
    */
+  /**
+   * System-wide key combinations, or null if this session has no desktop.
+   *
+   * Created lazily on the first config that asks for one, so an install that
+   * sets neither hotkey never registers a window class or a message pump at
+   * all. A failure is logged once and then left alone — a missing hotkey is a
+   * poor reason to lose the wake word.
+   */
+  let hotkeys: Hotkeys | null = null;
+  let hotkeysBroken = false;
+
+  /**
+   * A single exchange borrowed while voice is switched off.
+   *
+   * Push-to-talk, in other words: the setting stays off, the microphone stays
+   * shut, and the shortcut opens both for one command before closing them
+   * again. Affordable only because the models load in about 0.2s — the 198MB
+   * this project measures is the price of an *always-on* wake word, not of
+   * listening, and per-utterance loading is exactly the trade the leanness note
+   * says push-to-talk would make.
+   */
+  let oneShot = false;
+  let oneShotTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * How long a borrowed exchange may last.
+   *
+   * A timer rather than an event, and that is deliberate. The exchange can end
+   * four ways — a command lands, nothing usable is said, a retry reopens the
+   * window, a follow-up reopens it again — and hooking each one would mean four
+   * places that must all remember to close the microphone. One bound that
+   * comfortably outlasts every path is a single thing to get right, and the cost
+   * of being generous is a few seconds of microphone rather than a leak.
+   */
+  const oneShotWindow = () => VOICE_COMMAND_TIMEOUT_MS + followUpMs + retryMs + 5000;
+
+  function endOneShot(): void {
+    if (!oneShot) return;
+    oneShot = false;
+    if (oneShotTimer) clearTimeout(oneShotTimer);
+    oneShotTimer = null;
+    // Back to whatever the server says, which is off — this is the line that
+    // releases the microphone and the ~123MB of speech models again.
+    applyConfig();
+  }
+
+  async function onHotkey(action: HotkeyAction): Promise<void> {
+    console.log(`[${clock()}] hotkey: ${action}`);
+    if (action === 'toggle') {
+      /*
+       * Straight to the server, which owns the flip. The answer comes back on the
+       * next poll like any other settings change, so nothing here has to model
+       * what the new state is.
+       */
+      const { enabled } = await client.voiceToggle();
+      popup.show({
+        title: enabled ? 'Voice on' : 'Voice off',
+        lines: [{ text: enabled ? 'listening for the wake word' : 'the microphone is closed', tone: 'muted' }],
+        forMs: 1400,
+        sound: enabled ? 'wake' : 'miss',
+      });
+      return;
+    }
+
+    // Already listening: an ordinary exchange, nothing to borrow.
+    if (voice.listenNow()) return;
+
+    if (!wanted.listenHotkeyWhileOff) {
+      popup.show({
+        title: 'Voice is off',
+        lines: [{ text: 'switch it on first, or use the other hotkey', tone: 'muted' }],
+        forMs: 1800,
+      });
+      return;
+    }
+
+    /*
+     * A pause is borrowed through as well, and that is deliberate rather than
+     * an oversight. The agent cannot tell "off" from "paused" anyway — the
+     * server folds both into `enabled: false` — but the answer would be the
+     * same if it could: a pause silences the *wake word*, which is a thing the
+     * room can trigger, and pressing a key on this keyboard is not. The pause is
+     * not cleared, so it goes on silencing everything else.
+     */
+
+    /*
+     * **Fetch the real config first, because voice being off is why it is not
+     * already here.** The tick only asks for the vocabulary `if (answer.enabled)`
+     * — deliberately, since it is the expensive half of the payload — so while
+     * voice is off `wanted` is `EMPTY_VOICE_CONFIG`: no wake word, no
+     * vocabulary, no voiceprint. Forcing `enabled: true` onto that starts a
+     * recogniser with an empty grammar, which is not a failure anything reports;
+     * it is a microphone that hears nothing. Found by watching the agent's
+     * resident memory not move when the key was pressed.
+     */
+    oneShot = true;
+    try {
+      wanted = { ...wanted, ...(await client.voiceConfig()) };
+    } catch {
+      oneShot = false;
+      popup.show({
+        title: 'Could not start listening',
+        lines: [{ text: 'the server did not answer', tone: 'bad' }],
+        forMs: 2200,
+      });
+      return;
+    }
+
+    // Only now, with something to listen *for*. This is the line that loads the
+    // models and opens the device.
+    applyConfig();
+
+    /*
+     * **And then wait for it, because `configure` does not load anything.** It
+     * arms the listener's poll and the models are pulled in on the first tick —
+     * so calling `listenNow()` on the next line finds no recognisers and
+     * refuses, every time. It presented as the key doing nothing at all: the
+     * hotkey fired, `onHotkey` ran, and it took the failure branch silently.
+     * Found by watching the agent's resident memory not move.
+     *
+     * Retried rather than timed, since "how long do the models take" is a
+     * property of the machine rather than a number to hard-code — measured at
+     * about 0.2s here, and this allows fifteen times that before giving up.
+     */
+    const ready = await new Promise<boolean>((resolve) => {
+      const deadline = Date.now() + LISTEN_READY_MS;
+      const attempt = () => {
+        if (!oneShot) return resolve(false);
+        if (voice.listenNow()) return resolve(true);
+        if (Date.now() >= deadline) return resolve(false);
+        setTimeout(attempt, 100).unref();
+      };
+      attempt();
+    });
+
+    if (!ready) {
+      endOneShot();
+      popup.show({
+        title: 'Could not start listening',
+        lines: [{ text: 'the speech models did not load', tone: 'bad' }],
+        forMs: 2200,
+      });
+      return;
+    }
+
+    oneShotTimer = setTimeout(endOneShot, oneShotWindow());
+    oneShotTimer.unref();
+  }
+
+  function applyHotkeys(): void {
+    const wantsAny = Boolean(wanted.toggleHotkey || wanted.listenHotkey);
+    if (!hotkeys && (!wantsAny || hotkeysBroken)) return;
+
+    if (!hotkeys) {
+      try {
+        hotkeys = createHotkeys((action) => {
+          /*
+           * `onHotkey` is async, so a rejection escapes the try/catch in the
+           * message pump entirely and lands as an unhandled rejection nobody
+           * sees. For the most consequential key on the machine, silence is the
+           * worst possible failure — it is indistinguishable from the key not
+           * being registered.
+           */
+          void onHotkey(action).catch((error: Error) => {
+            console.log(`[${clock()}] hotkey ${action} failed: ${error.message}`);
+          });
+        });
+      } catch (error) {
+        hotkeysBroken = true;
+        console.log(`[${clock()}] hotkeys unavailable: ${(error as Error).message}`);
+        return;
+      }
+    }
+
+    hotkeys.apply([
+      { action: 'toggle', combo: wanted.toggleHotkey ?? '' },
+      { action: 'listen', combo: wanted.listenHotkey ?? '' },
+    ]);
+  }
+
   function applyConfig(): void {
-    voice.configure(present ? wanted : { ...wanted, enabled: false });
+    const base = present ? wanted : { ...wanted, enabled: false };
+    /*
+     * A borrowed exchange outranks the setting for as long as it lasts, or the
+     * next poll — which arrives every few seconds — would switch the microphone
+     * off underneath somebody mid-sentence.
+     */
+    voice.configure(oneShot ? { ...base, enabled: true } : base);
+    /*
+     * Registered from the same config, and **not** gated on `enabled`. One of
+     * them is the switch that turns voice on, so unregistering it while voice is
+     * off would make it a hotkey that works only when it is not needed.
+     */
+    applyHotkeys();
   }
 
   async function voiceTick(): Promise<number> {
@@ -568,6 +773,9 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       since: voiceVersion,
       enrolSamples: enrolSamples.length,
       enrolAgreement,
+      // Combinations another program already owns. A hotkey that silently does
+      // nothing is indistinguishable from one that was never saved.
+      hotkeyProblems: hotkeys?.problems() ?? [],
     });
 
     voiceVersion = answer.version;
@@ -613,7 +821,25 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
 
       wanted = { ...full, ...answer };
     } else {
-      wanted = { ...EMPTY_VOICE_CONFIG, wakeWord: answer.wakeWord ?? '' };
+      /*
+       * **The hotkeys survive being switched off, and that is load-bearing.**
+       * `EMPTY_VOICE_CONFIG` is how the agent forgets everything about a feature
+       * that is not running — which dropped these too, so the very first press
+       * of "toggle voice" unregistered the key that turns it back on. It
+       * worked exactly once, then the next poll took it away. Caught by pressing
+       * it twice.
+       */
+      wanted = {
+        ...EMPTY_VOICE_CONFIG,
+        wakeWord: answer.wakeWord ?? '',
+        toggleHotkey: answer.toggleHotkey ?? null,
+        listenHotkey: answer.listenHotkey ?? null,
+        // And this one, which is *only* ever read while voice is off — so
+        // dropping it here would have made the setting do nothing at all, in
+        // exactly the state it exists for. The hotkeys above were lost the same
+        // way once already.
+        listenHotkeyWhileOff: answer.listenHotkeyWhileOff ?? false,
+      };
     }
     applyConfig();
 

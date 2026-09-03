@@ -35,6 +35,7 @@ export type ChangeScope =
   | 'vault'
   | 'integrations'
   | 'packages'
+  | 'games'
   | 'all';
 
 type Listener = (scope: ChangeScope) => void;
@@ -173,4 +174,48 @@ export function onDataChange(listener: Listener, watch?: readonly ChangeScope[])
   return () => {
     listeners.delete(filtered);
   };
+}
+
+/**
+ * Refetch everything on a clock, for a screen left open.
+ *
+ * ### Why this exists at all, in an app that deliberately does not poll
+ *
+ * Changes made *here* announce themselves: the server emits on `/api/events`
+ * and every reader refetches the moment one lands, which is why a task ticked
+ * off on the phone appears on the PC without anything running on a timer.
+ *
+ * What that cannot cover is data that moves at somebody else's server with
+ * nobody to tell us — a friend going idle on Steam, an hour passing in a stored
+ * forecast, a duration on screen counting up. Those advance only when something
+ * happens to trigger a read, so a Dashboard left open sits still.
+ *
+ * ### It reuses `notify`, and that is the whole design
+ *
+ * Firing `all` is exactly what `visibilitychange` already does when the app
+ * comes back from being backgrounded — the same claim ("anything could have
+ * changed"), through the same path, so every reader hears it the way it already
+ * hears everything else. Nothing new subscribes and no reader learns that a
+ * timer exists.
+ *
+ * `api.ts` coalesces concurrent GETs of the same path, so one tick costs one
+ * request per distinct endpoint on screen rather than one per reader.
+ *
+ * Returns a stop function. Passing 0 starts nothing, which is the default.
+ */
+export function refreshEvery(seconds: number): () => void {
+  if (!Number.isFinite(seconds) || seconds <= 0) return () => {};
+
+  const timer = setInterval(() => {
+    /*
+     * Skipped while the tab is hidden. A background tab that kept refetching
+     * would spend requests on a screen nobody is looking at — the exact cost
+     * the attention loop was tuned to avoid — and coming back to the app
+     * refetches anyway, through the visibility handler above.
+     */
+    if (document.visibilityState !== 'visible') return;
+    notify('all');
+  }, seconds * 1000);
+
+  return () => clearInterval(timer);
 }

@@ -394,6 +394,11 @@ export async function replaceFriends(provider: ProviderId, incoming: ReportedFri
     detail: f.detail ?? null,
     lastOnlineAt: f.lastOnlineAt ?? null,
     seenAt: now,
+    // A row we have never seen before starts its clock now. That is a lower
+    // bound rather than the truth — they may have been away for hours before
+    // this app existed — which is why the screen phrases it as "since we
+    // noticed" rather than as a fact about them.
+    stateSince: now,
   }));
 
   for (let i = 0; i < rows.length; i += 100) {
@@ -409,6 +414,27 @@ export async function replaceFriends(provider: ProviderId, incoming: ReportedFri
           game: sql`excluded.game`,
           detail: sql`excluded.detail`,
           lastOnlineAt: sql`excluded.last_online_at`,
+          /*
+           * **Only when the state actually changed**, which is the entire point
+           * of the column. This upsert runs on every read of the friends list,
+           * so `now` unconditionally would reset every timer to zero several
+           * times a minute and the screen would report everybody as having just
+           * gone away.
+           */
+          /*
+           * **Or has no clock at all**, which is the case that left rows without
+           * a timer indefinitely: everything that predates the column starts
+           * null, and a row only got a value when its state *changed* — so
+           * somebody who has been away since before this shipped would wait for
+           * a transition that might never come. 120 rows were in that state.
+           *
+           * With the null arm, the rule is one sentence for every row: this is
+           * when we first saw them in the state they are in now. A backfilled
+           * value understates — they may have been away for hours already — but
+           * it is a lower bound that becomes exact at their next transition, and
+           * the screen says which it is.
+           */
+          stateSince: sql`CASE WHEN ${friends.state} = excluded.state AND ${friends.stateSince} IS NOT NULL THEN ${friends.stateSince} ELSE ${now} END`,
           seenAt: now,
           updatedAt: now,
         },

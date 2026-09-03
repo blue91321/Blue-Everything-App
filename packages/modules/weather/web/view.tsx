@@ -6,17 +6,28 @@
  * division the Voice tab draws between the switch and the screen that explains
  * what the switch is doing.
  */
-import { useState } from 'react';
+import { useState } from 'react';
+import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { HourlyGraph } from './HourlyGraph';
 import { ageOf, dayName, weather, type Place, type RefreshMode, type Units } from './weather-api';
 
 const MODES: Array<{ id: RefreshMode; label: string; hint: string }> = [
+  { id: 'hourly', label: 'Once an hour', hint: 'checks when you open the app and an hour has passed' },
   { id: 'daily', label: 'Once a day', hint: 'checks when you open the app and a day has passed' },
   { id: 'manual', label: 'Only when I ask', hint: 'never goes and looks on its own' },
 ];
 
 export default function Weather() {
+  /*
+   * Redraws the durations on screen — an away timer counting up, a "last seen"
+   * ageing — without asking the server anything. The refresh interval decides
+   * how often to *fetch*; this decides how often what is already here is
+   * redrawn, which is what makes "only when something changes" true rather than
+   * a screen that freezes the moment nothing is announced.
+   */
+  useNow();
+
   /*
    * No scope: this package's data is not one core announces about, so there is
    * nothing to subscribe to. Refreshing is explicit here — the button, or a read
@@ -64,10 +75,17 @@ export default function Weather() {
                 {data.place.detail && <span className="meta"> · {data.place.detail}</span>}
               </div>
               <div style={{ fontSize: '2.4rem', lineHeight: 1.2, marginTop: 6 }}>
-                {data.reading.glyph} {data.reading.temperature}°{data.units.toUpperCase()}
+                {(data.now ?? data.reading).glyph} {(data.now ?? data.reading).temperature}°
+                {data.units.toUpperCase()}
               </div>
               <div className="meta" style={{ marginTop: 2 }}>
-                {data.reading.label} · feels like {data.reading.feelsLike}°
+                {(data.now ?? data.reading).label}
+                {/* Only when this hour has one. The measured comfort beside a
+                    forecast temperature made the line contradict itself —
+                    "71°, feels like 76°". */}
+                {(data.now ? data.now.feelsLike : data.reading.feelsLike) !== null
+                  ? ` · feels like ${data.now ? data.now.feelsLike : data.reading.feelsLike}°`
+                  : ''}
               </div>
               <div className="meta" style={{ marginTop: 2 }}>
                 {data.reading.humidity}% humidity · wind {data.reading.windSpeed}{' '}
@@ -77,6 +95,18 @@ export default function Weather() {
 
             <RefreshButton busy={busy} onPress={() => void run(weather.refreshNow)} />
           </div>
+
+          {/*
+            Said where the number is, because the number changed meaning. It is
+            the forecast for this hour rather than the measurement the fetch
+            took — which is what makes a once-a-day reading follow the day, and
+            is exactly the sort of thing that must not be left to be inferred.
+          */}
+          {data.now?.forecast && (
+            <div className="meta" style={{ marginTop: 4 }}>
+              Forecast for this hour, from the last check — not a fresh measurement.
+            </div>
+          )}
 
           <div className="meta" style={{ marginTop: 10 }}>
             Checked {ageOf(data.fetchedAt)}
@@ -90,7 +120,9 @@ export default function Weather() {
               ? ' — it will not check again on its own.'
               : data.due
                 ? ' — due, so opening this again will check.'
-                : ' — it will check again a day after that.'}
+                : data.mode === 'hourly'
+                  ? ' — it will check again an hour after that.'
+                  : ' — it will check again a day after that.'}
           </div>
 
           {/*

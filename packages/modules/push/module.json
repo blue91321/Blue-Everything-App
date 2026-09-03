@@ -2,7 +2,7 @@
   "id": "push",
   "label": "Phone notifications",
   "blurb": "Web push to an installed PWA when you are away from the PC.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": "blue91321",
   "server": "server/index.ts",
   "notes": "Needs VAPID_SUBJECT set to a real domain \u2014 Apple rejects localhost."

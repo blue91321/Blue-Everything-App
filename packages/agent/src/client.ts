@@ -14,6 +14,15 @@ import { agentConfig } from './config.js';
  * this is the client that fetches it, and `features/voice/` can be deleted.
  * Core must not reach into a folder that may be absent, even for a type.
  */
+/** The executables the server says are games. */
+export interface WatchedGames {
+  version: string;
+  /** Names the agent would not otherwise know. */
+  exes: string[];
+  /** Names it knows and must stop treating as games. Absent on an older server. */
+  off?: string[];
+}
+
 export interface VoiceConfig {
   enabled: boolean;
   wakeWord: string;
@@ -45,6 +54,21 @@ export interface VoiceConfig {
   enrolUntil?: number;
   /** How long to reopen after a miss. Read by the voice feature, not used here. */
   retryMs?: number;
+  /**
+   * System-wide key combinations, or null for unset.
+   *
+   * Sent whether or not voice is switched on, because one of them is how you
+   * switch it on — the agent registers them from the same config either way.
+   */
+  toggleHotkey?: string | null;
+  listenHotkey?: string | null;
+  /**
+   * Whether the listen shortcut works while voice is off.
+   *
+   * Sent whatever `enabled` says, for the same reason the combinations
+   * themselves are: the whole point is the case where voice is off.
+   */
+  listenHotkeyWhileOff?: boolean;
   /** How long to keep listening after answering. 0 switches follow-ups off. */
   followUpMs?: number;
 }
@@ -63,6 +87,26 @@ export interface AttentionResponse {
    */
   soundEnabled?: boolean;
   /**
+   * The app's accent colour, as `#rrggbb`.
+   *
+   * On the heartbeat rather than the voice config because the popup is core:
+   * an install with the voice package deleted still raises nudges through it,
+   * and this is the only request the agent always makes — the same reasoning
+   * `soundEnabled` rides on.
+   *
+   * Optional, so a server older than this leaves the overlay on the default
+   * rather than being handed nothing and drawing in black.
+   */
+  accentHex?: string;
+  /**
+   * Whether to watch for games at all, and a hash of which ones.
+   *
+   * Optional: a server older than the Games screen sends neither, and the agent
+   * must then behave exactly as it did — detecting, with the shipped list.
+   */
+  gameDetectionEnabled?: boolean;
+  gamesVersion?: string;
+  /**
    * Which tone each moment gets, by name. Empty or absent means the default.
    *
    * Sent as names rather than resolved definitions because the palette lives
@@ -77,6 +121,15 @@ export type VoiceAction =
   | { do: 'open-url'; url: string }
   | { do: 'press-keys'; keys: string }
   | { do: 'media'; action: string }
+  /**
+   * Start a program. Resolved by the *server* from the games list, which this
+   * agent filled in by watching that executable run here — the stored command
+   * holds a name like `cs2.exe`, never a path.
+   *
+   * Either a path or a `steam://` address, since running a Steam game's binary
+   * directly is often the wrong thing. Exactly one is set.
+   */
+  | { do: 'launch'; path?: string; url?: string; name: string }
   | { do: 'pause'; untilMs: number | null }
   | { do: 'cancel' };
 
@@ -86,6 +139,7 @@ export interface VoiceOutcome {
     | 'habit-checked'
     | 'note-added'
     | 'opened'
+    | 'launched'
     | 'keys-sent'
     | 'media-sent'
     | 'paused'
@@ -197,6 +251,27 @@ export class ServerClient {
   /** Wake word, phrase vocabulary and the enrolled voiceprint. */
   voiceConfig(): Promise<VoiceConfig> {
     return this.request<VoiceConfig>('/api/voice/config');
+  }
+
+  /**
+   * The executables the server counts as games.
+   *
+   * Fetched only when the version on the heartbeat has moved, so the ordinary
+   * cost of this is nothing at all.
+   */
+  watchedGames(): Promise<WatchedGames> {
+    return this.request<WatchedGames>('/api/games/watching');
+  }
+
+  /**
+   * Flip voice on or off, for the hotkey.
+   *
+   * The server owns the flip rather than this reading the value and writing the
+   * opposite back: two presses in quick succession would otherwise both read
+   * the same "before", and the second would undo nothing.
+   */
+  voiceToggle(): Promise<{ enabled: boolean }> {
+    return this.request('/api/voice/toggle', { method: 'POST', body: '{}' });
   }
 
   /**

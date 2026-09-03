@@ -295,6 +295,55 @@
       "when": 1786064100000,
       "tag": "0041_retry_matches_follow_up",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1786064200000,
+      "tag": "0042_games",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1786064300000,
+      "tag": "0043_no_shipped_games",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1786064301000,
+      "tag": "0044_voice_hotkeys",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1786064302000,
+      "tag": "0045_game_launch_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "6",
+      "when": 1786064303000,
+      "tag": "0046_listen_while_off",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1786064304000,
+      "tag": "0047_friend_state_since",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1786064305000,
+      "tag": "0048_dashboard_refresh",
+      "breakpoints": true
     }
   ]
 }

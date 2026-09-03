@@ -29,8 +29,11 @@ import {
   NotificationState,
   notificationStateName,
   type ForegroundWindowInfo,
+  exePathForPid,
 } from './win32.js';
 import { audioRecentlyPlaying } from './audio.js';
+import { steamUrlFor } from './steam.js';
+import { looksLikeSystemApp } from '@everything/shared/games';
 import { isGame, isLauncher } from './games.js';
 
 export type AttentionState =
@@ -70,6 +73,30 @@ export interface AttentionSnapshot {
   audioPlaying: boolean;
   /** Known game executables currently alive, whether focused or not. */
   liveGames: string[];
+  /**
+   * The executable holding exclusive fullscreen, if any.
+   *
+   * Reported every tick rather than announced once, because the server keeps the
+   * list now: the `unknown-fullscreen-app` event fired a single time per process
+   * lifetime and went to the console, which is no use to a screen somebody opens
+   * an hour later.
+   */
+  fullscreenApp: string | null;
+  /**
+   * Full paths for the live games, keyed by executable.
+   *
+   * Read from the PID the monitor is already tracking, so it costs one call per
+   * game per snapshot and only while one is running. It is what makes "run this"
+   * and "show me where it is" possible at all — the executable *name* is enough
+   * to recognise a game and useless for launching one.
+   */
+  gamePaths: Record<string, string>;
+  /**
+   * How to *start* each one, where that is not the same as running its
+   * executable — today, Steam games. Absent for anything installed elsewhere,
+   * which launches by path exactly as before.
+   */
+  gameUrls: Record<string, string>;
 }
 
 /**
@@ -120,17 +147,17 @@ export interface AttentionMonitorEvents {
   change: [AttentionSnapshot, AttentionState];
   'stopping-point': [StoppingPoint];
   /** An unrecognised app held exclusive fullscreen — a candidate for games.ts. */
-  'unknown-fullscreen-app': [string];
 }
 
 export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
   private timer?: NodeJS.Timeout;
   private last?: AttentionSnapshot;
   private readonly awayAfterMs: number;
-  private readonly reportedUnknown = new Set<string>();
 
   /** Game exe -> PID, so liveness is a cheap check instead of a rescan. */
   private trackedGames = new Map<string, number>();
+  /** What covered the screen last snapshot, so a flicker does not get listed. */
+  private lastCovering: string | null = null;
   private launcherRunning = false;
   private lastSnapshotAt = 0;
   private lastForegroundExe = '';
@@ -226,7 +253,72 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
       notificationState === NotificationState.QUIET_TIME ||
       notificationState === NotificationState.PRESENTATION_MODE;
     const audioPlaying = audioRecentlyPlaying(now).playing;
-    const base = { at, foreground, idleMs, notificationState, windowsDnd, audioPlaying, liveGames };
+    /*
+     * A candidate for the games list.
+     *
+     * **Not `RUNNING_D3D_FULL_SCREEN`**, which was the first version and is the
+     * wrong signal: that flag means *exclusive* fullscreen, and most people play
+     * borderless — so a whole library of games was invisible to discovery while
+     * the one that grabs the display outright was the only thing ever found.
+     *
+     * `isFullScreen` is geometry instead: the window covers its monitor's full
+     * bounds. A maximised window does not, because it stops at the work area, so
+     * this is a genuinely narrower signal than "big window" while still catching
+     * borderless — and exclusive fullscreen covers the monitor too, so nothing
+     * that used to be found is lost.
+     *
+     * Held for two consecutive snapshots before it counts. A transition, a
+     * screensaver or an installer flashing up covers the screen for an instant,
+     * and a list that filled with those would be worse than one that filled
+     * slowly.
+     */
+    /*
+     * The shell is excluded before anything else. The desktop *is* a window
+     * covering its whole monitor, and it is the foreground window every time you
+     * alt-tab out of a game — so without this, `explorer.exe` is discovered as
+     * an app that filled the screen. Which it had. Reported from real use.
+     */
+    const covering =
+      foreground?.exe &&
+      foreground.isFullScreen &&
+      !isLauncher(foreground.exe) &&
+      !looksLikeSystemApp(foreground.exePath)
+        ? foreground.exe.toLowerCase()
+        : null;
+    const sustained = covering !== null && covering === this.lastCovering;
+    this.lastCovering = covering;
+    const fullscreenApp = sustained ? covering : null;
+    const gamePaths: Record<string, string> = {};
+    const gameUrls: Record<string, string> = {};
+    for (const [exe, pid] of this.trackedGames) {
+      const path = exePathForPid(pid);
+      if (path) {
+        gamePaths[exe] = path;
+        const url = steamUrlFor(path);
+        if (url) gameUrls[exe] = url;
+      }
+    }
+    if (fullscreenApp && foreground?.pid) {
+      const path = exePathForPid(foreground.pid);
+      if (path) {
+        gamePaths[fullscreenApp] = path;
+        const url = steamUrlFor(path);
+        if (url) gameUrls[fullscreenApp] = url;
+      }
+    }
+
+    const base = {
+      at,
+      foreground,
+      idleMs,
+      notificationState,
+      windowsDnd,
+      audioPlaying,
+      liveGames,
+      fullscreenApp,
+      gamePaths,
+      gameUrls,
+    };
 
     // Order matters. A live game outranks idleness: sitting in a death-cam
     // without touching the mouse is not the same as walking away, and firing a
@@ -237,10 +329,12 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
 
     if (notificationState === NotificationState.RUNNING_D3D_FULL_SCREEN) {
       const exe = foreground?.exe ?? '';
-      if (exe && !isLauncher(exe) && !this.reportedUnknown.has(exe)) {
-        this.reportedUnknown.add(exe);
-        this.emit('unknown-fullscreen-app', exe);
-      }
+      /*
+       * Still `in-game`: something has taken the display outright, and that is
+       * not a moment to interrupt whatever it turns out to be. Discovery no
+       * longer hangs off this branch — see `covering` above — because it never
+       * fires for a borderless window, which is how most people actually play.
+       */
       return { ...base, state: 'in-game', reason: `${exe || 'an app'} holds exclusive fullscreen` };
     }
 

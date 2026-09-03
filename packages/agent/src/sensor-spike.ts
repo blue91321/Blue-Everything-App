@@ -41,9 +41,6 @@ monitor.on('stopping-point', (sp) => {
   console.log(`${colour}  >> STOPPING POINT (${sp.quality}): ${sp.reason} — nudges would fire now\x1b[0m`);
 });
 
-monitor.on('unknown-fullscreen-app', (exe) => {
-  console.log(`\x1b[36m  ?? ${exe} held exclusive fullscreen but isn't in games.ts — consider adding it\x1b[0m`);
-});
 
 monitor.start();
 

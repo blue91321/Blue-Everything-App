@@ -53,3 +53,12 @@ export const modulesStateFile = or(config.MODULES_STATE, resolve(repoRoot, 'modu
 
 /** What the tray's Restart runs, and what the in-app button runs too. */
 export const restartScript = resolve(repoRoot, 'scripts/restart.ps1');
+
+/**
+ * The one script that knows how to launch the agent.
+ *
+ * Named here rather than spelled out at the call site for the reason this file
+ * exists at all: the repo root has been counted by hand three times in this
+ * project and disabled a button every time.
+ */
+export const startScript = resolve(repoRoot, 'scripts/start.ps1');

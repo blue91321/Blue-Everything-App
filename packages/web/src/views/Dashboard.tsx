@@ -1,6 +1,7 @@
-import { Suspense } from 'react';
+import { Suspense, useEffect} from 'react';
 import { api, type Nudge, type Task } from '../api';
 import { useAsync } from '../useAsync';
+import { refreshEvery } from '../live';
 import { useSettling } from '../useSettling';
 import { clockTime, endOfToday, relative, startOfToday } from '../format';
 import { goTo } from '../nav';
@@ -58,6 +59,19 @@ export function Dashboard() {
   const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const panels = settings.data ? chosenPanels(settings.data) : [];
 
+  /*
+   * Refetch on a clock, if you asked for one.
+   *
+   * Only this screen, because it is the only one whose content moves without
+   * anybody doing anything — a friend going idle at Steam, an hour passing in a
+   * stored forecast, an away timer counting up. Everywhere else, a change
+   * announces itself and a timer would be spending requests to learn nothing.
+   *
+   * Zero is off and is the default, so this hook usually starts nothing at all.
+   */
+  const every = settings.data?.dashboardRefreshSeconds ?? 0;
+  useEffect(() => refreshEvery(every), [every]);
+
   return (
     /*
      * `has-panel` widens the container, and it does that through
@@ -110,7 +124,7 @@ export function Dashboard() {
         <h2>Habits left</h2>
         {habitsLeft.length === 0 && !habits.loading && <div className="empty">All done for now.</div>}
         {habitsLeft.map((habit) => (
-          <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} />
+          <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} receivedAt={habits.receivedAt} />
         ))}
       </section>
 
@@ -118,7 +132,7 @@ export function Dashboard() {
         <section className="done-area">
           <h2>Finished today</h2>
           {habitsDone.map((habit) => (
-            <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} />
+            <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} receivedAt={habits.receivedAt} />
           ))}
           {finished.map((task) => (
             <TaskRow key={task.id} task={task} onChange={reloadAll} settling={settling} />

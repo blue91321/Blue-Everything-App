@@ -9,7 +9,7 @@
  */
 import { getToken } from '@app/api';
 
-export type RefreshMode = 'daily' | 'manual';
+export type RefreshMode = 'hourly' | 'daily' | 'manual';
 export type Units = 'c' | 'f';
 
 export interface Place {
@@ -30,7 +30,15 @@ export interface Reading {
   glyph: string;
   isDay: boolean;
   /** The next 24 hours as the server sliced them. Empty on an older reading. */
-  hours: Array<{ time: string; temperature: number; rain: number | null; isDay: boolean; label: string; glyph: string }>;
+  hours: Array<{
+    time: string;
+    temperature: number;
+    feelsLike?: number | null;
+    rain: number | null;
+    isDay: boolean;
+    label: string;
+    glyph: string;
+  }>;
   days: Array<{ date: string; high: number; low: number; rain: number | null; label: string; glyph: string }>;
 }
 
@@ -39,6 +47,26 @@ export interface WeatherState {
   units: Units;
   place: Place | null;
   reading: Reading | null;
+  /**
+   * What it is doing *now*, read forward out of the stored hours.
+   *
+   * In `daily` mode the fetched reading is a morning temperature still being
+   * shown in the afternoon; this is that afternoon's hour out of the same
+   * forecast, at no extra request. `forecast` says whether it is an expectation
+   * or the measurement the fetch actually took.
+   *
+   * Optional because the server and the PWA update independently — an older
+   * server sends none, and both screens fall back to the reading itself.
+   */
+  now?: {
+    temperature: number;
+    /** Null when the stored hour predates the field — say nothing rather than guess. */
+    feelsLike: number | null;
+    label: string;
+    glyph: string;
+    isDay: boolean;
+    forecast: boolean;
+  } | null;
   fetchedAt: number | null;
   error: string | null;
   due: boolean;

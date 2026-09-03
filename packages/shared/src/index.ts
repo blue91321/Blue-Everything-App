@@ -39,6 +39,28 @@ export const attentionReportSchema = z.object({
   title: z.string().max(500).nullish(),
   idleMs: z.number().int().nonnegative().default(0),
   liveGames: z.array(z.string().max(260)).default([]),
+  /**
+   * The executable holding exclusive fullscreen, if any.
+   *
+   * Reported whether or not it is a known game, because that is exactly how an
+   * unknown one gets onto the list — it used to be written to the agent's
+   * console and nowhere else, which is no use to anybody looking at a screen.
+   */
+  fullscreenApp: z.string().max(260).nullish(),
+  /**
+   * Where each live game actually lives on disk, keyed by executable.
+   *
+   * The name recognises a game; the path is what lets the screen open its folder
+   * or start it. Recorded when first seen rather than asked for later, because
+   * the only moment this is cheaply knowable is while the process is running.
+   */
+  gamePaths: z.record(z.string(), z.string().max(500)).default({}),
+  /*
+   * Optional rather than defaulted-and-required for the reason every field
+   * added to this payload has been: an older agent sends none, and its whole
+   * report must not be refused over a field that postdates it.
+   */
+  gameUrls: z.record(z.string(), z.string().max(300)).default({}),
   /** Windows' own Do Not Disturb / quiet time is switched on right now. */
   windowsDnd: z.boolean().default(false),
   /** Something has played sound recently — a video, a stream, a call. */
@@ -404,6 +426,60 @@ export const reorderSchema = z.object({ ids: z.array(z.string().uuid()).max(500)
  * Two words minimum: a single short word fires constantly on ordinary speech,
  * and the room is full of ordinary speech.
  */
+/**
+ * May a nudge break into a running game?
+ *
+ * Three states per game and one global default, resolved in one place so the
+ * sweep, the API and the settings screen cannot disagree — the same job
+ * `resolvePush` does for the phone and `quietReason` for going quiet.
+ *
+ * **The most restrictive running game wins.** With two games somehow live at
+ * once, or one whose row says "never" beside one that follows the default, the
+ * answer is no: being interrupted mid-match is the exact failure this whole app
+ * exists to prevent, and the cost of being wrong is asymmetric. A nudge held
+ * back arrives at the next stopping point a few minutes later; one let through
+ * lands in the middle of a fight.
+ */
+export function gamesAllowInterruption(
+  running: ReadonlyArray<{ allowInterruptions: number | null }>,
+  interruptByDefault: boolean
+): boolean {
+  if (running.length === 0) return true;
+  return running.every((game) =>
+    game.allowInterruptions === null ? interruptByDefault : game.allowInterruptions === 1
+  );
+}
+
+/** Turn `fortniteclient-win64-shipping.exe` into something readable. */
+export function labelForExe(exe: string): string {
+  const base = exe.replace(/\.exe$/i, '');
+  const trimmed = base
+    // Build-system noise every Unreal title carries, and nobody calls it that.
+    /*
+     * Build-system noise, separated by a dot as well as a dash or underscore —
+     * `warframe.x64.exe` was the first real row this ever produced and came out
+     * as "Warframe X64".
+     */
+    .replace(/[-_.](win64|win32|shipping|x64|x86|final|retail)(?=$|[-_. ])/gi, '')
+    .replace(/[-_.]+/g, ' ')
+    .trim();
+  const words = (trimmed || base).split(/\s+/).filter(Boolean);
+  /*
+   * Short words are upper-cased because they are nearly always initialisms here
+   * — cs2, gta5, rdr2 — but the handful that are ordinary English are not, or
+   * "league of legends" comes out as "League OF Legends". Only ever the *first*
+   * word escapes the exception, since a title starting with "of" is not a thing.
+   */
+  const LOWER = new Set(['of', 'the', 'and', 'a', 'an', 'to', 'in', 'at', 'on', 'for']);
+  return words
+    .map((word, i) => {
+      if (LOWER.has(word)) return i === 0 ? word[0]!.toUpperCase() + word.slice(1) : word;
+      if (word.length <= 3) return word.toUpperCase();
+      return word[0]!.toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
 export const wakeWordSchema = z
   .string()
   .min(3)
@@ -716,6 +792,13 @@ export const voiceAgentReportSchema = z.object({
   enrolSamples: z.number().int().min(0).max(200).optional(),
   /** How well the last sample agreed with the ones before it, 0-1. */
   enrolAgreement: z.number().min(-1).max(1).nullish(),
+  /*
+   * Key combinations the agent could not register, nearly always because
+   * another program already owns them. Optional so an older agent — which sends
+   * no such field — is read as "none" rather than having its whole report
+   * refused, the treatment every field added to this payload has had.
+   */
+  hotkeyProblems: z.array(z.string().max(200)).max(8).optional(),
 });
 export type VoiceAgentReport = z.infer<typeof voiceAgentReportSchema>;
 
@@ -1125,7 +1208,7 @@ export function ticksFor(
  * microphone for minutes or until switched back on. "Never mind" should not
  * cost you the next five minutes of voice.
  */
-export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'media', 'pause', 'cancel'] as const;
+export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'media', 'launch', 'pause', 'cancel'] as const;
 export const voiceCommandKindSchema = z.enum(voiceCommandKinds);
 export type VoiceCommandKind = z.infer<typeof voiceCommandKindSchema>;
 
@@ -1174,11 +1257,46 @@ export const HOTKEY_KEYS = [
   'space', 'enter', 'tab', 'escape', 'backspace', 'delete', 'insert', 'home', 'end',
   'pageup', 'pagedown', 'up', 'down', 'left', 'right',
   'minus', 'plus', 'comma', 'period',
+  /*
+   * The number pad, which is the natural home for a global hotkey: the keys are
+   * far from anything a game binds and most keyboards have them spare.
+   *
+   * Spelled `numpad*` rather than reusing the digit names because they are
+   * genuinely different keys — `5` and `numpad5` are separate virtual-key codes,
+   * and registering one does nothing for the other.
+   *
+   * **Numpad Enter is deliberately absent.** Windows gives it the same
+   * virtual-key code as the main Enter and tells them apart only by an extended
+   * flag that `RegisterHotKey` cannot see — so offering it would be offering a
+   * key that silently binds a different one.
+   *
+   * **They follow Num Lock.** With it off the keyboard sends the navigation
+   * codes instead, so a `numpad5` hotkey answers only while Num Lock is on. The
+   * screen says so rather than leaving it to be discovered.
+   */
+  'numpad0', 'numpad1', 'numpad2', 'numpad3', 'numpad4',
+  'numpad5', 'numpad6', 'numpad7', 'numpad8', 'numpad9',
+  'numpadplus', 'numpadminus', 'numpadmultiply', 'numpaddivide', 'numpaddecimal',
 ] as const;
 
 export interface Hotkey {
   modifiers: string[];
   key: string;
+}
+
+/**
+ * A combination fit to register *system-wide*, which is stricter than one fit
+ * to be sent.
+ *
+ * `parseHotkey` refuses a bare letter, because sending one into whatever window
+ * has focus is far too easy to do by accident. Registering has a wider problem:
+ * a bare `f5` or `numpad5` would take that key away from **every** program on
+ * the machine, so a modifier is required outright rather than only for
+ * single-character keys.
+ */
+export function isGlobalHotkey(value: string): boolean {
+  const parsed = parseHotkey(value);
+  return parsed !== null && parsed.modifiers.length > 0;
 }
 
 /** `"ctrl+shift+m"` to its parts, or null if it isn't one. */
@@ -1215,6 +1333,28 @@ export function isOpenableUrl(value: string): boolean {
   }
 }
 
+/**
+ * A `launch` target names a row on the games list. It is never a path.
+ *
+ * **That is the whole safety property of this kind**, and it is the same rule
+ * `POST /api/games/:exe/launch` follows: the path is read from a row the agent
+ * filled in by watching that executable actually run here, so what a voice
+ * command can start is bounded by what this machine has already started by
+ * itself. A target that could hold a path would be a spoken "run anything",
+ * which is a categorically larger thing than "open the game I named".
+ *
+ * So a separator is refused rather than normalised — accepting
+ * `C:\\Windows\\System32\\cmd.exe` and then failing to find a row for it
+ * would work by accident rather than by rule, and the rule is what has to hold
+ * when somebody edits this next.
+ */
+export function isLaunchTarget(value: string): boolean {
+  const name = value.trim().toLowerCase();
+  if (!name || name.length > 260) return false;
+  if (name.includes('/') || name.includes(String.fromCharCode(92)) || name.includes(':')) return false;
+  return name.endsWith('.exe');
+}
+
 export const createVoiceCommandSchema = z
   .object({
     kind: voiceCommandKindSchema,
@@ -1246,6 +1386,9 @@ export const createVoiceCommandSchema = z
     }
     if (value.kind === 'media' && !(mediaActions as readonly string[]).includes(value.target ?? '')) {
       fail('pick which media control this is');
+    }
+    if (value.kind === 'launch' && !isLaunchTarget(value.target ?? '')) {
+      fail('pick something from the games list — a name like cs2.exe, never a path');
     }
   });
 
@@ -1799,6 +1942,31 @@ export const updateSettingsSchema = z.object({
   /** Seconds to keep listening after a miss. 0 means don't wait for a retry. */
   voiceRetrySeconds: z.number().int().min(0).max(MAX_VOICE_FOLLOW_UP_SECONDS).optional(),
   voiceRetryMatchesFollowUp: z.boolean().optional(),
+  /*
+   * Empty string clears; a combination is validated by the same `parseHotkey` a
+   * `hotkey` voice command uses. Nullable so "unset" survives a round trip as
+   * itself rather than as the empty string, which the PWA would render in the
+   * box as though something had been typed there.
+   */
+  voiceToggleHotkey: z
+    .string()
+    .max(60)
+    .refine((v) => v === '' || isGlobalHotkey(v), 'needs a key combination with at least one modifier')
+    .nullish(),
+  voiceListenHotkey: z
+    .string()
+    .max(60)
+    .refine((v) => v === '' || isGlobalHotkey(v), 'needs a key combination with at least one modifier')
+    .nullish(),
+  voiceListenHotkeyWhileOff: z.boolean().optional(),
+  /*
+   * Capped at an hour, floored at ten seconds. Below ten this stops being a
+   * refresh and becomes a poll, against a project that tuned its attention loop
+   * down to ~1,500 rows a day; above an hour it is indistinguishable from off.
+   */
+  dashboardRefreshSeconds: z.number().int().min(0).max(3600).optional(),
+  gameDetectionEnabled: z.boolean().optional(),
+  interruptDuringGames: z.boolean().optional(),
   overlayPlacement: overlayPlacementSchema.optional(),
   /** Device name of the screen to anchor to; null follows the mouse. */
   overlayScreen: z.string().max(200).nullish(),

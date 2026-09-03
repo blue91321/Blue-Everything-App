@@ -9,10 +9,11 @@
  * fixes, so the sources panel sits under the list and names the one that
  * applies.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNow } from '@app/clock';
 import { api, type FriendRow, type FriendSource } from '@app/api';
 import { useAsync } from '@app/useAsync';
-import { STATE_LABEL } from './presence';
+import { awayFor, AWAY_TITLE, STATE_LABEL } from './presence';
 import { relativeTime } from './Integrations';
 
 
@@ -48,6 +49,15 @@ function matchesSearch(friend: FriendRow, needle: string): boolean {
 }
 
 export function Friends({ seed }: { seed?: string | null } = {}) {
+  /*
+   * Redraws the durations on screen — an away timer counting up, a "last seen"
+   * ageing — without asking the server anything. The refresh interval decides
+   * how often to *fetch*; this decides how often what is already here is
+   * redrawn, which is what makes "only when something changes" true rather than
+   * a screen that freezes the moment nothing is announced.
+   */
+  useNow();
+
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
@@ -502,10 +512,16 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
 
         <div className="grow friend-text">
           <div className="title truncate">{friend.name}</div>
-          <div className="meta">
+          <div className="meta" title={awayFor(friend) ? AWAY_TITLE : undefined}>
             {/* What they are playing outranks the status word: "playing Deep Rock
-                Galactic" is the answer, and "online" is the less useful half of it. */}
-            {friend.game ?? friend.detail ?? STATE_LABEL[friend.state]}
+                Galactic" is the answer, and "online" is the less useful half of it.
+
+                With nothing to play, the duration joins the status word rather
+                than following it — the first version read "away · away 2h 15m",
+                which only showed up against real data. */}
+            {friend.game ??
+              friend.detail ??
+              (awayFor(friend) ? `${STATE_LABEL[friend.state]} ${awayFor(friend)}` : STATE_LABEL[friend.state])}
             {/* Where a borrowed status came from. Without it, a Discord row
                 showing a game looks like Discord told us, and the next person to
                 wonder why the others are blank has nothing to go on. */}
@@ -513,14 +529,19 @@ function FriendCard({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
             {friend.state === 'offline' && friend.lastOnlineAt
               ? ` · last on ${relativeTime(friend.lastOnlineAt)}`
               : ''}
+            {/*
+              And when there *is* a game, the duration follows it instead —
+              "Warframe · away 2h 15m", which is the whole point of
+              `in-game-away`: a match is running and they are still not there.
+            */}
+            {(friend.game ?? friend.detail) && awayFor(friend) ? ` · away ${awayFor(friend)}` : ''}
             {/* The handles this was merged from, so a name you do not recognise
-                on one service can still be placed by the other. */}
-            {friend.accounts.length > 1
-              ? ` · ${friend.accounts
-                  .filter((account) => account.name !== friend.name)
-                  .map((account) => `${account.provider}: ${account.name}`)
-                  .join(', ')}`
-              : ''}
+                on one service can still be placed by the other.
+
+                Built before it is rendered, because the filter can empty it:
+                somebody using the same handle on both services left a row
+                ending in a bare "·" with nothing after it. */}
+            {otherHandles(friend) ? ` · ${otherHandles(friend)}` : ''}
           </div>
         </div>
 
@@ -803,15 +824,39 @@ function Sources({ sources, anyFriends }: { sources: FriendSource[]; anyFriends:
 
           <div className="meta" style={{ marginTop: 2 }}>{source.why}</div>
 
-          {/* The three states a local provider can be in, which need three
-              different things done about them. */}
+          {/*
+            The *four* states a local provider can be in, each needing something
+            different done about it. The fourth was missing and is the one that
+            caused a report: Riot's launcher can be running while League itself
+            is not, so the lockfile exists, `clientRunning` is true, and every
+            request for the friends list answers 404. This card said "Client
+            running, last checked just now" — the most reassuring of the four
+            messages, over the state that was quietly serving hours-old
+            statuses.
+          */}
           {source.local && (
             <div className="meta" style={{ marginTop: 2 }}>
               {source.local.stale
                 ? 'The Windows agent is not reporting — is it running?'
-                : source.local.clientRunning
-                  ? `Client running, last checked ${relativeTime(source.local.reportedAt)}`
-                  : `Client is closed — showing what it last saw, ${relativeTime(source.local.reportedAt)}`}
+                : source.local.error
+                  ? `The client is open but not answering — the game itself may be closed. (${source.local.error})`
+                  : source.local.clientRunning
+                    ? `Client running, last checked ${relativeTime(source.local.reportedAt)}`
+                    : `Client is closed — showing who it last saw, ${relativeTime(source.local.reportedAt)}`}
+            </div>
+          )}
+
+          {/*
+            Named, because otherwise this is a wall of hollow rings with no
+            cause. The names are still real — they are kept deliberately, so
+            quitting a game does not empty your friends list — but what those
+            people were *doing* has aged out, which is a different claim with a
+            different shelf life.
+          */}
+          {(source.unconfirmed ?? 0) > 0 && (
+            <div className="meta" style={{ marginTop: 2 }}>
+              {source.unconfirmed} {source.unconfirmed === 1 ? 'status is' : 'statuses are'} too old to show — the
+              names are still here, but nothing has confirmed what they are doing recently enough to say.
             </div>
           )}
 
@@ -843,4 +888,18 @@ function Sources({ sources, anyFriends }: { sources: FriendSource[]; anyFriends:
       ))}
     </details>
   );
+}
+
+/**
+ * The handles this row was merged from, other than the one it is wearing.
+ *
+ * Empty when there are none to name — which happens whenever somebody uses the
+ * same handle on both services, and is why this is a function rather than an
+ * expression inline in the row.
+ */
+function otherHandles(friend: FriendRow): string {
+  return friend.accounts
+    .filter((account) => account.name !== friend.name)
+    .map((account) => `${account.provider}: ${account.name}`)
+    .join(', ');
 }

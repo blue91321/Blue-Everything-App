@@ -27,7 +27,26 @@ const STORE = join(dataDir, 'weather.json');
 /** How often `daily` will go and look. A day, in the plainest sense. */
 export const DAILY_MS = 24 * 60 * 60 * 1000;
 
-export type RefreshMode = 'daily' | 'manual';
+/**
+ * And how often `hourly` will.
+ *
+ * Still not a timer — the same staleness window `daily` uses, checked when
+ * somebody reads. A PC nobody is looking at makes no requests in either mode;
+ * the difference is only how old a reading may be before the next look
+ * replaces it.
+ */
+export const HOURLY_MS = 60 * 60 * 1000;
+
+export type RefreshMode = 'hourly' | 'daily' | 'manual';
+
+/** How stale a reading may get before a read goes and looks, by mode. */
+export const STALE_AFTER: Record<RefreshMode, number | null> = {
+  hourly: HOURLY_MS,
+  daily: DAILY_MS,
+  // Null rather than Infinity: "only when I ask" is the absence of a window
+  // rather than a very long one, and `isDue` reads better for saying so.
+  manual: null,
+};
 export type Units = 'c' | 'f';
 
 export interface Place {
@@ -60,6 +79,14 @@ export interface Reading {
     /** Local ISO, as the service returned it: `2026-08-22T14:00`. */
     time: string;
     temperature: number;
+    /**
+     * What that hour is expected to *feel* like.
+     *
+     * Optional, and the reason is a reading written before this field existed:
+     * the store is a cache that survives an update, so an hour from yesterday
+     * has none. Null means "do not claim one" rather than a number to guess.
+     */
+    feelsLike?: number | null;
     /** Percent, or null when the service did not say. */
     rain: number | null;
     isDay: boolean;
@@ -98,7 +125,10 @@ export function read(): Store {
     // this file is plain enough that somebody will eventually edit it in Notepad.
     const parsed = JSON.parse(raw.startsWith('﻿') ? raw.slice(1) : raw) as Partial<Store>;
     return {
-      mode: parsed.mode === 'manual' ? 'manual' : 'daily',
+      mode:
+        parsed.mode === 'manual' || parsed.mode === 'hourly' || parsed.mode === 'daily'
+          ? parsed.mode
+          : 'daily',
       units: parsed.units === 'c' ? 'c' : 'f',
       place: parsed.place ?? null,
       reading: parsed.reading ?? null,
@@ -217,6 +247,7 @@ export interface Forecast {
   hourly?: {
     time?: string[];
     temperature_2m?: (number | null)[];
+    apparent_temperature?: (number | null)[];
     precipitation_probability?: (number | null)[];
     weather_code?: (number | null)[];
     is_day?: (number | null)[];
@@ -293,6 +324,10 @@ export function sliceHours(
     return {
       time,
       temperature: Math.round(hourly?.temperature_2m?.[at] ?? 0),
+      feelsLike:
+        hourly?.apparent_temperature?.[at] === undefined || hourly?.apparent_temperature?.[at] === null
+          ? null
+          : Math.round(hourly.apparent_temperature[at] as number),
       rain: hourly?.precipitation_probability?.[at] ?? null,
       isDay,
       label: described.label,
@@ -306,7 +341,7 @@ export async function fetchReading(place: Place, units: Units): Promise<Reading>
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
     '&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day' +
-    '&hourly=temperature_2m,precipitation_probability,weather_code,is_day' +
+    '&hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code,is_day' +
     '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
     `&timezone=${encodeURIComponent(place.timezone)}&forecast_days=4` +
     `&temperature_unit=${units === 'f' ? 'fahrenheit' : 'celsius'}` +
@@ -382,8 +417,105 @@ export async function refresh(): Promise<Store> {
  * setting worth having — the same rule the quiet-hours switch follows.
  */
 export function isDue(store: Store, now = Date.now()): boolean {
-  if (store.mode !== 'daily') return false;
+  const after = STALE_AFTER[store.mode];
+  if (after === null) return false;
   if (!store.place) return false;
   if (store.fetchedAt === null) return true;
-  return now - store.fetchedAt >= DAILY_MS;
+  return now - store.fetchedAt >= after;
+}
+
+/**
+ * The forecast for the hour it is *there*, from a reading that may be old.
+ *
+ * ### Why this exists
+ *
+ * In `daily` mode the temperature on screen is whatever it was when the fetch
+ * happened, so a reading taken at eight in the morning still says eight in the
+ * morning's temperature at four in the afternoon. The number is stale in the
+ * one way people actually notice, and refetching to fix it would throw away the
+ * whole reason the mode exists.
+ *
+ * But the reading already contains the answer: `hours` is the next
+ * twenty-four, and one of them is now. Reading it forward costs nothing and no
+ * request.
+ *
+ * **It is a forecast, not an observation, and the caller is told which.** The
+ * hour it was fetched in is the real measurement; every hour after it is what
+ * the service expected. Presenting the second as the first would be the quiet
+ * kind of wrong this project keeps refusing.
+ *
+ * The hour is matched by string for the same reason `sliceHours` does it:
+ * the timestamps are local to the place with no offset, so arithmetic against
+ * `Date.now()` is right only while the server and the place agree.
+ */
+export function nowFromReading(
+  reading: Reading | null,
+  timezone: string | undefined,
+  now = new Date()
+): {
+  temperature: number;
+  /** Null when the stored hour predates this field — see `Reading['hours']`. */
+  feelsLike: number | null;
+  label: string;
+  glyph: string;
+  isDay: boolean;
+  forecast: boolean;
+} | null {
+  if (!reading) return null;
+
+  const observed = {
+    temperature: reading.temperature,
+    feelsLike: reading.feelsLike,
+    label: reading.label,
+    glyph: reading.glyph,
+    isDay: reading.isDay,
+    forecast: false,
+  };
+  if (reading.hours.length === 0) return observed;
+
+  let stamp: string;
+  try {
+    const there = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: !timezone || timezone === 'auto' ? undefined : timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hour12: false,
+    }).format(now);
+    stamp = `${there.slice(0, 10)}T${there.slice(11, 13)}`;
+  } catch {
+    return observed;
+  }
+
+  const at = reading.hours.findIndex((hour) => hour.time.startsWith(stamp));
+  /*
+   * Not in the range at all means the reading is older than the hours it
+   * carries — a fortnight in manual mode. The observation is then the only
+   * thing there is, and the screen already says how old it is.
+   */
+  if (at < 0) return observed;
+
+  /*
+   * Index 0 is the hour the fetch happened in, where the observation is the
+   * better of the two: it is a measurement rather than a prediction, and it
+   * carries the humidity and wind that the hourly rows do not.
+   */
+  if (at === 0) return observed;
+
+  const hour = reading.hours[at];
+  return {
+    temperature: hour.temperature,
+    /*
+     * Null rather than the reading's own, which is the whole reason this field
+     * is carried at all: showing "71°, feels like 76°" — the forecast hour
+     * beside the measured comfort — is a row contradicting itself, and it is
+     * what the first version did.
+     */
+    feelsLike: hour.feelsLike ?? null,
+    label: hour.label,
+    glyph: hour.glyph,
+    isDay: hour.isDay,
+    forecast: true,
+  };
 }

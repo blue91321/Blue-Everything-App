@@ -19,6 +19,17 @@ export interface AsyncState<T> {
   loading: boolean;
   /** A reload is in flight over data that is already on screen. */
   refreshing: boolean;
+  /**
+   * When this data arrived here, by the *local* clock.
+   *
+   * For ageing values the server already resolved — a gauge countdown is
+   * correct as of the response and stale a minute later. Subtracting
+   * `Date.now() - receivedAt` is a **duration** measured entirely on this
+   * device, so unlike comparing a server timestamp against a local clock it is
+   * unaffected by the two disagreeing: a phone five minutes fast still measures
+   * thirty seconds as thirty seconds.
+   */
+  receivedAt: number | undefined;
   reload: () => void;
 }
 
@@ -41,6 +52,7 @@ export function useAsync<T>(
   watch?: readonly ChangeScope[]
 ): AsyncState<T> {
   const [data, setData] = useState<T>();
+  const [receivedAt, setReceivedAt] = useState<number>();
   const [error, setError] = useState<Error>();
   const [tick, setTick] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -78,6 +90,7 @@ export function useAsync<T>(
         if (cancelled) return;
         settled.current = true;
         setData(result);
+        setReceivedAt(Date.now());
         setError(undefined);
       })
       .catch((cause: Error) => {
@@ -99,5 +112,5 @@ export function useAsync<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, ...deps]);
 
-  return { data, error, loading, refreshing, reload };
+  return { data, error, loading, refreshing, receivedAt, reload };
 }

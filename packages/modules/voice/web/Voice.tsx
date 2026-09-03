@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from '@app/api';
 import { useAsync } from '@app/useAsync';
+import { RestartBanner } from '@app/views/InstalledPackages';
 import { Vocabulary } from './Vocabulary';
 import { Toggle } from '@app/controls';
 import { VoicePhrases } from './VoiceCommands';
@@ -52,14 +53,42 @@ export function Voice({ local }: { local: boolean }) {
             This screen needs voice support on the server, and the process that's running predates it.
             Restart it and this page will work.
           </div>
-          <code className="snippet">Stop Blue Everything.cmd, then Blue Everything.cmd</code>
         </div>
+        {/*
+          The button rather than the two file names it used to print. Restarting
+          is the fix, the app can do it, and `RestartBanner` already asks the
+          server whether it can before offering — so the fallback for a machine
+          that cannot is its problem rather than a second copy of it here.
+        */}
+        <RestartBanner why="The running server predates this screen." />
       </section>
     );
   }
 
   return <VoiceSettings settings={settings.data} local={local} reload={settings.reload} />;
 }
+
+/**
+ * The three tabs.
+ *
+ * This screen grew from a switch and a text box into appearance, reminders,
+ * shortcuts, enrolment, the vocabulary and every phrase you can say — one long
+ * scroll in which whatever you came to change was always in the middle.
+ *
+ * The split is by *how often you touch it*, not by subject. **General** is what
+ * you open the screen for: is it on, is it hearing me, which microphone, and
+ * the wake word. Everything set once and left is behind **Settings**, and the
+ * phrase list is long enough to deserve a tab of its own.
+ *
+ * Which tab is open is `useState`, like every other bit of navigation here.
+ */
+const VOICE_TABS = [
+  { id: 'general', label: 'General', hint: 'Is it on, is it hearing you, and what wakes it' },
+  { id: 'settings', label: 'Settings', hint: 'Shortcuts, the popup, and only responding to your voice' },
+  { id: 'commands', label: 'Commands', hint: 'Everything you can say' },
+] as const;
+
+type VoiceTabId = (typeof VOICE_TABS)[number]['id'];
 
 function VoiceSettings({
   settings: current,
@@ -71,7 +100,7 @@ function VoiceSettings({
   reload: () => void;
 }) {
   const [saving, setSaving] = useState(false);
-  const [draftWakeWord, setDraftWakeWord] = useState<string | null>(null);
+  const [tab, setTab] = useState<VoiceTabId>('general');
   const [draftDecoys, setDraftDecoys] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -120,19 +149,8 @@ function VoiceSettings({
     void update({ voiceRetrySeconds: draftRetry }).then(() => setDraftRetry(null));
   }
 
-  const wakeWord = draftWakeWord ?? current.wakeWord;
   const decoys = draftDecoys ?? current.wakeDecoys ?? '';
-  // One word is allowed. It is a worse choice, not an invalid one — and it is
-  // the choice that survives the recogniser dropping half the phrase, so the
-  // screen advises rather than refuses.
-  const wakeWordValid = /^[a-z]+(?: [a-z]+)*$/i.test(wakeWord.trim()) && wakeWord.trim().length >= 3;
-  const advice = wakeWordValid ? wakeWordAdvice(wakeWord) : null;
 
-  /*
-   * A wake word the model cannot pronounce is the worst version of this bug:
-   * nothing wakes at all, and every other diagnostic on this screen looks fine.
-   * Only checks the *saved* one, since that is what the agent was asked about.
-   */
   /*
    * A decoy the model cannot pronounce is dropped by Vosk without a word, which
    * is the same silent failure the wake word already has a warning for — so it
@@ -144,27 +162,49 @@ function VoiceSettings({
       .split(/[,\s]+/)
       .includes(word)
   );
-  const wakeWordUnknown = (look?.unknownWords ?? []).filter((word) =>
-    current.wakeWord.toLowerCase().split(/\s+/).includes(word)
-  );
-
   return (
     <>
+      <div className="tabs" role="tablist" aria-label="Voice sections">
+        {VOICE_TABS.map((entry) => (
+          <button
+            key={entry.id}
+            role="tab"
+            className={`tab${tab === entry.id ? ' on' : ''}`}
+            aria-selected={tab === entry.id}
+            title={entry.hint}
+            onClick={() => setTab(entry.id)}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'general' && (
       <section>
         <div className="card">
           <div className="row between">
             <div className="grow">
-              <div className="title">Listen for a wake word</div>
+              <div className="title">Enable voice</div>
               <div className="meta">
                 Say the wake word, then something like <em>"I drank water"</em>, and the matching habit gets
                 ticked off. The microphone stays open while this is on — nothing is recorded, nothing leaves
                 this PC, and speech is only processed while there's actually sound in the room.
               </div>
+              {/*
+                This one switch is the whole system, on every device: it is a
+                server-side setting, so turning it off from the phone closes the
+                microphone on the PC. Saying so matters because the status card
+                below reports a *second* thing — whether the agent is running —
+                and without this the two read as one confusing switch.
+              */}
+              <div className="meta" style={{ marginTop: 6 }}>
+                Applies to this PC whichever device you set it from, and stays set until you change it.
+              </div>
             </div>
             <Toggle
               on={Boolean(current.voiceEnabled)}
               disabled={saving}
-              label="Listen for a wake word"
+              label="Enable voice"
               onChange={(on) => update({ voiceEnabled: on })}
             />
           </div>
@@ -172,52 +212,115 @@ function VoiceSettings({
 
         <LiveStatus enabled={Boolean(current.voiceEnabled)} selectedDevice={current.voiceInputDevice ?? null} onPick={(device) => update({ voiceInputDevice: device })} saving={saving} />
 
+        {/*
+          The wake word is on this tab *as well as* Settings, and it is the same
+          component rather than a second copy of the markup — the one thing that
+          must not happen is the two drifting apart. It earns the duplication by
+          being the setting people come here to change: everything else on this
+          screen is set once and left, while a wake word that keeps mishearing
+          gets tried three or four times in an evening.
+        */}
+        <WakeWordCard
+          current={current}
+          saving={saving}
+          unknown={look?.unknownWords ?? []}
+          update={update}
+        />
+      </section>
+      )}
+
+      {tab === 'settings' && (
+      <section>
+        {/*
+          Here too. The General tab is the short version of this screen, so
+          somebody who came to Settings for the decoys should not have to go back
+          a tab to change the word those decoys are about.
+        */}
+        <WakeWordCard
+          current={current}
+          saving={saving}
+          unknown={look?.unknownWords ?? []}
+          update={update}
+        />
+
+        {/*
+          The two things that work when the wake word does not — and one of them
+          is how you switch voice on at all, which the microphone can never do
+          for itself.
+        */}
         <div className="card">
-          <div className="title">Wake word</div>
+          <div className="title">Keyboard shortcuts</div>
           <div className="meta" style={{ marginTop: 4 }}>
-            Pick something you would never say by accident. Two words are safer, but a leading "hey" or "ok"
-            is optional when it's heard — so "hey jarvis" also answers to just "jarvis".
+            System-wide, so they work from inside a game. Neither is set by default: these take the
+            combination away from every other program on this PC, which is not something to do to somebody
+            who has not asked for it.
           </div>
-          <div className="row" style={{ marginTop: 10 }}>
-            <div className="grow">
-              <input value={wakeWord} aria-label="Wake word" onChange={(e) => setDraftWakeWord(e.target.value)} />
-            </div>
-            <button
-              className="btn primary"
-              disabled={saving || !wakeWordValid || wakeWord.trim() === current.wakeWord}
-              onClick={() =>
-                update({ wakeWord: wakeWord.trim().toLowerCase() }).then(() => setDraftWakeWord(null))
-              }
-            >
-              Save
-            </button>
-          </div>
-          {!wakeWordValid && (
-            <div className="meta urgent" style={{ marginTop: 6 }}>
-              Letters and spaces only, three characters or more.
+
+          <HotkeyField
+            label="Turn voice on and off"
+            hint="Works while voice is off — that is the point of it. The microphone cannot hear you ask for it to be switched on."
+            value={current.voiceToggleHotkey ?? ''}
+            saving={saving}
+            onSave={(value) => update({ voiceToggleHotkey: value })}
+          />
+
+          <HotkeyField
+            label="Listen now, without the wake word"
+            hint="Starts an exchange as though you had said it. More reliable than the wake word, because nothing has to be heard correctly first."
+            value={current.voiceListenHotkey ?? ''}
+            saving={saving}
+            onSave={(value) => update({ voiceListenHotkey: value })}
+          />
+
+          {/*
+            Directly under the shortcut it changes, and only once one is set —
+            a switch governing a key you have not chosen is a question about
+            nothing.
+          */}
+          {(current.voiceListenHotkey ?? '') !== '' && (
+            <div className="row between" style={{ marginTop: 10, alignItems: 'flex-start', gap: '.6rem' }}>
+              <div className="grow">
+                <div className="title" style={{ fontSize: '.95em' }}>
+                  Let it work while voice is off
+                </div>
+                <div className="meta" style={{ marginTop: 2 }}>
+                  {Boolean(current.voiceListenHotkeyWhileOff)
+                    ? 'Push-to-talk: voice stays off and the microphone stays shut, and this key opens it for one command before closing it again. The wake word is still silent.'
+                    : 'Off — the key does nothing while voice is switched off, and says so.'}
+                </div>
+                {Boolean(current.voiceListenHotkeyWhileOff) && (
+                  <div className="meta" style={{ marginTop: 4 }}>
+                    Takes about a fifth of a second longer to start, because the speech models are loaded
+                    when you press it rather than kept in memory — which is the whole saving.
+                  </div>
+                )}
+              </div>
+              <Toggle
+                on={Boolean(current.voiceListenHotkeyWhileOff)}
+                disabled={saving}
+                label="Let it work while voice is off"
+                onChange={(on) => update({ voiceListenHotkeyWhileOff: on })}
+              />
             </div>
           )}
-          {advice && (
-            <div className="meta urgent" style={{ marginTop: 6 }}>
-              {advice}
+
+          {/*
+            The speaker check does not apply to a hotkey, and saying so matters:
+            somebody who switched "only my voice" on has a reasonable claim to
+            know where it stops applying.
+          */}
+          {Boolean(current.requireKnownSpeaker) && (
+            <div className="meta" style={{ marginTop: 8 }}>
+              "Only respond to my voice" does not apply to the second one. It is a filter against the room —
+              the television, someone else talking — and none of those can press a key on this keyboard.
             </div>
           )}
-          {wakeWordUnknown.length > 0 && (
-            <div className="meta urgent" style={{ marginTop: 6 }}>
-              ⚠ {wakeWordUnknown.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so this
-              wake word can never be heard. Compounds and invented names are the usual cause — separating one into
-              two ordinary words almost always fixes it.
-            </div>
-          )}
-          <div className="meta" style={{ marginTop: 6 }}>
-            Takes effect straight away — the status above will say what it's listening for.
-          </div>
         </div>
 
         {/*
-          Its own card, directly under the wake word, because it is only ever
-          about the wake word — not about commands, which have their own screen
-          and their own matcher.
+          Directly after the wake word, because it is only ever about the wake
+          word — not about commands, which have their own tab and their own
+          matcher.
         */}
         <div className="card">
           <div className="title">Words that keep waking it by mistake</div>
@@ -352,11 +455,9 @@ function VoiceSettings({
           </div>
         </div>
         )}
-      </section>
 
       <VoiceLook settings={current} status={look} saving={saving} onChange={update} />
 
-      <section>
         <h2>Only respond to my voice</h2>
         <div className="card">
           <div className="row between">
@@ -415,12 +516,14 @@ function VoiceSettings({
           )}
         </div>
       </section>
+      )}
 
+      {tab === 'commands' && (
       <section>
-        <h2>What can I say?</h2>
         <VoicePhrases />
         <PhraseTester />
       </section>
+      )}
 
       {error && <div className="banner">{error}</div>}
     </>
@@ -602,7 +705,18 @@ function LiveStatus({
   // without it this said "Starting up…" indefinitely at something that was
   // never going to start.
   const state = !status.agentRunning
-    ? { text: 'The agent is not running', tone: 'urgent', why: 'Nothing is listening. Start it with Blue Everything.cmd.' }
+    ? {
+        text: 'The agent is not running',
+        tone: 'urgent',
+        /*
+         * This said "Start it with Blue Everything.cmd", which is accurate and
+         * is exactly the friction the double-clickable files exist to remove:
+         * an app that can tell you something is not running can start it. The
+         * button is beside this line; the fallback text only appears when there
+         * is genuinely no button to offer.
+         */
+        why: 'Nothing is listening — the part of the app that holds the microphone has stopped.',
+      }
     : status.error
       ? { text: 'Not listening', tone: 'urgent', why: status.error }
       : !enabled
@@ -630,9 +744,17 @@ function LiveStatus({
           <div className={`title ${state.tone === 'ok-text' ? 'ok-text' : ''}`}>{state.text}</div>
           {state.why && <div className={`meta ${state.tone === 'urgent' ? 'urgent' : ''}`}>{state.why}</div>}
         </div>
-        {/* Resume outranks Test: while paused there is nothing to test, and
-            getting back to listening is the only thing worth offering. */}
-        {enabled && status.paused ? (
+        {/*
+          Start outranks both. While the agent is down, resuming and testing are
+          requests to a process that is not there — so this is the only thing on
+          the card worth offering, and it is the thing the screen was previously
+          telling you to leave the app to do.
+        */}
+        {!status.agentRunning ? (
+          <StartAgent onStarted={async () => setStatus(await api.voice.status())} />
+        ) : /* Resume outranks Test: while paused there is nothing to test, and
+              getting back to listening is the only thing worth offering. */
+        enabled && status.paused ? (
           <button
             className="btn primary"
             disabled={busy}
@@ -670,6 +792,18 @@ function LiveStatus({
           )
         )}
       </div>
+
+      {/*
+        A hotkey another program already owns registers as a failure and then
+        does nothing at all — which is indistinguishable from one that was never
+        saved. Windows will not say *which* program, so this says what to do
+        rather than pretending to diagnose it.
+      */}
+      {(status.hotkeyProblems ?? []).map((problem) => (
+        <div className="meta urgent" key={problem} style={{ marginTop: 8 }}>
+          ⚠ {problem}
+        </div>
+      ))}
 
       {/* The level meter answers "is this microphone picking me up at all",
           which is the first thing to check and the hardest to guess at. */}
@@ -849,6 +983,393 @@ function PhraseTester() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * "Start it", where the instructions to go and find a .cmd file used to be.
+ *
+ * It asks the server whether it *can* before offering, the same call the
+ * Restart button makes — a button that fails when pressed is worse than one
+ * that says why it cannot, and over Tailscale from the phone this genuinely
+ * cannot: the agent runs on the PC, and only the PC may start it.
+ *
+ * The fallback names the file, because that is still the answer when the script
+ * is missing or you are not at that machine — and a screen that reports a
+ * stopped agent with no route forward at all is what this replaced.
+ */
+function StartAgent({ onStarted }: { onStarted: () => void }) {
+  const can = useAsync(() => api.agent.canStart(), [], []);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+
+  if (can.loading) return null;
+
+  if (!can.data?.available) {
+    return (
+      <div className="meta" style={{ maxWidth: 260, textAlign: 'right' }}>
+        {can.data?.local
+          ? 'scripts/start.ps1 is missing — double-click Blue Everything.cmd instead.'
+          : 'It runs on the PC, so only the PC can start it.'}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ textAlign: 'right' }}>
+      <button
+        className="btn primary"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setProblem('');
+          try {
+            await api.agent.start();
+            /*
+             * The agent takes a few seconds to load, and its first heartbeat is
+             * what actually proves it is up. The card already polls twice a
+             * second, so the honest thing is to say it is starting and let that
+             * poll be what changes the answer — rather than checking once,
+             * finding it not up yet, and reporting a failure that is only
+             * earliness.
+             */
+            setTimeout(onStarted, 3000);
+          } catch (error) {
+            setProblem((error as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? 'Starting…' : 'Start it'}
+      </button>
+      {problem && (
+        <div className="meta urgent" style={{ marginTop: 6, maxWidth: 260 }}>
+          {problem}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One key combination, typed rather than captured.
+ *
+ * **Typed, deliberately.** A "press the keys now" capture box is the nicer
+ * interaction right up against the thing this actually sets: a *system-wide*
+ * hotkey, which means the capture box has to swallow combinations the browser
+ * and Windows already own — ctrl+w closes the tab, alt+f4 closes the window, and
+ * neither ever reaches a keydown handler. A text box has no such holes, and the
+ * spelling is the same one a `hotkey` voice command already uses.
+ *
+ * Validated with the same rule the server applies, so an impossible combination
+ * is refused here rather than round-tripping to a 400.
+ */
+function HotkeyField({
+  label,
+  hint,
+  value,
+  saving,
+  onSave,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  saving: boolean;
+  onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const current = draft ?? value;
+  const trimmed = current.trim().toLowerCase();
+  // Empty is a legitimate value — it is how you clear one — so it is not
+  // "invalid", it is "none".
+  const valid = trimmed === '' || looksLikeHotkey(trimmed);
+  const dirty = trimmed !== value;
+
+  /*
+   * Recording listens on the window rather than on an input, and captures.
+   *
+   * On the *capture* phase and on `window` so nothing downstream has a chance to
+   * act on the key first, and `preventDefault` so the page does not scroll on
+   * space or tab away on tab.
+   */
+  useEffect(() => {
+    if (!recording) return;
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+        setRecording(false);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+
+      const combo = comboFromEvent(event);
+      // Null is a modifier on its own — still mid-press, so keep listening
+      // rather than treating a held Ctrl as a failed attempt.
+      if (!combo) return;
+
+      setDraft(combo);
+      setRecording(false);
+    };
+
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [recording]);
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="title" style={{ fontSize: '.95em' }}>
+        {label}
+      </div>
+      <div className="meta" style={{ marginTop: 2 }}>
+        {hint}
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <div className="grow">
+          <input
+            value={recording ? '' : current}
+            placeholder={recording ? 'press the keys…' : 'ctrl+alt+numpad5'}
+            aria-label={label}
+            disabled={recording}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+        </div>
+        <button
+          className={recording ? 'btn' : 'btn subtle'}
+          disabled={saving}
+          onClick={() => setRecording(!recording)}
+        >
+          {recording ? 'Cancel' : 'Record'}
+        </button>
+        <button
+          className="btn primary"
+          disabled={saving || !valid || !dirty || recording}
+          onClick={() => {
+            onSave(trimmed);
+            setDraft(null);
+          }}
+        >
+          Save
+        </button>
+        {value !== '' && (
+          <button
+            className="btn subtle"
+            disabled={saving || recording}
+            onClick={() => {
+              onSave('');
+              setDraft(null);
+            }}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+
+      {recording ? (
+        /*
+          Said while recording rather than in the help text, because this is the
+          moment somebody presses ctrl+w, loses the tab, and concludes the
+          feature is broken. The browser never sees those: Windows and Chrome
+          take them first, which is precisely why the box stays typeable.
+        */
+        <div className="meta" style={{ marginTop: 6 }}>
+          Press the combination now. Escape cancels. Some are taken before the page sees them —
+          <code>ctrl+w</code>, <code>alt+f4</code>, anything with the Windows key — so type those in
+          instead; recording cannot capture what it is never shown.
+        </div>
+      ) : (
+        <div className="meta" style={{ marginTop: 6 }}>
+          <strong>modifier + key</strong>, joined by <code>+</code>. Modifiers are <code>ctrl</code>,{' '}
+          <code>alt</code>, <code>shift</code> and <code>win</code>; keys are <code>a</code>–<code>z</code>,{' '}
+          <code>0</code>–<code>9</code>, <code>f1</code>–<code>f12</code>, <code>numpad0</code>–
+          <code>numpad9</code>, <code>numpadplus</code>, <code>numpadminus</code>,{' '}
+          <code>numpadmultiply</code>, <code>numpaddivide</code>, <code>numpaddecimal</code>, the arrows
+          (<code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>) and{' '}
+          <code>space</code>, <code>enter</code>, <code>tab</code>, <code>escape</code>,{' '}
+          <code>backspace</code>, <code>delete</code>, <code>insert</code>, <code>home</code>,{' '}
+          <code>end</code>, <code>pageup</code>, <code>pagedown</code>, <code>minus</code>,{' '}
+          <code>plus</code>, <code>comma</code>, <code>period</code>.
+        </div>
+      )}
+
+      {/*
+        Worth saying next to the number pad rather than in a footnote: with Num
+        Lock off the keyboard sends the navigation codes instead, so the hotkey
+        simply stops answering and nothing on screen would explain why.
+      */}
+      {!recording && trimmed.includes('numpad') && (
+        <div className="meta" style={{ marginTop: 6 }}>
+          Number-pad keys follow Num Lock — with it off this will not answer.
+        </div>
+      )}
+
+      {!valid && !recording && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          Needs at least one modifier and one key — <code>ctrl+alt+v</code>, <code>ctrl+alt+numpad5</code>.
+          A bare key is refused on purpose: registered system-wide it would swallow that key everywhere.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The same shape `parseHotkey` accepts, checked again here.
+ *
+ * A second copy of the rule, and the reason is the one this file already lives
+ * with: the PWA cannot import `@everything/shared` without pulling zod into a
+ * bundle that is almost entirely framework. The server is the side that
+ * enforces it — this only decides whether to grey out the Save button.
+ */
+const HOTKEY_MODIFIERS = ['ctrl', 'control', 'alt', 'shift', 'win', 'super', 'meta'];
+const HOTKEY_KEYS = [
+  ...'abcdefghijklmnopqrstuvwxyz0123456789'.split(''),
+  ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`),
+  'space', 'enter', 'tab', 'escape', 'backspace', 'delete', 'insert', 'home', 'end',
+  'pageup', 'pagedown', 'up', 'down', 'left', 'right', 'minus', 'plus', 'comma', 'period',
+  ...Array.from({ length: 10 }, (_, i) => `numpad${i}`),
+  'numpadplus', 'numpadminus', 'numpadmultiply', 'numpaddivide', 'numpaddecimal',
+];
+
+function looksLikeHotkey(value: string): boolean {
+  const parts = value.split('+').map((p) => p.trim()).filter(Boolean);
+  // At least one modifier, always. Registering a bare key takes it away from
+  // every program on the machine.
+  if (parts.length < 2) return false;
+  const key = parts[parts.length - 1];
+  const modifiers = parts.slice(0, -1);
+  if (!HOTKEY_KEYS.includes(key)) return false;
+  if (modifiers.some((m) => !HOTKEY_MODIFIERS.includes(m))) return false;
+  return new Set(modifiers).size === modifiers.length;
+}
+
+/**
+ * A browser key event in the spelling the rest of the app uses.
+ *
+ * Reads `event.code`, which is the *physical* key, rather than `event.key`,
+ * which is what that key produces — the two differ exactly where it matters
+ * here. `event.key` for the number pad is `"5"` whether you pressed the digit
+ * row or the pad, and it is the empty-ish `"Dead"` or an accented letter under
+ * some layouts; `code` says `Numpad5` or `Digit5` and says the same thing on
+ * every layout, which is what a virtual-key code needs.
+ */
+function comboFromEvent(event: KeyboardEvent): string | null {
+  const code = event.code;
+
+  let key: string | null = null;
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3).toLowerCase();
+  else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);
+  else if (/^F([1-9]|1[0-2])$/.test(code)) key = code.toLowerCase();
+  else if (/^Numpad[0-9]$/.test(code)) key = code.toLowerCase();
+  else {
+    const named: Record<string, string> = {
+      Space: 'space', Enter: 'enter', Tab: 'tab', Escape: 'escape',
+      Backspace: 'backspace', Delete: 'delete', Insert: 'insert',
+      Home: 'home', End: 'end', PageUp: 'pageup', PageDown: 'pagedown',
+      ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+      Minus: 'minus', Equal: 'plus', Comma: 'comma', Period: 'period',
+      NumpadAdd: 'numpadplus', NumpadSubtract: 'numpadminus',
+      NumpadMultiply: 'numpadmultiply', NumpadDivide: 'numpaddivide',
+      NumpadDecimal: 'numpaddecimal',
+    };
+    key = named[code] ?? null;
+  }
+
+  // A modifier on its own is not a combination yet — it is somebody still
+  // reaching for the second key, so the recorder waits rather than refusing.
+  if (!key) return null;
+
+  const modifiers: string[] = [];
+  if (event.ctrlKey) modifiers.push('ctrl');
+  if (event.altKey) modifiers.push('alt');
+  if (event.shiftKey) modifiers.push('shift');
+  if (event.metaKey) modifiers.push('win');
+  if (modifiers.length === 0) return null;
+
+  return [...modifiers, key].join('+');
+}
+
+/**
+ * The wake word, on two tabs at once.
+ *
+ * A component rather than the markup twice, because the one thing that must not
+ * happen is the copies drifting — the version that warns about a word the model
+ * cannot pronounce is the whole reason this box is worth looking at, and a
+ * second copy would be the one that quietly lost it.
+ *
+ * The draft lives here, so switching tabs mid-edit discards it rather than
+ * carrying half a wake word to the other tab. That is the right loss: the two
+ * boxes are the same setting, and a half-typed value showing up somewhere you
+ * did not type it would be worse than starting again.
+ */
+function WakeWordCard({
+  current,
+  saving,
+  unknown,
+  update,
+}: {
+  current: VoiceSettings;
+  saving: boolean;
+  /** Words the speech model has no pronunciation for. */
+  unknown: string[];
+  update: (patch: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const wakeWord = draft ?? current.wakeWord;
+  // One word is allowed. It is a worse choice, not an invalid one — and it is
+  // the choice that survives the recogniser dropping half the phrase, so the
+  // screen advises rather than refuses.
+  const valid = /^[a-z]+(?: [a-z]+)*$/i.test(wakeWord.trim()) && wakeWord.trim().length >= 3;
+  const advice = valid ? wakeWordAdvice(wakeWord) : null;
+  /*
+   * A wake word the model cannot pronounce is the worst version of this bug:
+   * nothing wakes at all, and every other diagnostic on this screen looks fine.
+   * Only checks the *saved* one, since that is what the agent was asked about.
+   */
+  const broken = unknown.filter((word) => current.wakeWord.toLowerCase().split(/\s+/).includes(word));
+
+  return (
+    <div className="card">
+      <div className="title">Wake word</div>
+      <div className="meta" style={{ marginTop: 4 }}>
+        Pick something you would never say by accident. Two words are safer, but a leading "hey" or "ok"
+        is optional when it's heard — so "hey jarvis" also answers to just "jarvis".
+      </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <div className="grow">
+          <input value={wakeWord} aria-label="Wake word" onChange={(e) => setDraft(e.target.value)} />
+        </div>
+        <button
+          className="btn primary"
+          disabled={saving || !valid || wakeWord.trim() === current.wakeWord}
+          onClick={() => void update({ wakeWord: wakeWord.trim().toLowerCase() }).then(() => setDraft(null))}
+        >
+          Save
+        </button>
+      </div>
+      {!valid && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          Letters and spaces only, three characters or more.
+        </div>
+      )}
+      {advice && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          {advice}
+        </div>
+      )}
+      {broken.length > 0 && (
+        <div className="meta urgent" style={{ marginTop: 6 }}>
+          ⚠ {broken.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so this wake
+          word can never be heard. Compounds and invented names are the usual cause — separating one into
+          two ordinary words almost always fixes it.
+        </div>
+      )}
+      <div className="meta" style={{ marginTop: 6 }}>
+        Takes effect straight away — the status on General will say what it's listening for.
+      </div>
     </div>
   );
 }

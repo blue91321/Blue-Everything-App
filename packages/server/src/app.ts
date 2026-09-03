@@ -19,7 +19,9 @@ import { connectRoutes } from './routes/connect.js';
 import { deviceRoutes } from './routes/devices.js';
 import { featureRoutes } from './routes/features.js';
 import { moduleRoutes } from './routes/modules.js';
+import { gameRoutes } from './routes/games.js';
 import { restartRoutes } from './routes/restart.js';
+import { agentStartRoutes } from './routes/agent-start.js';
 import { habitRoutes } from './routes/habits.js';
 import { noteRoutes } from './routes/notes.js';
 import { nudgeRoutes } from './routes/nudges.js';
@@ -66,6 +68,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(taskRoutes);
   await app.register(nudgeRoutes);
   await app.register(attentionRoutes);
+  // Core: what counts as a game decides what may interrupt, which is the engine.
+  await app.register(gameRoutes);
+
   await app.register(deviceRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);
@@ -75,6 +80,12 @@ export async function buildApp(): Promise<FastifyInstance> {
    * the note in the route.
    */
   await app.register(restartRoutes);
+  /*
+   * Beside it, for the same reason: "the agent has stopped" is a state the app
+   * has to be able to fix from inside, and a package must not be able to be the
+   * reason it cannot.
+   */
+  await app.register(agentStartRoutes);
   // Core: the one screen that can tell you a feature is off has to work when it is.
   await app.register(featureRoutes);
   /*

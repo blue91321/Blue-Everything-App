@@ -151,6 +151,18 @@ export interface VoiceListener extends EventEmitter {
    * immediately. "Never mind" should not cost the next five minutes of voice.
    */
   cancelExchange(): void;
+  /**
+   * Start an exchange now, without the wake word.
+   *
+   * For the hotkey. It is the same thing a wake does — tone, popup, command
+   * window — reached by a route that cannot be misheard, which is the whole
+   * point: the wake word is for when your hands are busy, and this is for when
+   * they are not.
+   *
+   * Returns false when there is nothing to start: voice off, paused, or the
+   * models not loaded. The caller says so rather than the key doing nothing.
+   */
+  listenNow(): boolean;
   /** When the running listening test ends, or 0. Drives the report cadence. */
   readonly testingUntil: number;
   /** When the running enrolment ends, or 0. Also drives the report cadence. */
@@ -190,6 +202,14 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
    * it to be.
    */
   let inFollowUp = false;
+  /**
+   * True while this exchange was started by the hotkey rather than by the wake
+   * word.
+   *
+   * It exists to skip the speaker check, and that is a deliberate widening
+   * rather than an oversight — see `listenNow`.
+   */
+  let manual = false;
   /** How long the current follow-up lasts; set by `listenAgain`. */
   let followWindow = 0;
 
@@ -555,6 +575,9 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
 
     lastSpeakerScore = speakerScore;
     inFollowUp = false;
+    // A wake word carries its own evidence, so whatever the last exchange was
+    // started by does not carry over.
+    manual = false;
     phase = 'awake';
     wokeAt = now;
     command!.reset();
@@ -617,7 +640,15 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
     // Checked here as well as on the server. Locally it avoids a pointless
     // round trip for every television advert; on the server it is the check
     // that cannot be bypassed. Neither is redundant.
-    if (config.requireKnownSpeaker && config.voiceprint) {
+    /*
+     * **The hotkey is the check.** `requireKnownSpeaker` is a filter against
+     * the *room* — the television, a video, somebody else talking — and none of
+     * those can press a key on this keyboard. Holding a manually started
+     * exchange to a voiceprint would fail it every time anyway, since there is
+     * no wake word to take an embedding from, so the feature would read as
+     * broken for exactly the people who had switched the protection on.
+     */
+    if (config.requireKnownSpeaker && config.voiceprint && !manual) {
       if (score === null) {
         post({ text, speakerScore: null, accepted: false, reason: 'no-speaker-sample' });
         return;
@@ -645,6 +676,40 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void): VoiceLis
 
   emitter.start = start;
   emitter.stop = stop;
+
+  /**
+   * Begin an exchange because a key was pressed, not because a word was heard.
+   *
+   * Deliberately *not* `listenAgain`: that reopens a follow-up, which inherits
+   * the speaker score of the wake word that started the exchange and is bounded
+   * by the follow-up window. This is a fresh exchange with no wake word behind
+   * it, so it gets the ordinary command timeout and its own reason for being
+   * trusted.
+   *
+   * The replay buffer is dropped rather than fed in. There is no wake word to
+   * replay past, and whatever was said in the four seconds before you reached
+   * for the keyboard is not the command.
+   */
+  emitter.listenNow = (): boolean => {
+    if (!config?.enabled || !command || !wake) return false;
+
+    stats.wakes++;
+    lastSpeakerScore = null;
+    inFollowUp = false;
+    manual = true;
+    phase = 'awake';
+    wokeAt = Date.now();
+    command.reset();
+    wake.reset();
+    forgetReplay();
+
+    // The same pair a wake word emits, so the tone plays and the popup appears
+    // — pressing a key and getting no acknowledgement at all is the failure
+    // that makes people press it again.
+    emitter.emit('wake', { speakerScore: null });
+    emitter.emit('listening');
+    return true;
+  };
 
   emitter.listenAgain = (ms: number): void => {
     if (!config?.enabled || !command || !wake) return;

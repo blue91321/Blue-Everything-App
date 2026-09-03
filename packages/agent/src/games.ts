@@ -1,3 +1,4 @@
+import { BUILTIN_GAMES, BUILTIN_LAUNCHERS } from '@everything/shared/games';
 /**
  * Which executables mean "do not interrupt", and which only look like they do.
  *
@@ -7,38 +8,10 @@
  */
 
 /** A live match / session is in progress whenever one of these is running. */
-export const GAME_PROCESSES = new Set([
-  'league of legends.exe',
-  'valorant-win64-shipping.exe',
-  'cs2.exe',
-  'dota2.exe',
-  'deadlock.exe',
-  'overwatch.exe',
-  'r5apex.exe',
-  'destiny2.exe',
-  'fortniteclient-win64-shipping.exe',
-  'rocketleague.exe',
-  'marvel-win64-shipping.exe',
-  'helldivers2.exe',
-  'palworld-win64-shipping.exe',
-  'eldenring.exe',
-  'gta5.exe',
-  'rdr2.exe',
-]);
+export const GAME_PROCESSES = new Set(BUILTIN_GAMES);
 
 /** Storefronts and lobbies — running these is a green light, not a red one. */
-export const LAUNCHER_PROCESSES = new Set([
-  'leagueclientux.exe',
-  'leagueclient.exe',
-  'riotclientux.exe',
-  'riotclientservices.exe',
-  'steam.exe',
-  'steamwebhelper.exe',
-  'epicgameslauncher.exe',
-  'battle.net.exe',
-  'ealauncher.exe',
-  'galaxyclient.exe',
-]);
+export const LAUNCHER_PROCESSES = new Set(BUILTIN_LAUNCHERS);
 
 /**
  * Games added at runtime from config, so the built-in list above doesn't have
@@ -53,8 +26,51 @@ export function registerExtraGames(names: readonly string[]): void {
   }
 }
 
+/**
+ * Apply what the server says, on top of the shipped list.
+ *
+ * **Not a replacement**, which it was for about ten minutes and which deadlocked
+ * the whole feature: the server's table starts empty, so "watch exactly these"
+ * meant watch nothing, so nothing was ever detected to fill the table.
+ *
+ * The shipped names stay as *recognition* — how a game is known the first time
+ * it runs — and the server only overrides: `extra` adds names it has learned or
+ * you typed, `off` removes ones the screen has unticked. Nothing about the
+ * shipped list reaches a screen unless it actually ran here.
+ */
+export function applyServerGames(extra: readonly string[], off: readonly string[]): void {
+  extraGames.clear();
+  suppressed.clear();
+  for (const name of extra) {
+    const normalised = name.trim().toLowerCase();
+    if (normalised) extraGames.add(normalised);
+  }
+  for (const name of off) {
+    const normalised = name.trim().toLowerCase();
+    if (normalised) suppressed.add(normalised);
+  }
+}
+
+/** Shipped games the server's list has switched off. */
+const suppressed = new Set<string>();
+
+/**
+ * Detection as a whole.
+ *
+ * Off makes `isGame` answer false for everything, so the monitor never reports
+ * `in-game` and a match reads as ordinary use. The server also neutralises the
+ * state on its side; this stops the agent doing the work at all.
+ */
+let detecting = true;
+
+export function setGameDetection(enabled: boolean): void {
+  detecting = enabled;
+}
+
 export const isGame = (exe: string): boolean => {
+  if (!detecting) return false;
   const name = exe.toLowerCase();
+  if (suppressed.has(name)) return false;
   return GAME_PROCESSES.has(name) || extraGames.has(name);
 };
 

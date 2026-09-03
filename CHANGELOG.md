@@ -5,6 +5,93 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## Unreleased
+
+### A Games tab
+
+- **Settings → Games**: whether to notice games at all, whether one may be
+  interrupted, and the list of everything this PC has been seen running.
+- **The list fills itself in.** Rows appear because the agent saw a process run
+  or an app take the screen — the game list used to be a constant in the agent's
+  source plus an array in a config file, and a fullscreen app was written to a
+  console log and nowhere else.
+- **A fullscreen app is listed but not called a game.** Films and browsers go
+  fullscreen too, and guessing wrong means silently holding nudges back.
+- **Per-game "interrupt me during this one"**, three-state: yes, no, or follow
+  the setting above. The most restrictive running game wins — being interrupted
+  mid-match is the failure this app exists to prevent.
+- **The Voice screen has tabs.** *General* is what you open it for — on/off,
+  whether it is hearing you, the microphone, and the wake word. *Settings* holds
+  everything set once and left. *Commands* is the phrase list.
+- **The wake word appears on both General and Settings**, as one component
+  rendered twice rather than two copies that could drift.
+- **"Listen now" can work while voice is off**, as a toggle beside the shortcut.
+  It is push-to-talk: voice stays off and the wake word stays silent, and the key
+  opens the microphone for one command before closing it and giving back the
+  ~123MB of speech models.
+- **Number-pad keys work as shortcuts** — `ctrl+alt+numpad5` and the rest. They
+  follow Num Lock, and the field says so.
+- **A Record button** captures the combination you press, beside the text box for
+  the ones a browser never sees (`ctrl+w`, `alt+f4`, anything with the Windows
+  key).
+- **The syntax is written under the field**, rather than left to a placeholder.
+- **Two keyboard shortcuts for voice.** One turns it on and off — the thing a
+  microphone can never do for itself — and one starts listening without the wake
+  word. Both system-wide, so they work from inside a game; neither set by
+  default, because registering one takes that combination from every other
+  program on the PC.
+- **A shortcut another program already owns says so**, rather than silently doing
+  nothing.
+- **The away timer is on the Dashboard panel as well as the tab**, and shows for
+  people linked across two services — the clock follows whichever account knew
+  the status, not the one supplying the name.
+- **The friends list says how long somebody has been away** — `· away 25m`,
+  coarse on purpose and hidden under five minutes. Measured from when the app
+  first noticed the state, so it is a lower bound rather than a claim.
+- **A friend's status now goes off, while their name keeps.** Somebody was still
+  shown playing a match hours after the Riot client had been shut. A state
+  nothing has confirmed for three minutes decays to "cannot tell" — a hollow
+  ring, sorted last, and left out of the Dashboard panel — while the row itself
+  stays, so quitting a game still does not empty your friends list.
+- **A local client that is open but not answering says so.** Riot's launcher runs
+  while League does not, and the card read "Client running, last checked just
+  now" over exactly that.
+- **A stopped agent is started from the app.** The Voice screen said "Start it
+  with Blue Everything.cmd"; there is a **Start it** button there now. It starts
+  only the agent — the server is not restarted, because it is not the thing that
+  stopped.
+- **The Voice screen no longer names a .cmd file anywhere.** The stale-server
+  card offers the Restart button instead of printing two file names.
+- **Steam games start through Steam.** Running `Warframe.x64.exe` answers "start
+  warframe from launcher" and quits; the app now records
+  `steam://rungameid/230410` beside the path and uses it instead. Found
+  automatically from the `appmanifest` beside the game, and pasteable by hand on
+  the Games tab for anything it cannot work out.
+- **Voice can start a game or an app.** A new command kind, whose target names a
+  row on the Games list rather than a path — so what a mis-heard phrase can start
+  is bounded by what this PC has already run on its own. A path typed as a target
+  is refused outright rather than merely failing to match.
+- **Borderless games are found now.** Discovery hung off Windows' *exclusive*
+  fullscreen flag, which borderless never sets — so most of a library was
+  invisible. It uses window geometry instead (a maximised window still does not
+  count, since it stops at the work area), plus the install path.
+- **A game under Steam, Epic, Riot, GOG or Xbox is switched on for you.** Filling
+  the screen only gets something listed — films and browsers do that too — but an
+  executable living in a game library is a game whatever shape its window is.
+- **The Windows desktop is no longer listed as a game candidate.** The shell's
+  desktop window covers its whole monitor by definition, and is the foreground
+  window every time you alt-tab out of a game.
+- **No game names ship with the app.** A row means "this ran here". The built-in
+  names still exist so a game is *recognised* the first time it runs, but they
+  never create a row — a list of titles you may not have installed buries the
+  two you do. Migration `0043` removes any that were seeded.
+- **Run and Show folder** on each row, using the path the agent read from the
+  running process. The path is never taken from the caller, so this can only
+  start something this machine has already started by itself.
+- The agent takes its list from the server now, so unticking something takes
+  effect rather than waiting for a restart. It costs no queries per poll and the
+  list is fetched only when its hash moves.
+
 ## 0.3.0
 
 Packages you can install, delete and restart into — and everything optional in

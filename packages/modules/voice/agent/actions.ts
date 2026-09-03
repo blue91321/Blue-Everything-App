@@ -17,12 +17,19 @@
  *    single stray letter can never be sent,
  *  - only `http:` and `https:` URLs open, so the shell is never handed a
  *    `file:` path or a custom protocol handler,
+ *  - a `launch` runs a path the *server* resolved from the games list, which
+ *    the agent itself filled in by watching that executable run here — so what
+ *    voice can start is bounded by what this machine has already started on its
+ *    own, and the stored command holds a name rather than a path,
  *  - the speaker check, when enrolled, still gates everything, and
  *  - the vault remains entirely out of reach of voice.
  */
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
 import koffi from 'koffi';
 import { isOpenableUrl, parseHotkey, type MediaAction } from '@everything/shared';
+import { isLaunchUrl } from '@everything/shared/games';
 
 const user32 = koffi.load('user32.dll');
 
@@ -37,8 +44,13 @@ const keybd_event = user32.func('void __stdcall keybd_event(uint8_t vk, uint8_t 
 
 const KEYEVENTF_KEYUP = 0x0002;
 
-/** Virtual-key codes for everything `HOTKEY_KEYS` allows. */
-const VK: Record<string, number> = {
+/**
+ * Virtual-key codes for everything `HOTKEY_KEYS` allows.
+ *
+ * Exported because `hotkeys.ts` registers the same spellings system-wide, and a
+ * second copy of this table is one nobody would think to keep in step.
+ */
+export const VK: Record<string, number> = {
   ctrl: 0x11, control: 0x11, alt: 0x12, shift: 0x10, win: 0x5b, super: 0x5b, meta: 0x5b,
   space: 0x20, enter: 0x0d, tab: 0x09, escape: 0x1b, backspace: 0x08, delete: 0x2e,
   insert: 0x2d, home: 0x24, end: 0x23, pageup: 0x21, pagedown: 0x22,
@@ -49,6 +61,13 @@ const VK: Record<string, number> = {
 for (let i = 0; i < 26; i++) VK[String.fromCharCode(97 + i)] = 0x41 + i; // a-z
 for (let i = 0; i < 10; i++) VK[String(i)] = 0x30 + i; // 0-9
 for (let i = 1; i <= 12; i++) VK[`f${i}`] = 0x6f + i; // F1-F12
+for (let i = 0; i < 10; i++) VK[`numpad${i}`] = 0x60 + i; // VK_NUMPAD0-9
+// The operator keys, which are their own codes rather than shifted digits.
+VK.numpadmultiply = 0x6a;
+VK.numpadplus = 0x6b;
+VK.numpadminus = 0x6d;
+VK.numpaddecimal = 0x6e;
+VK.numpaddivide = 0x6f;
 
 /**
  * The system media keys.
@@ -119,4 +138,62 @@ export function pressKeys(combo: string): void {
 export function openUrl(url: string): void {
   if (!isOpenableUrl(url)) throw new ActionRefused(`refusing to open "${url}" — only http and https`);
   spawn('cmd.exe', ['/c', 'start', '', url], { windowsHide: true, stdio: 'ignore', detached: true }).unref();
+}
+
+/**
+ * Start a program that the games list already knows about.
+ *
+ * The path arrives resolved, because only the server can read the row it comes
+ * from — but this end checks it too, since these are two different claims and
+ * they are the same check only while both are right. The server's is about the
+ * list; this one is about the disk, and the disk is what is about to be handed
+ * to the shell.
+ *
+ * `cmd /c start` rather than spawning it directly, for the reason the tray
+ * menu, the restart button and the Run button all learned: the child has to
+ * outlive the agent, and `detached` alone on Windows means DETACHED_PROCESS,
+ * which leaves a program with no console host. The working directory is the
+ * game's own folder, because plenty of them look for files beside themselves.
+ */
+export function launchProgram(target: { path?: string; url?: string }, name: string): void {
+  /*
+   * A `steam://` address, when the games list has one.
+   *
+   * **This is the one place the shell is handed a protocol other than http.**
+   * `openUrl` refuses everything but http and https precisely so a registered
+   * handler is never invoked with an argument we did not write — and a Steam
+   * game genuinely cannot be started any other way, since running its
+   * executable answers "start warframe from launcher" and quits.
+   *
+   * So the exception is a *shape* rather than a scheme: `isLaunchUrl` allows
+   * `steam://rungameid/<digits>` and nothing else — no query, no fragment, no
+   * second segment. `steam://` can install, uninstall and open pages in its own
+   * browser, and the digits are what keep this to "start the game I named".
+   */
+  if (target.url) {
+    if (!isLaunchUrl(target.url)) {
+      throw new ActionRefused(`refusing to open "${target.url}" — not a game address`);
+    }
+    spawn('cmd.exe', ['/c', 'start', '', target.url], {
+      windowsHide: true,
+      stdio: 'ignore',
+      detached: true,
+    }).unref();
+    return;
+  }
+
+  const path = target.path ?? '';
+  // Not a normalisation — a refusal. A resolved path is absolute and ends in
+  // `.exe`, and anything else means something upstream is not what it claims.
+  if (!path || !path.toLowerCase().endsWith('.exe') || !path.includes(String.fromCharCode(92))) {
+    throw new ActionRefused(`refusing to start "${name}" — that is not a program path`);
+  }
+  if (!existsSync(path)) throw new ActionRefused(`${name} is not where it used to be`);
+
+  spawn('cmd.exe', ['/c', 'start', '', path], {
+    cwd: dirname(path),
+    windowsHide: true,
+    stdio: 'ignore',
+    detached: true,
+  }).unref();
 }

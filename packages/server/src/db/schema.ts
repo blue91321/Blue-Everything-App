@@ -504,6 +504,79 @@ export const settings = sqliteTable('settings', {
    */
   voiceRetryMatchesFollowUp: integer('voice_retry_matches_follow_up').notNull().default(0),
 
+  /**
+   * A key combination that switches voice on and off, from anywhere.
+   *
+   * Null is unset, which is the default: this registers a *system-wide* hotkey,
+   * so shipping one would take a combination away from every other program on
+   * the machine for a feature you had not asked for.
+   *
+   * Stored as the same `ctrl+shift+m` spelling a `hotkey` voice command uses,
+   * and validated by the same `parseHotkey` — which already requires a modifier,
+   * and matters twice as much here: a bare letter registered globally would
+   * swallow that key everywhere.
+   */
+  voiceToggleHotkey: text('voice_toggle_hotkey'),
+
+  /**
+   * A key combination that starts listening without the wake word.
+   *
+   * The wake word is for when your hands are busy; this is for when they are
+   * not, and it is strictly more reliable — nothing has to be heard correctly
+   * before it works.
+   */
+  voiceListenHotkey: text('voice_listen_hotkey'),
+
+  /**
+   * Whether that shortcut works while voice is switched *off*.
+   *
+   * Off by default, because the whole meaning of switching voice off is that
+   * the microphone is closed — a key that quietly reopens it is not something
+   * to hand somebody who has not asked for it.
+   *
+   * Switched on it is push-to-talk: voice stays off, the models stay unloaded,
+   * and the key opens the microphone for **one exchange** before closing it
+   * again. That is affordable only because the models load in about 0.2s, which
+   * is exactly the trade this project's leanness note describes — the 198MB
+   * resident cost is the price of an always-on wake word, not of listening.
+   */
+  voiceListenHotkeyWhileOff: integer('voice_listen_hotkey_while_off').notNull().default(0),
+
+  /**
+   * How often an open Dashboard refetches on its own, in seconds. 0 is off.
+   *
+   * **Off is the default, and it is not laziness.** Nothing in this app polls:
+   * the server announces changes over `/api/events` and every reader refetches
+   * the moment one lands, which is why a task ticked off on the phone appears
+   * on the PC immediately without anything running on a clock.
+   *
+   * What that cannot cover is data that changes *at somebody else's server*
+   * without anybody telling us — a friend going idle on Steam, an hour passing
+   * in the weather forecast, a timer on screen counting up. Those only move
+   * when something happens to trigger a read, so a Dashboard left open sits
+   * still. This is the switch for that, and it is opt-in because it is the one
+   * thing here that spends requests on a clock.
+   */
+  dashboardRefreshSeconds: integer('dashboard_refresh_seconds').notNull().default(0),
+
+  /**
+   * Watch for games at all.
+   *
+   * Off means the attention monitor never reports `in-game`, so a match looks
+   * like ordinary use and nudges arrive as they would at the desktop. It does
+   * not stop the *list* being kept — turning it back on should not mean
+   * rediscovering everything.
+   */
+  gameDetectionEnabled: integer('game_detection_enabled').notNull().default(1),
+  /**
+   * Whether a running game blocks nudges by default.
+   *
+   * Off is the behaviour this app was built around: `in-game` is not a moment,
+   * and only a passed deadline breaks through. A per-game `allowInterruptions`
+   * overrides it either way.
+   */
+  interruptDuringGames: integer('interrupt_during_games').notNull().default(0),
+
   /** Where the popup appears, and on which screen. Null screen = the mouse's. */
   overlayPlacement: text('overlay_placement').notNull().default('cursor'),
   overlayScreen: text('overlay_screen'),
@@ -890,6 +963,26 @@ export const friends = sqliteTable(
     detail: text('detail'),
     lastOnlineAt: integer('last_online_at'),
     /**
+     * When this account was *first seen in the state it is in now*.
+     *
+     * The column exists so the screen can say how long somebody has been away
+     * rather than only that they are — "away" and "away for three hours" are
+     * different answers to "should I bother them", and only the second one is
+     * useful.
+     *
+     * Kept across an unchanged sync and reset the moment the state differs,
+     * which is the whole trick: `replaceFriends` runs every time the list is
+     * read, so writing `now` unconditionally would peg every timer to zero
+     * forever.
+     *
+     * **Null means "we have not seen it change yet"**, and the screen shows no
+     * timer for it rather than guessing. Every value is really a lower bound —
+     * it is measured from when this app first noticed, not from when the person
+     * actually walked away — and pretending otherwise would be the confident
+     * kind of wrong this screen exists to avoid.
+     */
+    stateSince: integer('state_since'),
+    /**
      * Which real person this account belongs to, when you have said.
      *
      * Two rows sharing one of these are the same human on two services — a
@@ -1105,3 +1198,49 @@ export const schema = {
 
 /** Used by the health check to prove the database is actually reachable. */
 export const healthProbe = sql`select 1`;
+
+/**
+ * Games this machine has seen, and what to do about each.
+ *
+ * A record of what actually ran rather than a list to keep up to date: rows are
+ * created by the agent reporting what it saw, so the screen can only ever offer
+ * choices about things that genuinely happened here.
+ *
+ * The executable is the key. It is what the monitor has in hand — a window title
+ * changes with the map you are on, and a display name is something a person
+ * types afterwards.
+ */
+export const games = sqliteTable('games', {
+  /** Lowercase executable name, e.g. `cs2.exe`. */
+  exe: text('exe').primaryKey(),
+  label: text('label').notNull(),
+  /** Treat it as a game at all. Off makes it an ordinary app again. */
+  isGame: integer('is_game').notNull().default(1),
+  /**
+   * Let nudges through while it runs. **Null follows the global setting**, and
+   * the null is the design rather than laziness about a boolean: stamping every
+   * row with today's default would make changing that default later leave every
+   * game already on the list answering the old question, silently. The same
+   * three states `push_to_phone` has, for the same reason.
+   */
+  allowInterruptions: integer('allow_interruptions'),
+  /** Where to launch it, when known. */
+  launchPath: text('launch_path'),
+  /**
+   * How to *start* it, when that is not the same as running the executable.
+   *
+   * A Steam game is usually a thin binary behind a launcher: running
+   * `Warframe.x64.exe` directly answers "start warframe from launcher" and
+   * quits. `steam://rungameid/230410` is what the desktop shortcut holds and
+   * what actually works, so it wins over the path whenever it is known.
+   *
+   * Filled in by the agent, which can read `appmanifest_*.acf` beside the game
+   * — and editable by hand, since the address is sitting in the properties of a
+   * shortcut you already have.
+   */
+  launchUrl: text('launch_url'),
+  /** `builtin`, `seen`, `fullscreen` or `manual` — how it got here. */
+  source: text('source').notNull().default('seen'),
+  firstSeenAt: integer('first_seen_at').notNull(),
+  lastSeenAt: integer('last_seen_at').notNull(),
+});

@@ -264,6 +264,40 @@ is "about once a day", and a PC left alone makes no requests at all.
 The screen says so rather than letting you infer it, because somebody watching
 for a fetch at midnight should know it will not come.
 
+**Once an hour is a third window, not a third mechanism.** `STALE_AFTER` maps
+each mode to its window and `manual` to null — null rather than Infinity, since
+"only when I ask" is the *absence* of a window rather than a very long one. A PC
+nobody is looking at still makes no requests in any mode.
+
+#### The number moves without fetching again
+
+A once-a-day reading taken at eight in the morning was still showing eight in the
+morning's temperature at four in the afternoon — stale in the one way anybody
+notices, and refetching to fix it would throw away the reason the mode exists.
+
+But the reading already contains the answer: `hours` is the next twenty-four and
+one of them is now. `nowFromReading()` reads it forward, at no request, matching
+the hour by string for the reason `sliceHours` does — the timestamps are local to
+the place with no offset, so arithmetic against `Date.now()` is right only while
+the server and the place agree. Verified on this install: a reading fetched 100
+minutes earlier said 76°, and the screen said 71°.
+
+**It is a forecast, not a measurement, and it says so.** The hour the fetch
+happened in is the real observation and keeps its own values — it is a
+measurement, and it carries the humidity and wind the hourly rows do not. Every
+hour after it is what the service expected, and the screen labels it rather than
+presenting an expectation as a reading.
+
+**"Feels like" had to move with it, and that took a new field.** The first
+version moved the temperature and left the fetched comfort beside it, so the line
+read *"71°, feels like 76°"* — contradicting itself. `apparent_temperature` is
+now requested hourly and stored per hour; a reading written before that field
+existed has none, so the clause is **omitted rather than guessed**.
+
+Resolved server-side, like the gauge level: in the browser it would depend on the
+*device's* clock, and a phone a few minutes out would disagree with the PC about
+which hour it is.
+
 **Manual mode never does this.** `isDue` returns false outright — a setting
 called "only when I ask" has to mean it or it is not worth having, the same rule
 `quietHoursEnabled` follows. `weather-check` asserts both tempting cases: never
@@ -1285,6 +1319,30 @@ What is genuinely lost is the Action Centre entry: a nudge you miss is now
 missed rather than waiting in a list. The queue still holds it, and an
 undelivered nudge is on the Dashboard either way.
 
+**The popup wears the app's accent, and did not.** `COLOR.accent` was
+`#ffb454` hard-coded — amber, the default — so every popup title came up orange
+whatever the Settings screen said, and the one window that draws above a
+fullscreen game was the one place the app did not look like itself.
+
+The colour rides the **attention heartbeat** rather than the voice config, for
+the reason `soundEnabled` does: the popup is core, an install with the voice
+package deleted still raises nudges through it, and that is the only request the
+agent always makes. Applied every heartbeat, so picking a colour reaches the
+overlay without restarting the agent.
+
+The **dark** value always, since the overlay has one background and it is the
+dark one — the light-theme variants are the pair darkened to carry white text.
+
+`accentFromHex` is split out from `setAccent` purely so it can be asserted:
+**GDI wants `0x00BBGGRR`**, so a byte-order slip does not throw, it draws blue as
+orange — which is the bug being fixed, and would be a poor thing to reintroduce
+inside the fix. `popup-check` covers all eight accents, a missing `#`, capitals,
+and that no two collide.
+
+`overlay-try` reads the accent from the server too. Without that the diagnostic
+would be the last place still showing amber, and would "prove" a bug that had
+been fixed.
+
 **The popup reads as a conversation.** Within one exchange each turn is appended
 rather than replacing the last, and the window grows — measured at 76px for a
 bare "Listening…" up to 164px for a wake, a command, a reply and a follow-up.
@@ -1666,6 +1724,92 @@ the bearer token in a query string where it lands in history and proxy logs.
 `live.ts` holds one shared connection for the whole page, reconnects with
 backoff, and refetches on `visibilitychange` — iOS suspends a backgrounded PWA
 and kills the stream with it.
+
+### Time passing is something changing
+
+"Only when something changes" was the default and was not quite true: *time* was
+changing and the screen was not showing it. A friend read "away 25m" for an hour,
+a gauge said "empty in 4 hours" all evening, and the weather said "1 hour ago"
+long after it was three. Every one of those is arithmetic on data already in
+hand, so the fix is not a refetch — the screen only needs telling that the clock
+moved.
+
+`clock.ts` is **one interval with a subscriber list**, started when the first
+component asks and stopped when the last goes, so a screen with no durations
+pays nothing. Ten seconds, which is finer than anything displayed: nothing shows
+seconds, so a number is never more than ten seconds late, and a minute-long tick
+would leave "away 4m" standing for up to a minute after it became five — the
+sort of small wrongness that is hard to notice and impossible to trust.
+
+**It makes no requests, and that is the distinction the two settings draw.** The
+refresh interval decides how often to ask the *server* anything; this decides how
+often what is already on screen is redrawn. Leaving refresh off and still having
+the timers tick is what "only when something changes" should have meant.
+
+#### Ageing a value the server resolved
+
+A gauge is the harder half, because its level and both countdowns are computed
+server-side and are correct only as of the response. `useAsync` therefore reports
+`receivedAt`, and the row ages the numbers forward by `Date.now() - receivedAt`.
+
+**That is a duration, not a comparison, and the difference is what keeps it
+compatible with the rule that the level is resolved on the server.** The
+objection there was that a phone a few minutes out would draw a different gauge
+from the PC — true, because comparing a server timestamp against a local clock
+inherits the offset. A stopwatch started when the bytes arrived is the same
+length on both devices however wrong either clock is, and it re-syncs to the
+server's answer on the next fetch.
+
+Verified with the refresh setting **off**: a gauge went 38% → 37%, away timers
+went 23m → 28m and 4h 4m → 4h 9m, and the only requests in that window were the
+handful the server announced.
+
+**One thing still needs a fetch**, and is worth knowing rather than discovering:
+the weather's *temperature* is picked from the stored hours server-side, so
+crossing an hour boundary changes it only on the next read. The age beside it
+ticks; the number waits. Doing that in the browser would mean a second copy of
+the timezone matching `sliceHours` documents at length.
+
+### Refreshing the Dashboard on a clock, if you ask
+
+**Nothing here polls, and that is worth stating before the exception.** A change
+made anywhere announces itself over `/api/events` and every reader refetches
+when one lands — which is why a habit ticked off on the phone appears on the PC
+with no timer involved. There is no interval anywhere in the PWA.
+
+What that cannot cover is data moving at *somebody else's* server with nobody to
+tell us: a friend going idle on Steam, an hour passing inside a stored forecast,
+a duration on screen counting up. Those advance only when something happens to
+trigger a read, so a Dashboard left open sits still — which is what prompted
+this.
+
+`settings.dashboard_refresh_seconds`, **0 and off by default**, offered as five
+named options rather than a slider: a slider is right for a number on a
+continuum and wrong for a handful of alternatives where every position between
+them is a worse version of a neighbour.
+
+**It reuses `notify('all')`, which is the whole design.** That is exactly what
+`visibilitychange` already does when the app returns from being backgrounded —
+the same claim, "anything could have changed", through the same path. Nothing
+new subscribes, and no reader learns a timer exists.
+
+**Only while the tab is visible.** A background tab that kept refetching would
+spend requests on a screen nobody is looking at, and coming back to the app
+refetches anyway through the visibility handler.
+
+**One tick is one request per endpoint, not per reader**, because `api.ts`
+coalesces concurrent GETs of the same path. Measured in the browser at a 30s
+setting: two ticks exactly thirty seconds apart, seven requests each, against a
+Dashboard whose readers number rather more than seven.
+
+Bounded 0–3600 and integer-only. Below ten seconds this stops being a refresh
+and becomes the polling the attention loop was tuned to avoid; above an hour it
+is off with extra steps.
+
+Verifying the visible branch needed the pane's `visibilityState` overridden,
+because a browser pane that is not compositing reports `hidden` forever — the
+same limitation that makes `requestAnimationFrame` and `ResizeObserver` measure
+nothing there.
 
 ### The one endpoint that matters
 
@@ -2292,6 +2436,35 @@ before trusting any change to the phrase logic.
 microphone open, so the switch that turns it off must never be something you
 have to go hunting through another screen for.
 
+### Three tabs, split by how often you touch them
+
+This screen grew from a switch and a text box into appearance, reminders,
+shortcuts, enrolment, the vocabulary and every phrase you can say — one long
+scroll in which whatever you came to change was always in the middle. It is
+*General*, *Settings* and *Commands* now, the same idiom the Settings screen
+uses, with the open tab in `useState` like every other bit of navigation here.
+
+**The split is by how often you touch something, not by subject.** General is
+what you actually open this screen for — is it on, is it hearing me, which
+microphone, and the wake word. Everything set once and left is behind Settings.
+The phrase list is long enough to deserve its own tab, and the two questions
+"why is it not hearing me" and "what can I say" were never the same visit.
+
+**The wake word is on two tabs, and it is one component rendered twice.** It
+earns the duplication by being the setting people come back to: everything else
+here is set once, while a wake word that keeps mishearing gets tried three or
+four times in an evening — and somebody on Settings changing the decoys should
+not have to switch tabs to change the word those decoys are about. What must not
+happen is the two drifting, so there is one `WakeWordCard`; the version that
+warns about a word the model cannot pronounce is the whole reason the box is
+worth looking at, and a copy-pasted second one would be the one that quietly
+lost it.
+
+**The draft lives in the card, so switching tabs mid-edit discards it.** That is
+the right loss rather than a bug: the two boxes are the same setting, and a
+half-typed value appearing somewhere you did not type it is worse than starting
+again.
+
 ### The screen must not be write-only
 
 A switch reading "on" while the agent is stopped, the models are missing, or the
@@ -2325,6 +2498,206 @@ the new device has had a moment to open.
 Status lives in memory on the server, like `currentWindowsDnd`. "Is a microphone
 open right now" cannot be answered from a log, and writing a row every ten
 seconds for it would be the polling this app avoids everywhere else.
+
+### Starting it, rather than being told to go and start it
+
+The status card answered a stopped agent with *"Nothing is listening. Start it
+with Blue Everything.cmd."* — accurate, and exactly the friction the three
+double-clickable files in the repo root exist to remove. An app that can tell
+you something is not running can start it, so there is a **Start it** button
+where that sentence was.
+
+**It is not the Restart button.** Restarting stops the server too, and the
+server is demonstrably fine — you are reading its response. Taking it down to
+fix the other half would drop every open browser onto the offline screen to
+solve a problem none of them had. `POST /api/agent/start` starts only the agent.
+
+**And it hands off to `start.ps1 -AgentOnly` rather than spawning node itself.**
+That script already owns the entry path, the working directory that lets
+`--import tsx` resolve, and the log files; a second recipe here would be a
+second thing to keep true. The switch exists because the ordinary path
+**short-circuits on the server's port already being open** — so "the agent has
+stopped while the server is fine" is precisely the case `start.ps1` could not
+serve, and the button would have done nothing at all.
+
+Registered in core beside `restartRoutes` and before anything optional, for the
+same reason: "the agent has stopped" is a state the app must be able to fix from
+inside, and a package must not be able to be the reason it cannot.
+
+The button asks whether it *can* before offering, like the Restart button — over
+Tailscale from the phone it genuinely cannot, since the agent runs on the PC. The
+file name is still named in that fallback, because a machine with no
+`start.ps1` has to be told something.
+
+**The switch above it is the whole system, and now says so.** `voiceEnabled` is
+a server-side setting, so turning it off from the phone closes the microphone on
+the PC — but the card underneath reports a *second* thing, whether the agent is
+running, and without a line saying which is which the two read as one confusing
+switch.
+
+**Which state the screen shows lags by up to `AGENT_STALE_MS` (45s).** That is
+deliberate and not a bug to tighten: the agent long-polls, so an idle report
+arrives about every twenty seconds, and a window much under a minute would
+flicker the screen into "the agent is down" on an ordinary slow tick.
+
+### Two keys, for what the wake word cannot do
+
+**Voice → Keyboard shortcuts.** Both unset by default, both system-wide, so they
+work from inside a game.
+
+- **Turn voice on and off.** This is the one that had no alternative: a
+  microphone that is off cannot hear you ask for it to be switched on, so before
+  this the only ways back were the tray, a browser tab, or the phone.
+- **Listen now, without the wake word.** Same tone, same popup, same command
+  window — reached by a route that cannot be misheard. Strictly more reliable
+  than the wake word, since nothing has to be recognised before it works.
+
+**Neither ships set.** Registering one takes that combination away from every
+other program on the machine, which is not a thing to do to somebody who has not
+asked for it.
+
+**It lives in the voice package, and works while voice is off.** Those are only
+compatible because switching voice off does not *unload* the module — it disposes
+the models and closes the microphone, while the agent half keeps polling, which
+is how it learns to turn back on. Deleting the package takes the hotkeys with it,
+which is right. It also keeps the virtual-key table in one place: `actions.ts`
+already owns one for sending keystrokes.
+
+**`RegisterHotKey` is given a window, not null.** With a window, `WM_HOTKEY` is
+posted to it and `DispatchMessageW` routes it to a window procedure like any
+other message. Registered against a null window the message lands in the bare
+*thread* queue, where `DispatchMessageW` has nowhere to send it — and with three
+pumps in this process, whichever peeked first would silently eat it.
+
+**`MOD_NOREPEAT` is not optional.** Without it, holding the combination repeats
+at the keyboard's autorepeat rate, which for "toggle voice" means flipping it
+thirty times a second.
+
+**A combination another program owns is reported, not logged.** `RegisterHotKey`
+simply returns false, and a hotkey that does nothing is indistinguishable from
+one that was never saved. Windows will not say *which* program has it, so the
+message says what to do instead of pretending to diagnose it. Verified by asking
+for `ctrl+alt+delete`, which Windows reserves.
+
+**The server owns the flip.** `POST /api/voice/toggle` reads and writes in one
+place, so two presses in quick succession cannot both read the same "before" and
+have the second undo nothing. Local-only, like every other write that decides how
+this machine behaves.
+
+#### The number pad, and a Record button
+
+`numpad0`–`numpad9` and the five operator keys are in `HOTKEY_KEYS`. They are the
+natural home for a global hotkey — far from anything a game binds, and spare on
+most keyboards — and they are spelled `numpad*` rather than reusing the digit
+names because they are genuinely different virtual-key codes: registering `5`
+does nothing for the pad.
+
+Two things about them are worth stating on screen rather than leaving to be
+found:
+
+- **Numpad Enter is deliberately absent.** Windows gives it the same virtual-key
+  code as the main Enter and separates them only by an extended flag
+  `RegisterHotKey` cannot see, so offering it would be offering a key that
+  silently binds a different one.
+- **They follow Num Lock.** With it off the keyboard sends navigation codes
+  instead, so the hotkey simply stops answering — and nothing else on screen
+  would explain why. The field says so whenever the value contains `numpad`.
+
+**`isGlobalHotkey` is stricter than `parseHotkey`, and the difference is real.**
+`parseHotkey` refuses a bare *letter*, because sending one into whatever window
+has focus is too easy to do by accident — but it allows a bare `f5`, which is
+fine to *send* and disastrous to *register*: it would take F5 from every program
+on the machine. Registering therefore requires a modifier outright. The screen
+enforced this all along and the schema did not, which is the sort of gap that
+holds until somebody uses the API directly.
+
+**There is a Record button, and it reverses an earlier decision.** This shipped
+as a text box only, on the reasoning that a capture box cannot see the
+combinations Windows and the browser take first — `ctrl+w` closes the tab,
+`alt+f4` the window, and neither reaches a `keydown` handler. That reasoning is
+still true; it just is not a reason to withhold the button. **Both exist**: the
+recorder for the ordinary case, the box for what it cannot capture, and a line
+while recording saying which is which.
+
+It reads `event.code`, the physical key, rather than `event.key`, which is what
+that key produces. They differ exactly where it matters: `key` for the number pad
+is `"5"` whether you pressed the digit row or the pad, and varies by layout;
+`code` says `Numpad5` on every keyboard.
+
+Three behaviours, all verified in the browser: a modifier on its own keeps
+waiting rather than failing, since it is somebody still reaching for the second
+key; a key with no modifier is ignored, matching what can actually be
+registered; and Escape cancels.
+
+#### Borrowing the microphone while voice is off
+
+**Voice → "Let it work while voice is off"**, under the listen shortcut, off by
+default. Switched on, that key is push-to-talk: voice stays off, the wake word
+stays silent, and the key opens the microphone for **one exchange** before
+closing it again. The setting is never changed — pressing it does not turn voice
+on.
+
+It is affordable only because of a number this project already measured. The
+198MB resident cost is the price of an *always-on wake word*, not of listening,
+and the models load in about 0.2s — which the leanness note names as exactly the
+trade push-to-talk would make. Verified on this machine: **91MB with voice off,
+222MB within a second of the press, back to 100MB when the window closed**, with
+`voiceEnabled` still 0 throughout.
+
+**A pause is borrowed through as well.** The agent cannot tell "off" from
+"paused" — the server folds both into `enabled: false` — but the answer would be
+the same either way: a pause silences the *wake word*, which is something the
+room can trigger, and pressing a key on this keyboard is not. The pause is not
+cleared.
+
+**The window is a timer, not an event.** An exchange can end four ways — a
+command lands, nothing usable is said, a retry reopens it, a follow-up reopens it
+again — and hooking each would be four places that must all remember to close the
+microphone. One bound that outlasts every path is a single thing to get right,
+and being generous costs a few seconds of microphone rather than a leak.
+
+#### Three ways it did nothing at all
+
+Worth keeping, because each was silent and each looked identical from outside.
+
+- **`EMPTY_VOICE_CONFIG` dropped the flag.** The agent rebuilds its config from
+  that shell whenever voice is off — and this setting is *only ever read* in that
+  state, so it was discarded in exactly the case it exists for. The hotkeys
+  themselves had already been lost this way once.
+- **`configure()` loads nothing.** It arms the listener's poll, and the models
+  are pulled in on the first tick — so `listenNow()` on the next line found no
+  recognisers and refused, every time. It is retried for up to
+  `LISTEN_READY_MS` now rather than assumed.
+- **The handler is `async`, so its rejection escaped the pump's `try/catch`**
+  and landed as an unhandled rejection nobody prints. For the most consequential
+  key on the machine, that is the worst available failure: indistinguishable from
+  the key never being registered. It logs now, and so does every press.
+
+All three were found the same way — by watching the agent's resident memory not
+move — because none of them produced a message anywhere.
+
+#### The hotkey outranks the speaker check
+
+`requireKnownSpeaker` does not apply to a manually started exchange, and that is
+a deliberate widening. It is a filter against the *room* — the television, a
+video, somebody else talking — and none of those can press a key on this
+keyboard. Holding it to a voiceprint would fail every time regardless, since
+there is no wake word to take an embedding from, so the feature would read as
+broken for exactly the people who had switched the protection on. The Voice
+screen says so where the setting is, rather than leaving it to be discovered.
+
+#### It worked exactly once
+
+The first version toggled voice off and then the key stopped working. Switching
+voice off rebuilds the agent's config from `EMPTY_VOICE_CONFIG` — which is how it
+forgets everything about a feature that is not running, and it dropped the
+hotkeys with everything else. So the press that turned voice off also
+unregistered the key that turns it back on, one poll later.
+
+The code carried a comment saying the registration is deliberately *not* gated on
+`enabled`. It was not; the config it read from had simply been emptied. **A
+guard is only as good as the data still being there to guard**, and that is the
+kind of gap only pressing the thing twice will find.
 
 ### Testing it
 
@@ -2741,6 +3114,7 @@ sources of truth would only ever disagree.
 | `url` | opens it in the default browser | http(s) address |
 | `hotkey` | presses keys into the focused window | e.g. `ctrl+shift+m` |
 | `media` | play/pause, skip, back, stop, volume, mute | one of `mediaActions` |
+| `launch` | starts a game or app | an **exe on the games list** |
 | `pause` | closes the microphone, for N minutes or until switched back on | — |
 | `cancel` | drops the sentence in progress; the microphone stays on | — |
 
@@ -2749,6 +3123,44 @@ the server, which owns the database. Anything touching *this machine* — a
 browser, a keystroke — comes back as an instruction for the agent to carry out,
 because the server is meant to be movable and has no business assuming it runs
 on your desk.
+
+#### Starting a game by voice, without a spoken "run anything"
+
+**The target names a row on the games list, and the path is read from that
+row.** That is the whole safety property of the kind, and it is the same rule
+`POST /api/games/:exe/launch` follows: the path was filled in by the agent
+watching that executable actually run here, so what a mis-heard phrase can start
+is bounded by what this machine has already started on its own. A target that
+could hold a path would be a spoken "run anything", which is a categorically
+larger thing than "open the game I named".
+
+So `isLaunchTarget` **refuses a separator rather than normalising it**. Accepting
+`C:\Windows\System32\cmd.exe` and then merely failing to find a row for it
+would work by accident, and what has to hold is the rule — that is what somebody
+editing this next will read.
+
+**Both ends check, and they are checking different things.** The server refuses a
+target that is not a bare name and resolves the row; the agent refuses a path
+that is not an existing `.exe` before handing it to the shell. One is about the
+list and the other is about the disk, and they are the same check only while both
+are right — the arrangement the zip reader's path guard already uses.
+
+**Three failures are told apart, because they have three different fixes.** Not
+on the list, on the list with no path known yet, and gone from disk. "It didn't
+work" is not a fix; *"run it once and I will know where it is"* is — and the
+editor says that at the moment you pick such a row rather than waiting for the
+command to fail, since a row with no path saves perfectly and then answers with
+what reads as the command being broken.
+
+**The picker offers nothing when the list is empty**, and says why. An empty
+dropdown is indistinguishable from a broken screen, and the fix — go and run the
+thing once — is not guessable from one.
+
+Nothing had to be added to the grammar: phrase words are expanded by
+`vocabularyFor` whatever kind they belong to, so "start warframe" contributed
+`start`, `warframe`, their generated forms and the run-together `startwarframe`
+on its own. A game name the model cannot pronounce gets the same warning every
+other phrase word already gets.
 
 **Media commands are gated on something actually playing.** They go out as the
 system media keys rather than a `hotkey`, so they reach whatever owns playback
@@ -4072,6 +4484,156 @@ quietly absorbing whatever was linked to that id next. `unlinkPerson` remains
 on the server for dissolving a whole group in one call; nothing on screen needs
 it now that the panel lists the accounts.
 
+### How long they have been away
+
+"Away" and "away for three hours" are different answers to whether it is worth
+messaging somebody, and only the second is useful. `friends.state_since` records
+when an account was first seen in the state it is in now, and the row says
+`· away 25m`.
+
+**The whole difficulty is one line of the upsert.** `replaceFriends` runs on
+every read of the friends list, so writing `now` unconditionally would peg every
+timer to zero several times a minute and the screen would report everyone as
+having just stepped away. The column takes `now` only when the state actually
+differs — a `CASE` in `onConflictDoUpdate`, so a rename or a changed game leaves
+it alone.
+
+**A row with no clock gets one on the next sync**, rather than waiting for a
+state change that may never come. Everything predating the column starts null,
+and on the real install 120 rows sat that way — visible as friends in the away
+section with nothing beside them while their neighbours had numbers, which reads
+as broken rather than as restraint. The `CASE` therefore fires on a differing
+state *or* a null one, which makes the rule one sentence for every row: this is
+when we first saw them in the state they are in now.
+
+**That means a backfilled value understates**, and the row says so on hover
+rather than presenting itself as a fact about the person — `AWAY_TITLE` lives
+beside the formatter so the tab and the panel cannot word it differently. It
+becomes exact at their next transition.
+
+**Only the first minute is silent, and it was five.** Five was reasoning about
+the wrong thing — that a fresh "away 1m" is noise — but on a real list it left
+rows blank for five minutes among neighbours that had numbers. A small fact beats
+a puzzle.
+
+**Null still draws nothing**, which is now only ever the case for a provider that
+has never reported presence at all. Every value is a lower
+bound anyway: it is measured from when this app noticed, not from when the person
+walked away. Guessing a duration for a row we have never watched change would be
+the confident kind of wrong this screen exists to avoid.
+
+**Only the two away states get one.** `online` for twenty minutes is a fact about
+nothing, `offline` already has the better line in "last on Tuesday", and
+`unknown` is specifically the state meaning nobody can vouch for anything.
+Anything under five minutes shows nothing either — that is "they just stepped
+away", and a number there would tick distractingly on a list that reloads every
+minute.
+
+**`presence.ts` now has no imports at all, and that is load-bearing twice.** It
+was already split out of `Friends.tsx` so the Dashboard panel would not drag in
+the 9.5KB Connections chunk to render six words. Having nothing to resolve is
+what additionally lets `smoke` import it and check the formatting — `@app/api` is
+a Vite alias, so one type import from it put the file beyond the server's
+typechecker the moment the suite reached for it.
+
+**It is on the Dashboard panel too**, where it matters more rather than less:
+that column is the glance that decides whether to bother somebody, and "away"
+alone does not answer it.
+
+**And it survives being two accounts.** A merged row wears one account's name
+and another's status — Discord leads for identity because that is where somebody
+chose a name for themselves, and Discord's REST API carries no presence at all,
+so the status always comes from elsewhere. The clock follows the *status*, not
+the name, or every linked person would silently lose their timer. Asserted end to
+end: a Steam↔Discord pair renders the Discord name, the Steam state, and the
+Steam clock.
+
+Two things only real data showed:
+
+- **"away · away 2h 15m".** The duration was appended after the status word. It
+  joins the word when there is nothing else on the line, and follows a game when
+  there is — which is what `in-game-away` is for: "Warframe · away 2h 15m".
+- **A row ending in a bare `·`.** The merged-handles list renders after a
+  separator, and the filter that drops the name already shown can empty it —
+  which it does whenever somebody uses the same handle on both services.
+
+#### The test that deleted a friends list
+
+Written down because it cost real data. The first attempt at verifying this drove
+`POST /api/integrations/presence` against the **running app** with one fabricated
+friend — and `replaceFriends` prunes anything absent from a snapshot, so that one
+row replaced a 163-strong Riot list and every Riot↔Discord link went with it.
+The same failure this document already describes one section below, reproduced by
+hand.
+
+It was invisible for a second reason worth knowing: `riot` was in
+`hidden_providers`, so the probe never appeared in the response either, and
+"nothing showed up" read as the write having failed rather than having worked.
+
+The suite drives `replaceFriends` directly against smoke's own throwaway
+database now, and the section ends by asserting that an empty snapshot prunes —
+the very behaviour that makes the endpoint dangerous, stated where somebody
+reaching for it will read it.
+
+### A name keeps; a status goes off
+
+Reported from real use: the Riot client had been shut for hours and somebody was
+still on screen playing a match, long after they had gone to bed.
+
+The rows are kept deliberately when a client closes — that is what stops
+quitting League emptying your friends list, and the section below is about how
+much it cost to get that right. But **keeping the names and keeping the claim
+about what those people are doing were one decision, and they are two.** A name
+a few hours old is a list. A status a few hours old is a lie with a coloured dot
+next to it, which is the failure this whole screen exists to avoid.
+
+So `trustedPresence()` decays a state to `unknown` once nothing has confirmed it
+for `PRESENCE_TRUSTED_MS`. `unknown` is exactly right and already existed: a
+hollow ring rather than a filled dot, sorted last, left out of the Dashboard
+panel, and specifically the value that means *nobody can vouch for this*.
+
+**It is applied on read, after the refresh**, which is what lets one rule cover
+every provider. A web service that answered has a fresh `seenAt`; one that
+failed does not; a local client that is shut never had the chance. Three causes,
+one observable fact — when did anybody last confirm this — and the merge already
+excludes `unknown` when choosing which account speaks, so a decayed Riot row
+silently defers to a live Steam one for the same person.
+
+**Every state decays, `offline` included.** The tempting version spares it as
+"the quiet answer", and it is wrong twice: `unknown` exists in the first place
+because *"grey would say offline — the specific thing that state exists to avoid
+saying"*, and a rule that decays only some states needs a list of which, which is
+what silently goes wrong the day a state is added to it. `STATUS_ORDER` missing
+`in-game-away` is the same failure one level up.
+
+**Three minutes, and the number has to clear every legitimate gap.** The longest
+is a web provider's 60s `PRESENCE_STALE_MS` refresh window plus the fetch; the
+agent's Riot poll is 30s, so this is six missed tries. Much tighter and it flaps
+on one slow request, which is worse than the bug — a dot that keeps changing
+teaches you to ignore it. It is deliberately *shorter* than
+`LOCAL_PRESENCE_STALE_MS`, so "the agent has stopped" is still reported as its
+own thing rather than being swallowed.
+
+**The count is reported per service, not merely applied**, for the reason
+`hiddenCount` is: 163 hollow rings with nothing saying why reads as the app
+having broken rather than as a client that is shut.
+
+#### The fourth state of a local provider, which was missing
+
+Finding this turned up the thing that made it confusing. The status card had
+three rungs — agent quiet, client running, client closed — and Riot has a
+fourth: **the launcher runs while the game does not.** `riotclientservices.exe`
+holds the lockfile open, so `clientRunning` is true and every request for the
+friends list answers `404 /lol-chat/v1/friends`.
+
+`recordLocalPresence` handled that correctly and had since the `error` guard
+went in — it declines to write an errored report through. The *card* did not:
+it read the boolean, skipped the error beside it, and said **"Client running,
+last checked just now"**, which is the most reassuring of the four messages
+printed over the one state that was quietly serving hours-old statuses.
+Measured on this machine at the moment of the report: `clientRunning: true`,
+`error: "League client returned 404"`, 163 rows unconfirmed.
+
 ### An errored report must not be written through as an empty list
 
 `recordLocalPresence` refused to write when `clientRunning` was false, and that
@@ -4276,6 +4838,180 @@ last fifty every single time, and a Takeout file is the whole history every time
 
 Videos already known from a playlist sync keep the details they have, so an
 import can never downgrade a categorised track to a bare title.
+
+### Games: what counts as one, and what may interrupt it
+
+**Settings → Games.** The nudge engine's most consequential rule lives here —
+`in-game` has never been a moment, which is the whole reason this is a nudge
+engine rather than a to-do list — and until now that rule had no screen at all.
+The game list was a constant in `packages/agent/src/games.ts` plus an
+`extraGames` array in a config file on the PC, and an app that grabbed exclusive
+fullscreen was written to the agent's console and nowhere else.
+
+**No game names ship onto the list.** A row means "this ran here" — anything
+else is a catalogue of titles you may not have installed, which buries the two
+you do. The built-in names still exist, in `shared`, purely so a game is
+*recognised* the first time it runs; they never create a row.
+
+That distinction is what the deadlock below is really about, and it is worth
+stating as a rule: **the agent recognises, the server records.**
+
+#### How a game is found, and why the first answer was wrong
+
+Discovery originally hung off `RUNNING_D3D_FULL_SCREEN`, which is Windows'
+*exclusive* fullscreen flag. Most people play **borderless**, which never sets
+it — so an entire library was invisible and the only thing ever discovered was
+the rare game that grabs the display outright. Reported from real use, and the
+sort of bug that looks like nothing happening.
+
+Two signals replaced it, and they answer different halves of the question:
+
+- **The window covers its monitor** — `isFullScreen`, which is geometry rather
+  than a Windows flag, so borderless counts and exclusive fullscreen still does.
+  A *maximised* window does not, because it stops at the work area, which makes
+  this narrower than "a big window". Held for two consecutive snapshots, so a
+  transition or an installer flashing up does not get listed.
+- **The executable lives in a game library** — `looksLikeGameInstall`, matching
+  `steamapps/common`, `Epic Games`, `Riot Games`, `GOG`, `Xbox Games` and the
+  rest. This is by far the stronger signal, because it is true whatever shape
+  the window is.
+
+**Covering the screen gets it listed; the path is what switches it on.** A
+browser at F11 and a film both fill a monitor, so that alone can only ever make
+a candidate — while an executable under `steamapps/common` is a game whatever it
+looks like, and making somebody tick that would be busywork. Verified live: a
+borderless Warframe was found, switched on from its Steam path, and its location
+recorded, on a machine where the old check had found nothing at all.
+
+The markers are deliberately unambiguous. `Battle.net/` is the launcher's own
+folder rather than where Blizzard games install, and `WindowsApps/` holds every
+Store app including Notepad — **a marker that catches non-games is worse than
+one that misses games**, because a wrongly detected game silently holds your
+reminders back and nobody would think to blame this list for it.
+
+**And the desktop is a window covering its whole monitor.** `explorer.exe` was
+listed as having filled the screen within a day of this shipping, which it had:
+the shell becomes the foreground window every time you alt-tab out of a game, so
+the geometry check was right and the conclusion was absurd. `looksLikeSystemApp`
+is the counterpart to the library markers and stops something being a *candidate*
+at all — a stronger claim, so the folders in it have to be unambiguous.
+
+The omission that matters there is `WindowsApps/`: every Game Pass title installs
+beside Notepad, so excluding it would hide a library to be rid of a text editor.
+It is checked in the **agent and the server both** — one stops the shell being
+reported, the other stops an older agent putting it back — which are the same
+check only while both are right, the arrangement the zip reader's path guard
+already uses.
+
+**"Interrupt me during this one" is three-state** — yes, no, and follow the
+setting above. The null is the design, not laziness about a boolean: stamping
+every row with today's default would look identical on the day it was made and
+diverge silently forever after. `push_to_phone` made the same choice for the
+same reason, and `gamesAllowInterruption` in `shared` is the one place the three
+states become two.
+
+**The most restrictive running game wins.** Being interrupted mid-match is the
+exact failure this app exists to prevent, and the cost is asymmetric: a nudge
+held back arrives a few minutes later, one let through lands in a fight.
+
+**Resolved by rewriting the state, not by teaching `momentQuality` about games.**
+That function is the policy table this project keeps small and testable, and
+"which executables count" is not a fact about attention states. `resolveMoment`
+turns `in-game` into `free` when the settings allow it and hands that to the
+same table.
+
+#### The deadlock, and the fix that was worse than the bug
+
+The agent takes its list from the server so the screen can edit it, and it has
+to *suppress* anything the screen unticks — otherwise unticking would do nothing
+until a restart.
+
+Written as "watch exactly these", that produced: empty table → agent watching
+nothing → nothing detected → table stays empty. It reported itself as
+`watching 0 games`.
+
+**The first fix was to seed the table from the built-in list, and it was wrong.**
+It cured the deadlock and filled a fresh install's screen with sixteen titles the
+machine had never run — a list of games you do not own, which is exactly what
+this screen should not be.
+
+So the server **overrides** rather than replaces: `exes` adds names the agent
+would not know, `off` removes ones the screen has unticked, and the shipped list
+stays where it is as recognition. An empty table now means "nothing has run yet",
+which is true, rather than "watch nothing", which was fatal.
+
+Both halves of the version hash matter for the same reason: unticking a *shipped*
+game removes nothing from `exes`, so hashing only the watch list would leave the
+change never reaching the agent.
+
+
+#### Some games cannot be started by their own executable
+
+Reported from real use: `"start warframe"` ran `Warframe.x64.exe` and got
+**"start warframe from launcher"** back. That is not a Warframe quirk — plenty
+of Steam games are a thin binary behind a launcher that expects Steam to have
+set the environment up first, so the executable is the wrong thing to run even
+though it is exactly what was running when the app saw it.
+
+So a row carries a `launch_url` beside its path, and **the address wins whenever
+there is one**. `steam://rungameid/230410` is what the desktop shortcut holds,
+and it is what works.
+
+**The app id is not in the path, but it is next to the game.** Steam writes an
+`appmanifest_<appid>.acf` per install into the library's `steamapps` folder, and
+each one records its `installdir` — which *is* the folder name in the path. So
+`steamapps/common/Warframe/…` finds the manifest whose `installdir` is
+`Warframe`, and that manifest carries `230410`. The `.acf` is read with a regex
+rather than parsed, the same call `zip.ts` makes about its own format: two quoted
+strings on a line is all that is needed.
+
+**The agent resolves it, and only for games it sees running** — the same rule the
+path already follows, and the same division voice and the Riot reader draw. A row
+that predates this gets its address the next time the game runs, or you paste one
+in: the Games tab has a field for it, because the address is already sitting in
+the properties of a shortcut you have.
+
+**This is the one place the shell is handed a protocol other than http, and the
+guard is a shape rather than a scheme.** Voice commands may open `http:` and
+`https:` only, precisely so a registered handler is never invoked with an
+argument we did not write. `isLaunchUrl` allows `steam://rungameid/<digits>` and
+nothing else — no query, no fragment, no second segment — because `steam://` can
+also install, uninstall and open pages in its own browser. Checked when the value
+is stored, and again by the launcher before the shell sees it: those are two
+different claims, and they agree only while both are right.
+
+#### Run it, or see where it lives
+
+Each row carries the executable's full path, read from the PID the monitor is
+already tracking — so it costs one call per game per snapshot, only while one is
+running, and only until the path is known.
+
+**The path is never taken from the caller.** `POST /api/games/:exe/launch` reads
+it from the row, which the agent filled in by watching that executable actually
+run here; a route that accepted a path would be a remote "run anything" button
+wearing a game's name. Local-only on top of that, and `cmd /c start` with the
+game's own folder as the working directory, since plenty of games look for files
+beside themselves.
+
+Filling a path in had to bypass the write cache, which is the one non-obvious
+part: a row created before paths existed is "recently written", so every
+heartbeat carrying its location was skipped and the Run button would never have
+appeared — on precisely the rows an upgraded install starts with.
+
+#### It costs nothing per poll
+
+The heartbeat arrives every two to fifteen seconds and names the same
+executables every time, so `recordSeen` keeps an in-memory set of what this
+process has already written and does nothing for anything seen in the last five
+minutes. The steady state — one game running for an hour — is zero queries, not
+one per poll, which is the row-per-tick cost the attention log was shaped to
+avoid arriving by a different door.
+
+The response carries a **hash of the list**, not the list: a hundred executables
+on every poll would be the same waste in bandwidth. The agent fetches
+`/api/games/watching` only when the hash moves. Hashed rather than counted, for
+the reason the voice vocabulary already learned — swapping one game for another
+leaves the count identical.
 
 ## Attention model
 

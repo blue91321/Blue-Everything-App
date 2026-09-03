@@ -23,12 +23,14 @@ import {
   remainderAfterPhrase,
   segmentUtterance,
   spokenAmount,
+  isLaunchTarget,
   type MediaAction,
   type VoiceCandidate,
   type VoiceCommandKind,
 } from '@everything/shared';
+import { isLaunchUrl } from '@everything/shared/games';
 import { db } from '@everything/server/module-api';
-import { habits, notes, settings, voiceCommands } from '@everything/server/module-api';
+import { games, habits, notes, settings, voiceCommands } from '@everything/server/module-api';
 import { recordHabitDone } from '@everything/server/module-api';
 
 /** Something for the agent to do on the machine you are sitting at. */
@@ -37,6 +39,15 @@ export type VoiceAction =
   | { do: 'press-keys'; keys: string }
   /** A system media key. The agent refuses it when nothing is playing. */
   | { do: 'media'; action: string }
+  /**
+   * Start a program. Resolved here from the games list, never carried in the
+   * command — see `isLaunchTarget`.
+   *
+   * Either a path or a `steam://` address: for a Steam game the executable is
+   * frequently the wrong thing to run, and the URL is what the desktop shortcut
+   * holds. Exactly one is set.
+   */
+  | { do: 'launch'; path?: string; url?: string; name: string }
   | { do: 'pause'; untilMs: number | null }
   /** Drop the sentence in progress. The microphone stays on. */
   | { do: 'cancel' };
@@ -48,6 +59,7 @@ export interface VoiceOutcome {
     | 'opened'
     | 'keys-sent'
     | 'media-sent'
+    | 'launched'
     | 'paused'
     | 'cancelled'
     | 'captured-as-note'
@@ -264,6 +276,12 @@ export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): stri
   }
 
   return [...words].sort();
+}
+
+/** The games list's own name for an executable, for the Voice screen. */
+async function describeGame(exe: string): Promise<string> {
+  const [row] = await db.select().from(games).where(eq(games.exe, exe.trim().toLowerCase()));
+  return row?.label ?? exe;
 }
 
 async function describeHabit(habitId: string): Promise<string> {
@@ -492,6 +510,10 @@ export async function labelFor(command: LoadedCommand): Promise<string> {
       return `press ${command.target}`;
     case 'media':
       return MEDIA_LABEL[(command.target ?? '') as MediaAction] ?? 'media control';
+    case 'launch':
+      // The games list already holds a name a person chose, so use it rather
+      // than showing `fortniteclient-win64-shipping.exe` on the Voice screen.
+      return `start ${await describeGame(command.target ?? '')}`;
     case 'note':
       return 'make a note';
     case 'pause':
@@ -578,6 +600,47 @@ export async function runCommand(
         say: MEDIA_LABEL[(command.target ?? '') as MediaAction] ?? 'Media',
       };
 
+    case 'launch': {
+      /*
+       * The path comes off the row, never off the command — the same rule the
+       * Run button follows. A stored target is a name like `cs2.exe`, and what
+       * it can point at is bounded by what this machine has already run by
+       * itself.
+       */
+      const exe = (command.target ?? '').trim().toLowerCase();
+      const [row] = await db.select().from(games).where(eq(games.exe, exe));
+
+      // Three failures worth telling apart, because they have three different
+      // fixes and "it didn't work" has none.
+      if (!row) return { outcome: 'no-match', text, say: `${exe} is not on the games list` };
+
+      /*
+       * The URL wins over the path, because for a Steam game the executable is
+       * usually the wrong thing to run: `Warframe.x64.exe` answers "start
+       * warframe from launcher" and quits. Reported from real use, by exactly
+       * that command.
+       */
+      if (row.launchUrl && isLaunchUrl(row.launchUrl)) {
+        return {
+          outcome: 'launched',
+          text,
+          action: { do: 'launch', url: row.launchUrl, name: row.label },
+          say: `Starting ${row.label}`,
+        };
+      }
+
+      if (!row.launchPath) {
+        return { outcome: 'no-match', text, say: `I do not know how to start ${row.label} — run it once and I will` };
+      }
+
+      return {
+        outcome: 'launched',
+        text,
+        action: { do: 'launch', path: row.launchPath, name: row.label },
+        say: `Starting ${row.label}`,
+      };
+    }
+
     case 'cancel':
       // Nothing to write: this ends an exchange rather than changing anything.
       // The agent closes the follow-up window and takes the popup away.
@@ -606,5 +669,6 @@ export async function runCommand(
 export function targetIsValid(kind: VoiceCommandKind, target: string | null): boolean {
   if (kind === 'hotkey') return parseHotkey(target ?? '') !== null;
   if (kind === 'habit') return Boolean(target);
+  if (kind === 'launch') return isLaunchTarget(target ?? '');
   return true;
 }

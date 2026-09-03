@@ -366,6 +366,18 @@ export interface AppSettings {
    * `boolean` made `=== true` quietly false and the card never hid.
    */
   voiceRetryMatchesFollowUp?: number;
+  /** System-wide key combinations. Null or absent means none is set. */
+  voiceToggleHotkey?: string | null;
+  voiceListenHotkey?: string | null;
+  /** Whether the listen shortcut works while voice is off. A row value, so 0/1. */
+  voiceListenHotkeyWhileOff?: number;
+  /**
+   * How often an open Dashboard refetches on its own, in seconds. 0 is off,
+   * which is the default — see the column for why nothing polls by default.
+   */
+  dashboardRefreshSeconds?: number;
+  gameDetectionEnabled?: number;
+  interruptDuringGames?: number;
   overlayPlacement?: string;
   overlayScreen?: string | null;
   /** An emoji, `file` for an uploaded picture, or empty for none. */
@@ -440,6 +452,12 @@ export interface VoiceStatus {
   enrolAgreement: number | null;
   /** Phrase words the speech model cannot pronounce, so can never be heard. */
   unknownWords: string[];
+  /**
+   * Key combinations the agent could not register — nearly always taken by
+   * another program. Optional so a newer bundle against an older server reads
+   * as "none" rather than throwing.
+   */
+  hotkeyProblems?: string[];
   followUpSeconds: number;
   retrySeconds: number;
   overlayPlacement: string;
@@ -460,7 +478,7 @@ export interface VoiceStatus {
   }[];
 }
 
-export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'media' | 'pause' | 'cancel';
+export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'media' | 'launch' | 'pause' | 'cancel';
 
 export interface VoiceCommand {
   id: string;
@@ -712,6 +730,27 @@ export interface InstalledPackage {
   files: number;
 }
 
+/** One executable this machine has been seen running. */
+export interface Game {
+  exe: string;
+  label: string;
+  isGame: number;
+  /** 1 yes, 0 no, null follows `interruptDuringGames` — three states on purpose. */
+  allowInterruptions: number | null;
+  launchPath: string | null;
+  /**
+   * A `steam://` address, when running the executable is not how you start it.
+   *
+   * Wins over the path. Optional because the server and the PWA update
+   * independently, and a bundle newer than the process serving it must not
+   * throw over a field that predates it.
+   */
+  launchUrl?: string | null;
+  source: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+}
+
 export interface Device {
   id: string;
   name: string;
@@ -858,6 +897,16 @@ export interface FriendRow {
   detail: string | null;
   lastOnlineAt: number | null;
   seenAt: number;
+  /**
+   * When this state started, as far as this app has seen.
+   *
+   * Null means it has not been observed changing yet, and the screen shows no
+   * timer rather than guessing. Every value is a lower bound — measured from
+   * when the app noticed, not from when the person actually walked away.
+   *
+   * Optional because the server and the PWA update independently.
+   */
+  stateSince?: number | null;
   /** Set when the status came from a different account than the name. */
   statusFrom: string | null;
   accounts: Array<{
@@ -932,6 +981,15 @@ export interface FriendSource {
   missingConfig: string[];
   lastError: string | null;
   local: LocalStatus | null;
+  /**
+   * How many of this service's rows are too old to still say what anybody is
+   * doing, so they show as "cannot tell" instead.
+   *
+   * Optional because the server and the PWA update independently — a browser
+   * holding this bundle against an older process must not throw over a field
+   * that predates it.
+   */
+  unconfirmed?: number;
 }
 
 export interface FriendsView {
@@ -1154,9 +1212,41 @@ export const api = {
    * the one control that has to keep working when a package has broken
    * something else.
    */
+  games: {
+    list: () => request<Game[]>('/api/games'),
+    update: (
+      exe: string,
+      patch: {
+        label?: string;
+        isGame?: boolean;
+        allowInterruptions?: boolean | null;
+        launchPath?: string | null;
+        /** `''` clears it and falls back to the path. */
+        launchUrl?: string | null;
+      }
+    ) =>
+      patch2<Game>(`/api/games/${encodeURIComponent(exe)}`, patch),
+    add: (exe: string, extra: { label?: string; launchPath?: string } = {}) => post<Game>('/api/games', { exe, ...extra }),
+    forget: (exe: string) => request<{ ok: boolean }>(`/api/games/${encodeURIComponent(exe)}`, { method: 'DELETE' }),
+    /** Local-only: the path comes from the row, never from the caller. */
+    launch: (exe: string) => post<{ ok: boolean; launched: string }>(`/api/games/${encodeURIComponent(exe)}/launch`),
+    showFolder: (exe: string) => post<{ ok: boolean; folder: string }>(`/api/games/${encodeURIComponent(exe)}/folder`),
+  },
+
   restart: {
     status: () => request<{ available: boolean; local: boolean; script: string | null }>('/api/restart'),
     now: () => post<{ ok: boolean; restarting: boolean }>('/api/restart'),
+  },
+
+  /**
+   * Starting the Windows agent, without restarting the server it is talking to.
+   *
+   * Separate from `restart` because the two answer different questions: the
+   * server being fine is not in doubt when this is what you need.
+   */
+  agent: {
+    canStart: () => request<{ available: boolean; local: boolean; script: string | null }>('/api/agent/start'),
+    start: () => post<{ ok: boolean; starting: boolean }>('/api/agent/start'),
   },
 
   modules: {
@@ -1239,6 +1329,13 @@ export const api = {
       voiceInputDevice?: string | null;
       voiceFollowUpSeconds?: number;
       voiceRetryMatchesFollowUp?: boolean;
+      /** '' clears it. */
+      voiceToggleHotkey?: string | null;
+      voiceListenHotkey?: string | null;
+      voiceListenHotkeyWhileOff?: boolean;
+      dashboardRefreshSeconds?: number;
+      gameDetectionEnabled?: boolean;
+      interruptDuringGames?: boolean;
       voiceRetrySeconds?: number;
       overlayPlacement?: string;
       overlayScreen?: string | null;

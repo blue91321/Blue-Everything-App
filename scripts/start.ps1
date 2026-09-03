@@ -18,7 +18,12 @@
 [CmdletBinding()]
 param(
   [switch]$Foreground,
-  [switch]$Open
+  [switch]$Open,
+  # Start only the agent, and start it even though the server is already up.
+  # The app's own "Start it" button uses this: an agent that has stopped while
+  # the server is fine is the one case the ordinary path cannot serve, because
+  # it short-circuits on the server's port being open.
+  [switch]$AgentOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,8 +80,9 @@ function Open-AppWindow {
 }
 
 # Already up: a second double-click should just bring the app to the front
-# rather than complaining.
-if (Test-Listening) {
+# rather than complaining. Skipped for -AgentOnly, which is asking for the half
+# this check cannot see.
+if ((Test-Listening) -and -not $AgentOnly) {
   Write-Host "Blue Everything is already running at $url" -ForegroundColor Green
   if ($Open) { Open-AppWindow }
   exit 0
@@ -143,6 +149,27 @@ if ($needsBuild) {
 # processes apart from every other node on the machine.
 $serverEntry = Join-Path $serverDir 'src\main.ts'
 $agentEntry = Join-Path $agentDir 'src\index.ts'
+
+# -AgentOnly skips the server, the install and the build: the server answering
+# on its port is proof that all three already happened.
+if ($AgentOnly) {
+  Write-Host 'Starting agent... ' -NoNewline
+  $only = Start-Process node `
+    -ArgumentList '--import', 'tsx', "`"$agentEntry`"" `
+    -WorkingDirectory $agentDir `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput (Join-Path $logDir 'agent.log') `
+    -RedirectStandardError (Join-Path $logDir 'agent.err.log') `
+    -PassThru
+  Start-Sleep -Milliseconds 800
+  if ($only.HasExited) {
+    Write-Host 'failed' -ForegroundColor Red
+    Write-Host "Check $logDirgent.err.log" -ForegroundColor Yellow
+    exit 1
+  }
+  Write-Host "ok (pid $($only.Id))" -ForegroundColor Green
+  exit 0
+}
 
 Write-Host 'Starting server...' -NoNewline
 $server = Start-Process node `
