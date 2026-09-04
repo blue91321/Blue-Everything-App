@@ -3250,6 +3250,43 @@ utterance would waste the speed that justified building it. If it cannot be
 created at all, voice carries on without it — a missing overlay is a poor reason
 to lose the feature.
 
+### Exclusive fullscreen, and why no window style fixes it
+
+Reported from real use: in exclusive fullscreen, a popup made the game lose the
+display and minimise, so it had to be clicked back into.
+
+**It is not focus theft, and checking that first saved fixing the wrong thing.**
+The window already refuses focus every way Windows offers — `WS_EX_NOACTIVATE`
+at creation, `SW_SHOWNOACTIVATE` to show, `SWP_NOACTIVATE` to move, and
+`WS_EX_TOOLWINDOW` to stay out of Alt-Tab. It never takes the foreground.
+
+What happens instead is that **exclusive fullscreen owns the display rather than
+merely the screen**. A game in true D3D fullscreen has the output to itself, and
+for Windows to draw *anything* above it that mode has to break so the desktop
+compositor can take over. Plenty of games read that as losing the display and
+minimise. No style prevents it, because the cost is in compositing at all rather
+than in who has focus.
+
+So the only thing that works is to put the popup where the game is not.
+`screenOwnedByGame()` finds the monitor the foreground window has claimed and
+`place()` anchors to a different one — the primary if it is free, otherwise
+whichever is left. With one monitor there is nowhere to go and nothing changes.
+
+**Only for `RUNNING_D3D_FULL_SCREEN`, never for borderless.** Borderless is
+already composited, so a popup over it costs nothing, and moving the window to
+another screen would be a change of behaviour bought for no reason. That is why
+the *shell's* notification state is asked rather than the geometry check the
+games list uses: those two questions look identical and are not. It is also the
+same call `quietReason` makes about Do Not Disturb, so nothing new is bound.
+
+**A named screen wins.** Pinning the popup to a monitor is an explicit statement
+about where popups go, and quietly overriding it would be worse than the flicker
+this avoids.
+
+Verified on this machine mid-game: the shell reported `RUNNING_D3D_FULL_SCREEN`,
+the foreground window was a game owning the 3440×1440 primary, and the popup
+resolved to the 1920×1080 beside it.
+
 ### Where it appears, and what face it wears
 
 `cursor` is the original behaviour. A **5×5 grid** pins it somewhere fixed

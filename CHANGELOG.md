@@ -7,6 +7,18 @@ files `npm version` does not touch.
 
 ## Unreleased
 
+### Notifications and exclusive fullscreen
+
+- **A popup no longer knocks a game out of exclusive fullscreen.** It was never
+  stealing focus — the window refuses it every way Windows offers. Exclusive
+  fullscreen owns the *display*, so drawing anything above it breaks the mode and
+  many games respond by minimising. The popup now appears on a monitor the game
+  is not using.
+- **Borderless is untouched**, because it is already composited and there is
+  nothing to break. A screen you pinned deliberately still wins.
+
+## 0.3.1
+
 ### A Games tab
 
 - **Settings → Games**: whether to notice games at all, whether one may be
