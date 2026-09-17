@@ -16,6 +16,11 @@ import {
   extractTags,
   extractWikiLinks,
   folderAncestors,
+  folderName,
+  folderParent,
+  folderMoveTarget,
+  canMoveFolder,
+  canMoveNote,
   inlineToText,
   noteKey,
   normaliseFolder,
@@ -118,6 +123,38 @@ check('backslashes are folders too', normaliseFolder('a\\b'), 'a/b');
 check('a climbing segment is dropped', normaliseFolder('a/../../etc'), 'a/etc');
 check('ancestors, for the tree', folderAncestors('a/b/c'), ['a', 'a/b', 'a/b/c']);
 check('the root has no ancestors', folderAncestors(''), []);
+
+console.log('\ndragging a folder somewhere else');
+
+check('its own name', folderName('a/b/c'), 'c');
+check('the root has no name', folderName(''), '');
+check('its parent', folderParent('a/b/c'), 'a/b');
+check('a top-level folder parents to the root', folderParent('a'), '');
+
+check('dropped into another, it keeps its name', folderMoveTarget('a/b', 'c'), 'c/b');
+check('dropped on the root, it loses its parents', folderMoveTarget('a/b', ''), 'b');
+
+check('an ordinary move is allowed', canMoveFolder('a/b', 'c'), true);
+check('out to the root is allowed', canMoveFolder('a/b', ''), true);
+/*
+ * The one that silently mangles a tree rather than erroring: every path under
+ * `a` would be rewritten to a prefix that is itself about to move.
+ */
+check('a folder may not go inside its own descendant', canMoveFolder('a', 'a/b'), false);
+check('  ...nor several levels down', canMoveFolder('a', 'a/b/c/d'), false);
+check('a folder may not go onto itself', canMoveFolder('a/b', 'a/b'), false);
+check('dropping it where it already is does nothing', canMoveFolder('a/b', 'a'), false);
+check('the root cannot be picked up', canMoveFolder('', 'a'), false);
+/*
+ * `ab` is not inside `a`, and a naive `startsWith` without the separator says it
+ * is — which would refuse a perfectly ordinary move between sibling folders
+ * whose names happen to share a prefix.
+ */
+check('a name that merely starts the same is not a descendant', canMoveFolder('a', 'ab'), true);
+
+check('a note moves between folders', canMoveNote('a', 'b'), true);
+check('  ...and out to the root', canMoveNote('a', ''), true);
+check('  ...but not to where it already is', canMoveNote('a/b', 'a/b'), false);
 
 console.log('\nfilenames Windows will actually accept');
 check('illegal characters go', safeFileName('a/b:c?d'), 'a b c d');

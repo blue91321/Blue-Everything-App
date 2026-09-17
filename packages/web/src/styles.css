@@ -1981,6 +1981,35 @@ button {
   opacity: 0.8;
 }
 
+/*
+ * The folder about to receive a drop.
+ *
+ * An outline rather than a fill: the selected folder is already a solid accent
+ * block, and a second solid state would make "this is the folder I am looking
+ * at" and "this is where it will land" the same picture. An inset outline also
+ * keeps the row from changing size, which would shove the rest of the tree down
+ * mid-drag and move the target out from under the cursor.
+ */
+.notes-folder.drop-here {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/*
+ * Only a row that is *being* dragged dims. Everything else stays put, because
+ * the one thing a drag needs is for the targets to hold still.
+ */
+.notes-row:active,
+.notes-folder:active {
+  cursor: grabbing;
+}
+
+.notes-drag-hint {
+  margin-top: 0.5rem;
+  line-height: 1.45;
+}
+
 .notes-list {
   display: flex;
   flex-direction: column;

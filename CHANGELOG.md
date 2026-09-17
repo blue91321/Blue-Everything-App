@@ -108,6 +108,23 @@ files `npm version` does not touch.
   back open, which took a guard — the shell reloads settings on every change
   announced anywhere in the app.
 
+### Drag notes and folders about, like a file system
+
+- **Drag a note onto a folder** to file it, **a folder onto another** to move it
+  with everything underneath, and either onto **Not in a folder** to take it back
+  out. "All notes" is not a target — it is a filter, not a place.
+- **Moving a folder needed no new endpoint.** A folder is a path prefix on
+  notes, so moving `a/b` into `c` renames that prefix to `c/b` and every note
+  under it follows in one update.
+- **A folder cannot be dropped inside its own descendant**, onto itself, or
+  where it already is. The first is the one that matters: it would rewrite every
+  path under the folder to a prefix that is itself about to move, which does not
+  error — it silently mangles the tree. Illegal targets never light up and never
+  take the drop.
+- **Mouse only for now.** HTML5 drag and drop does not exist on iOS, so on the
+  phone a note is still moved by typing a path in its folder box, and a folder
+  cannot be moved at all.
+
 ### The notes columns measure themselves, not the window
 
 - **Whether three columns fit is now asked of the space they have**, not of the

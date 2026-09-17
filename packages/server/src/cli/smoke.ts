@@ -1092,6 +1092,46 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 1200, drawerDocked: true } });
   check('  ...and both go back', (await drawerNow()).drawerDocked === 1);
 
+  /*
+   * Dragging a folder somewhere else, over the wire.
+   *
+   * A folder here is a path prefix on notes rather than a row of its own, so a
+   * move is a rename of that prefix and every note underneath follows. The
+   * interesting assertion is the refusal: a folder dropped inside its own
+   * descendant would rewrite every path under it to a prefix that is itself
+   * about to move, which does not error — it silently mangles the tree.
+   */
+  const makeNote = (title: string, folder: string) =>
+    app.inject({ method: 'POST', url: '/api/notes', payload: { title, body: 'x', folder } });
+  await makeNote('Drag probe one', 'alpha');
+  await makeNote('Drag probe two', 'alpha/inner');
+
+  const moveFolder = (from: string, to: string) =>
+    app.inject({ method: 'POST', url: '/api/notes/folder/rename', payload: { from, to } });
+
+  const moved = await moveFolder('alpha', 'beta');
+  check('a folder moves, and takes its notes with it', moved.statusCode === 200, `HTTP ${moved.statusCode}`);
+  check('  ...both of them', moved.json().moved === 2, String(moved.json().moved));
+
+  const afterMove = (await app.inject({ method: 'GET', url: '/api/notes' })).json() as { folder: string }[];
+  const folders = afterMove.map((n) => n.folder);
+  check('  ...and the nested one keeps its place inside', folders.includes('beta/inner'), folders.join(' '));
+  check('  ...with nothing left at the old path', !folders.some((f) => f.startsWith('alpha')), folders.join(' '));
+
+  const intoItself = await moveFolder('beta', 'beta/inner');
+  check('a folder cannot be dropped inside its own descendant', intoItself.statusCode === 400, `HTTP ${intoItself.statusCode}`);
+  const ontoItself = await moveFolder('beta', 'beta');
+  check('  ...nor onto itself', ontoItself.statusCode === 400, `HTTP ${ontoItself.statusCode}`);
+  /*
+   * `betas` merely starts with `beta`; without the separator in the guard this
+   * reads as a descendant and an ordinary move between siblings is refused.
+   */
+  const sibling = await moveFolder('beta', 'betas');
+  check('  ...but a name that only starts the same is fine', sibling.statusCode === 200, `HTTP ${sibling.statusCode}`);
+
+  const toRoot = await moveFolder('betas', '');
+  check('and a folder can be taken out to the root', toRoot.statusCode === 200 && toRoot.json().folder === '', JSON.stringify(toRoot.json()));
+
   const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
   check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);
   check('  ...and knows whether it actually can', typeof canStart.json().available === 'boolean');

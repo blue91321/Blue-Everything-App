@@ -2602,6 +2602,55 @@ note with no links would carry a stray column of padding. `hasNoteLinks()` is
 the single statement of the condition, asked once by the layout and once by the
 panel that returns null on it.
 
+#### Dragging notes and folders about
+
+A note dragged onto a folder is filed there; a folder dragged onto another moves
+with everything under it; and either dropped on **Not in a folder** comes back
+out. "All notes" is deliberately *not* a target — it is a filter rather than a
+place, and accepting a drop there would have to silently pick a folder.
+
+**Moving a folder needed no new endpoint.** A folder here is a path prefix on
+notes rather than a row of its own, so moving `a/b` into `c` is renaming that
+prefix to `c/b` and every note underneath follows in one update. The rename
+route already existed for exactly that arithmetic.
+
+**The rules live in `shared` and both ends read them.** `canMoveFolder` refuses
+four things, and the third is the one that matters: **a folder cannot go inside
+its own descendant.** That would rewrite every path under it to a prefix that is
+itself about to move — which does not error, it silently mangles the tree. The
+fourth refusal is the no-op of dropping something where it already is, refused
+so the target never lights up rather than accepting a drop that changes nothing,
+which reads as the drag having failed.
+
+**`preventDefault` on `dragover` is the whole mechanism**, and calling it only
+for a legal move is what makes an illegal one show the browser's own "no entry"
+cursor with no styling required to say so.
+
+**The decision comes from a ref and the highlight from state, and that split is
+not tidiness.** `setDragging` in `dragstart` does not reach the handlers until
+React re-renders, and `dragover` can arrive in the same frame — which read
+`null`, refused to `preventDefault`, and made the first pass over a folder
+silently not a target. `useEdgeDrawer` documents this identical trap in the same
+words. It showed up here as `accepted: false` on a synthetic drag and would have
+shown up in real use as a drag that needed jiggling before it took.
+
+`dataTransfer` cannot answer this instead: a page may only read what is being
+dragged when it is **dropped**, so that a page cannot snoop on a file you drag
+past it. It still carries a plain text label, because Firefox will not begin a
+drag with nothing set and a title is the honest thing to hand any other app.
+
+**This is mouse-only, and that is a real gap rather than an oversight.** HTML5
+drag and drop does not exist on iOS, so on the phone a note is still moved by
+typing a path into the folder box on its editor, and a folder cannot be moved at
+all. That is not a regression — folders had no UI of any kind before this — but
+it is the half still missing, and a "move to…" picker is what would close it.
+
+Verified against the running app with probe notes rather than real ones, then
+deleted: a note into a folder and back out to the root, a folder with a nested
+child into a sibling (`zzprobe/from` → `zzprobe/to/from`, child following as
+`zzprobe/to/from/deeper`) and back out to the root, and all three refusals
+leaving the tree byte-identical.
+
 #### Whether three columns fit is asked of the columns, not of the window
 
 This was a `max-width: 1100px` media query, and it stopped being able to answer

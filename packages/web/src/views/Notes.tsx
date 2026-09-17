@@ -23,7 +23,13 @@ import { relative } from '../format';
 import { Markdown } from '../notes/Markdown';
 import { NoteGraphView } from '../notes/Graph';
 import { NoteTransfer } from '../notes/Transfer';
-import { noteKey, parseBlocks } from '@everything/shared/notes';
+import {
+  canMoveFolder,
+  canMoveNote,
+  folderMoveTarget,
+  noteKey,
+  parseBlocks,
+} from '@everything/shared/notes';
 
 /**
  * The three tabs, split by what you came to do rather than by subject.
@@ -41,6 +47,26 @@ const NOTE_TABS = [
 ] as const;
 
 type NoteTabId = (typeof NOTE_TABS)[number]['id'];
+
+/** What is being dragged: one note, or a whole folder and everything under it. */
+type DragPayload =
+  | { kind: 'note'; id: string; folder: string; label: string }
+  | { kind: 'folder'; path: string; label: string };
+
+/**
+ * May this land here?
+ *
+ * Asked on every `dragover`, so a target that would refuse never lights up and
+ * never takes the drop — which is the difference between a drag that visibly
+ * cannot go somewhere and one that appears to work and quietly does nothing.
+ * The folder rules live in `shared`, where the server reads the same ones.
+ */
+function canDropOn(item: DragPayload | null, destination: string): boolean {
+  if (!item) return false;
+  return item.kind === 'note'
+    ? canMoveNote(item.folder, destination)
+    : canMoveFolder(item.path, destination);
+}
 
 export function Notes({ session }: { session?: { local: boolean } }) {
   const [folder, setFolder] = useState<string | undefined>(undefined);
@@ -93,6 +119,69 @@ export function Notes({ session }: { session?: { local: boolean } }) {
       openNote(created.id);
     },
     [all, folder, list, openNote]
+  );
+
+  /*
+   * What is currently under the cursor, held in state rather than only in the
+   * drag event.
+   *
+   * `dataTransfer` is deliberately unreadable during `dragover` — a page may
+   * only see what is being dragged when it is dropped, which stops a page
+   * snooping on a file you are dragging past it. But "may this land here" has
+   * to be answered *during* `dragover`, because calling `preventDefault` there
+   * is the only thing that makes a target droppable at all. So the payload is
+   * kept beside the drag, and `dataTransfer` carries a label for anything
+   * outside this app that the drag may end up over.
+   */
+  const [dragging, setDragging] = useState<DragPayload | null>(null);
+  const [moveProblem, setMoveProblem] = useState('');
+
+  /**
+   * The same payload again, in a ref, and both are load-bearing.
+   *
+   * State drives the highlight, because only a render can paint one. But the
+   * *decision* cannot come from state: `setDragging` in `dragstart` does not
+   * reach the handlers until React re-renders, and `dragover` can arrive in the
+   * same frame — which read `null`, refused to `preventDefault`, and made the
+   * first pass over a folder silently not a drop target.
+   *
+   * `useEdgeDrawer` documents this exact trap for the same reason, in the same
+   * words: the rendered value is stale and the gesture is quietly dropped. A
+   * ref is what is true right now; state is what is on screen.
+   */
+  const draggingRef = useRef<DragPayload | null>(null);
+  const setDrag = useCallback((item: DragPayload | null) => {
+    draggingRef.current = item;
+    setDragging(item);
+  }, []);
+
+  /** Carry out whatever was dropped on `destination`. */
+  const dropOnto = useCallback(
+    async (destination: string) => {
+      const item = draggingRef.current;
+      setDrag(null);
+      if (!item) return;
+
+      try {
+        setMoveProblem('');
+        if (item.kind === 'note') {
+          await api.notes.update(item.id, { folder: destination });
+        } else {
+          // A folder is a path prefix, so moving it is renaming that prefix —
+          // every note underneath follows without being touched one by one.
+          await api.notes.renameFolder(item.path, folderMoveTarget(item.path, destination));
+        }
+        list.reload();
+        all.reload();
+        tree.reload();
+        tags.reload();
+      } catch (error) {
+        // Named rather than swallowed: a drop that does nothing is
+        // indistinguishable from one the browser never registered.
+        setMoveProblem((error as Error).message);
+      }
+    },
+    [setDrag, list, all, tree, tags]
   );
 
   async function newNote() {
@@ -176,7 +265,28 @@ export function Notes({ session }: { session?: { local: boolean } }) {
                 setFolder(next);
                 setTag(undefined);
               }}
+              dragging={dragging}
+              dragRef={draggingRef}
+              onDragItem={setDrag}
+              onDrop={(destination) => void dropOnto(destination)}
             />
+
+            {moveProblem && (
+              <div className="banner" style={{ marginTop: 6 }}>
+                Could not move that — {moveProblem}
+              </div>
+            )}
+
+            {/*
+              Said once, where the folders are, rather than left to be
+              discovered: a drag target that is never tried is a feature nobody
+              has. It names the folder case too, since dragging a *folder* into
+              another is the part people do not think to attempt.
+            */}
+            <div className="meta notes-drag-hint">
+              Drag a note onto a folder to file it, or a folder into another to move it — and onto
+              <em> Not in a folder</em> to take it back out.
+            </div>
 
             {(tags.data?.tags.length ?? 0) > 0 && (
               <>
@@ -223,7 +333,13 @@ export function Notes({ session }: { session?: { local: boolean } }) {
             )}
 
             {notes.map((note) => (
-              <NoteRow key={note.id} note={note} open={note.id === openId} onOpen={() => openNote(note.id)} />
+              <NoteRow
+                key={note.id}
+                note={note}
+                open={note.id === openId}
+                onOpen={() => openNote(note.id)}
+                onDragItem={setDrag}
+              />
             ))}
           </div>
 
@@ -258,9 +374,31 @@ export function Notes({ session }: { session?: { local: boolean } }) {
 
 /* ------------------------------------------------------------------ */
 
-function NoteRow({ note, open, onOpen }: { note: Note; open: boolean; onOpen: () => void }) {
+function NoteRow({
+  note,
+  open,
+  onOpen,
+  onDragItem,
+}: {
+  note: Note;
+  open: boolean;
+  onOpen: () => void;
+  onDragItem: (item: DragPayload | null) => void;
+}) {
   return (
-    <button className={`card notes-row${open ? ' on' : ''}`} onClick={onOpen}>
+    <button
+      className={`card notes-row${open ? ' on' : ''}`}
+      onClick={onOpen}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = 'move';
+        // Firefox refuses to begin a drag with nothing set, and the title is
+        // what any other app dropped on would sensibly receive.
+        event.dataTransfer.setData('text/plain', note.title);
+        onDragItem({ kind: 'note', id: note.id, folder: note.folder, label: note.title });
+      }}
+      onDragEnd={() => onDragItem(null)}
+    >
       <div className="title truncate">{note.title}</div>
       {note.preview && <div className="meta notes-peek">{note.preview}</div>}
       <div className="meta">
@@ -282,26 +420,94 @@ function FolderList({
   folders,
   selected,
   onPick,
+  dragging,
+  dragRef,
+  onDragItem,
+  onDrop,
 }: {
   folders: NoteFolder[];
   selected: string | undefined;
   onPick: (folder: string | undefined) => void;
+  /** For the highlight, which only a render can paint. */
+  dragging: DragPayload | null;
+  /** For the decision, which cannot wait for one. */
+  dragRef: React.RefObject<DragPayload | null>;
+  onDragItem: (item: DragPayload | null) => void;
+  onDrop: (destination: string) => void;
 }) {
+  /** Which target the cursor is over, so exactly one can light up. */
+  const [over, setOver] = useState<string | null>(null);
+
+  /**
+   * The handlers a droppable row needs, in one place.
+   *
+   * `preventDefault` in `dragover` is the whole mechanism: without it the
+   * browser's default is to refuse the drop, so a target that does not call it
+   * is simply not a target. Calling it only when the move is legal is what
+   * makes an illegal one show the "no entry" cursor by itself, with no styling
+   * required to say so.
+   */
+  const dropTarget = (destination: string) => ({
+    // Painted from state — this is what is on screen.
+    className: `notes-folder${selected === destination ? ' on' : ''}${
+      over === destination && canDropOn(dragging, destination) ? ' drop-here' : ''
+    }`,
+    // Decided from the ref — this is what is true right now. Reading the render's
+    // copy here loses the first `dragover` of every drag.
+    onDragOver: (event: React.DragEvent) => {
+      if (!canDropOn(dragRef.current, destination)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      setOver(destination);
+    },
+    onDragLeave: () => setOver((current) => (current === destination ? null : current)),
+    onDrop: (event: React.DragEvent) => {
+      event.preventDefault();
+      setOver(null);
+      if (canDropOn(dragRef.current, destination)) onDrop(destination);
+    },
+  });
+
+  /** The handlers a folder needs to be picked up. */
+  const dragSource = (path: string, label: string) => ({
+    draggable: true,
+    onDragStart: (event: React.DragEvent) => {
+      event.dataTransfer.effectAllowed = 'move';
+      // Firefox will not start a drag at all without some data set, and a plain
+      // label is the honest thing to hand anywhere outside this screen.
+      event.dataTransfer.setData('text/plain', label);
+      onDragItem({ kind: 'folder', path, label });
+    },
+    onDragEnd: () => {
+      onDragItem(null);
+      setOver(null);
+    },
+  });
+
   return (
     <div className="notes-tree">
+      {/*
+        "All notes" is a filter rather than a place, so it is deliberately not a
+        drop target — there is no folder called everything, and accepting a drop
+        here would have to silently pick one.
+      */}
       <button className={selected === undefined ? 'notes-folder on' : 'notes-folder'} onClick={() => onPick(undefined)}>
         All notes
       </button>
-      <button className={selected === '' ? 'notes-folder on' : 'notes-folder'} onClick={() => onPick('')}>
+
+      {/* The root, and therefore how things come *out* of a folder. */}
+      <button {...dropTarget('')} onClick={() => onPick('')}>
         Not in a folder
       </button>
+
       {folders.map((entry) => (
         <button
           key={entry.path}
-          className={selected === entry.path ? 'notes-folder on' : 'notes-folder'}
+          {...dropTarget(entry.path)}
+          {...dragSource(entry.path, entry.path)}
           style={{ paddingLeft: 10 + entry.path.split('/').length * 12 }}
           onClick={() => onPick(entry.path)}
-          title={entry.path}
+          title={`${entry.path} — drag a note here, or drag this into another folder`}
         >
           {entry.name} <span className="meta">{entry.count}</span>
         </button>
