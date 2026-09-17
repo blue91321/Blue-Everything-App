@@ -568,12 +568,77 @@ export interface ConnectInfo {
   port: number;
 }
 
+/**
+ * A row in the list, which deliberately carries no body.
+ *
+ * The sidebar holds every note and the editor holds one, so sending bodies with
+ * the list meant a megabyte of Markdown on every keystroke of the search box.
+ * `preview` is the rendered first line or two, which is all a row shows.
+ */
 export interface Note {
   id: string;
-  title: string | null;
-  body: string;
+  /** Always something — the server falls back to the first meaningful line. */
+  title: string;
+  /** Null when the note has no title of its own, so the editor can tell. */
+  storedTitle: string | null;
+  folder: string;
   pinned: number;
+  preview: string;
+  createdAt: number;
   updatedAt: number;
+}
+
+export interface NoteLinkRow {
+  id: string;
+  title: string;
+  folder: string;
+  /** The line the link sits on, so a backlink says something. */
+  context: string;
+}
+
+export interface NoteFile {
+  id: string;
+  name: string;
+  ext: string;
+  mime: string;
+  bytes: number;
+}
+
+/** One note, opened. */
+export interface NoteDetail extends Note {
+  body: string;
+  backlinks: NoteLinkRow[];
+  /** `id` is null for a link to a note that does not exist yet. */
+  outgoing: { target: string; display: string; id: string | null; title: string }[];
+  files: NoteFile[];
+}
+
+export interface NoteFolder {
+  path: string;
+  name: string;
+  count: number;
+}
+
+export interface NoteGraph {
+  nodes: { id: string; title: string; folder: string; degree: number }[];
+  edges: { from: string; to: string }[];
+}
+
+export interface ImportedNotePreview {
+  title: string;
+  body: string;
+  folder: string;
+  tags: string[];
+}
+
+export interface NoteImportResult {
+  format: string;
+  formatLabel: string;
+  notes: ImportedNotePreview[];
+  skipped: { name: string; why: string }[];
+  total: number;
+  committed: number;
+  folder?: string;
 }
 
 export interface Nudge {
@@ -1430,11 +1495,79 @@ export const api = {
   },
 
   notes: {
-    list: () => request<Note[]>('/api/notes'),
-    create: (payload: { title?: string | null; body: string }) => post<Note>('/api/notes', payload),
-    update: (id: string, payload: { title?: string | null; body?: string; pinned?: boolean }) =>
-      patch<Note>(`/api/notes/${id}`, payload),
+    list: (query: { folder?: string; tag?: string; q?: string } = {}) => {
+      const search = new URLSearchParams();
+      // Only what was asked for: an empty `folder=` means the root, which is a
+      // different question from "every folder".
+      if (query.folder !== undefined) search.set('folder', query.folder);
+      if (query.tag) search.set('tag', query.tag);
+      if (query.q) search.set('q', query.q);
+      const qs = search.toString();
+      return request<Note[]>(`/api/notes${qs ? `?${qs}` : ''}`);
+    },
+    get: (id: string) => request<NoteDetail>(`/api/notes/${id}`),
+    create: (payload: { title?: string | null; body?: string; folder?: string | null }) =>
+      post<Note>('/api/notes', payload),
+    update: (
+      id: string,
+      payload: { title?: string | null; body?: string; folder?: string | null; pinned?: boolean }
+    ) => patch<Note>(`/api/notes/${id}`, payload),
     remove: (id: string) => request<void>(`/api/notes/${id}`, { method: 'DELETE' }),
+
+    tree: () => request<{ folders: NoteFolder[] }>('/api/notes/tree'),
+    tags: () => request<{ tags: { tag: string; count: number }[] }>('/api/notes/tags'),
+    graph: () => request<NoteGraph>('/api/notes/graph'),
+    renameFolder: (from: string, to: string) =>
+      post<{ moved: number; folder: string }>('/api/notes/folder/rename', { from, to }),
+    reindex: () => post<{ reindexed: number }>('/api/notes/reindex', {}),
+
+    formats: () =>
+      request<{
+        import: { id: string; label: string; hint: string }[];
+        export: { id: string; label: string; hint: string }[];
+      }>('/api/notes/formats'),
+
+    /** Preview writes nothing; `commit` is the second call with the same bytes. */
+    import: (payload: { name: string; data: string; commit?: boolean; folder?: string }) =>
+      post<NoteImportResult>('/api/notes/import', payload),
+
+    /**
+     * Downloads through a blob rather than a link, because `/api/` needs a
+     * bearer token and an `<a download>` sends none — the same reason the habit
+     * pictures are fetched rather than used as an `<img src>`.
+     */
+    export: async (payload: { format: string; ids?: string[]; folder?: string }) => {
+      const response = await fetch('/api/notes/export', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const problem = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(problem.error ?? `export failed (${response.status})`);
+      }
+      const disposition = response.headers.get('content-disposition') ?? '';
+      return {
+        fileName: /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'notes',
+        blob: await response.blob(),
+      };
+    },
+
+    /**
+     * An attachment's bytes, for wrapping in an object URL.
+     *
+     * `<img src="/api/…">` sends no bearer token, so the picture has to be
+     * fetched like any other API call — the same move the habit pictures make.
+     */
+    fetchFile: async (path: string): Promise<Blob> => {
+      const response = await fetch(path, { headers: { authorization: `Bearer ${getToken()}` } });
+      if (!response.ok) throw new Error(`could not load ${path}`);
+      return response.blob();
+    },
+
+    uploadFile: (payload: { name: string; data: string; noteId?: string | null }) =>
+      post<NoteFile & { markdown: string }>('/api/notes/files', payload),
+    removeFile: (id: string) => request<void>(`/api/notes/files/${id}`, { method: 'DELETE' }),
   },
 
   nudges: {

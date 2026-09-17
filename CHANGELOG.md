@@ -7,6 +7,71 @@ files `npm version` does not touch.
 
 ## Unreleased
 
+### Notes, rebuilt as a linked notebook
+
+- **`[[Wiki-links]]`, and a panel saying who links back.** A backlink is quoted
+  with the line it appears in, so the list says *why* something links here rather
+  than only that it does. Links are matched case- and punctuation-insensitively,
+  so `[[reading LIST]]` finds "Reading list".
+- **A link to a note nobody has written yet still works** — it is drawn dashed,
+  and clicking it creates that note. The panel underneath lists every such link,
+  which is the notebook telling you what it is missing.
+- **Folders, as a tree in the sidebar**, with a whole folder renameable at once.
+- **`#tags`**, counted in the sidebar and clickable to filter. Read out of the
+  body rather than stored separately, so there is nothing to keep in step — and
+  deliberately not read out of headings, URL fragments or code.
+- **Full-text search** across every note, debounced so the list is not refetched
+  per keystroke.
+- **A graph view.** Hand-drawn SVG like the gauges and the weather chart, with a
+  layout seeded from each note's id so the same notebook always draws the same
+  shape — a graph that rearranges itself nightly is most of the point lost. A
+  note nothing links to is hollow rather than a different colour, the same
+  distinction the `unknown` presence dot draws.
+- **Images and attachments**, dropped or pasted into a note. Fetched with the
+  bearer token and wrapped in an object URL, exactly as the habit pictures are,
+  because an `<img src>` under `/api/` sends no token. SVG is deliberately not
+  an allowed type.
+- **The editor is one box, not a split view.** The note is rendered until you
+  click into it. Obsidian's two-pane view is the thing most people turn off
+  first: two copies of one note competing for the width.
+- **Autosave**, debounced, and flushed on the way out so closing mid-sentence
+  keeps what you typed.
+
+### Bringing notes in from somewhere else, and taking them out
+
+- **Fourteen formats read**: Obsidian vaults, Notion, Evernote `.enex`, Google
+  Keep, Roam, Logseq, Joplin `.jex`, Bear, Standard Notes, Apple Notes,
+  Markdown, Word, CSV and plain text. The format is **detected from the
+  contents**, not from a dropdown asking you to know what your own export is.
+- **Two-phase, like the vault's password import.** The first call reports what it
+  found and writes nothing, so a wrong guess costs a click rather than a thousand
+  rows. Imports land in a folder you name, because a folder can be taken apart
+  afterwards and a merge cannot.
+- **Six formats written**: an Obsidian vault, Markdown, plain text, CSV, PDF and
+  Word. The vault is a real one — unzip it into Obsidian and the `[[links]]`
+  work, because they were Obsidian's syntax all along.
+- **No new dependencies.** The PDF writer, the `.docx` writer and the zip
+  *writer* are hand-rolled, the same call the PNG encoder, the WAV writer and the
+  zip reader already made. One parser feeds the screen, the PDF and the Word
+  file, so an export cannot drift from what you were looking at.
+- **What each format loses is said before you pick it**, rather than discovered
+  on opening the file — PDF and Word flatten links, CSV and text flatten
+  formatting, and the PDF can only draw Latin alphabets.
+
+### Two things this turned up
+
+- **Opening a note rewrote it.** The autosave's "have I written this already"
+  ref started empty, so the first debounce fired 700ms after *opening* a note and
+  saved it unchanged — bumping its timestamp and shuffling it to the top of a
+  list sorted by that. A notebook that rearranges itself as you read it is worse
+  than one that saves late.
+- **Notes is the one core screen that is now fetched rather than bundled.** It
+  carries a Markdown parser, a renderer, a graph and fourteen importers' worth of
+  transfer UI, and it put 8KB gzipped into the eager bundle — the same 9.5KB the
+  friends panel nearly cost, arriving by a different door. It has its own chunk
+  and its own Suspense boundary now, like a feature's screen: 100.4KB back down
+  to 93.3KB, against 92.6KB before any of this.
+
 ### Notifications and exclusive fullscreen
 
 - **A popup no longer knocks a game out of exclusive fullscreen.** It was never

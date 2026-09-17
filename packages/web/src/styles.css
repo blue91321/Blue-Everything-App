@@ -1715,3 +1715,327 @@ button {
 :root[data-theme='dark'] .hourly-rain {
   fill: #4c9be8;
 }
+
+/* ------------------------------------------------------------------ */
+/* Notes                                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Three columns on a desktop and a stack on a phone. `minmax(0, …)` on the
+ * middle and right is what actually lets them shrink — a grid track defaults to
+ * `min-content` and refuses to go below its longest word, which is the same
+ * trap `min-width: 0` fixes for the friends row and the weather graph.
+ */
+.notes-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 300px) minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .notes-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.notes-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: sticky;
+  top: 0.5rem;
+}
+
+.notes-side-head {
+  margin-top: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+}
+
+.notes-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.notes-folder {
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+.notes-folder:hover {
+  background: var(--card);
+}
+
+.notes-folder.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.notes-folder.on .meta {
+  color: var(--accent-text);
+  opacity: 0.8;
+}
+
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  /* Its own scroll, so the sidebar and the note stay put while the list moves. */
+  max-height: calc(100vh - 8rem);
+  overflow-y: auto;
+}
+
+.notes-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.notes-row.on {
+  border-color: var(--accent);
+}
+
+/* Two lines of preview, clamped — a long note must not make a tall row. */
+.notes-peek {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.notes-body {
+  width: 100%;
+  min-height: 24rem;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.notes-read {
+  min-height: 8rem;
+  padding-top: 0.25rem;
+}
+
+.notes-links {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+
+.notes-backlink {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 2px solid var(--border);
+  padding: 0.35rem 0.6rem;
+  margin-top: 0.3rem;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+}
+
+.notes-backlink:hover {
+  border-left-color: var(--accent);
+  background: var(--card);
+}
+
+.notes-drop {
+  display: block;
+  margin-top: 0.6rem;
+  padding: 1.2rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.notes-drop:hover {
+  border-color: var(--accent);
+}
+
+.notes-drop input {
+  display: none;
+}
+
+.notes-graph {
+  /* The SVG scales to the card; the card decides the height. */
+  width: 100%;
+  overflow: hidden;
+}
+
+.notes-graph-edge {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.notes-graph-node {
+  cursor: pointer;
+}
+
+.notes-graph-node circle {
+  fill: var(--accent);
+}
+
+/*
+ * A note nothing links to is hollow rather than a different colour — the same
+ * distinction the `unknown` presence dot draws, and for the same reason: a
+ * filled shape in another colour would read as a *kind* of note rather than as
+ * one with no connections.
+ */
+.notes-graph-node circle.lonely {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+.notes-graph-node text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.notes-graph-node:hover circle {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+/* --- rendered Markdown --------------------------------------------- */
+
+.md {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.md-h {
+  margin: 1.1em 0 0.4em;
+  line-height: 1.25;
+}
+
+.md-p {
+  margin: 0.55em 0;
+  white-space: pre-wrap;
+}
+
+.md-list {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+
+.md-list li {
+  margin: 0.15em 0;
+}
+
+.md-task {
+  list-style: none;
+  margin-left: -1.2em;
+}
+
+.md-task input {
+  margin-right: 0.4em;
+  width: auto;
+}
+
+.md-quote {
+  margin: 0.6em 0;
+  padding: 0.1em 0 0.1em 0.8em;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+.md-code {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+  font-size: 0.85em;
+}
+
+.md-inline-code {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  font-size: 0.9em;
+}
+
+.md-rule {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+
+/* A wide table scrolls rather than stretching the column it sits in. */
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+
+.md-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.55em;
+  text-align: left;
+}
+
+.md-image {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 0.4em 0;
+}
+
+.md-wiki,
+.md-tag {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.md-wiki:hover,
+.md-tag:hover {
+  text-decoration: underline;
+}
+
+/*
+ * A link to a note nobody has written yet. Dashed rather than a different
+ * colour, so it still reads as a link — it works, it just creates the note
+ * rather than opening one.
+ */
+.md-wiki-new {
+  color: var(--muted);
+  border-bottom: 1px dashed var(--muted);
+}
+
+.md-tag {
+  color: var(--muted);
+}
+
+/* A link whose scheme a note may not open — shown with its address rather than
+   silently dropped, since a vanishing link looks like lost content. */
+.md-unsafe {
+  color: var(--muted);
+  text-decoration: line-through dotted;
+}

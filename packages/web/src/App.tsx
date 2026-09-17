@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { ServerUnreachable, api, clearToken, setToken, type Session } from './api';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
 import { setEnabledFeatures, webFeatures } from './features';
@@ -19,8 +19,22 @@ import { onNavigate } from './nav';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
-import { Notes } from './views/Notes';
 import { Settings } from './views/Settings';
+
+/*
+ * The one core screen that is fetched rather than bundled.
+ *
+ * Every other view here is a few kilobytes of form controls. Notes carries a
+ * Markdown parser, a renderer, a force-directed graph and fourteen importers'
+ * worth of transfer UI, and it put **8KB gzipped into the eager bundle** — on a
+ * 92KB bundle whose whole argument is that it is almost entirely React. That is
+ * the 9.5KB the friends panel nearly cost, arriving by a different door.
+ *
+ * So it takes the same shape a feature's screen already has: its own chunk, its
+ * own Suspense boundary, fetched the first time the tab is opened. A named
+ * export needs the `default` shim; `lazy` wants a module with one.
+ */
+const Notes = lazy(() => import('./views/Notes').then((m) => ({ default: m.Notes })));
 
 /**
  * The screens that are always here. Dashboard and Tasks are the nudge engine's
@@ -377,7 +391,11 @@ export function App() {
         {current.id === 'dashboard' && <Dashboard />}
         {current.id === 'tasks' && <Tasks focus={focus} onFocused={clearFocus} />}
         {current.id === 'habits' && <Habits focus={focus} onFocused={clearFocus} />}
-        {current.id === 'notes' && <Notes />}
+        {current.id === 'notes' && (
+          <Suspense fallback={<div className="empty">loading…</div>}>
+            <Notes session={session} />
+          </Suspense>
+        )}
         {current.id === 'settings' && (
           <Settings session={session} onChanged={checkSession} focus={focus} onFocused={clearFocus} />
         )}

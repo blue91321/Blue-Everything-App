@@ -102,7 +102,9 @@ dependencies, which is 66KB gzipped and nearly all of it framework.
 - **Tasks** — the full list with editing, open above, done below.
 - **Habits** — *management*: reorder, edit, pause, delete, and a −/+ stepper to
   correct the tally. Ticking one off day to day belongs on the Dashboard.
-- **Notes**, **Settings**.
+- **Notes** — a linked notebook: folders, `[[wiki-links]]`, backlinks, tags, a
+  graph, and a way in from fourteen other apps. See **Notes** below.
+- **Settings**.
 
 ### The Dashboard's side column
 
@@ -1618,6 +1620,7 @@ npm run wake-probe -w @everything/agent    # what the wake partial says, block b
 npm run wake-falsing -w @everything/agent  # how often ordinary conversation wakes it
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
+npm run notes-check -w @everything/server  # the Markdown parser, wiki-links, tags, folders
 npm run integrations-check -w @everything/server  # the categoriser, the Takeout reader, the coursework rules
 
 npm run features         # what is switched on, and what is actually on disk
@@ -2291,6 +2294,176 @@ never break into a match.
 
 Note for tests: quiet hours default to 23:00–07:30, so anything asserting
 delivery must switch them off first or it passes or fails by time of day.
+
+## Notes
+
+A linked notebook rather than a list of text blobs.
+`npm run notes-check -w @everything/server` proves the text model — the parser,
+the link and tag extraction, the folder rules and the date reader — with no
+database and no network. Run it before trusting a change to any of them.
+
+**One parser, three renderers.** `packages/shared/src/notes.ts` turns Markdown
+into blocks; the screen, the PDF and the `.docx` all render *that*. The
+alternative is three readings of the same text that drift, and the drift is
+invisible until somebody opens an export and finds a table missing. It has **no
+imports at all** — which is what lets the PWA use it, since the rule is that the
+PWA never pulls in `@everything/shared`'s entry point and its zod.
+
+### Links are the feature
+
+`[[Wiki-links]]` in Obsidian's syntax, deliberately, because that is what makes
+the export a real vault rather than an approximation of one.
+
+**A link is matched on a key, not on the text.** `noteKey()` folds case and
+punctuation, so `[[reading LIST]]` finds "Reading list". Storing that key on the
+row rather than computing it per query is what makes the backlink lookup an
+index scan instead of a walk over every note.
+
+**A backlink is quoted with its line.** "Three notes link here" is nearly
+useless; the line the link sits in says *why*. That cost one real bug worth
+keeping: `contextAround` first searched the **rendered** text for the link — and
+rendering a wiki-link into its label is exactly what removes it, so every
+context came back empty. It searches the raw line and renders that line.
+
+**A link to a note that does not exist still works**, drawn dashed, and clicking
+it creates the note. They are listed under **not written yet**, which is the
+notebook telling you what it is missing — the one thing a plain list of notes
+can never do.
+
+**Tags are read out of the body, never stored beside it.** A second copy is a
+second thing to keep in step, and the first edit that bypassed the writer would
+desynchronise it silently. `extractTags` skips headings, URL fragments, bare
+numbers and code, all of which contain a `#` and none of which is a tag.
+
+**Reindexing is delete-then-rewrite, never a diff.** A note's links and tags are
+derived entirely from its body, so the body is the authority and a diff is an
+opportunity to disagree with it. `reindexNote` is the only writer.
+
+### The editor is one box
+
+Obsidian's split view is the thing most people turn off first: two copies of one
+note competing for the width, with the cursor in one and your eyes in the other.
+Here the note is rendered until you click into it, and what you type in is the
+raw Markdown. One column, and the switch is clicking the thing you want to
+change.
+
+**The renderer builds React elements and never `dangerouslySetInnerHTML`.** A
+note can arrive by dropping a stranger's Evernote export into the app, so its
+body is genuinely untrusted input — and this app's one reflected-XSS hole was
+found in the one place that assembles HTML by hand. A Markdown renderer emitting
+a string would be the second, over a far wider input. The one hole that survives
+building elements is the `href`, since React will set it to anything, so a link
+is restricted to `http:`, `https:`, `mailto:` and same-origin — the same rule
+voice commands follow. A refused link is **shown with its address** rather than
+dropped, because a link that vanishes looks like the renderer losing content.
+
+**A task checkbox is read-only.** Ticking it would have to write back into the
+Markdown by position, and a body edited from two places at once is how a note
+loses a paragraph. The box is a picture of the text.
+
+**Opening a note must not write it.** The autosave keeps a signature of the last
+thing written so an unchanged draft is never sent — and that ref started *empty*,
+so the first debounce fired 700ms after opening a note and saved it unchanged.
+That bumps `updatedAt`, and the list is sorted by it, so reading a note shuffled
+it to the top. It is seeded from what was loaded now. A notebook that rearranges
+itself as you browse it is worse than one that saves a little late.
+
+### The graph
+
+Hand-drawn SVG, like `Gauge.tsx` and the weather chart, for the same reason: a
+graph library would be the largest dependency in this repo, to draw circles and
+straight lines.
+
+**The layout is seeded from each note's id**, not from `Math.random`. A force
+simulation seeded randomly draws a different picture every time the tab is
+opened — and recognising the shape you saw yesterday is most of what a graph
+view is *for*. It runs to completion once rather than animating, since a
+simulation ticking behind a tab is exactly the sort of timer this project
+measures before adding.
+
+Only connected notes are labelled; two hundred labels is a grey rectangle. An
+unlinked note is drawn **hollow** rather than in another colour — the same
+distinction the `unknown` presence dot draws, and for the same reason: a filled
+shape in a second colour reads as a *kind* of note rather than one with no
+connections.
+
+### Attachments
+
+Dropped or pasted straight into the body. The allow-list is in `files.ts` and
+**SVG is deliberately not on it**: an SVG is a document that can carry script,
+so it is not an image for this purpose.
+
+They sit behind `/api/` like the habit pictures and for the same reason — they
+are your data, unlike the icons and the tones — so an `<img src>` cannot fetch
+one, and the bytes are fetched with the token and wrapped in an object URL.
+Revoked on unmount, or every render of a note with pictures leaks one per image.
+
+### Fourteen ways in, six ways out
+
+**The format is detected from the contents, not chosen from a dropdown.** Asking
+somebody which of fourteen formats their export is asks them the one thing they
+are least sure about, and the answer is sitting in the file.
+
+Reads: Obsidian vaults, Notion, Evernote `.enex`, Google Keep, Roam, Logseq,
+Joplin `.jex`, Bear, Standard Notes, Apple Notes, Markdown, Word, CSV and plain
+text. Writes: an Obsidian vault, Markdown, plain text, CSV, PDF and Word.
+
+**Two-phase, exactly like the vault's password import.** The first call reports
+what it found and writes nothing, because a mis-detected format produces a
+plausible number of plausible-looking rows and a wrong guess should cost a click
+rather than a thousand notes. Imports land in a folder you name: a folder can be
+taken apart afterwards and a merge into an existing notebook cannot.
+
+**No new dependencies.** The PDF writer, the `.docx` writer and the zip *writer*
+are hand-rolled, the same call `zip.ts`, `icon.ts` and the WAV writer already
+made. Three details that cost something to get right:
+
+- **The PDF is assembled as `latin1`, and that is load-bearing.** Every `xref`
+  offset is a byte count, so encoding the same string as UTF-8 shifts every
+  offset past the first non-ASCII character and produces a file that opens as
+  corrupt. It carries real Helvetica AFM widths rather than a fixed pitch,
+  because a PDF with no embedded font and guessed widths is a page of overlapping
+  words.
+- **The `.docx` uses direct formatting and no `styles.xml`.** A document
+  referring to a style it does not define is what triggers Word's "repair the
+  file" dialog — which reads as the export being broken, whatever it then
+  recovers.
+- **Filename collisions are resolved case-insensitively.** Two notes called
+  "Home" and "home" are two files on Linux and one on Windows, and the second
+  silently replacing the first is data loss inside a backup.
+
+**The vault export is a real Obsidian vault.** Unzip it into Obsidian and the
+links work, because they were Obsidian's syntax the whole time. Verified by
+round-tripping one back in.
+
+**What each format loses is on screen before you pick it.** PDF and Word flatten
+links, CSV and plain text flatten formatting too, and the PDF can only draw
+Latin alphabets — an emoji comes out as a question mark. Discovering that on
+opening the file is worse than reading it next to the button.
+
+### The screen is fetched, not bundled
+
+Notes is **the one core view behind `lazy`**. Every other one is a few kilobytes
+of form controls; this one carries a parser, a renderer, a graph and the
+transfer UI, and it put **8KB gzipped into the eager bundle** — on a bundle whose
+whole argument is that it is 92KB and almost entirely React. That is the 9.5KB
+the friends panel nearly cost, arriving by a different door.
+
+It takes the shape a feature's screen already has: its own chunk, its own
+Suspense boundary, fetched the first time the tab is opened. Measured: 92.6KB
+before any of this, 100.4KB bundled, **93.3KB** fetched, with the screen itself
+7.8KB gzipped and only when opened.
+
+### Two smaller things
+
+- **`saveNote` is exported from `module-api`**, because the voice feature's
+  `note` command and the HTTP route must write a note the same way. The habit
+  path learned this the expensive way: voice had its own copy of "record a
+  completion", identical to the route until gauge mode arrived, and then
+  silently did half the write.
+- **The list carries a `preview`, never the body.** A notes list is fetched on
+  every visit and on the Dashboard panel, and a notebook of long notes would send
+  the whole thing to draw two clamped lines.
 
 ## Password vault
 
