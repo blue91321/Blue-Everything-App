@@ -1058,6 +1058,40 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 0 } });
   check('  ...and zero turns it back off', (await refreshNow()) === 0);
 
+  /*
+   * The menu drawer: where it docks itself, and whether it starts docked.
+   *
+   * The bounds are the interesting part. Both ends of the range are "off"
+   * wearing a number — below 600 nothing would ever dock and above 2400 nothing
+   * would ever undock — so a value outside them is a setting that silently does
+   * nothing, which is the failure this project refuses everywhere else.
+   */
+  const drawerNow = async () => (await app.inject({ method: 'GET', url: '/api/settings' })).json();
+  const defaults = await drawerNow();
+  check('the menu docks at 1200 by default, not the old 900', defaults.drawerBreakpoint === 1200, String(defaults.drawerBreakpoint));
+  check('  ...and starts docked', defaults.drawerDocked === 1, String(defaults.drawerDocked));
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 1500 } });
+  check('  ...the width can be moved', (await drawerNow()).drawerBreakpoint === 1500);
+
+  const tooNarrow = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 599 } });
+  check('  ...but not so low that nothing would ever dock', tooNarrow.statusCode === 400, `HTTP ${tooNarrow.statusCode}`);
+  const tooWide = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 2401 } });
+  check('  ...nor so high that nothing ever would', tooWide.statusCode === 400, `HTTP ${tooWide.statusCode}`);
+
+  /*
+   * Sent as a boolean and stored as 0/1. Asserted as a number on the way back
+   * because the PWA reads it that way — `voiceRetryMatchesFollowUp` was typed
+   * `boolean` in `api.ts`, `=== true` was quietly false against a `1`, and the
+   * card it controlled never hid while the setting saved perfectly.
+   */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerDocked: false } });
+  const off = await drawerNow();
+  check('  ...and it can start put away', off.drawerDocked === 0, `${typeof off.drawerDocked} ${off.drawerDocked}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 1200, drawerDocked: true } });
+  check('  ...and both go back', (await drawerNow()).drawerDocked === 1);
+
   const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
   check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);
   check('  ...and knows whether it actually can', typeof canStart.json().available === 'boolean');

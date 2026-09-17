@@ -82,6 +82,30 @@ files `npm version` does not touch.
   rows of one field each, which put Delete against a text box and read as though
   each button acted on the field beside it.
 
+### The menu can be put away, and you choose when it docks
+
+- **The ☰ button is there at every width now.** It only appeared on narrow
+  screens, so on a desktop the menu was permanent furniture — 260px you could
+  not reclaim while reading something that wanted it.
+- **When it docks is a setting**, and the default moved from 900px to 1200px.
+  900 was the answer to "is there room for a drawer beside a task list"; a
+  screen with columns of its own is squeezed well above that. Four named widths
+  — *Early*, *Balanced*, *Late*, *Never* — rather than a number nobody can
+  reason about, and *Never* is a real choice.
+- **Whether it starts docked is a setting too.** Hiding it by hand stays
+  temporary and comes back next launch: the setting says how the app opens, the
+  button says what you have done since. An unrelated save can no longer snap it
+  back open, which took a guard — the shell reloads settings on every change
+  announced anywhere in the app.
+
+### On a phone, a note is its own screen
+
+- **Opening a note used to scroll you to the bottom of the page**, below the
+  sidebar and the whole list, because one column meant everything stacked.
+- Below the breakpoint the list and sidebar now step aside and the note takes
+  the screen, with a **Back** button. Nothing is unmounted, so going back is
+  instant and the list keeps its scroll position and search text.
+
 ### Two things this turned up
 
 - **Opening a note rewrote it.** The autosave's "have I written this already"

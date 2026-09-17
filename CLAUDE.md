@@ -156,11 +156,13 @@ Three details:
   layout question the child already knows the answer to. Where `:has()` is
   unsupported the page stays at its reading width with the panel stacked
   underneath — which is the narrow-screen layout, so the fallback is a real one.
-- **The breakpoint is 1100px, not the drawer's 900px**, and they are deliberately
-  different questions: 900 is "is there room for a drawer beside the content",
-  this is "is there room for a second column without squeezing the first". At
-  900 with the drawer showing, the task list would be left about 320px — narrower
-  than the phone layout it was designed for.
+- **The breakpoint is 1100px, not the drawer's**, and they are deliberately
+  different questions: the drawer's is "is there room for a drawer beside the
+  content", this is "is there room for a second column without squeezing the
+  first". At 900 — which is what the drawer's default used to be, and is now the
+  lowest it offers — with the drawer showing, the task list would be left about
+  320px, narrower than the phone layout it was designed for. That mismatch is
+  part of why the drawer's default moved to 1200.
 - **Panels are lazy, and one import nearly cost 9.5KB.** `panel.tsx` imported
   `STATE_LABEL` from `Friends.tsx`, so choosing the panel pulled in the whole
   Connections screen — searching, filtering, account linking — to render six
@@ -926,12 +928,45 @@ Three things there are worth knowing:
 
 ### Navigation
 
-One left drawer, two behaviours, decided by a single `(min-width: 900px)` query:
+One left drawer, two behaviours, decided by a width you choose:
 
-- **Desktop** — always visible, content offset by its width.
-- **Phone** — slides over the content. Opens by dragging from the left edge or
-  with the ☰ button; closes by dragging back, tapping the backdrop, picking an
-  item, or Escape.
+- **Docked** — always visible, content offset by its width.
+- **Overlaid** — slides over the content. Opens by dragging from the left edge
+  or with the ☰ button; closes by dragging back, tapping the backdrop, picking
+  an item, or Escape.
+
+**The ☰ button is there at every width, which it was not.** It used to appear
+only below the breakpoint, so on a wide screen the menu was permanent furniture:
+260px of navigation you could not put away while reading something that wanted
+the room. One button does both jobs — collapse it where it is docked, open it
+where it overlays — because both are "show or hide the menu", and two controls
+would need explaining apart.
+
+**The breakpoint is `settings.drawer_breakpoint`, and the default moved from 900
+to 1200.** 900 answered "is there room for a drawer beside a *task list*" — one
+column of short lines — and a screen with columns of its own is squeezed a long
+way above that: at 900 with the drawer showing, the content is left about 640px.
+Offered as four named widths rather than a slider or a box, the same call the
+refresh rate makes: these are a handful of real answers and "1200" is not a
+decision anybody can make while "from a large laptop up" is. The top of the
+range means *never dock*, which is a legitimate choice rather than a broken one.
+
+**`settings.drawer_docked` is the default, not a live record of the toggle.**
+Collapsing the menu to read something is a thing you do for a minute, and
+persisting it would turn a temporary choice permanent by accident. The setting
+says how the app opens; the button says what you have done since.
+
+That distinction needed a guard. The shell reloads its settings on **every**
+change announced over the SSE stream — a habit ticked off on the phone comes
+down the same pipe — so an effect that simply applied `docked` would have
+snapped the menu back open under your hands on any unrelated save. A ref holds
+the last value actually applied, so only a change to *this* preference re-applies
+it. Verified: collapsed by hand, then an unrelated setting written, and it stayed
+collapsed.
+
+`drawerDocked` is a **`number` in `api.ts`**, like every other boolean on that
+type, because the row returns 0 or 1 — `voiceRetryMatchesFollowUp` is the
+cautionary tale and it is quoted at the top of that file.
 
 `useEdgeDrawer.ts` makes the drawer follow the finger rather than snapping at a
 threshold, because a menu that moves with you reads as a drawer and one that
@@ -2493,6 +2528,28 @@ grid gap is drawn between tracks whether or not the second holds anything, so a
 note with no links would carry a stray column of padding. `hasNoteLinks()` is
 the single statement of the condition, asked once by the layout and once by the
 panel that returns null on it.
+
+#### On a phone a note is a place you go, not a row that grows
+
+Stacked into one column, an open note sat below the sidebar *and* the whole
+list, so tapping one scrolled you to the foot of the page to find it.
+
+The alternative was expanding it inline under the row you tapped, accordion
+style, and that is right for a preview and wrong for a document: the thing being
+opened is a full-screen editor with a title, a folder, a Markdown box and a
+backlinks panel, and putting one inside a list leaves it wearing the list's
+width with the rest of the list still above and below it. Every notes app on a
+phone uses a detail view, and the reason is the same one.
+
+So below the breakpoint the sidebar and the list are taken off screen and the
+note has the width, with a **‹ Back** button that exists only there — above it
+the list never left, so there is nowhere to go back to and the control would
+close a note for no visible reason.
+
+**`display: none`, not unmounting.** Going back is instant and the list returns
+with its scroll position and its search box exactly as they were. React keeps
+the state; CSS decides what is shown. The class is `has-open` on the layout,
+which is state React already had.
 
 #### And the editor header is one row
 

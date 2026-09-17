@@ -376,6 +376,17 @@ export interface AppSettings {
    * which is the default — see the column for why nothing polls by default.
    */
   dashboardRefreshSeconds?: number;
+  /** Width at or above which the menu docks itself beside the content. */
+  drawerBreakpoint?: number;
+  /**
+   * Whether the menu starts docked on a wide screen.
+   *
+   * A `number`, not a `boolean` — the row returns 0 or 1 and the warning at the
+   * top of this file is about exactly this. `voiceRetryMatchesFollowUp` was
+   * declared `boolean` here, `=== true` was quietly false against a `1`, and
+   * the card it controlled never hid while the setting saved perfectly.
+   */
+  drawerDocked?: number;
   gameDetectionEnabled?: number;
   interruptDuringGames?: number;
   overlayPlacement?: string;
@@ -1399,6 +1410,10 @@ export const api = {
       voiceListenHotkey?: string | null;
       voiceListenHotkeyWhileOff?: boolean;
       dashboardRefreshSeconds?: number;
+      drawerBreakpoint?: number;
+      // Sent as a boolean, stored as 0/1 — the write side speaks JSON, the read
+      // side speaks SQLite, and they are deliberately different types.
+      drawerDocked?: boolean;
       gameDetectionEnabled?: boolean;
       interruptDuringGames?: boolean;
       voiceRetrySeconds?: number;

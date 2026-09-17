@@ -1973,6 +1973,13 @@ export const updateSettingsSchema = z.object({
    * down to ~1,500 rows a day; above an hour it is indistinguishable from off.
    */
   dashboardRefreshSeconds: z.number().int().min(0).max(3600).optional(),
+  /*
+   * Bounded 600–2400. Below 600 no phone would ever dock the menu, which is the
+   * setting doing nothing; above 2400 no monitor would, which is the setting
+   * doing nothing in the other direction. Both ends are "off" wearing a number.
+   */
+  drawerBreakpoint: z.number().int().min(600).max(2400).optional(),
+  drawerDocked: z.boolean().optional(),
   gameDetectionEnabled: z.boolean().optional(),
   interruptDuringGames: z.boolean().optional(),
   overlayPlacement: overlayPlacementSchema.optional(),

@@ -665,6 +665,27 @@ export const settings = sqliteTable('settings', {
   dashboardRefreshSeconds: integer('dashboard_refresh_seconds').notNull().default(0),
 
   /**
+   * The width at or above which the menu docks itself beside the content.
+   *
+   * It was 900, hard-coded, and 900 was the answer to "is there room for a
+   * drawer beside a task list" — one column of short lines. A screen that has
+   * columns of its own is squeezed a long way above that, so the default is
+   * 1200 and the number is a setting because the right answer depends on the
+   * monitor and on which screen you spend your time in.
+   */
+  drawerBreakpoint: integer('drawer_breakpoint').notNull().default(1200),
+
+  /**
+   * Whether the menu starts docked on a wide screen.
+   *
+   * The *default*, not a live record of the toggle: collapsing the menu to read
+   * something is a thing you do for a minute, and having that survive to the
+   * next launch would make a temporary choice permanent by accident. Which way
+   * the app opens is the decision worth storing.
+   */
+  drawerDocked: integer('drawer_docked').notNull().default(1),
+
+  /**
    * Watch for games at all.
    *
    * Off means the attention monitor never reports `in-game`, so a match looks

@@ -351,6 +351,13 @@
       "when": 1786064306000,
       "tag": "0049_notes_like_obsidian",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1786064307000,
+      "tag": "0050_drawer_controls",
+      "breakpoints": true
     }
   ]
 }

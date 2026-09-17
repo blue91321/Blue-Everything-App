@@ -142,8 +142,25 @@ export function Notes({ session }: { session?: { local: boolean } }) {
         />
       )}
 
+      {/*
+          `has-open` is what turns a narrow screen into a detail view.
+
+          Stacked, an open note sits below the sidebar and the whole list, so on
+          a phone tapping one scrolled you to the bottom of the page to find it.
+          The alternative was expanding it inline under the row you tapped, and
+          that is right for a preview and wrong for a document: the thing being
+          opened is a full-screen editor, and putting one inside a list leaves
+          it wearing the list's width with the rest of the list still above and
+          below it.
+
+          So below the breakpoint the list and sidebar are hidden outright and
+          the note takes the screen, with a Back button — which is what every
+          notes app on a phone does, because a note is a place you go rather
+          than a row that grows. Nothing is unmounted: it is CSS, so going back
+          is instant and the list keeps its scroll position.
+      */}
       {showing === 'notes' && (
-        <div className="notes-layout">
+        <div className={`notes-layout${openId ? ' has-open' : ''}`}>
           <aside className="notes-side">
             <input
               value={search}
@@ -418,6 +435,14 @@ function NoteEditor({
         from in the first place.
       */}
       <div className="row wrap notes-head" style={{ gap: '.4rem' }}>
+        {/*
+          The way out of the detail view, and the only control that is purely a
+          phone affordance — hidden by CSS wherever the list is still on screen,
+          because there it would close a note for no reason you could see.
+        */}
+        <button className="btn subtle notes-back" onClick={onClosed} aria-label="Back to the list">
+          ‹
+        </button>
         <div className="grow notes-title-field">
           <input
             className="notes-title-input"

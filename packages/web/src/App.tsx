@@ -68,8 +68,19 @@ const CORE_NAV: NavItem[] = [
 
 type NavId = string;
 
-/** Below this the drawer slides over the content; above it, it's always there. */
-const DESKTOP_QUERY = '(min-width: 900px)';
+/**
+ * Below this the drawer slides over the content; at or above it, it docks.
+ *
+ * It was 900 and hard-coded, and 900 answered "is there room for a drawer
+ * beside a *task list*" — one column of short lines. A screen with columns of
+ * its own is squeezed a long way above that: at 900 with the drawer showing,
+ * the content is left about 640px. So the default is 1200 and the number is a
+ * setting, because the right answer depends on the monitor and on which screen
+ * you actually live in.
+ *
+ * Used until the real setting arrives, and as the fallback if it never does.
+ */
+const DEFAULT_DRAWER_BREAKPOINT = 1200;
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -108,7 +119,47 @@ export function App() {
    */
   const [logo, setLogo] = useState<{ shape: LogoShape; version: number }>({ shape: 'pause', version: 0 });
 
-  const isDesktop = useMediaQuery(DESKTOP_QUERY);
+  /**
+   * The two drawer settings, held here because the shell is what reads them.
+   *
+   * Defaults until the fetch lands, so the first paint has a drawer in the
+   * right place rather than one that jumps once settings arrive.
+   */
+  const [drawerPrefs, setDrawerPrefs] = useState({
+    breakpoint: DEFAULT_DRAWER_BREAKPOINT,
+    docked: true,
+  });
+
+  /** Is there room to dock it? */
+  const wide = useMediaQuery(`(min-width: ${drawerPrefs.breakpoint}px)`);
+
+  /**
+   * Collapsed by hand, on a screen wide enough to dock.
+   *
+   * Session state rather than a write back to the setting: collapsing the menu
+   * to read something is a thing you do for a minute, and persisting it would
+   * turn a temporary choice into a permanent one. The *setting* says how the
+   * app opens; this says what you have done since.
+   */
+  const [collapsed, setCollapsed] = useState(false);
+
+  /*
+   * Follow the stored default when it changes, without stomping a live toggle.
+   *
+   * The effect must not simply write `docked` on every settings change, or any
+   * unrelated save — a habit ticked off on the phone announces itself down the
+   * same SSE stream — would snap the menu back open under your hands. Only an
+   * actual change to *this* preference re-applies it.
+   */
+  const appliedDock = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (appliedDock.current === drawerPrefs.docked) return;
+    appliedDock.current = drawerPrefs.docked;
+    setCollapsed(!drawerPrefs.docked);
+  }, [drawerPrefs.docked]);
+
+  /** Docked open beside the content, as opposed to overlaying or hidden. */
+  const isDesktop = wide && !collapsed;
   const drawer = useEdgeDrawer(!isDesktop);
 
   /**
@@ -190,6 +241,11 @@ export function App() {
         applyLook(theme, accent);
         watchSystemTheme(theme, accent);
         setLogo({ shape, version });
+        setDrawerPrefs({
+          breakpoint: settings.drawerBreakpoint ?? DEFAULT_DRAWER_BREAKPOINT,
+          // `!== 0`, not `=== true`: the row returns 0 or 1. See `api.ts`.
+          docked: (settings.drawerDocked ?? 1) !== 0,
+        });
         // The tab icon is a real file, so it needs a URL that changes when the
         // mark does — the accent and the shape are both part of the answer.
         applyFavicon(`${accent}-${shape}-${version}`);
@@ -380,11 +436,26 @@ export function App() {
 
       <div className="app">
         <header className="top">
-          {!isDesktop && (
-            <button className="menu" onClick={drawer.toggle} aria-label="Open menu" aria-expanded={drawer.open}>
-              ☰
-            </button>
-          )}
+          {/*
+            One button, at every width, which is the change. It used to appear
+            only below the breakpoint, so on a wide screen the menu was
+            permanent furniture — 260px of navigation you cannot put away while
+            reading something that wants the room.
+
+            It does two different things because there are two different states
+            to leave: docked, where the content is offset and collapsing gives
+            that width back, and undocked, where the drawer overlays and this
+            opens it. Both are "show or hide the menu", which is why it is one
+            control rather than two that would need explaining apart.
+          */}
+          <button
+            className="menu"
+            onClick={() => (wide ? setCollapsed((was) => !was) : drawer.toggle())}
+            aria-label={isDesktop ? 'Hide menu' : 'Show menu'}
+            aria-expanded={isDesktop || drawer.open}
+          >
+            ☰
+          </button>
           <h1>{current.label}</h1>
         </header>
 

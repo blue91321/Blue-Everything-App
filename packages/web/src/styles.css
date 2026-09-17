@@ -1772,6 +1772,40 @@ button {
   .notes-layout {
     grid-template-columns: 1fr;
   }
+
+  /*
+   * One column means one thing at a time. With a note open the list and the
+   * sidebar are taken off screen rather than left stacked above it — stacked,
+   * opening a note put it below everything and tapping one scrolled you to the
+   * foot of the page to find it.
+   *
+   * `display: none` rather than unmounting, so Back is instant and the list
+   * comes back with the scroll position and the search box exactly as they
+   * were. React keeps the state; CSS decides what is shown.
+   */
+  .notes-layout.has-open > .notes-side,
+  .notes-layout.has-open > .notes-list {
+    display: none;
+  }
+
+  /* The way back, which only exists where there is something to go back to. */
+  .notes-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    font-size: 1.3rem;
+    line-height: 1;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+/* Above the breakpoint the list never left, so there is nowhere to go back to. */
+@media (min-width: 1101px) {
+  .notes-back {
+    display: none;
+  }
 }
 
 .notes-side {
