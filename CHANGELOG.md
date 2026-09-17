@@ -92,6 +92,11 @@ files `npm version` does not touch.
   is centred in the rest, so toggling the menu slid the button up to 260px
   sideways and you had to go and find it again. It is the same place in every
   state now, which is what lets you hit it without looking.
+- **"Blue Everything" sits on the button's line** in the drawer, derived from
+  the button's own offset and height rather than a hand-tuned number.
+- **The screen title only steps aside where the button would actually sit on
+  it** — otherwise it stays lined up with the cards below it, which on a wide
+  screen is what a heading needs.
 - **When it docks is a setting**, and the default moved from 900px to 1200px.
   900 was the answer to "is there room for a drawer beside a task list"; a
   screen with columns of its own is squeezed well above that. Four named widths

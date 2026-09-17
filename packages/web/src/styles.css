@@ -977,11 +977,11 @@ button {
  */
 .menu {
   position: fixed;
-  top: calc(env(safe-area-inset-top) + 10px);
+  top: calc(env(safe-area-inset-top) + var(--menu-top));
   left: calc(env(safe-area-inset-left) + 10px);
   z-index: 40;
   width: 36px;
-  height: 32px;
+  height: var(--menu-size);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1008,23 +1008,65 @@ button {
  */
 :root {
   --menu-clear: 40px;
+  /* Where the button's band starts and how tall it is. */
+  --menu-top: 10px;
+  --menu-size: 32px;
 }
 
 /*
- * The drawer's logo sits to the right of the button, as it does on every site
- * that puts a menu control beside a wordmark.
+ * The wordmark sits beside the button, on its line, not under it.
+ *
+ * The alignment is derived rather than eyeballed: the head takes the button's
+ * own top offset as padding and reserves exactly the button's height, so
+ * `align-items: center` lands the logo's centre on the button's centre whatever
+ * those two numbers become. A hand-tuned `padding-top` would be right once and
+ * then quietly wrong the first time the button changed size.
  */
 .drawer-head {
   padding-left: calc(var(--menu-clear) + 12px);
+  padding-top: var(--menu-top);
+  min-height: calc(var(--menu-top) + var(--menu-size) + 12px);
 }
 
 /*
- * The page title only needs to move out of the way while the menu is *not*
- * docked, because that is the only time the content can reach the left edge —
- * docked, it starts 260px in and the button is nowhere near it.
+ * The title steps aside only where it would actually be sat on.
+ *
+ * The button is fixed near the left edge of the *screen*; the title is in a
+ * column that is usually centred. Padding it whenever the menu is undocked was
+ * one rule and too blunt — on a wide screen the button is hundreds of pixels
+ * away and the indent only pushed the title out of line with the cards beneath
+ * it, which is the thing a heading most needs to line up with.
+ *
+ * So the question is "has this column centred clear of the button yet", and it
+ * has a different answer per column width. Each rule below states one of those
+ * widths; docked needs no rule at all, since the content starts 260px in.
  */
 .shell:not(.desktop) header.top {
   padding-left: var(--menu-clear);
+}
+
+/* A reading-width column (720px) has centred clear by here. */
+@media (min-width: 820px) {
+  .shell:not(.desktop) header.top {
+    padding-left: 0;
+  }
+
+  /*
+   * The two that are still against the edge at this width: the Dashboard when
+   * it is carrying a side column, which is 1140px wide, and Notes, which has no
+   * maximum at all and so never centres.
+   */
+  .shell:not(.desktop):has(.notes) header.top,
+  .shell:not(.desktop):has(.dash.has-panel) header.top {
+    padding-left: var(--menu-clear);
+  }
+}
+
+/* ...and the 1140px one has centred clear by here. Notes still has not. */
+@media (min-width: 1240px) {
+  .shell:not(.desktop):has(.dash.has-panel) header.top {
+    padding-left: 0;
+  }
 }
 
 .logo-mark {

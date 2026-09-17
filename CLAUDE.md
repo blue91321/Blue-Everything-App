@@ -975,12 +975,40 @@ It is the behaviour every browser and YouTube have, and the reason is that a
 menu button is hit without looking. A fixed hit target costs a little layout
 work; a moving one costs a search every single time.
 
-**Two things have to clear it**, and `--menu-clear` is the one number they both
-read. The drawer's own wordmark is padded past it, which is where a logo sits
-next to a menu control anyway. And the page title is padded past it **only while
-the menu is undocked**, because that is the only time the content can reach the
-left edge of the screen — docked, it starts 260px in and the button is nowhere
-near it.
+**Two things have to clear it**, and three custom properties are what keep them
+honest: `--menu-clear`, `--menu-top` and `--menu-size`.
+
+**The wordmark sits on the button's line**, and the alignment is derived rather
+than eyeballed. The drawer's head takes the button's own top offset as padding
+and reserves exactly the button's height, so `align-items: center` lands the
+logo's centre on the button's centre whatever those two numbers become. A
+hand-tuned `padding-top` would be right once and quietly wrong the first time
+the button changed size. Measured: button, logo and wordmark all centre on
+**y=26**.
+
+**The title steps aside only where it would actually be sat on.** The first
+version padded it whenever the menu was undocked, which was one rule and too
+blunt: the button is fixed near the left edge of the *screen* while the title
+sits in a column that is usually centred, so on a wide screen the indent only
+pushed the heading out of line with the cards beneath it — the thing a heading
+most needs to line up with.
+
+The real question is "has this column centred clear of the button yet", and it
+has a different answer per column width, so there is a rule per width: the
+720px reading column has by 820px, the Dashboard's 1140px one has by 1240px, and
+Notes has no maximum so it never does. Docked needs no rule at all, since the
+content starts 260px in.
+
+Verified across the matrix, undocked unless stated:
+
+| width | screen | title vs cards |
+| --- | --- | --- |
+| 1440 | Dashboard + panel, docked | aligned, 285 / 285 |
+| 1440 | Dashboard + panel | aligned, 155 / 155 |
+| 1440 | Notes | indented to 52 — it is full-bleed |
+| 900 | Dashboard + panel | indented to 52 — still full-bleed |
+| 900 | Tasks | aligned, 95 / 95 |
+| 375 | Dashboard | indented to 52 |
 
 The button sits **above** the drawer rather than below it, so an open drawer
 does not cover the control that closes it. Asserted with `elementFromPoint`
