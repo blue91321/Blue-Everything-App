@@ -2529,6 +2529,50 @@ note with no links would carry a stray column of padding. `hasNoteLinks()` is
 the single statement of the condition, asked once by the layout and once by the
 panel that returns null on it.
 
+#### Whether three columns fit is asked of the columns, not of the window
+
+This was a `max-width: 1100px` media query, and it stopped being able to answer
+its own question the moment the menu's width became a setting. A media query
+asks the *window*; what decides whether three columns fit is the space they
+actually have, and the menu is 260px of that. At a 1250px window with the menu
+docked the notes screen has 990px and the viewport query cheerfully kept three
+columns in it — then collapsing the menu handed back 260px and nothing changed,
+because nothing in the query could see it.
+
+So `.notes` is a query container and the rule is `@container`. Measured at one
+fixed 1150px window: menu docked, the screen is **851px and stacks to one
+column**; menu collapsed, it is **1126px and lays out three** (170 / 248 / 684).
+No media query can tell those two apart.
+
+**Both containers are named, and that is load-bearing rather than tidy.**
+`.notes-note` is already a container for the backlinks rail, and the Back button
+sits inside it — so an unnamed `@container` would resolve against the nearest
+one, which is the note card, and hide the button whenever the *card* was wide.
+On a phone with a note open the card is the full width, which is exactly when
+the button is the only way out. `notes-screen` and `notes-card` say which
+question is being asked.
+
+**The tracks are `cqi` rather than `vw`** for the same reason: a percentage of
+the notes screen, so docking the menu narrows them instead of leaving them sized
+for room they no longer have.
+
+**The number changed with the unit, from 1100 to 900, and had to.** The old
+figure had the menu's width baked into it — it could not see the menu, so it
+compensated. 900 is what the columns genuinely need: 170 for the sidebar, 240
+for the list, 24 of gaps, and something worth having left for the note.
+
+Container queries are Chrome 105 and Safari 16, both below this app's existing
+floor of iOS 16.4 for web push, so unlike the `:has()` rules there is no older
+browser here to keep a fallback for.
+
+**One thing this turned up and did not change.** The sidebar is `position:
+sticky` and, in a notebook of half a dozen short notes, it is the tallest column
+— so the grid is exactly its height and sticky has nowhere to travel. That reads
+as broken and is not: with a long note open it pins at its `top` as intended,
+verified by scrolling 600px and watching it hold at 8px. Confirmed it predates
+the container work by toggling `container-type` off at runtime and measuring the
+same result both ways.
+
 #### On a phone a note is a place you go, not a row that grows
 
 Stacked into one column, an open note sat below the sidebar *and* the whole

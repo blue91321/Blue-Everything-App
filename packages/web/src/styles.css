@@ -1758,19 +1758,61 @@ button {
  * it, so they grow with the viewport and stop. Everything left over goes to the
  * note, which is the only column that can genuinely use it.
  */
+/*
+ * The screen is a query container, so "is there room for three columns" is
+ * asked of the space the columns actually have.
+ *
+ * It was a `max-width: 1100px` media query, which asks the *window* — and the
+ * window stopped being the answer once the menu's width became a setting. At a
+ * 1250px window with the menu docked, the notes screen has 990px to work in and
+ * the viewport query happily kept three columns in it; collapse the menu and
+ * nothing about the columns changed even though 260px had just arrived. A media
+ * query cannot see the menu at all.
+ *
+ * **Both containers are named**, and that is load-bearing rather than tidy.
+ * `.notes-note` is itself a container (for the backlinks rail), and the Back
+ * button lives inside it — so an unnamed `@container` would resolve against the
+ * note card and hide the button whenever the *card* was wide, which on a phone
+ * with a note open is exactly when it is needed.
+ *
+ * Container queries are Chrome 105 and Safari 16, both below this app's
+ * existing floor of iOS 16.4 for web push, so there is no older browser here to
+ * keep a fallback for.
+ */
+.notes {
+  container: notes-screen / inline-size;
+}
+
 .notes-layout {
   display: grid;
+  /*
+   * `cqi`, not `vw`: a percentage of the notes screen rather than of the
+   * window, so docking the menu narrows these tracks instead of leaving them
+   * sized for space they no longer have.
+   */
   grid-template-columns:
-    clamp(170px, 13vw, 260px)
-    minmax(0, clamp(240px, 22vw, 460px))
+    clamp(170px, 13cqi, 260px)
+    minmax(0, clamp(240px, 22cqi, 460px))
     minmax(0, 1fr);
   gap: 0.75rem;
   align-items: start;
 }
 
-@media (max-width: 1100px) {
+/* Only ever shown on the stacked layout, below. */
+.notes-back {
+  display: none;
+}
+
+/*
+ * 900px of *content*, which is a different number from the 1100px of window it
+ * replaces and a smaller one on purpose. The old figure had the menu's width
+ * baked into it — it had to, since it could not see it. This is the width the
+ * columns genuinely need: 170 for the sidebar, 240 for the list, 24 of gaps and
+ * something worth having left for the note.
+ */
+@container notes-screen (max-width: 900px) {
   .notes-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   /*
@@ -1798,13 +1840,6 @@ button {
     line-height: 1;
     padding-top: 0;
     padding-bottom: 0;
-  }
-}
-
-/* Above the breakpoint the list never left, so there is nowhere to go back to. */
-@media (min-width: 1101px) {
-  .notes-back {
-    display: none;
   }
 }
 
@@ -1895,7 +1930,7 @@ button {
  * weather graph has three separate ways to measure itself.
  */
 .notes-note {
-  container-type: inline-size;
+  container: notes-card / inline-size;
 }
 
 .notes-work {
@@ -1904,7 +1939,7 @@ button {
   gap: 1rem;
 }
 
-@container (min-width: 1000px) {
+@container notes-card (min-width: 1000px) {
   .notes-work.has-rail {
     grid-template-columns: minmax(0, 1fr) clamp(240px, 24cqi, 360px);
   }

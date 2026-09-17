@@ -98,6 +98,19 @@ files `npm version` does not touch.
   back open, which took a guard — the shell reloads settings on every change
   announced anywhere in the app.
 
+### The notes columns measure themselves, not the window
+
+- **Whether three columns fit is now asked of the space they have**, not of the
+  window. It was a viewport media query, which could not see the menu — so at a
+  1250px window with the menu docked the notes screen had 990px and still drew
+  three columns, and collapsing the menu handed back 260px without changing
+  anything.
+- Measured at one fixed 1150px window: menu docked → 851px → **one column**;
+  menu collapsed → 1126px → **three columns**. No media query can tell those
+  apart.
+- The threshold moved from 1100px of window to **900px of content**, because the
+  old number had the menu's width baked into it.
+
 ### On a phone, a note is its own screen
 
 - **Opening a note used to scroll you to the bottom of the page**, below the
