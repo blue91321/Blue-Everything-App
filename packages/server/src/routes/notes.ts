@@ -38,6 +38,10 @@ import {
   backlinksFor,
   filesFor,
   folderTree,
+  declareFolder,
+  undeclareFolder,
+  notesInFolder,
+  moveDeclaredFolders,
   graph,
   listNotes,
   outgoingFor,
@@ -245,8 +249,58 @@ export async function noteRoutes(app: FastifyInstance): Promise<void> {
       .where(sql`${notes.folder} = ${source} or ${notes.folder} like ${`${source}/%`}`)
       .returning({ id: notes.id });
 
+    /*
+     * The declarations move with the notes, or an empty folder would appear not
+     * to move at all and a full one would leave a ghost behind at the old path.
+     */
+    await moveDeclaredFolders(source, target);
+
     changes.emitChange('notes');
     return { moved: moved.length, folder: target };
+  });
+
+  /**
+   * Make a folder that has nothing in it.
+   *
+   * The one folder operation that needs its own table: everywhere else a folder
+   * is a prefix on notes and needs no record, but an empty one has no note to
+   * be a prefix of. Creating one that already exists is a success rather than a
+   * conflict — the screen cannot tell a declared folder from an implied one, and
+   * should not have to.
+   */
+  app.post('/api/notes/folder', async (request, reply) => {
+    const { path } = request.body as { path?: string };
+    const folder = normaliseFolder(path);
+    if (!folder) return reply.code(400).send({ error: 'name the folder' });
+
+    await declareFolder(folder);
+    changes.emitChange('notes');
+    return reply.code(201).send({ folder });
+  });
+
+  /**
+   * Remove a folder, but only while it is empty.
+   *
+   * Deleting one that still holds notes would have to answer a question this
+   * route cannot: whether the notes go too. Refusing and saying how many are in
+   * there leaves that decision where it belongs, and makes the destructive
+   * reading of "delete folder" impossible to reach by accident.
+   */
+  app.delete('/api/notes/folder', async (request, reply) => {
+    const { path } = request.query as { path?: string };
+    const folder = normaliseFolder(path);
+    if (!folder) return reply.code(400).send({ error: 'name the folder' });
+
+    const holding = await notesInFolder(folder);
+    if (holding > 0) {
+      return reply.code(409).send({
+        error: `${folder} still has ${holding} ${holding === 1 ? 'note' : 'notes'} in it`,
+      });
+    }
+
+    await undeclareFolder(folder);
+    changes.emitChange('notes');
+    return reply.code(204).send();
   });
 
   /* ---------------------------------------------------------------- */

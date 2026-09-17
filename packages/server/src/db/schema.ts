@@ -310,6 +310,27 @@ export const noteLinks = sqliteTable(
 );
 
 /** Tags found in a body, rebuilt on write beside the links. */
+/**
+ * Folders that exist before anything is in them.
+ *
+ * A folder is otherwise a path prefix on notes and nothing else, which is a
+ * good model — it needs no maintenance, it cannot disagree with where the notes
+ * actually are, and moving one is a single prefix rewrite. What it cannot do is
+ * hold nothing, so "New folder" had nowhere to put the answer.
+ *
+ * This is the smallest thing that fixes that: a list of paths made by hand.
+ * `folderTree` unions it with the derived ones, so a folder that appears
+ * because a note is filed there still needs no row here, and the two can never
+ * contradict each other — the derived side always wins on counts.
+ *
+ * The path is the key, so declaring one twice is not an error and the table
+ * cannot hold the same folder twice.
+ */
+export const noteFolders = sqliteTable('note_folders', {
+  path: text('path').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+});
+
 export const noteTags = sqliteTable(
   'note_tags',
   {

@@ -108,6 +108,25 @@ files `npm version` does not touch.
   back open, which took a guard — the shell reloads settings on every change
   announced anywhere in the app.
 
+### New asks what kind, and folders can be empty
+
+- **New** offers *Note* or *Folder*, from a list built to grow — a template or a
+  note from the clipboard is one entry rather than another button in the corner.
+- **A folder can now exist with nothing in it.** It used to be nothing but a
+  path prefix on notes, so "new folder" had nowhere to put the answer. Made
+  folders are recorded and shown at zero; ones that appear because a note is
+  filed there still need no record, and the notes always win on the count.
+- **An empty folder moves and can be removed**; one with notes in it is refused,
+  with the count in the message, because "delete folder" has a destructive
+  reading this will not perform.
+
+### "Not in a folder" showed every note
+
+- It took the same "and everything under it" rule as every other folder — and
+  everything is under the root, so the condition dropped out entirely and the
+  two entries in the tree rendered identical lists. The root now means notes
+  filed nowhere; *All notes* remains the separate question.
+
 ### Drag notes and folders about, like a file system
 
 - **Drag a note onto a folder** to file it, **a folder onto another** to move it

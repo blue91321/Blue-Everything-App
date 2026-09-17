@@ -77,6 +77,44 @@ export function useContextMenu(items: () => MenuItem[]): {
   };
 }
 
+/**
+ * The same menu, opened by an ordinary click on a button rather than by a
+ * right-click on a row.
+ *
+ * Shared with `useContextMenu` rather than built twice: the measuring, the
+ * clamping to the viewport and the six ways it dismisses are the fiddly parts,
+ * and a second copy is a second one to keep right. What differs is only where
+ * it opens — under the button's own corner, so it reads as belonging to it.
+ */
+export function useButtonMenu(items: () => MenuItem[]): {
+  open: (event: React.MouseEvent) => void;
+  menu: React.ReactNode;
+} {
+  const [at, setAt] = useState<At | null>(null);
+  const [shown, setShown] = useState<MenuItem[]>([]);
+
+  const open = useCallback(
+    (event: React.MouseEvent) => {
+      const list = items();
+      if (list.length === 0) return;
+      // The window-level `pointerdown` inside `Menu` would otherwise see this
+      // same press and close the menu in the frame it opened.
+      event.stopPropagation();
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      setShown(list);
+      setAt({ x: rect.left, y: rect.bottom + 4 });
+    },
+    [items]
+  );
+
+  const close = useCallback(() => setAt(null), []);
+
+  return {
+    open,
+    menu: at ? <Menu at={at} items={shown} onClose={close} /> : null,
+  };
+}
+
 function Menu({ at, items, onClose }: { at: At; items: MenuItem[]; onClose: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   const [placed, setPlaced] = useState(at);

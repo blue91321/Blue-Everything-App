@@ -1132,6 +1132,71 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   const toRoot = await moveFolder('betas', '');
   check('and a folder can be taken out to the root', toRoot.statusCode === 200 && toRoot.json().folder === '', JSON.stringify(toRoot.json()));
 
+  /*
+   * "Not in a folder" and "All notes" are different questions.
+   *
+   * They rendered identical lists: the root took the same "and everything under
+   * it" rule every other folder takes, and everything is under the root. The
+   * empty case pushed `undefined`, which was filtered out, so the query went
+   * with no folder condition at all — and the one entry that answers "what have
+   * I not filed yet" was the one that broke.
+   */
+  await makeNote('Filed away', 'somewhere');
+  await makeNote('Loose page', '');
+  const atRoot = (await app.inject({ method: 'GET', url: '/api/notes?folder=' })).json() as { folder: string }[];
+  const everything = (await app.inject({ method: 'GET', url: '/api/notes' })).json() as unknown[];
+  check('the root holds only what is filed nowhere', atRoot.every((n) => n.folder === ''), atRoot.map((n) => n.folder).join('|'));
+  check('  ...which is fewer than every note', atRoot.length < everything.length, `${atRoot.length} of ${everything.length}`);
+  check('  ...and is not empty either', atRoot.length > 0, String(atRoot.length));
+
+  /*
+   * A folder that exists before anything is in it.
+   *
+   * Everywhere else a folder is a prefix on notes and needs no record; an empty
+   * one has no note to be a prefix of, which is why it gets a table.
+   */
+  const treePaths = async () =>
+    ((await app.inject({ method: 'GET', url: '/api/notes/tree' })).json().folders as { path: string }[]).map(
+      (f) => f.path
+    );
+
+  const made = await app.inject({ method: 'POST', url: '/api/notes/folder', payload: { path: 'empty/shelf' } });
+  check('an empty folder can be made', made.statusCode === 201, `HTTP ${made.statusCode}`);
+  const withEmpty = await treePaths();
+  check('  ...and appears in the tree with nothing in it', withEmpty.includes('empty/shelf'), withEmpty.join(' '));
+  // Or the tree would render a child indented under a parent that is not there.
+  check('  ...along with its parent', withEmpty.includes('empty'), withEmpty.join(' '));
+
+  const madeTwice = await app.inject({ method: 'POST', url: '/api/notes/folder', payload: { path: 'empty/shelf' } });
+  check('  ...making it twice is not an error', madeTwice.statusCode === 201, `HTTP ${madeTwice.statusCode}`);
+
+  /*
+   * The declaration has to travel with the notes. Without it, moving an empty
+   * folder would appear to do nothing at all.
+   */
+  await moveFolder('empty/shelf', 'moved/shelf');
+  const afterEmptyMove = await treePaths();
+  check('an empty folder moves too', afterEmptyMove.includes('moved/shelf'), afterEmptyMove.join(' '));
+  check('  ...leaving no ghost behind', !afterEmptyMove.includes('empty/shelf'), afterEmptyMove.join(' '));
+
+  const rm = (path: string) =>
+    app.inject({ method: 'DELETE', url: `/api/notes/folder?path=${encodeURIComponent(path)}` });
+
+  const gone = await rm('moved/shelf');
+  check('an empty folder can be removed', gone.statusCode === 204, `HTTP ${gone.statusCode}`);
+  check('  ...and leaves the tree', !(await treePaths()).includes('moved/shelf'));
+
+  /*
+   * A folder with notes in it is refused rather than cascading. "Delete folder"
+   * has a destructive reading and a harmless one, and this route may only
+   * perform the harmless one.
+   */
+  await makeNote('Folder guard probe', 'keepme');
+  const refused = await rm('keepme');
+  check('a folder with notes in it is not removed', refused.statusCode === 409, `HTTP ${refused.statusCode}`);
+  check('  ...and says how many are in the way', /1 note/.test(refused.json().error), refused.json().error);
+  check('  ...and is still there', (await treePaths()).includes('keepme'));
+
   const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
   check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);
   check('  ...and knows whether it actually can', typeof canStart.json().available === 'boolean');

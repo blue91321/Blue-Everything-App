@@ -17,12 +17,13 @@ import {
   derivedTitle,
   extractTags,
   extractWikiLinks,
+  folderAncestors,
   noteKey,
   normaliseFolder,
   noteToText,
 } from '@everything/shared/notes';
 import { db } from '../db/client.js';
-import { noteFiles, noteLinks, notes, noteTags } from '../db/schema.js';
+import { noteFiles, noteFolders, noteLinks, notes, noteTags } from '../db/schema.js';
 
 export interface NoteRow {
   id: string;
@@ -115,8 +116,19 @@ export async function listNotes(query: ListQuery = {}): Promise<NoteRow[]> {
      * tree where clicking a parent shows nothing because everything sits one
      * level down reads as broken, and "show me everything about work" is the
      * question people actually ask a folder.
+     *
+     * **The root is the exception, and getting that wrong made it useless.**
+     * Everything is under the root, so the descendant rule would make "Not in a
+     * folder" mean every note — which is exactly what it did: the empty case
+     * pushed `undefined`, `filter(Boolean)` dropped it, and the query went out
+     * with no folder condition at all. The two entries in the tree rendered
+     * identical lists, and the one that answers "what have I not filed yet" was
+     * the one that broke.
+     *
+     * So the root means notes whose folder *is* the root, and nothing else.
+     * "All notes" is the separate question, asked by sending no folder.
      */
-    where.push(folder === '' ? undefined : or(eq(notes.folder, folder), like(notes.folder, `${folder}/%`)));
+    where.push(folder === '' ? eq(notes.folder, '') : or(eq(notes.folder, folder), like(notes.folder, `${folder}/%`)));
   }
 
   if (query.search?.trim()) {
@@ -261,9 +273,98 @@ export async function folderTree(): Promise<FolderNode[]> {
     }
   }
 
+  /*
+   * Folders made by hand join the ones the notes imply, at zero.
+   *
+   * `counts.has` rather than `set`, so a declared folder that has since been
+   * filled keeps its real count — the derived side is the authority on how many
+   * notes are in something, and this side only ever adds a folder that would
+   * otherwise not appear at all.
+   */
+  const declared = await db.select({ path: noteFolders.path }).from(noteFolders);
+  for (const { path } of declared) {
+    // Its ancestors too: a folder at `a/b/c` implies `a` and `a/b` exist, and
+    // without them the tree would render a child with no parent to indent under.
+    for (const at of folderAncestors(path)) {
+      if (!counts.has(at)) counts.set(at, 0);
+    }
+  }
+
   return [...counts.entries()]
     .map(([path, count]) => ({ path, count, name: path.split('/').pop() ?? path }))
     .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * Record a folder that has nothing in it yet.
+ *
+ * Idempotent by construction — the path is the primary key — so creating a
+ * folder that already exists, whether declared or implied by a note, is not an
+ * error. That matters because the screen cannot always tell which kind it is
+ * looking at, and should not have to.
+ */
+export async function declareFolder(path: string): Promise<string> {
+  const folder = normaliseFolder(path);
+  if (!folder) return '';
+  await db
+    .insert(noteFolders)
+    .values({ path: folder, createdAt: Date.now() })
+    .onConflictDoNothing();
+  return folder;
+}
+
+/**
+ * Forget a declared folder and everything declared under it.
+ *
+ * Only ever removes *declarations*. A folder that still holds notes goes on
+ * existing because those notes' paths say so, which is the right outcome: the
+ * route refuses that case rather than leaving a folder half-deleted.
+ */
+export async function undeclareFolder(path: string): Promise<number> {
+  const folder = normaliseFolder(path);
+  if (!folder) return 0;
+  const gone = await db
+    .delete(noteFolders)
+    .where(sql`${noteFolders.path} = ${folder} or ${noteFolders.path} like ${`${folder}/%`}`)
+    .returning({ path: noteFolders.path });
+  return gone.length;
+}
+
+/** How many notes sit in a folder or anywhere under it. */
+export async function notesInFolder(path: string): Promise<number> {
+  const folder = normaliseFolder(path);
+  if (!folder) return 0;
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(notes)
+    .where(sql`${notes.folder} = ${folder} or ${notes.folder} like ${`${folder}/%`}`);
+  return Number(row?.count ?? 0);
+}
+
+/**
+ * Carry declared folders along when their path moves.
+ *
+ * The rename route rewrites the prefix on every *note*; without this the
+ * declarations would stay behind, so moving an empty folder would appear to do
+ * nothing and moving a full one would leave a ghost at the old path.
+ */
+export async function moveDeclaredFolders(source: string, target: string): Promise<number> {
+  const from = normaliseFolder(source);
+  if (!from) return 0;
+  const to = normaliseFolder(target);
+  const moved = await db
+    .update(noteFolders)
+    .set({
+      path: to
+        ? sql`${to} || substr(${noteFolders.path}, ${from.length + 1})`
+        : sql`ltrim(substr(${noteFolders.path}, ${from.length + 1}), '/')`,
+    })
+    .where(sql`${noteFolders.path} = ${from} or ${noteFolders.path} like ${`${from}/%`}`)
+    .returning({ path: noteFolders.path });
+  // Moving `a/b` to the root makes it `b`; moving `a` to the root would make it
+  // the empty string, which is not a folder. Those rows are simply dropped.
+  await db.delete(noteFolders).where(sql`${noteFolders.path} = ''`);
+  return moved.length;
 }
 
 /** Tags with their counts, commonest first. */

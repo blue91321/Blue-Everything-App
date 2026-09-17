@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, type Note, type NoteDetail, type NoteFolder } from '../api';
 import { useAsync } from '../useAsync';
 import { relative } from '../format';
+import { useButtonMenu, useContextMenu, type MenuItem } from '../ContextMenu';
 import { Markdown } from '../notes/Markdown';
 import { NoteGraphView } from '../notes/Graph';
 import { NoteTransfer } from '../notes/Transfer';
@@ -184,12 +185,71 @@ export function Notes({ session }: { session?: { local: boolean } }) {
     [setDrag, list, all, tree, tags]
   );
 
+  /** Everything the tree reads, after something has been added or moved. */
+  const reloadAll = useCallback(() => {
+    list.reload();
+    all.reload();
+    tree.reload();
+    tags.reload();
+  }, [list, all, tree, tags]);
+
   async function newNote() {
     const created = await api.notes.create({ body: '', folder: folder ?? '' });
     list.reload();
     all.reload();
     openNote(created.id);
   }
+
+  async function newFolder() {
+    // Inside whichever folder is open, which is what a file manager does — and
+    // the root when the answer is "all notes", since that is the only place a
+    // folder can go when you are not standing in one.
+    const parent = folder ?? '';
+    const name = window.prompt(parent ? `New folder inside ${parent}` : 'New folder');
+    if (name === null) return;
+    if (!name.trim()) return;
+
+    try {
+      setMoveProblem('');
+      const { folder: created } = await api.notes.createFolder(parent ? `${parent}/${name}` : name);
+      reloadAll();
+      // Opened, so it is obvious it was made — an empty folder appearing
+      // somewhere in a long tree is easy to miss entirely.
+      setFolder(created);
+      setTag(undefined);
+    } catch (error) {
+      setMoveProblem((error as Error).message);
+    }
+  }
+
+  async function removeFolder(path: string) {
+    try {
+      setMoveProblem('');
+      await api.notes.removeFolder(path);
+      // Standing in the folder that just went would leave the list filtered by
+      // something no longer in the tree, which renders as an empty screen with
+      // no way back to it.
+      if (folder === path || (folder ?? '').startsWith(`${path}/`)) setFolder(undefined);
+      reloadAll();
+    } catch (error) {
+      // The 409 for a folder that still holds notes arrives here, and says how
+      // many — which is the whole reason the route refuses rather than cascades.
+      setMoveProblem((error as Error).message);
+    }
+  }
+
+  /**
+   * What the New button offers.
+   *
+   * A table rather than two buttons, because this is the list that grows: a
+   * template, a note from the clipboard, a daily note are all the same shape,
+   * and each is one entry here rather than another control competing for the
+   * same corner. The menu itself is the one the right-click menu already uses.
+   */
+  const newMenu = useButtonMenu(() => [
+    { label: 'Note', onSelect: () => void newNote() },
+    { label: 'Folder', onSelect: () => void newFolder() },
+  ]);
 
   return (
     <section className="notes">
@@ -248,6 +308,8 @@ export function Notes({ session }: { session?: { local: boolean } }) {
           than a row that grows. Nothing is unmounted: it is CSS, so going back
           is instant and the list keeps its scroll position.
       */}
+      {newMenu.menu}
+
       {showing === 'notes' && (
         <div className={`notes-layout${openId ? ' has-open' : ''}`}>
           <aside className="notes-side">
@@ -269,6 +331,7 @@ export function Notes({ session }: { session?: { local: boolean } }) {
               dragRef={draggingRef}
               onDragItem={setDrag}
               onDrop={(destination) => void dropOnto(destination)}
+              onRemove={(path) => void removeFolder(path)}
             />
 
             {moveProblem && (
@@ -316,8 +379,8 @@ export function Notes({ session }: { session?: { local: boolean } }) {
                 {folder !== undefined && folder !== '' ? ` in ${folder}` : ''}
                 {tag ? ` tagged #${tag}` : ''}
               </div>
-              <button className="btn primary" onClick={() => void newNote()}>
-                New
+              <button className="btn primary" onClick={newMenu.open} aria-haspopup="menu">
+                New ▾
               </button>
             </div>
 
@@ -424,6 +487,7 @@ function FolderList({
   dragRef,
   onDragItem,
   onDrop,
+  onRemove,
 }: {
   folders: NoteFolder[];
   selected: string | undefined;
@@ -434,6 +498,7 @@ function FolderList({
   dragRef: React.RefObject<DragPayload | null>;
   onDragItem: (item: DragPayload | null) => void;
   onDrop: (destination: string) => void;
+  onRemove: (path: string) => void;
 }) {
   /** Which target the cursor is over, so exactly one can light up. */
   const [over, setOver] = useState<string | null>(null);
@@ -501,18 +566,66 @@ function FolderList({
       </button>
 
       {folders.map((entry) => (
-        <button
+        <FolderRow
           key={entry.path}
-          {...dropTarget(entry.path)}
-          {...dragSource(entry.path, entry.path)}
-          style={{ paddingLeft: 10 + entry.path.split('/').length * 12 }}
-          onClick={() => onPick(entry.path)}
-          title={`${entry.path} — drag a note here, or drag this into another folder`}
-        >
-          {entry.name} <span className="meta">{entry.count}</span>
-        </button>
+          entry={entry}
+          target={dropTarget(entry.path)}
+          source={dragSource(entry.path, entry.path)}
+          onPick={onPick}
+          onRemove={onRemove}
+        />
       ))}
     </div>
+  );
+}
+
+/**
+ * One folder in the tree.
+ *
+ * Its own component so it can hold a hook — a right-click menu belongs to a
+ * row, and `useContextMenu` cannot be called inside a `map`.
+ */
+function FolderRow({
+  entry,
+  target,
+  source,
+  onPick,
+  onRemove,
+}: {
+  entry: NoteFolder;
+  target: Record<string, unknown>;
+  source: Record<string, unknown>;
+  onPick: (folder: string) => void;
+  onRemove: (path: string) => void;
+}) {
+  const menu = useContextMenu(() => [
+    {
+      /*
+       * Named with its count when it cannot go, rather than simply greyed.
+       * "Remove" disabled for no stated reason is a dead end; "3 notes inside"
+       * says what to do about it.
+       */
+      label: entry.count > 0 ? `Remove — ${entry.count} inside` : 'Remove folder',
+      onSelect: () => onRemove(entry.path),
+      disabled: entry.count > 0,
+      danger: true,
+    } satisfies MenuItem,
+  ]);
+
+  return (
+    <>
+      <button
+        {...target}
+        {...source}
+        style={{ paddingLeft: 10 + entry.path.split('/').length * 12 }}
+        onClick={() => onPick(entry.path)}
+        onContextMenu={menu.onContextMenu}
+        title={`${entry.path} — drag a note here, or drag this into another folder`}
+      >
+        {entry.name} <span className="meta">{entry.count}</span>
+      </button>
+      {menu.menu}
+    </>
   );
 }
 

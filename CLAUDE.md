@@ -2602,6 +2602,57 @@ note with no links would carry a stray column of padding. `hasNoteLinks()` is
 the single statement of the condition, asked once by the layout and once by the
 panel that returns null on it.
 
+#### New is a menu, and folders can exist while empty
+
+**New** offers *Note* or *Folder*, from a table rather than two buttons, because
+that is the list which grows — a template, a note from the clipboard, a daily
+note are all the same shape and each is one entry rather than another control
+competing for the same corner. It reuses the right-click menu's own component:
+the measuring, the clamping to the viewport and the six ways it dismisses are
+the fiddly parts, and a second copy is a second one to keep right. Only where it
+opens differs, so `useButtonMenu` sits beside `useContextMenu` in the same file.
+
+**"New folder" needed somewhere to put the answer.** A folder was a path prefix
+on notes and nothing else — a good model, since it needs no maintenance, cannot
+disagree with where the notes actually are, and moves with one prefix rewrite.
+What it cannot do is hold *nothing*, so an empty folder could not exist at all.
+
+`note_folders` is the smallest fix: a list of paths made by hand, which
+`folderTree` unions with the derived ones at a count of zero. A folder that
+appears because a note is filed there still needs no row, and the two cannot
+contradict each other because **the derived side always wins on counts** —
+`counts.has` rather than `counts.set`, so a declared folder that has since been
+filled shows its real number.
+
+Three consequences worth knowing:
+
+- **Its ancestors are declared too.** A folder at `a/b/c` implies `a` and `a/b`,
+  and without them the tree renders a child indented under a parent that is not
+  there.
+- **The declarations move with the notes.** `moveDeclaredFolders` runs inside the
+  rename route, or moving an empty folder would appear to do nothing and moving
+  a full one would leave a ghost at the old path.
+- **Removing one is refused while it holds notes**, with the count in the
+  message. "Delete folder" has a destructive reading and a harmless one, and
+  this route may only perform the harmless one — the menu item says
+  *"Remove — 3 inside"* and is disabled, because a greyed control with no stated
+  reason is a dead end.
+
+#### "Not in a folder" was showing every note
+
+Reported, and it was one branch. Every other folder shows what is *under* it,
+which is right — a tree where clicking a parent shows nothing because everything
+sits one level down reads as broken. The root is the exception, because
+everything is under the root.
+
+The empty case pushed `undefined` into the condition list, `filter(Boolean)`
+dropped it, and the query went out with **no folder condition at all**. So the
+two entries in the tree rendered identical lists, and the one that answers "what
+have I not filed yet" was the one that broke. The root now means notes whose
+folder *is* the root; "All notes" is the separate question, asked by sending no
+folder at all. Smoke asserts the root is both non-empty and smaller than the
+whole list, since either alone would pass on an empty notebook.
+
 #### Dragging notes and folders about
 
 A note dragged onto a folder is filed there; a folder dragged onto another moves

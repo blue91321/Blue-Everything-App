@@ -1534,6 +1534,11 @@ export const api = {
     graph: () => request<NoteGraph>('/api/notes/graph'),
     renameFolder: (from: string, to: string) =>
       post<{ moved: number; folder: string }>('/api/notes/folder/rename', { from, to }),
+    /** Make one that has nothing in it yet. Making an existing one is a no-op. */
+    createFolder: (path: string) => post<{ folder: string }>('/api/notes/folder', { path }),
+    /** Refused with a 409 while it still holds notes. */
+    removeFolder: (path: string) =>
+      request<void>(`/api/notes/folder?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
     reindex: () => post<{ reindexed: number }>('/api/notes/reindex', {}),
 
     formats: () =>
