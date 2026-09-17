@@ -1180,6 +1180,20 @@ renderer) and in `styles.css` (for the app), because the PWA does not import
 shared and CSS cannot import TypeScript. Neither copy can go, so
 `make-icons.mjs` compares them and **fails the build** if they drift.
 
+**It also refuses a `var(--x)` that nothing declares**, and that check exists
+because of a real one. `--card` was used by nine rules and defined by none: the
+context menu, the gauge track, code blocks, the live thumbnail and four hover
+states. CSS has no error for this — an undefined custom property makes the
+*whole declaration* invalid, so `background: var(--card)` is not a wrong colour,
+it is **no background at all**. The right-click menu had been transparent for as
+long as it had existed, with the page showing through it, and nothing anywhere
+said so.
+
+It is the same class of mistake as the palette drift and is refused in the same
+place. `var(--x, fallback)` is exempt, since a fallback is a deliberate default
+rather than a typo. All nine became `--surface-raised`, which is what the name
+was reaching for — a surface lifted slightly off the one behind it.
+
 `logo_shape` is `image` when a picture is uploaded rather than there being a
 separate flag — the two are exclusive, and a `useCustomLogo` boolean alongside
 a shape would allow "custom picture *and* triangle". Setting it to `image` with

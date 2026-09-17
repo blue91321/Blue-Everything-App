@@ -108,6 +108,17 @@ files `npm version` does not touch.
   back open, which took a guard — the shell reloads settings on every change
   announced anywhere in the app.
 
+### The right-click menu had no background
+
+- **`--card` was used by nine rules and defined by none.** An undefined custom
+  property makes the whole declaration invalid, so those were not the wrong
+  colour — they had *no background at all*: the right-click menu, the gauge
+  track, code blocks, the live thumbnail and four hover states, all with the
+  page showing straight through them.
+- All nine now use `--surface-raised`, which is what the name was reaching for.
+- **The build refuses a `var(--x)` that nothing declares**, so the next typo in
+  a property name stops the build instead of quietly removing a background.
+
 ### New asks what kind, and folders can be empty
 
 - **New** offers *Note* or *Folder*, from a list built to grow — a template or a

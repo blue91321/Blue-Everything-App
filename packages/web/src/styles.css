@@ -996,7 +996,7 @@ button {
 }
 
 .menu:hover {
-  background: var(--card);
+  background: var(--surface-raised);
 }
 
 /*
@@ -1382,7 +1382,7 @@ button {
 
 /* Whole even when empty, so the shape is still a shape rather than a gap. */
 .gauge-track {
-  fill: var(--card);
+  fill: var(--surface-raised);
 }
 
 .gauge-fill {
@@ -1465,7 +1465,7 @@ button {
   padding: 4px;
   display: flex;
   flex-direction: column;
-  background: var(--card);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
@@ -1597,7 +1597,7 @@ button {
   flex: none;
   border-radius: 6px;
   object-fit: cover;
-  background: var(--card);
+  background: var(--surface-raised);
 }
 
 /*
@@ -1642,7 +1642,7 @@ button {
 
 .star:hover:not(:disabled),
 .star:focus-visible {
-  background: var(--card);
+  background: var(--surface-raised);
   color: var(--accent);
 }
 
@@ -1968,7 +1968,7 @@ button {
 }
 
 .notes-folder:hover {
-  background: var(--card);
+  background: var(--surface-raised);
 }
 
 .notes-folder.on {
@@ -2184,7 +2184,7 @@ button {
 
 .notes-backlink:hover {
   border-left-color: var(--accent);
-  background: var(--card);
+  background: var(--surface-raised);
 }
 
 .notes-drop {
@@ -2326,7 +2326,7 @@ button {
 }
 
 .md-code {
-  background: var(--card);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.6em 0.8em;
@@ -2335,7 +2335,7 @@ button {
 }
 
 .md-inline-code {
-  background: var(--card);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.05em 0.3em;

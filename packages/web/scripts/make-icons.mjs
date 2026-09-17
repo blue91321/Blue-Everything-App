@@ -80,6 +80,39 @@ if (drift.length > 0) {
   process.exit(1);
 }
 
+/*
+ * Every `var(--x)` must name a property something actually declares.
+ *
+ * CSS has no error for this. An undefined custom property makes the whole
+ * declaration invalid, so `background: var(--card)` is not a wrong colour — it
+ * is *no background at all*, silently, with the page showing through. That is
+ * how `--card` survived: nine rules used it, nothing defined it, and the
+ * right-click menu had been transparent for as long as it had existed.
+ *
+ * A typo in a property name is the same class of mistake as the palette drift
+ * above — invisible until somebody happens to look at the one screen where it
+ * shows — so it is refused in the same place, at build time.
+ */
+const declared = new Set([...css.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((m) => m[1]));
+const undeclared = new Map();
+
+for (const use of css.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*(,|\))/g)) {
+  // A fallback — `var(--x, red)` — is a deliberate default rather than a typo,
+  // and stays legal whether or not the property is ever declared.
+  if (use[2] === ',') continue;
+  if (declared.has(use[1])) continue;
+  undeclared.set(use[1], (undeclared.get(use[1]) ?? 0) + 1);
+}
+
+if (undeclared.size > 0) {
+  console.error('\nstyles.css uses custom properties that nothing declares:\n');
+  for (const [name, count] of undeclared) {
+    console.error(`  ! ${name} — used ${count} time${count === 1 ? '' : 's'}, never defined`);
+  }
+  console.error('\nEach one silently drops the whole declaration. Define it or fix the name.\n');
+  process.exit(1);
+}
+
 /* ---------- .ico container ---------- */
 
 /**
