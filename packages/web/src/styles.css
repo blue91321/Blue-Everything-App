@@ -1967,6 +1967,87 @@ button {
   font-size: 0.86rem;
 }
 
+/*
+ * A folder in the tree is a row of two controls, not one button.
+ *
+ * The twist and the name do different things — one folds the branch, the other
+ * opens the folder — and a button inside a button is not something a browser
+ * will render. The drop target and the drag handle live on the row, so the
+ * whole width takes a note and the whole width can be picked up, including the
+ * arrow; scoped to the row rather than the name button, or the arrow would be a
+ * dead strip down the side of the tree.
+ */
+.notes-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.notes-folder-row:hover {
+  background: var(--surface-raised);
+}
+
+.notes-folder-row.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.notes-folder-row.on .meta {
+  color: var(--accent-text);
+  opacity: 0.8;
+}
+
+.notes-folder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  padding: 0.3rem 0.5rem 0.3rem 0.2rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+/*
+ * The arrow, and the space it keeps when a folder has nothing inside it.
+ *
+ * A fixed width either way, so names line up down the tree — labels that jog
+ * left and right by a few pixels depending on whether a folder has children are
+ * harder to scan than a column with a little empty space in it.
+ */
+.notes-twist {
+  flex: none;
+  width: 16px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.notes-twist:hover {
+  color: var(--text);
+}
+
+.notes-folder-row.on .notes-twist {
+  color: var(--accent-text);
+}
+
+.notes-twist-empty {
+  cursor: default;
+}
+
 .notes-folder:hover {
   background: var(--surface-raised);
 }

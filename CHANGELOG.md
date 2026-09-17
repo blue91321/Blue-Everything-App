@@ -108,6 +108,13 @@ files `npm version` does not touch.
   back open, which took a guard — the shell reloads settings on every change
   announced anywhere in the app.
 
+### The folder tree folds up
+
+- **An arrow beside every folder that has something inside it**, and only those
+  — a leaf keeps the space so names stay lined up.
+- Collapsing takes *every* descendant with it, not just the children.
+- **Remembered between visits**, per device, like the collapsed voice sections.
+
 ### Folders show up among the notes
 
 - **Standing in a folder, the list leads with the folders inside it**, then the

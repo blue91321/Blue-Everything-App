@@ -2696,6 +2696,31 @@ folder *is* the root; "All notes" is the separate question, asked by sending no
 folder at all. Smoke asserts the root is both non-empty and smaller than the
 whole list, since either alone would pass on an empty notebook.
 
+#### Branches fold, and stay folded
+
+An arrow beside any folder that has something inside it, and **only** those —
+a leaf gets a spacer of the same width instead, so names line up down the tree
+rather than jogging left and right depending on whether a folder has children.
+
+**Collapsing hides every descendant, not only the children.** Shutting `a` has
+to take `a/b/c` with it; testing the parent alone would leave grandchildren on
+screen under a folder that is visibly not showing its own children, which reads
+as the tree being broken rather than folded.
+
+**Remembered in `localStorage`**, matching the voice command groups and for the
+reason they give: reopening them every visit is a chore. Deliberately *not* in
+`settings` beside the theme — this is a view preference about one screen on one
+device, and a tree you folded up on the phone should not fold up on the PC where
+there is room for it.
+
+**A folder row is now two controls, not one button.** The twist folds the branch
+and the name opens the folder, and a button inside a button is not something a
+browser will render. The drop target and the drag handle moved out to the row
+with them, so the whole width still takes a note and the whole width can still
+be picked up — including the arrow, which would otherwise be a dead strip down
+the side of the tree. Verified after the restructure that selecting, dropping
+and the drop highlight all still work.
+
 #### The folders inside the one you are in, among the notes
 
 Standing in a folder, the list leads with the folders directly inside it and

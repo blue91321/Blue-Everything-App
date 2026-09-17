@@ -27,6 +27,7 @@ import { NoteTransfer } from '../notes/Transfer';
 import {
   canMoveFolder,
   canMoveNote,
+  folderAncestors,
   folderMoveTarget,
   folderParent,
   noteKey,
@@ -136,6 +137,59 @@ function useFolderDnd({
 function childrenOf(folders: NoteFolder[], parent: string | undefined): NoteFolder[] {
   if (parent === undefined) return [];
   return folders.filter((entry) => folderParent(entry.path) === parent);
+}
+
+const COLLAPSED_KEY = 'everything.notesFoldersCollapsed';
+
+/**
+ * Which branches of the tree are shut.
+ *
+ * `localStorage`, matching the voice command groups, and for the same reason
+ * they give: reopening them every visit is a chore. It is a view preference
+ * about this screen on this device rather than anything about the notebook, so
+ * it does not belong in `settings` beside the theme — a tree you collapsed on
+ * the phone should not fold up on the PC, where there is room for it.
+ */
+function readCollapsed(): Set<string> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]');
+    return new Set(Array.isArray(stored) ? stored.filter((p): p is string => typeof p === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function useCollapsedFolders() {
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
+
+  const toggle = useCallback((path: string) => {
+    setCollapsed((previous) => {
+      const next = new Set(previous);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      try {
+        localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
+      } catch {
+        // Private browsing, or a full quota. Losing the preference is not worth
+        // failing the render over.
+      }
+      return next;
+    });
+  }, []);
+
+  /**
+   * Hidden when *any* ancestor is shut, not merely the parent.
+   *
+   * Collapsing `a` has to take `a/b/c` with it. Testing the parent alone would
+   * leave grandchildren on screen under a folder that is no longer showing its
+   * own children, which reads as the tree being broken rather than folded.
+   */
+  const hidden = useCallback(
+    (path: string) => folderAncestors(path).slice(0, -1).some((at) => collapsed.has(at)),
+    [collapsed]
+  );
+
+  return { collapsed, toggle, hidden };
 }
 
 export function Notes({ session }: { session?: { local: boolean } }) {
@@ -266,6 +320,9 @@ export function Notes({ session }: { session?: { local: boolean } }) {
   );
 
   /** Drag and drop for those rows, with its own highlight. */
+  const folds = useCollapsedFolders();
+
+  /** Drag and drop for the subfolder rows, with its own highlight. */
   const listDnd = useFolderDnd({
     dragRef: draggingRef,
     onDragItem: setDrag,
@@ -460,6 +517,9 @@ export function Notes({ session }: { session?: { local: boolean } }) {
               onDissolve={(path) => void dissolveFolder(path)}
               creatingIn={creatingIn}
               onCreated={(name) => void createFolder(name)}
+              collapsed={folds.collapsed}
+              onToggleFolder={folds.toggle}
+              hiddenByCollapse={folds.hidden}
             />
 
             {moveProblem && (
@@ -657,6 +717,9 @@ function FolderList({
   onDissolve,
   creatingIn,
   onCreated,
+  collapsed,
+  onToggleFolder,
+  hiddenByCollapse,
 }: {
   folders: NoteFolder[];
   selected: string | undefined;
@@ -672,16 +735,29 @@ function FolderList({
   /** Which folder a new one is being named inside, or null when none is. */
   creatingIn: string | null;
   onCreated: (name: string) => void;
+  collapsed: Set<string>;
+  onToggleFolder: (path: string) => void;
+  hiddenByCollapse: (path: string) => boolean;
 }) {
   /** Which target the cursor is over, so exactly one can light up. */
   const { over, dropTarget: dropOn, dragSource } = useFolderDnd({ dragRef, onDragItem, onDrop });
 
-  /** The tree's own row styling, wrapped round the shared drop handlers. */
+  /** Selected, and lit for a drop — the two states a target can be in. */
+  const marks = (destination: string) =>
+    `${selected === destination ? ' on' : ''}${
+      over === destination && canDropOn(dragging, destination) ? ' drop-here' : ''
+    }`;
+
+  /** For the plain buttons at the top of the tree, which are one control each. */
   const dropTarget = (destination: string) => ({
     ...dropOn(destination),
-    className: `notes-folder${selected === destination ? ' on' : ''}${
-      over === destination && canDropOn(dragging, destination) ? ' drop-here' : ''
-    }`,
+    className: `notes-folder${marks(destination)}`,
+  });
+
+  /** For a folder, which is a row holding a twist and a name. */
+  const rowTarget = (destination: string) => ({
+    ...dropOn(destination),
+    className: `notes-folder-row${marks(destination)}`,
   });
 
   return (
@@ -702,11 +778,16 @@ function FolderList({
 
       {creatingIn === '' && <NewFolderField parent="" onDone={onCreated} />}
 
-      {folders.map((entry) => (
+      {folders
+        .filter((entry) => !hiddenByCollapse(entry.path))
+        .map((entry) => (
         <FolderRow
           key={entry.path}
+          hasChildren={folders.some((other) => folderParent(other.path) === entry.path)}
+          isCollapsed={collapsed.has(entry.path)}
+          onToggle={() => onToggleFolder(entry.path)}
           entry={entry}
-          target={dropTarget(entry.path)}
+          target={rowTarget(entry.path)}
           source={dragSource(entry.path, entry.path)}
           onPick={onPick}
           onRemove={onRemove}
@@ -845,6 +926,9 @@ function FolderRow({
   onRemove,
   onDissolve,
   below,
+  hasChildren,
+  isCollapsed,
+  onToggle,
 }: {
   entry: NoteFolder;
   target: Record<string, unknown>;
@@ -854,6 +938,9 @@ function FolderRow({
   onDissolve: (path: string) => void;
   /** The new-folder field, when one is being named inside this folder. */
   below: React.ReactNode;
+  hasChildren: boolean;
+  isCollapsed: boolean;
+  onToggle: () => void;
 }) {
   /*
    * Nothing here is ever greyed out.
@@ -883,18 +970,47 @@ function FolderRow({
         ] satisfies MenuItem[])
   );
 
+  const depth = entry.path.split('/').length;
+
   return (
     <>
-      <button
+      {/*
+        A row rather than one button, because the twist is a second control and
+        a button inside a button is not something a browser will render. The
+        drop target and the drag source move out here with it, so the whole row
+        accepts a note and the whole row can be picked up — including the arrow,
+        which would otherwise be a dead strip down the side of the tree.
+      */}
+      <div
         {...target}
         {...source}
-        style={{ paddingLeft: 10 + entry.path.split('/').length * 12 }}
-        onClick={() => onPick(entry.path)}
+        style={{ paddingLeft: 4 + depth * 12 }}
         onContextMenu={menu.onContextMenu}
-        title={`${entry.path} — drag a note here, or drag this into another folder`}
       >
-        {entry.name} <span className="meta">{entry.count}</span>
-      </button>
+        {hasChildren ? (
+          <button
+            className="notes-twist"
+            aria-expanded={!isCollapsed}
+            aria-label={`${isCollapsed ? 'Show' : 'Hide'} what is inside ${entry.name}`}
+            onClick={onToggle}
+          >
+            {isCollapsed ? '▸' : '▾'}
+          </button>
+        ) : (
+          // Holds the column so names line up whether or not a folder has
+          // children — a tree whose labels jog left and right by a few pixels
+          // is harder to scan than one with a little empty space in it.
+          <span className="notes-twist notes-twist-empty" aria-hidden="true" />
+        )}
+
+        <button
+          className="notes-folder-name"
+          onClick={() => onPick(entry.path)}
+          title={`${entry.path} — drag a note here, or drag this into another folder`}
+        >
+          {entry.name} <span className="meta">{entry.count}</span>
+        </button>
+      </div>
       {below}
       {menu.menu}
     </>
