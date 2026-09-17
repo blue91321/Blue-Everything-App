@@ -113,6 +113,9 @@ files `npm version` does not touch.
 - **An arrow beside every folder that has something inside it**, and only those
   — a leaf keeps the space so names stay lined up.
 - Collapsing takes *every* descendant with it, not just the children.
+- **It is sized to paint like a `>`**, which takes a larger font-size than the
+  text beside it — a triangle carries about a quarter less ink than punctuation
+  at the same em.
 - **Remembered between visits**, per device, like the collapsed voice sections.
 
 ### Folders show up among the notes

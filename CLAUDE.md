@@ -2702,6 +2702,13 @@ An arrow beside any folder that has something inside it, and **only** those —
 a leaf gets a spacer of the same width instead, so names line up down the tree
 rather than jogging left and right depending on whether a folder has children.
 
+**The arrow is set larger than the row's type so that it *paints* the same size
+as a `<` or `>` beside it**, and matching the font-size alone does not achieve
+that. A geometric shape carries far less ink than punctuation at the same em:
+measured in the app's own font at 13.76px, `>` paints 8×7 while `▸` paints 6×5,
+about a quarter smaller. At 1.2rem the triangle paints 8×7 — the same. Worth
+knowing before "just make it the same font-size" looks like the obvious fix.
+
 **Collapsing hides every descendant, not only the children.** Shutting `a` has
 to take `a/b/c` with it; testing the parent alone would leave grandchildren on
 screen under a folder that is visibly not showing its own children, which reads

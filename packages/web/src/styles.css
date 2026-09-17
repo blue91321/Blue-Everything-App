@@ -1977,12 +1977,18 @@ button {
  * arrow; scoped to the row rather than the name button, or the arrow would be a
  * dead strip down the side of the tree.
  */
+/*
+ * The row sets the type size once and both controls inherit it, so the arrow is
+ * exactly as big as a `<` or `>` would be beside the folder's name rather than
+ * a size of its own that has to be kept in step by hand.
+ */
 .notes-folder-row {
   display: flex;
   align-items: center;
   gap: 2px;
   border-radius: 6px;
   cursor: pointer;
+  font-size: 0.86rem;
 }
 
 .notes-folder-row:hover {
@@ -2009,7 +2015,6 @@ button {
   padding: 0.3rem 0.5rem 0.3rem 0.2rem;
   cursor: pointer;
   font: inherit;
-  font-size: 0.86rem;
 }
 
 /*
@@ -2021,7 +2026,7 @@ button {
  */
 .notes-twist {
   flex: none;
-  width: 16px;
+  width: 18px;
   height: 20px;
   display: flex;
   align-items: center;
@@ -2031,7 +2036,19 @@ button {
   border: 0;
   border-radius: 4px;
   color: var(--muted);
-  font-size: 0.7rem;
+  font: inherit;
+  /*
+   * Bigger than the row's type on purpose, so it *paints* the size a `<` or `>`
+   * does beside it.
+   *
+   * Matching the font-size alone is not enough and looks like a bug: a
+   * geometric shape carries far less ink than punctuation at the same em.
+   * Measured in the app's own font at 13.76px, `>` paints 8×7 and `▸` paints
+   * 6×5 — about a quarter smaller. 1.2rem brings the triangle's ink up to the
+   * same 7px, which is what "the same size as a greater-than sign" means when
+   * you are looking at it rather than reading the stylesheet.
+   */
+  font-size: 1.2rem;
   line-height: 1;
   cursor: pointer;
 }
