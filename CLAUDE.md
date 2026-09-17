@@ -2632,11 +2632,40 @@ Three consequences worth knowing:
 - **The declarations move with the notes.** `moveDeclaredFolders` runs inside the
   rename route, or moving an empty folder would appear to do nothing and moving
   a full one would leave a ghost at the old path.
-- **Removing one is refused while it holds notes**, with the count in the
-  message. "Delete folder" has a destructive reading and a harmless one, and
-  this route may only perform the harmless one — the menu item says
-  *"Remove — 3 inside"* and is disabled, because a greyed control with no stated
-  reason is a dead end.
+- **The declarations move with the notes.** `moveDeclaredFolders` runs inside
+  the rename route, or moving an empty folder would appear to do nothing.
+
+**The name is typed in the tree, not in a `prompt`.** A modal dialogue sits in
+front of the thing you are adding to, so you cannot see where the folder is
+going while you name it. The field appears indented in the place the row will
+be, which is what every file manager does and says where it is landing without
+needing a sentence to explain it. **Enter commits and the blur is the fallback**
+— the ordering the habit stepper had to learn, because a document that is not
+focused dispatches no `blur` at all — with a `committed` ref so pressing Enter,
+which blurs an instant later, does not fire both.
+
+#### "Delete folder" means two things, so it offers both
+
+The first version disabled *Remove* on a folder with notes in it and labelled it
+*"Remove — 3 inside"*. That reads as a menu refusing to do the thing you opened
+it for, and it was solving the wrong problem: the action is not impossible, it
+is **ambiguous**. Deleting a folder can mean *throw away what is in it* or *get
+rid of the grouping*, and only one of those can be undone.
+
+So nothing is greyed. An empty folder offers **Delete folder**. One with
+something in it offers both, named for what each actually does:
+
+- **Keep the N notes, remove the folder** — the rename primitive again, `a/b`
+  into `a`, so the notes move up a level in one prefix rewrite and nothing is
+  touched note by note.
+- **Delete folder and N notes** — in the warning colour, and it asks first,
+  because there is no trash here. `notes=delete` on the route is the caller
+  stating which reading it meant; without it the endpoint still refuses and says
+  how many are in the way, so the destructive path is reachable only on purpose.
+
+Verified end to end: declining the confirmation left the note untouched,
+accepting removed folder and note together, and *Keep the notes* left the note
+alive one level up with the folder gone.
 
 #### "Not in a folder" was showing every note
 

@@ -287,20 +287,48 @@ export async function noteRoutes(app: FastifyInstance): Promise<void> {
    * reading of "delete folder" impossible to reach by accident.
    */
   app.delete('/api/notes/folder', async (request, reply) => {
-    const { path } = request.query as { path?: string };
+    const { path, notes: withNotes } = request.query as { path?: string; notes?: string };
     const folder = normaliseFolder(path);
     if (!folder) return reply.code(400).send({ error: 'name the folder' });
 
     const holding = await notesInFolder(folder);
-    if (holding > 0) {
+
+    /*
+     * Taking the notes too has to be asked for by name.
+     *
+     * "Delete folder" has a destructive reading and a harmless one, and which
+     * one was meant is not recoverable afterwards — there is no trash here. So
+     * the default refuses and says how many are in the way, and `notes=delete`
+     * is the caller stating which it meant. The screen offers both as separate
+     * menu items rather than one that behaves differently depending on what is
+     * inside.
+     */
+    if (holding > 0 && withNotes !== 'delete') {
       return reply.code(409).send({
         error: `${folder} still has ${holding} ${holding === 1 ? 'note' : 'notes'} in it`,
       });
     }
 
+    let deleted = 0;
+    if (holding > 0) {
+      const doomed = await db
+        .select({ id: notes.id })
+        .from(notes)
+        .where(sql`${notes.folder} = ${folder} or ${notes.folder} like ${`${folder}/%`}`);
+
+      for (const note of doomed) {
+        // Same order the single-note delete uses: the rows cascade, the files
+        // on disk do not and are swept by hand.
+        const attached = await filesFor(note.id);
+        await db.delete(notes).where(eq(notes.id, note.id));
+        for (const file of attached) await removeAttachment(file.id, file.ext);
+      }
+      deleted = doomed.length;
+    }
+
     await undeclareFolder(folder);
     changes.emitChange('notes');
-    return reply.code(204).send();
+    return { folder, notesDeleted: deleted };
   });
 
   /* ---------------------------------------------------------------- */

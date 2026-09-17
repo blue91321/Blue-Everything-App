@@ -28,6 +28,7 @@ import {
   canMoveFolder,
   canMoveNote,
   folderMoveTarget,
+  folderParent,
   noteKey,
   parseBlocks,
 } from '@everything/shared/notes';
@@ -200,13 +201,27 @@ export function Notes({ session }: { session?: { local: boolean } }) {
     openNote(created.id);
   }
 
-  async function newFolder() {
+  /**
+   * Which folder a new one is being named inside, or null when none is.
+   *
+   * The name used to come from `window.prompt`, which is a modal dialogue in
+   * front of the tree you are trying to add to — you cannot see where it is
+   * going while you type it. A field in the tree, in the place the folder will
+   * appear, is what every file manager does and says where it is landing
+   * without needing a sentence.
+   */
+  const [creatingIn, setCreatingIn] = useState<string | null>(null);
+
+  function newFolder() {
     // Inside whichever folder is open, which is what a file manager does — and
     // the root when the answer is "all notes", since that is the only place a
     // folder can go when you are not standing in one.
-    const parent = folder ?? '';
-    const name = window.prompt(parent ? `New folder inside ${parent}` : 'New folder');
-    if (name === null) return;
+    setCreatingIn(folder ?? '');
+  }
+
+  async function createFolder(name: string) {
+    const parent = creatingIn ?? '';
+    setCreatingIn(null);
     if (!name.trim()) return;
 
     try {
@@ -222,18 +237,42 @@ export function Notes({ session }: { session?: { local: boolean } }) {
     }
   }
 
-  async function removeFolder(path: string) {
+  /** Stop filtering by a folder that is no longer in the tree. */
+  function leaveIfInside(path: string) {
+    if (folder === path || (folder ?? '').startsWith(`${path}/`)) setFolder(undefined);
+  }
+
+  async function removeFolder(path: string, withNotes: boolean) {
+    // Irreversible, and there is no trash here — so the count is in the question
+    // rather than only in the menu item that got you here.
+    if (withNotes && !confirm(`Delete ${path} and every note in it? This cannot be undone.`)) return;
+
     try {
       setMoveProblem('');
-      await api.notes.removeFolder(path);
-      // Standing in the folder that just went would leave the list filtered by
-      // something no longer in the tree, which renders as an empty screen with
-      // no way back to it.
-      if (folder === path || (folder ?? '').startsWith(`${path}/`)) setFolder(undefined);
+      await api.notes.removeFolder(path, withNotes);
+      leaveIfInside(path);
       reloadAll();
     } catch (error) {
-      // The 409 for a folder that still holds notes arrives here, and says how
-      // many — which is the whole reason the route refuses rather than cascades.
+      setMoveProblem((error as Error).message);
+    }
+  }
+
+  /**
+   * Remove the folder and keep what was in it, by moving everything up a level.
+   *
+   * That is the rename primitive again — `a/b` becomes `a` — so the notes are
+   * never touched one by one and nothing can be lost part-way through.
+   */
+  async function dissolveFolder(path: string) {
+    try {
+      setMoveProblem('');
+      await api.notes.renameFolder(path, folderParent(path));
+      // Whatever was declared at the old path goes with it; the rename carries
+      // the declaration, and an emptied folder should not linger.
+      await api.notes.removeFolder(path).catch(() => {});
+      leaveIfInside(path);
+      reloadAll();
+    } catch (error) {
       setMoveProblem((error as Error).message);
     }
   }
@@ -331,7 +370,10 @@ export function Notes({ session }: { session?: { local: boolean } }) {
               dragRef={draggingRef}
               onDragItem={setDrag}
               onDrop={(destination) => void dropOnto(destination)}
-              onRemove={(path) => void removeFolder(path)}
+              onRemove={(path, withNotes) => void removeFolder(path, withNotes)}
+              onDissolve={(path) => void dissolveFolder(path)}
+              creatingIn={creatingIn}
+              onCreated={(name) => void createFolder(name)}
             />
 
             {moveProblem && (
@@ -488,6 +530,9 @@ function FolderList({
   onDragItem,
   onDrop,
   onRemove,
+  onDissolve,
+  creatingIn,
+  onCreated,
 }: {
   folders: NoteFolder[];
   selected: string | undefined;
@@ -498,7 +543,11 @@ function FolderList({
   dragRef: React.RefObject<DragPayload | null>;
   onDragItem: (item: DragPayload | null) => void;
   onDrop: (destination: string) => void;
-  onRemove: (path: string) => void;
+  onRemove: (path: string, withNotes: boolean) => void;
+  onDissolve: (path: string) => void;
+  /** Which folder a new one is being named inside, or null when none is. */
+  creatingIn: string | null;
+  onCreated: (name: string) => void;
 }) {
   /** Which target the cursor is over, so exactly one can light up. */
   const [over, setOver] = useState<string | null>(null);
@@ -565,6 +614,8 @@ function FolderList({
         Not in a folder
       </button>
 
+      {creatingIn === '' && <NewFolderField parent="" onDone={onCreated} />}
+
       {folders.map((entry) => (
         <FolderRow
           key={entry.path}
@@ -573,9 +624,51 @@ function FolderList({
           source={dragSource(entry.path, entry.path)}
           onPick={onPick}
           onRemove={onRemove}
+          onDissolve={onDissolve}
+          below={creatingIn === entry.path ? <NewFolderField parent={entry.path} onDone={onCreated} /> : null}
         />
       ))}
     </div>
+  );
+}
+
+/**
+ * Naming a new folder, in the place it is about to appear.
+ *
+ * **Enter commits and the blur is the fallback**, which is the ordering the
+ * habit stepper had to learn: a document that is not focused dispatches no
+ * `blur` at all, so a commit that depends on one is a commit that sometimes
+ * does not happen. Escape cancels outright.
+ *
+ * `committed` makes the second call a no-op, since pressing Enter also blurs
+ * the field an instant later and both paths would otherwise fire.
+ */
+function NewFolderField({ parent, onDone }: { parent: string; onDone: (name: string) => void }) {
+  const [name, setName] = useState('');
+  const committed = useRef(false);
+
+  const finish = (value: string) => {
+    if (committed.current) return;
+    committed.current = true;
+    onDone(value);
+  };
+
+  return (
+    <input
+      className="notes-new-folder"
+      autoFocus
+      value={name}
+      placeholder={parent ? `New folder in ${parent}` : 'New folder'}
+      aria-label={parent ? `Name for the new folder in ${parent}` : 'Name for the new folder'}
+      style={{ marginLeft: 10 + (parent ? parent.split('/').length : 0) * 12 }}
+      onChange={(event) => setName(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') finish(name);
+        // Cancelling has to beat the blur that follows, hence the same guard.
+        if (event.key === 'Escape') finish('');
+      }}
+      onBlur={() => finish(name)}
+    />
   );
 }
 
@@ -591,26 +684,45 @@ function FolderRow({
   source,
   onPick,
   onRemove,
+  onDissolve,
+  below,
 }: {
   entry: NoteFolder;
   target: Record<string, unknown>;
   source: Record<string, unknown>;
   onPick: (folder: string) => void;
-  onRemove: (path: string) => void;
+  onRemove: (path: string, withNotes: boolean) => void;
+  onDissolve: (path: string) => void;
+  /** The new-folder field, when one is being named inside this folder. */
+  below: React.ReactNode;
 }) {
-  const menu = useContextMenu(() => [
-    {
-      /*
-       * Named with its count when it cannot go, rather than simply greyed.
-       * "Remove" disabled for no stated reason is a dead end; "3 notes inside"
-       * says what to do about it.
-       */
-      label: entry.count > 0 ? `Remove — ${entry.count} inside` : 'Remove folder',
-      onSelect: () => onRemove(entry.path),
-      disabled: entry.count > 0,
-      danger: true,
-    } satisfies MenuItem,
-  ]);
+  /*
+   * Nothing here is ever greyed out.
+   *
+   * The first version disabled "Remove" on a folder with notes in it, which is
+   * a menu that refuses to do the thing you opened it for and leaves you to
+   * work out the way round. The real difficulty was never that the action is
+   * impossible — it is that **"delete folder" means two different things** and
+   * only one of them can be undone. So a folder with something in it offers
+   * both, named for what each actually does, and the destructive one asks.
+   */
+  const menu = useContextMenu(() =>
+    entry.count === 0
+      ? [{ label: 'Delete folder', onSelect: () => onRemove(entry.path, false), danger: true }]
+      : ([
+          {
+            // The notes go up to where the folder was, so nothing is lost and
+            // the folder stops existing — which is what most people mean.
+            label: `Keep the ${entry.count} ${entry.count === 1 ? 'note' : 'notes'}, remove the folder`,
+            onSelect: () => onDissolve(entry.path),
+          },
+          {
+            label: `Delete folder and ${entry.count} ${entry.count === 1 ? 'note' : 'notes'}`,
+            onSelect: () => onRemove(entry.path, true),
+            danger: true,
+          },
+        ] satisfies MenuItem[])
+  );
 
   return (
     <>
@@ -624,6 +736,7 @@ function FolderRow({
       >
         {entry.name} <span className="meta">{entry.count}</span>
       </button>
+      {below}
       {menu.menu}
     </>
   );

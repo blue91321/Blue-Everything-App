@@ -1183,7 +1183,7 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
     app.inject({ method: 'DELETE', url: `/api/notes/folder?path=${encodeURIComponent(path)}` });
 
   const gone = await rm('moved/shelf');
-  check('an empty folder can be removed', gone.statusCode === 204, `HTTP ${gone.statusCode}`);
+  check('an empty folder can be removed', gone.statusCode === 200, `HTTP ${gone.statusCode}`);
   check('  ...and leaves the tree', !(await treePaths()).includes('moved/shelf'));
 
   /*
@@ -1196,6 +1196,35 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   check('a folder with notes in it is not removed', refused.statusCode === 409, `HTTP ${refused.statusCode}`);
   check('  ...and says how many are in the way', /1 note/.test(refused.json().error), refused.json().error);
   check('  ...and is still there', (await treePaths()).includes('keepme'));
+
+  /*
+   * ...but it can be asked for by name, and that is the whole point of the
+   * refusal: the destructive reading of "delete folder" is reachable, and only
+   * reachable deliberately.
+   */
+  const noteCount = async () => ((await app.inject({ method: 'GET', url: '/api/notes' })).json() as unknown[]).length;
+  const beforeWipe = await noteCount();
+  const wiped = await app.inject({
+    method: 'DELETE',
+    url: '/api/notes/folder?path=keepme&notes=delete',
+  });
+  check('a folder can be deleted with its notes when asked', wiped.statusCode === 200, `HTTP ${wiped.statusCode}`);
+  check('  ...and says how many went', wiped.json().notesDeleted === 1, JSON.stringify(wiped.json()));
+  check('  ...the notes really are gone', (await noteCount()) === beforeWipe - 1);
+  check('  ...and so is the folder', !(await treePaths()).includes('keepme'));
+
+  /*
+   * Keeping the notes is the other reading, and it is the rename primitive
+   * again: `a/b` becomes `a`, so nothing is touched note by note and nothing
+   * can be half-done.
+   */
+  await makeNote('Dissolve probe', 'outer/inner');
+  const dissolved = await moveFolder('outer/inner', 'outer');
+  check('a folder can be dissolved into its parent instead', dissolved.statusCode === 200, `HTTP ${dissolved.statusCode}`);
+  const afterDissolve = (await app.inject({ method: 'GET', url: '/api/notes' })).json() as { title: string; folder: string }[];
+  const moved2 = afterDissolve.find((n) => n.title === 'Dissolve probe');
+  check('  ...with the note moved up rather than deleted', moved2?.folder === 'outer', String(moved2?.folder));
+  check('  ...and the inner folder gone', !(await treePaths()).includes('outer/inner'));
 
   const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
   check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);

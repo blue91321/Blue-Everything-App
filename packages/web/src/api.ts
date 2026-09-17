@@ -1536,9 +1536,15 @@ export const api = {
       post<{ moved: number; folder: string }>('/api/notes/folder/rename', { from, to }),
     /** Make one that has nothing in it yet. Making an existing one is a no-op. */
     createFolder: (path: string) => post<{ folder: string }>('/api/notes/folder', { path }),
-    /** Refused with a 409 while it still holds notes. */
-    removeFolder: (path: string) =>
-      request<void>(`/api/notes/folder?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
+    /**
+     * Refused with a 409 while it holds notes, unless `withNotes` says to take
+     * them too — which cannot be undone, so it is never the default.
+     */
+    removeFolder: (path: string, withNotes = false) =>
+      request<{ folder: string; notesDeleted: number }>(
+        `/api/notes/folder?path=${encodeURIComponent(path)}${withNotes ? '&notes=delete' : ''}`,
+        { method: 'DELETE' }
+      ),
     reindex: () => post<{ reindexed: number }>('/api/notes/reindex', {}),
 
     formats: () =>

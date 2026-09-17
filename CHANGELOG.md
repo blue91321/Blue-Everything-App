@@ -116,9 +116,13 @@ files `npm version` does not touch.
   path prefix on notes, so "new folder" had nowhere to put the answer. Made
   folders are recorded and shown at zero; ones that appear because a note is
   filed there still need no record, and the notes always win on the count.
-- **An empty folder moves and can be removed**; one with notes in it is refused,
-  with the count in the message, because "delete folder" has a destructive
-  reading this will not perform.
+- **The name is typed in the tree**, indented where the folder is about to
+  appear, rather than in a dialogue sitting in front of it. Enter commits,
+  Escape cancels.
+- **Right-clicking a folder greys nothing out.** "Delete folder" means two
+  different things and only one can be undone, so a folder with something in it
+  offers both: *Keep the N notes, remove the folder*, which moves them up a
+  level, and *Delete folder and N notes*, which asks first.
 
 ### "Not in a folder" showed every note
 

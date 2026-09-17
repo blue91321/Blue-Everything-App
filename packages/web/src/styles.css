@@ -2005,6 +2005,21 @@ button {
   cursor: grabbing;
 }
 
+/*
+ * Naming a new folder, where the folder is about to be.
+ *
+ * Sized and indented like the rows around it so the tree does not jump when it
+ * appears and again when it goes — the row it becomes should land in the space
+ * it was already occupying.
+ */
+.notes-new-folder {
+  width: auto;
+  align-self: stretch;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.86rem;
+  border-color: var(--accent);
+}
+
 .notes-drag-hint {
   margin-top: 0.5rem;
   line-height: 1.45;
