@@ -389,6 +389,12 @@ function NoteEditor({
   if (note.error || !loaded || !draft) return <div className="banner">Could not open that note.</div>;
 
   const blocks = parseBlocks(draft.body);
+  /*
+   * The same condition `Links` returns null on, asked one level up so the
+   * layout knows whether to reserve a rail. Two places deciding this is a thing
+   * to keep in step, so `hasNoteLinks` is the single statement of it.
+   */
+  const hasLinks = hasNoteLinks(loaded);
 
   /** Drop or paste a picture straight into the body. */
   async function attach(file: File) {
@@ -401,22 +407,27 @@ function NoteEditor({
 
   return (
     <div className="card notes-note">
-      <div className="row" style={{ gap: '.4rem' }}>
-        <div className="grow">
+      {/*
+        One row that wraps, rather than two rows of one field each.
+
+        The stacked version paired Edit with the title and Delete with the
+        folder, which reads as though each button acted on the box beside it —
+        and Delete sitting against a text field is the worst available place for
+        it. They belong together at the end, after the two things that describe
+        the note. It wraps on a narrow column, which is where the stack came
+        from in the first place.
+      */}
+      <div className="row wrap notes-head" style={{ gap: '.4rem' }}>
+        <div className="grow notes-title-field">
           <input
+            className="notes-title-input"
             value={draft.title}
             placeholder={loaded.title}
             aria-label="Note title"
             onChange={(event) => setDraft({ ...draft, title: event.target.value })}
           />
         </div>
-        <button className="btn subtle" onClick={() => setEditing(!editing)}>
-          {editing ? 'Read' : 'Edit'}
-        </button>
-      </div>
-
-      <div className="row" style={{ gap: '.4rem', marginTop: 6 }}>
-        <div className="grow">
+        <div className="notes-folder-field">
           <input
             value={draft.folder}
             placeholder="Folder — blank for none"
@@ -424,25 +435,52 @@ function NoteEditor({
             onChange={(event) => setDraft({ ...draft, folder: event.target.value })}
           />
         </div>
-        <button
-          className="btn subtle danger"
-          onClick={async () => {
-            // Nothing to confirm on an empty note — it is not a deletion, it is
-            // tidying up after opening one by accident.
-            if (draft.body.trim() && !confirm(`Delete “${loaded.title}”?`)) return;
-            // Cleared first, or the unmount flush recreates what was deleted.
-            latest.current = null;
-            await api.notes.remove(id);
-            onChanged();
-            onClosed();
-          }}
-        >
-          Delete
-        </button>
+        {/*
+          The two buttons wrap as one block. Left to themselves the row broke
+          between them and dropped Delete onto a line of its own, directly under
+          the folder box — a destructive button alone against a text field,
+          which is the arrangement this row was reshaped to avoid.
+        */}
+        <div className="row notes-head-actions" style={{ gap: '.4rem' }}>
+          <button className="btn subtle" onClick={() => setEditing(!editing)}>
+            {editing ? 'Read' : 'Edit'}
+          </button>
+          <button
+            className="btn subtle danger"
+            onClick={async () => {
+              // Nothing to confirm on an empty note — it is not a deletion, it is
+              // tidying up after opening one by accident.
+              if (draft.body.trim() && !confirm(`Delete “${loaded.title}”?`)) return;
+              // Cleared first, or the unmount flush recreates what was deleted.
+              latest.current = null;
+              await api.notes.remove(id);
+              onChanged();
+              onClosed();
+            }}
+          >
+            Delete
+          </button>
+        </div>
       </div>
 
       {problem && <div className="banner" style={{ marginTop: 8 }}>Not saved — {problem}</div>}
 
+      {/*
+        The note and what links to it, side by side once there is room.
+
+        A wide window gave the note a column far wider than its prose wants to
+        be, so reading one left several hundred pixels blank down the right. The
+        backlinks were underneath, off the bottom of a long note — the half of
+        the notebook you are least likely to scroll to and the half most worth
+        seeing. Putting them in that space uses the width for something rather
+        than letterboxing it.
+
+        `has-rail` rather than letting an empty track collapse: a grid gap is
+        drawn between tracks whether or not the second holds anything, so a note
+        with no links would carry a stray column of padding.
+      */}
+      <div className={`notes-work${hasLinks ? ' has-rail' : ''}`}>
+        <div className="notes-main">
       {editing ? (
         <textarea
           ref={area}
@@ -479,8 +517,10 @@ function NoteEditor({
           )}
         </div>
       )}
+        </div>
 
-      <Links note={loaded} onFollow={onFollow} />
+        <Links note={loaded} onFollow={onFollow} />
+      </div>
     </div>
   );
 }
@@ -491,10 +531,15 @@ function NoteEditor({
  * Both directions, because the backlinks are the half that makes a notebook a
  * notebook — the outgoing list you can already see by reading the note.
  */
+/** Whether this note has anything to say in the links panel. */
+function hasNoteLinks(note: NoteDetail): boolean {
+  return note.backlinks.length > 0 || note.outgoing.some((link) => !link.id);
+}
+
 function Links({ note, onFollow }: { note: NoteDetail; onFollow: (target: string) => void }) {
   const dangling = note.outgoing.filter((link) => !link.id);
 
-  if (note.backlinks.length === 0 && dangling.length === 0) return null;
+  if (!hasNoteLinks(note)) return null;
 
   return (
     <div className="notes-links">

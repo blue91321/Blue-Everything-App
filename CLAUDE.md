@@ -2441,6 +2441,67 @@ links, CSV and plain text flatten formatting too, and the PDF can only draw
 Latin alphabets — an emoji comes out as a question mark. Discovering that on
 opening the file is worse than reading it next to the button.
 
+### It takes the window, and that is the second exception to 720px
+
+`.app` is 720px because that is a comfortable measure for a **task list** — one
+column of short lines. Notes is three columns and one of them is a document, and
+inside 720px that document column measured **172px at a 1280px window**: a
+Markdown editor about twenty characters wide. The reading-width rule was right
+about the screen it was written for and wrong about this one.
+
+`.app:has(.notes)` lifts it, the same way `.app:has(.dash.has-panel)` already
+does for the Dashboard's second column — `:has()` rather than a class threaded
+down from `App`, because `App` does not read which screen wants what width and
+the child already knows. Where `:has()` is unsupported the page stays at 720px
+with the columns stacked, which is the phone layout, so the fallback is real.
+
+**There is no replacement cap, and that is the part worth arguing for.** A
+larger fixed number is still a fixed number: 1700px on a 3440px monitor leaves
+1500px of nothing, which is the same complaint one step further out. So the
+container is uncapped and the columns are `clamp`ed instead — a folder tree and
+a list of titles each want *some* of a wide window and neither should take a
+third of it, so they grow and stop, and everything left goes to the note.
+
+**What stops the prose sprawling is a measure on the text, not a narrow page.**
+`.md-p`, `.md-h`, `.md-list` and `.md-quote` cap at 90ch; tables, code blocks,
+rules and images are shapes rather than sentences and take the whole column. 90
+rather than the classical 70 because this only has to stop an ultrawide — a cap
+that bit on an ordinary monitor would be the narrowness arriving by a different
+route. At 1280px it does not bind at all.
+
+**The box you type in gets no measure.** Reading prose wants a short line;
+editing Markdown wants a table row, a long URL and a `[[link]]` not to wrap,
+since a wrapped table stops looking like a table. Measured: 172px → 505px at
+1280, 976px at 2560.
+
+#### The backlinks move beside the note when there is room
+
+A wide window gave the note a column far wider than its prose wants, so reading
+one left several hundred pixels blank down the right while the backlinks sat
+underneath — off the bottom of a long note, which is the half of the notebook
+you are least likely to scroll to and the half most worth seeing.
+
+**A container query, not a media query.** What decides whether they fit is the
+width of *that card*, which opening the drawer changes without the window moving
+at all; asking the viewport would put the rail back while the drawer squeezed
+the card. It is also pure CSS, so it works where `ResizeObserver` does not —
+worth knowing given that the weather graph needs three separate ways to measure
+itself for exactly that reason.
+
+**`has-rail` is a real class rather than letting an empty track collapse.** A
+grid gap is drawn between tracks whether or not the second holds anything, so a
+note with no links would carry a stray column of padding. `hasNoteLinks()` is
+the single statement of the condition, asked once by the layout and once by the
+panel that returns null on it.
+
+#### And the editor header is one row
+
+Title, folder, then Edit and Delete. It was two rows of one field each, which
+paired Edit with the title and Delete with the folder — reading as though each
+button acted on the box beside it, with a destructive button sitting against a
+text field. The buttons wrap as a group, so a narrow column never drops Delete
+onto a line of its own underneath the folder box.
+
 ### The screen is fetched, not bundled
 
 Notes is **the one core view behind `lazy`**. Every other one is a few kilobytes

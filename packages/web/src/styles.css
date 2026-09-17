@@ -1721,14 +1721,49 @@ button {
 /* ------------------------------------------------------------------ */
 
 /*
+ * The Notes screen takes the window, and that is a second exception rather than
+ * a loosening of the first.
+ *
+ * `.app` is 720px because that is a comfortable measure for a *task list* — one
+ * column of short lines. Notes is three columns and one of them is a document,
+ * and inside 720px that document column measured **172px** at a 1280px window:
+ * a Markdown editor about twenty characters wide. The reading-width rule was
+ * right about the screen it was written for and wrong about this one.
+ *
+ * `:has()` rather than a class from `App`, exactly as the Dashboard's panel
+ * column does it — `App` does not know which screen wants what width, and the
+ * child already does. Where `:has()` is unsupported the page stays at 720px
+ * with the columns stacked, which is the phone layout: a real fallback.
+ *
+ * There is **no cap at all**, which is the part worth arguing for. A larger
+ * fixed number is still a fixed number: 1700px on a 3440px monitor leaves
+ * 1500px of nothing, which is the same complaint one step further out. What
+ * stops the prose sprawling is a measure on `.md` below — that is a fact about
+ * sentences, and applying it to the whole page instead is what produced a
+ * 172px editor in the first place. The two are different problems and the
+ * container is the wrong place to solve either.
+ */
+.app:has(.notes) {
+  max-width: none;
+}
+
+/*
  * Three columns on a desktop and a stack on a phone. `minmax(0, …)` on the
  * middle and right is what actually lets them shrink — a grid track defaults to
  * `min-content` and refuses to go below its longest word, which is the same
  * trap `min-width: 0` fixes for the friends row and the weather graph.
+ *
+ * The first two are `clamp`ed rather than fixed: a folder tree and a list of
+ * titles both want *some* of a wide window and neither should take a third of
+ * it, so they grow with the viewport and stop. Everything left over goes to the
+ * note, which is the only column that can genuinely use it.
  */
 .notes-layout {
   display: grid;
-  grid-template-columns: 200px minmax(0, 300px) minmax(0, 1fr);
+  grid-template-columns:
+    clamp(170px, 13vw, 260px)
+    minmax(0, clamp(240px, 22vw, 460px))
+    minmax(0, 1fr);
   gap: 0.75rem;
   align-items: start;
 }
@@ -1815,13 +1850,107 @@ button {
   overflow: hidden;
 }
 
+/*
+ * A container query, not a media query, and the difference is the point: what
+ * decides whether the links fit beside the note is the width of *this card* —
+ * which the drawer being open changes without the window moving at all. Asking
+ * the viewport would put the rail back while the drawer squeezed the card.
+ *
+ * It is also pure CSS, so it works where `ResizeObserver` does not: a browser
+ * pane that is not compositing delivers no RO callbacks, which is why the
+ * weather graph has three separate ways to measure itself.
+ */
+.notes-note {
+  container-type: inline-size;
+}
+
+.notes-work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@container (min-width: 1000px) {
+  .notes-work.has-rail {
+    grid-template-columns: minmax(0, 1fr) clamp(240px, 24cqi, 360px);
+  }
+
+  /* Beside the note it is a column, so it is divided like one. */
+  .notes-work.has-rail .notes-links {
+    margin-top: 0;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+    padding-top: 0;
+    padding-left: 0.9rem;
+    /* Follows a long note down rather than sitting at the top of one. */
+    position: sticky;
+    top: 0.5rem;
+  }
+}
+
+.notes-head {
+  align-items: center;
+}
+
+/*
+ * The title is the note's name, so it is set like one rather than like another
+ * settings field. Borderless until you go near it: a box round the title of the
+ * thing you are reading is chrome round the one piece of text that needs none.
+ */
+.notes-title-input {
+  font-size: 1.15rem;
+  font-weight: 600;
+  padding-left: 0.35rem;
+  background: transparent;
+  border-color: transparent;
+}
+
+.notes-title-input:hover {
+  border-color: var(--border);
+}
+
+.notes-title-input:focus {
+  background: var(--bg);
+  border-color: var(--accent);
+}
+
+/* Enough for a folder path, and it gives the rest back to the title. */
+.notes-title-field {
+  min-width: 10rem;
+}
+
+.notes-folder-field {
+  flex: 0 1 11rem;
+  min-width: 7rem;
+}
+
+/* Kept together when the row wraps, and last in the reading order either way. */
+.notes-head-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/*
+ * The box you type in fills its column, and is **not** given the measure the
+ * rendered note gets.
+ *
+ * They are different jobs. Reading prose wants a short line; editing Markdown
+ * wants to see a table row, a long URL and a `[[link]]` without any of them
+ * wrapping — wrapping is precisely what makes raw Markdown hard to read, since
+ * a wrapped table stops looking like a table.
+ *
+ * It also grows with the window rather than sitting at a fixed 24rem: on a tall
+ * screen the note should fill it, and the handle is still there to override.
+ */
 .notes-body {
   width: 100%;
-  min-height: 24rem;
+  min-height: min(60vh, 34rem);
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 0.9rem;
-  line-height: 1.55;
+  font-size: 0.92rem;
+  line-height: 1.6;
   resize: vertical;
+  /* Tabs in a note are indentation, not eight columns of nothing. */
+  tab-size: 2;
 }
 
 .notes-read {
@@ -1917,8 +2046,43 @@ button {
 /* --- rendered Markdown --------------------------------------------- */
 
 .md {
-  line-height: 1.6;
-  overflow-wrap: anywhere;
+  line-height: 1.65;
+  /*
+   * `break-word`, not `anywhere`. Both break a URL too long for the column;
+   * `anywhere` additionally breaks ordinary words at the end of ordinary lines
+   * and drags the element's min-content width to one character, which is the
+   * sort of thing that quietly ruins a grid track.
+   */
+  overflow-wrap: break-word;
+}
+
+/*
+ * A measure on the prose, not on the container — which is the distinction the
+ * 172px editor column got wrong in the other direction.
+ *
+ * Long lines are genuinely hard to read: the eye loses the start of the next
+ * one on the way back. But that is a fact about *sentences*, not about tables,
+ * code blocks or pictures, and capping the whole note would letterbox all of
+ * them to keep paragraphs comfortable. So the text blocks are capped and
+ * everything else below is free to use the column.
+ *
+ * 90ch rather than the classical 70: this only has to stop an ultrawide, and a
+ * cap that bites on an ordinary monitor would be the narrowness complaint
+ * arriving again by a different route. At a 1280px window it does not bind.
+ */
+.md-p,
+.md-h,
+.md-list,
+.md-quote {
+  max-width: 90ch;
+}
+
+/* A table, a code block or a picture is a shape; it gets the whole column. */
+.md-table-wrap,
+.md-code,
+.md-image,
+.md-rule {
+  max-width: 100%;
 }
 
 .md-h {

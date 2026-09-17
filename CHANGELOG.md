@@ -58,6 +58,30 @@ files `npm version` does not touch.
   on opening the file — PDF and Word flatten links, CSV and text flatten
   formatting, and the PDF can only draw Latin alphabets.
 
+### The Notes screen uses the window
+
+- **The editor column was 172px wide at a 1280px window.** `.app` is capped at
+  720px — a reading width chosen for a task list — and three columns were being
+  folded into it, so the Markdown box came out about twenty characters across.
+  The Notes screen lifts the cap, the way the Dashboard's second column already
+  does.
+- **No replacement cap.** A bigger fixed number is still fixed: 1700px on a
+  3440px monitor leaves 1500px of nothing. The page is uncapped and the sidebar
+  and list `clamp` instead, so they grow with the window and stop, and the note
+  takes everything left. Measured: the editor column 172px → 505px at 1280,
+  and the page fills a 2560px window edge to edge.
+- **The prose is what has a measure, not the page** — paragraphs, headings,
+  lists and quotes cap at 90ch, while tables, code blocks and images take the
+  whole column. The box you *type* in has no cap at all, because a wrapped
+  Markdown table stops looking like a table.
+- **Backlinks sit beside the note when the card is wide enough**, in the space
+  the prose was leaving blank, instead of underneath where a long note pushed
+  them off the bottom. A container query rather than a media query: the drawer
+  narrows that card without the window moving.
+- **The editor header is one row** — title, folder, Edit, Delete. It was two
+  rows of one field each, which put Delete against a text box and read as though
+  each button acted on the field beside it.
+
 ### Two things this turned up
 
 - **Opening a note rewrote it.** The autosave's "have I written this already"
