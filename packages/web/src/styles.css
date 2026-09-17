@@ -336,18 +336,6 @@ header.top h1 {
   letter-spacing: -0.02em;
 }
 
-.menu {
-  background: none;
-  border: 0;
-  color: var(--text);
-  font-size: 22px;
-  line-height: 1;
-  padding: 6px 4px;
-  cursor: pointer;
-  /* Comfortable thumb target without shifting the title. */
-  margin-left: -4px;
-}
-
 section {
   margin-bottom: 24px;
 }
@@ -976,6 +964,72 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/*
+ * Put the menu away, from inside the menu, against the edge it collapses to.
+ *
+ * `margin-left: auto` rather than a width on the title, so it sits at the far
+ * edge whatever the app is called.
+ */
+.drawer-collapse {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  padding: 6px 4px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.drawer-collapse:hover {
+  color: var(--text);
+  background: var(--card);
+}
+
+/*
+ * The handle the menu leaves behind, magnetted to the edge it went to.
+ *
+ * `position: fixed` against that edge rather than a button in the flow: the
+ * menu is fixed, so the thing that brings it back belongs in the same place the
+ * menu itself occupies — you reach for where it was. Vertically centred because
+ * that is the shortest average distance from anywhere, and it is the same edge
+ * the drag-to-open gesture starts from.
+ *
+ * Below the drawer's z-index, above the content, so a drawer sliding open
+ * covers it rather than fighting it for the same pixels.
+ */
+.menu-magnet {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 25;
+  width: 22px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  /* Flat against the edge, rounded into the page. */
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  font-size: 12px;
+  line-height: 1;
+  /* Clear of a notch or a rounded corner on a phone. */
+  margin-left: env(safe-area-inset-left);
+}
+
+.menu-magnet:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  width: 26px;
 }
 
 .logo-mark {

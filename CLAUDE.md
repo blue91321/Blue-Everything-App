@@ -851,6 +851,20 @@ Worth adding to the list: **focus events join `ResizeObserver` and
 `requestAnimationFrame` as things that do not happen in a pane nobody is looking
 at.** All three have now cost a debugging session here.
 
+**And so do CSS transitions**, which is the newest member and the most
+misleading, because it does not look like a missing callback — it looks like a
+broken feature. Opening the drawer in a non-compositing pane left
+`getComputedStyle(...).transform` and `getBoundingClientRect()` reporting the
+*start* of the 0.22s slide indefinitely, so the drawer measured as off-canvas
+while its inline style said `translateX(0px)` and the backdrop sat at full
+opacity. Every piece of React state was correct and every measurement said the
+feature was broken.
+
+The tell is that the inline style and the computed style disagree. Setting
+`transition: none` and forcing a reflow snaps the value to its target, which is
+how to tell "the transition has not run" from "the value is wrong" — and worth
+doing before believing any geometry taken from a transitioning element here.
+
 **A failed save says so, and that was reported as the feature not working.**
 `commit()` first shipped with a `try/finally` and no `catch`. The route was new,
 the running server had not been restarted, every save answered 404, and the
@@ -932,15 +946,31 @@ One left drawer, two behaviours, decided by a width you choose:
 
 - **Docked** — always visible, content offset by its width.
 - **Overlaid** — slides over the content. Opens by dragging from the left edge
-  or with the ☰ button; closes by dragging back, tapping the backdrop, picking
-  an item, or Escape.
+  or with the handle on it; closes by dragging back, tapping the backdrop,
+  picking an item, or Escape.
 
-**The ☰ button is there at every width, which it was not.** It used to appear
-only below the breakpoint, so on a wide screen the menu was permanent furniture:
-260px of navigation you could not put away while reading something that wanted
-the room. One button does both jobs — collapse it where it is docked, open it
-where it overlays — because both are "show or hide the menu", and two controls
-would need explaining apart.
+**It can be put away at every width, which it could not.** The toggle used to
+appear only below the breakpoint, so on a wide screen the menu was permanent
+furniture: 260px of navigation you could not reclaim while reading something
+that wanted the room.
+
+**The control that hides the menu lives in the menu**, at the edge it collapses
+towards, rather than in the page header. In the header it put "hide this thing"
+on the far side of the thing being hidden, and left the screen's title sharing a
+row with a control that was not about it.
+
+**Put away, it leaves a handle magnetted to that same edge.** So "where did the
+menu go" and "how do I get it back" have one answer, in the place the menu
+itself occupies — and on a phone it is the edge you would already swipe from.
+`position: fixed` for that reason: the menu is fixed, so the thing standing in
+for it belongs in the same place rather than in the document flow. Its z-index
+sits below the drawer and above the content, so a drawer sliding open covers it
+instead of fighting it for the same pixels.
+
+**There is no ☰ in the header any more**, and that is the same rule as before
+rather than a reversal of it: one control for one thing. The handle appears
+exactly when the menu is absent, which covers both ways it can be — collapsed on
+a wide screen and closed on a narrow one.
 
 **The breakpoint is `settings.drawer_breakpoint`, and the default moved from 900
 to 1200.** 900 answered "is there room for a drawer beside a *task list*" — one

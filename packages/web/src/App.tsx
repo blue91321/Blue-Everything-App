@@ -395,6 +395,19 @@ export function App() {
     if (!isDesktop) drawer.setOpen(false);
   }
 
+  /**
+   * Show or hide the menu, whichever kind of menu is on screen.
+   *
+   * Docked, hiding means undocking and giving the width back; overlaid, it
+   * means closing. One function so the button inside the drawer and the handle
+   * on the edge are the same control in two places rather than two controls
+   * with two behaviours to keep in step.
+   */
+  const setMenuShown = (next: boolean) => {
+    if (wide) setCollapsed(!next);
+    else drawer.setOpen(next);
+  };
+
   /*
    * Nothing else in the app navigates itself, so this is the whole of the port.
    * An unknown view is ignored rather than switched to: the caller is a menu
@@ -406,6 +419,16 @@ export function App() {
         <div className="drawer-head">
           <Logo shape={logo.shape} size={26} version={logo.version} />
           <span>Blue Everything</span>
+          {/*
+            The control that puts the menu away lives *in* the menu, against the
+            edge it will collapse towards, rather than in the page header. It
+            was in the header, which put "hide this thing" on the far side of
+            the thing being hidden and left the app's title sharing a row with a
+            control that was not about it.
+          */}
+          <button className="drawer-collapse" onClick={() => setMenuShown(false)} aria-label="Hide menu">
+            ‹‹
+          </button>
         </div>
         <nav>
           {nav.map(({ id, label, glyph, pinned }) => (
@@ -434,28 +457,27 @@ export function App() {
         />
       )}
 
+      {/*
+        Put away, the menu leaves a handle stuck to the edge it went to.
+
+        It is the same control as the button inside the drawer, in the place
+        that control ends up — so "where did the menu go" and "how do I get it
+        back" have the same answer, at the edge you would already swipe from.
+        That is also why there is no longer a ☰ in the page header: two buttons
+        for one thing would need explaining apart, and the header's job is to
+        say which screen you are on.
+
+        Rendered only while nothing is showing, which covers both ways the menu
+        can be absent — collapsed on a wide screen, and closed on a narrow one.
+      */}
+      {!shown && (
+        <button className="menu-magnet" onClick={() => setMenuShown(true)} aria-label="Show menu" aria-expanded={false}>
+          ››
+        </button>
+      )}
+
       <div className="app">
         <header className="top">
-          {/*
-            One button, at every width, which is the change. It used to appear
-            only below the breakpoint, so on a wide screen the menu was
-            permanent furniture — 260px of navigation you cannot put away while
-            reading something that wants the room.
-
-            It does two different things because there are two different states
-            to leave: docked, where the content is offset and collapsing gives
-            that width back, and undocked, where the drawer overlays and this
-            opens it. Both are "show or hide the menu", which is why it is one
-            control rather than two that would need explaining apart.
-          */}
-          <button
-            className="menu"
-            onClick={() => (wide ? setCollapsed((was) => !was) : drawer.toggle())}
-            aria-label={isDesktop ? 'Hide menu' : 'Show menu'}
-            aria-expanded={isDesktop || drawer.open}
-          >
-            ☰
-          </button>
           <h1>{current.label}</h1>
         </header>
 
