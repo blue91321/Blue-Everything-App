@@ -1773,7 +1773,15 @@ export const startTimeEntrySchema = z.object({
 
 export const createNoteSchema = z.object({
   title: z.string().max(300).nullish(),
-  body: z.string().max(200_000).default(''),
+  /*
+   * Half a megabyte, raised from 200k when the importers landed. A decade of
+   * Evernote arrives as a handful of genuinely enormous notes, and refusing one
+   * at the boundary would fail an import with a message about a limit rather
+   * than about the note.
+   */
+  body: z.string().max(500_000).default(''),
+  /** `a/b`, or empty for the root. Cleaned by `normaliseFolder` on the way in. */
+  folder: z.string().max(400).nullish(),
   pinned: z.boolean().default(false),
 });
 export const updateNoteSchema = createNoteSchema.partial();

@@ -102,6 +102,16 @@ export { providePush } from './push-port.js';
  * the gauge exactly where it was.
  */
 export { recordHabitDone, undoHabitDone } from './routes/habits.js';
+/**
+ * The one write that creates a note.
+ *
+ * Here for the same reason `recordHabitDone` is: a package inserting the row
+ * itself gets a note with no title key, no tags and no links — which looks like
+ * a wiki-link pointing straight at it being broken, rather than like the write
+ * having been half done. The voice package's "make a note" command is the
+ * caller this exists for.
+ */
+export { saveNote } from './routes/notes.js';
 
 /**
  * Reading the two opaque-slug settings columns.

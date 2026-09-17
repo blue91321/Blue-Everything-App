@@ -236,14 +236,119 @@ export const timeEntries = sqliteTable(
   (t) => [index('time_entries_started_idx').on(t.startedAt)]
 );
 
-export const notes = sqliteTable('notes', {
-  id: id(),
-  title: text('title'),
-  body: text('body').notNull().default(''),
-  pinned: integer('pinned').notNull().default(0),
-  createdAt: now(),
-  updatedAt: touched(),
-});
+export const notes = sqliteTable(
+  'notes',
+  {
+    id: id(),
+    /**
+     * What `[[wiki-links]]` point at, so it is no longer optional in practice.
+     *
+     * Still nullable in the column because a note written before this existed
+     * has none and a `NOT NULL` would have needed a value invented for it. The
+     * *route* fills it from the first meaningful line when it is blank, which is
+     * what every notes app shows anyway — so "untitled" is a state the database
+     * can hold and the app never creates.
+     */
+    title: text('title'),
+    body: text('body').notNull().default(''),
+    /**
+     * The title reduced to the key a link matches on, stored rather than
+     * computed.
+     *
+     * Backlinks are "every note whose links name *this* one", which is an
+     * equality join against a hundred rows or ten thousand. Computing
+     * `noteKey()` per row would make that a scan no index can help with, for a
+     * panel that opens every time you read a note.
+     */
+    titleKey: text('title_key').notNull().default(''),
+    /**
+     * `a/b`, or the empty string for the root — never null.
+     *
+     * Two spellings of "no folder" is how a `WHERE folder = ''` ends up
+     * silently missing half the rows, and this column is filtered on constantly
+     * once there is a tree in the sidebar.
+     */
+    folder: text('folder').notNull().default(''),
+    pinned: integer('pinned').notNull().default(0),
+    createdAt: now(),
+    updatedAt: touched(),
+  },
+  (t) => [index('notes_title_key_idx').on(t.titleKey), index('notes_folder_idx').on(t.folder)]
+);
+
+/**
+ * Which note links to which, rebuilt from the body on every write.
+ *
+ * ### The target is a *name*, not an id, and that is the whole design
+ *
+ * Obsidian's most useful behaviour is that `[[Reading List]]` written before
+ * that note exists becomes a live link the moment you create it. Resolving to
+ * an id at write time would lose exactly that — the link would be stored as
+ * "points at nothing" forever, and creating the note later would fix nothing.
+ *
+ * So the target is the normalised title and resolution happens in the join.
+ * Renaming a note therefore breaks links pointing at the old name, which is
+ * also what Obsidian does unless it rewrites the files, and is the honest
+ * consequence of names being the thing people type.
+ *
+ * Derived rather than authoritative: the body is the truth and this is an index
+ * over it, which is why `reindexNote` rewrites the lot rather than diffing.
+ */
+export const noteLinks = sqliteTable(
+  'note_links',
+  {
+    id: id(),
+    fromId: text('from_id')
+      .notNull()
+      .references(() => notes.id, { onDelete: 'cascade' }),
+    /** `noteKey()` of the target, which is what `notes.title_key` holds. */
+    target: text('target').notNull(),
+    /** As written, so an unresolved link can be shown the way it was typed. */
+    display: text('display').notNull().default(''),
+  },
+  (t) => [index('note_links_from_idx').on(t.fromId), index('note_links_target_idx').on(t.target)]
+);
+
+/** Tags found in a body, rebuilt on write beside the links. */
+export const noteTags = sqliteTable(
+  'note_tags',
+  {
+    id: id(),
+    noteId: text('note_id')
+      .notNull()
+      .references(() => notes.id, { onDelete: 'cascade' }),
+    tag: text('tag').notNull(),
+  },
+  (t) => [index('note_tags_note_idx').on(t.noteId), index('note_tags_tag_idx').on(t.tag)]
+);
+
+/**
+ * A picture or file pasted into a note.
+ *
+ * The bytes live in `data/notes/` beside the database, not in it — the same
+ * call the habit pictures and the app logo make, and for the same reason: a
+ * notes list is fetched on every page load and has no business carrying a JPEG.
+ *
+ * `noteId` is nullable so an upload can be stored the instant it is dropped,
+ * before the note it belongs to has been saved. An orphan is a file on disk
+ * with a row pointing at it, which is recoverable; a failed upload because the
+ * note did not exist yet is a paste that silently does nothing.
+ */
+export const noteFiles = sqliteTable(
+  'note_files',
+  {
+    id: id(),
+    noteId: text('note_id').references(() => notes.id, { onDelete: 'cascade' }),
+    /** What it was called when it arrived, for the download and the alt text. */
+    name: text('name').notNull(),
+    /** The stored extension, which is what the served path ends in. */
+    ext: text('ext').notNull(),
+    mime: text('mime').notNull(),
+    bytes: integer('bytes').notNull().default(0),
+    createdAt: now(),
+  },
+  (t) => [index('note_files_note_idx').on(t.noteId)]
+);
 
 /**
  * The nudge queue — the part of the schema the whole app exists for.
