@@ -1990,7 +1990,8 @@ button {
  * keeps the row from changing size, which would shove the rest of the tree down
  * mid-drag and move the target out from under the cursor.
  */
-.notes-folder.drop-here {
+.notes-folder.drop-here,
+.notes-subfolder.drop-here {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -2044,6 +2045,53 @@ button {
 
 .notes-row.on {
   border-color: var(--accent);
+}
+
+/*
+ * A folder among the notes, and the styling is the feature.
+ *
+ * A note row is a `.card`: padded, on `--surface`, with a title, two clamped
+ * lines of preview and a date. A folder has none of those, so it is a single
+ * short line on `--surface-raised` with a glyph, a count and a chevron. The
+ * difference is meant to be obvious at a glance without reading either — a
+ * place you go into does not look like a thing you open and read.
+ */
+.notes-subfolder {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.notes-subfolder:hover {
+  border-color: var(--accent);
+}
+
+.notes-subfolder-glyph {
+  color: var(--accent);
+  flex: none;
+}
+
+/* Takes the slack, so the count and the chevron stay against the right edge. */
+.notes-subfolder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.notes-subfolder-go {
+  flex: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 /* Two lines of preview, clamped — a long note must not make a tall row. */

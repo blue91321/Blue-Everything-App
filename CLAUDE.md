@@ -2696,6 +2696,40 @@ folder *is* the root; "All notes" is the separate question, asked by sending no
 folder at all. Smoke asserts the root is both non-empty and smaller than the
 whole list, since either alone would pass on an empty notebook.
 
+#### The folders inside the one you are in, among the notes
+
+Standing in a folder, the list leads with the folders directly inside it and
+then the notes — folders first, as every file manager orders them, because they
+are the smaller group and the one you are scanning for when navigating rather
+than reading.
+
+**They deliberately do not look like notes.** A note row is a `.card`: padded,
+on `--surface`, with a title, two clamped lines of preview and a date. A folder
+has none of those, so it is a single short line on `--surface-raised` with a
+glyph, a count and a chevron pointing inwards — 40px against 77px, and a
+different background. A place you go into should not look like a thing you open
+and read, or the only way to tell them apart is to click one and find out.
+
+**One level, not every descendant.** This is where you are standing, not a
+summary of everything beneath you; the sidebar is where the whole tree lives.
+
+**"Not in a folder" gets them too, and "All notes" does not.** The root is a
+real place, so it lists the top-level folders and the notes filed nowhere —
+which is what a file manager shows when you open a drive. "All notes" is a flat
+view of everything and has no inside. A search hides them for the same reason:
+you are looking across the whole notebook, and a folder row would answer a
+question you did not ask.
+
+That distinction matters most where the sidebar is not there. **On a phone the
+tree is off-screen**, so these rows are the only way down into the notebook
+rather than a duplicate of something already visible — which also makes this the
+first piece of folder navigation that works on touch at all.
+
+They are drop targets and drag sources like the tree's rows, and carry the same
+right-click menu, because they are the same folder seen twice. `useFolderDnd`
+holds the handlers once for both; each column keeps its own `over`, so they
+highlight independently rather than lighting up together.
+
 #### Dragging notes and folders about
 
 A note dragged onto a folder is filed there; a folder dragged onto another moves

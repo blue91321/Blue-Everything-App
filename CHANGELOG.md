@@ -108,6 +108,20 @@ files `npm version` does not touch.
   back open, which took a guard — the shell reloads settings on every change
   announced anywhere in the app.
 
+### Folders show up among the notes
+
+- **Standing in a folder, the list leads with the folders inside it**, then the
+  notes — folders first, as a file manager orders them.
+- **They do not look like notes.** A note row is a padded card with a title,
+  preview and date; a folder is a single short line on a lighter surface with a
+  glyph, a count and a chevron. 40px against 77px.
+- One level down, not every descendant — the sidebar is where the whole tree is.
+- **"Not in a folder" gets them too**, because the root is a real place; *All
+  notes* does not, and a search hides them.
+- It matters most on a phone, where the sidebar is off-screen: these rows are
+  the first folder navigation that works on touch.
+- They take drops, can be dragged, and carry the same right-click menu.
+
 ### The right-click menu had no background
 
 - **`--card` was used by nine rules and defined by none.** An undefined custom

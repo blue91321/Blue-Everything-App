@@ -70,6 +70,74 @@ function canDropOn(item: DragPayload | null, destination: string): boolean {
     : canMoveFolder(item.path, destination);
 }
 
+/**
+ * The handlers that make a row a folder you can drop on and pick up.
+ *
+ * Shared by the sidebar tree and the subfolder rows in the list, because they
+ * are the same folder seen twice and a second copy is a second one to get the
+ * ref-versus-state split wrong in. Each caller keeps its own `over`, so the
+ * two columns highlight independently rather than lighting up together.
+ */
+function useFolderDnd({
+  dragRef,
+  onDragItem,
+  onDrop,
+}: {
+  dragRef: React.RefObject<DragPayload | null>;
+  onDragItem: (item: DragPayload | null) => void;
+  onDrop: (destination: string) => void;
+}) {
+  const [over, setOver] = useState<string | null>(null);
+
+  /**
+   * `preventDefault` in `dragover` is the whole mechanism: without it the
+   * browser's default is to refuse the drop, so a target that does not call it
+   * is simply not a target. Calling it only when the move is legal is what
+   * makes an illegal one show the "no entry" cursor by itself, with no styling
+   * required to say so.
+   */
+  const dropTarget = (destination: string) => ({
+    // Decided from the ref — this is what is true right now. Reading the
+    // render's copy here loses the first `dragover` of every drag.
+    onDragOver: (event: React.DragEvent) => {
+      if (!canDropOn(dragRef.current, destination)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      setOver(destination);
+    },
+    onDragLeave: () => setOver((current) => (current === destination ? null : current)),
+    onDrop: (event: React.DragEvent) => {
+      event.preventDefault();
+      setOver(null);
+      if (canDropOn(dragRef.current, destination)) onDrop(destination);
+    },
+  });
+
+  /** The handlers a folder needs to be picked up. */
+  const dragSource = (path: string, label: string) => ({
+    draggable: true,
+    onDragStart: (event: React.DragEvent) => {
+      event.dataTransfer.effectAllowed = 'move';
+      // Firefox will not start a drag at all without some data set, and a plain
+      // label is the honest thing to hand anywhere outside this screen.
+      event.dataTransfer.setData('text/plain', label);
+      onDragItem({ kind: 'folder', path, label });
+    },
+    onDragEnd: () => {
+      onDragItem(null);
+      setOver(null);
+    },
+  });
+
+  return { over, dropTarget, dragSource };
+}
+
+/** The folders directly inside `parent` — one level, the way a file manager shows them. */
+function childrenOf(folders: NoteFolder[], parent: string | undefined): NoteFolder[] {
+  if (parent === undefined) return [];
+  return folders.filter((entry) => folderParent(entry.path) === parent);
+}
+
 export function Notes({ session }: { session?: { local: boolean } }) {
   const [folder, setFolder] = useState<string | undefined>(undefined);
   const [tag, setTag] = useState<string | undefined>(undefined);
@@ -185,6 +253,24 @@ export function Notes({ session }: { session?: { local: boolean } }) {
     },
     [setDrag, list, all, tree, tags]
   );
+
+  /**
+   * The folders directly inside the one being looked at.
+   *
+   * One level, not every descendant, because this is a place you are standing
+   * in rather than a summary of it — the sidebar is where the whole tree lives.
+   */
+  const subfolders = useMemo(
+    () => childrenOf(tree.data?.folders ?? [], folder),
+    [tree.data, folder]
+  );
+
+  /** Drag and drop for those rows, with its own highlight. */
+  const listDnd = useFolderDnd({
+    dragRef: draggingRef,
+    onDragItem: setDrag,
+    onDrop: (destination) => void dropOnto(destination),
+  });
 
   /** Everything the tree reads, after something has been added or moved. */
   const reloadAll = useCallback(() => {
@@ -426,8 +512,42 @@ export function Notes({ session }: { session?: { local: boolean } }) {
               </button>
             </div>
 
+            {/*
+              The folders inside this one, above the notes.
+
+              **"Not in a folder" gets them too**, because it is the root and
+              the root is a real place — so it lists the top-level folders and
+              the notes filed nowhere, which is exactly what a file manager
+              shows you when you open a drive. "All notes" does not: that one is
+              a flat view of everything and has no inside.
+
+              This matters most where the sidebar is not there. On a phone the
+              tree is off-screen, so these rows are the only way down into the
+              notebook rather than a duplicate of something already visible.
+
+              A search hides them for the same reason "All notes" has none: you
+              are looking across the whole notebook, and a folder row would be
+              answering a question you did not ask.
+            */}
+            {!query &&
+              subfolders.map((entry) => (
+                <SubfolderRow
+                  key={entry.path}
+                  entry={entry}
+                  target={listDnd.dropTarget(entry.path)}
+                  source={listDnd.dragSource(entry.path, entry.path)}
+                  lit={listDnd.over === entry.path && canDropOn(dragging, entry.path)}
+                  onOpen={(path) => {
+                    setFolder(path);
+                    setTag(undefined);
+                  }}
+                  onRemove={(path, withNotes) => void removeFolder(path, withNotes)}
+                  onDissolve={(path) => void dissolveFolder(path)}
+                />
+              ))}
+
             {list.loading && <div className="empty">loading…</div>}
-            {!list.loading && notes.length === 0 && (
+            {!list.loading && notes.length === 0 && subfolders.length === 0 && (
               <div className="empty">
                 {query
                   ? `Nothing matches “${query}”.`
@@ -435,6 +555,10 @@ export function Notes({ session }: { session?: { local: boolean } }) {
                     ? 'Nothing here yet.'
                     : 'No notes yet — press New, or bring some in from another app.'}
               </div>
+            )}
+            {/* A folder holding only folders is not empty, but it has no notes. */}
+            {!list.loading && notes.length === 0 && subfolders.length > 0 && !query && (
+              <div className="empty">No notes here — open one of the folders above.</div>
             )}
 
             {notes.map((note) => (
@@ -550,52 +674,14 @@ function FolderList({
   onCreated: (name: string) => void;
 }) {
   /** Which target the cursor is over, so exactly one can light up. */
-  const [over, setOver] = useState<string | null>(null);
+  const { over, dropTarget: dropOn, dragSource } = useFolderDnd({ dragRef, onDragItem, onDrop });
 
-  /**
-   * The handlers a droppable row needs, in one place.
-   *
-   * `preventDefault` in `dragover` is the whole mechanism: without it the
-   * browser's default is to refuse the drop, so a target that does not call it
-   * is simply not a target. Calling it only when the move is legal is what
-   * makes an illegal one show the "no entry" cursor by itself, with no styling
-   * required to say so.
-   */
+  /** The tree's own row styling, wrapped round the shared drop handlers. */
   const dropTarget = (destination: string) => ({
-    // Painted from state — this is what is on screen.
+    ...dropOn(destination),
     className: `notes-folder${selected === destination ? ' on' : ''}${
       over === destination && canDropOn(dragging, destination) ? ' drop-here' : ''
     }`,
-    // Decided from the ref — this is what is true right now. Reading the render's
-    // copy here loses the first `dragover` of every drag.
-    onDragOver: (event: React.DragEvent) => {
-      if (!canDropOn(dragRef.current, destination)) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-      setOver(destination);
-    },
-    onDragLeave: () => setOver((current) => (current === destination ? null : current)),
-    onDrop: (event: React.DragEvent) => {
-      event.preventDefault();
-      setOver(null);
-      if (canDropOn(dragRef.current, destination)) onDrop(destination);
-    },
-  });
-
-  /** The handlers a folder needs to be picked up. */
-  const dragSource = (path: string, label: string) => ({
-    draggable: true,
-    onDragStart: (event: React.DragEvent) => {
-      event.dataTransfer.effectAllowed = 'move';
-      // Firefox will not start a drag at all without some data set, and a plain
-      // label is the honest thing to hand anywhere outside this screen.
-      event.dataTransfer.setData('text/plain', label);
-      onDragItem({ kind: 'folder', path, label });
-    },
-    onDragEnd: () => {
-      onDragItem(null);
-      setOver(null);
-    },
   });
 
   return (
@@ -629,6 +715,79 @@ function FolderList({
         />
       ))}
     </div>
+  );
+}
+
+/**
+ * A folder shown among the notes, while you are standing in its parent.
+ *
+ * Deliberately not a `.card` like a note row. A note is a thing you open and
+ * read, a folder is a place you go into, and if they look alike the only way to
+ * tell them apart is to click one and find out. So this is a shorter row with a
+ * folder glyph, a count and a chevron pointing inwards — and the notes keep
+ * their title, preview and date, which a folder has none of.
+ *
+ * Folders come first, as they do in every file manager: they are the smaller
+ * group and the one you are scanning for when you are navigating rather than
+ * reading.
+ */
+function SubfolderRow({
+  entry,
+  target,
+  source,
+  lit,
+  onOpen,
+  onRemove,
+  onDissolve,
+}: {
+  entry: NoteFolder;
+  target: Record<string, unknown>;
+  source: Record<string, unknown>;
+  lit: boolean;
+  onOpen: (path: string) => void;
+  onRemove: (path: string, withNotes: boolean) => void;
+  onDissolve: (path: string) => void;
+}) {
+  // The same choices the tree offers, because it is the same folder.
+  const menu = useContextMenu(() =>
+    entry.count === 0
+      ? [{ label: 'Delete folder', onSelect: () => onRemove(entry.path, false), danger: true }]
+      : ([
+          {
+            label: `Keep the ${entry.count} ${entry.count === 1 ? 'note' : 'notes'}, remove the folder`,
+            onSelect: () => onDissolve(entry.path),
+          },
+          {
+            label: `Delete folder and ${entry.count} ${entry.count === 1 ? 'note' : 'notes'}`,
+            onSelect: () => onRemove(entry.path, true),
+            danger: true,
+          },
+        ] satisfies MenuItem[])
+  );
+
+  return (
+    <>
+      <button
+        {...target}
+        {...source}
+        className={`notes-subfolder${lit ? ' drop-here' : ''}`}
+        onClick={() => onOpen(entry.path)}
+        onContextMenu={menu.onContextMenu}
+        title={`${entry.path} — open, or drag notes onto it`}
+      >
+        <span className="notes-subfolder-glyph" aria-hidden="true">
+          ▤
+        </span>
+        <span className="notes-subfolder-name truncate">{entry.name}</span>
+        <span className="meta">
+          {entry.count} {entry.count === 1 ? 'note' : 'notes'}
+        </span>
+        <span className="notes-subfolder-go" aria-hidden="true">
+          ›
+        </span>
+      </button>
+      {menu.menu}
+    </>
   );
 }
 
