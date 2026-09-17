@@ -5,7 +5,7 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
-## Unreleased
+## 0.3.2
 
 ### Notes, rebuilt as a linked notebook
 
