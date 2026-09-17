@@ -967,69 +967,64 @@ button {
 }
 
 /*
- * Put the menu away, from inside the menu, against the edge it collapses to.
+ * The menu button: top-left of the screen, and it never moves.
  *
- * `margin-left: auto` rather than a width on the title, so it sits at the far
- * edge whatever the app is called.
+ * `position: fixed` above the drawer's z-index, so it stays put whether the
+ * menu is docked beside the content, sliding over it, or away entirely. In the
+ * page header it travelled with the column — docked, the header starts 260px in
+ * and is centred in the rest, so toggling the menu slid the button sideways and
+ * you had to find it again every time.
  */
-.drawer-collapse {
-  margin-left: auto;
-  background: none;
-  border: 0;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1;
-  padding: 6px 4px;
-  cursor: pointer;
-  border-radius: 6px;
-}
-
-.drawer-collapse:hover {
-  color: var(--text);
-  background: var(--card);
-}
-
-/*
- * The handle the menu leaves behind, magnetted to the edge it went to.
- *
- * `position: fixed` against that edge rather than a button in the flow: the
- * menu is fixed, so the thing that brings it back belongs in the same place the
- * menu itself occupies — you reach for where it was. Vertically centred because
- * that is the shortest average distance from anywhere, and it is the same edge
- * the drag-to-open gesture starts from.
- *
- * Below the drawer's z-index, above the content, so a drawer sliding open
- * covers it rather than fighting it for the same pixels.
- */
-.menu-magnet {
+.menu {
   position: fixed;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 25;
-  width: 22px;
-  height: 64px;
+  top: calc(env(safe-area-inset-top) + 10px);
+  left: calc(env(safe-area-inset-left) + 10px);
+  z-index: 40;
+  width: 36px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  cursor: pointer;
-  color: var(--muted);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  /* Flat against the edge, rounded into the page. */
-  border-left: 0;
-  border-radius: 0 8px 8px 0;
-  font-size: 12px;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 20px;
   line-height: 1;
-  /* Clear of a notch or a rounded corner on a phone. */
-  margin-left: env(safe-area-inset-left);
+  cursor: pointer;
 }
 
-.menu-magnet:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-  width: 26px;
+.menu:hover {
+  background: var(--card);
+}
+
+/*
+ * What the fixed button covers, given back as padding.
+ *
+ * One number in one place, because two things have to clear it and they are in
+ * different stacking contexts — the drawer's own heading, and the page title
+ * when the content reaches the left edge of the screen.
+ */
+:root {
+  --menu-clear: 40px;
+}
+
+/*
+ * The drawer's logo sits to the right of the button, as it does on every site
+ * that puts a menu control beside a wordmark.
+ */
+.drawer-head {
+  padding-left: calc(var(--menu-clear) + 12px);
+}
+
+/*
+ * The page title only needs to move out of the way while the menu is *not*
+ * docked, because that is the only time the content can reach the left edge —
+ * docked, it starts 260px in and the button is nowhere near it.
+ */
+.shell:not(.desktop) header.top {
+  padding-left: var(--menu-clear);
 }
 
 .logo-mark {

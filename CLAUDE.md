@@ -946,31 +946,46 @@ One left drawer, two behaviours, decided by a width you choose:
 
 - **Docked** — always visible, content offset by its width.
 - **Overlaid** — slides over the content. Opens by dragging from the left edge
-  or with the handle on it; closes by dragging back, tapping the backdrop,
-  picking an item, or Escape.
+  or with the ☰; closes by dragging back, tapping the backdrop, picking an item,
+  or Escape.
 
 **It can be put away at every width, which it could not.** The toggle used to
 appear only below the breakpoint, so on a wide screen the menu was permanent
 furniture: 260px of navigation you could not reclaim while reading something
 that wanted the room.
 
-**The control that hides the menu lives in the menu**, at the edge it collapses
-towards, rather than in the page header. In the header it put "hide this thing"
-on the far side of the thing being hidden, and left the screen's title sharing a
-row with a control that was not about it.
+#### The ☰ is fixed to the top-left of the screen and never moves
 
-**Put away, it leaves a handle magnetted to that same edge.** So "where did the
-menu go" and "how do I get it back" have one answer, in the place the menu
-itself occupies — and on a phone it is the edge you would already swipe from.
-`position: fixed` for that reason: the menu is fixed, so the thing standing in
-for it belongs in the same place rather than in the document flow. Its z-index
-sits below the drawer and above the content, so a drawer sliding open covers it
-instead of fighting it for the same pixels.
+That is the whole feature, and it took three goes to get right — worth writing
+down because the first two were both reasonable and both wrong.
 
-**There is no ☰ in the header any more**, and that is the same rule as before
-rather than a reversal of it: one control for one thing. The handle appears
-exactly when the menu is absent, which covers both ways it can be — collapsed on
-a wide screen and closed on a narrow one.
+1. **In the page header.** It moved with the content: docked, the header starts
+   260px in and its column is centred in what is left, so toggling the menu slid
+   the button up to 260px sideways. A control that is somewhere else every time
+   you look for it is one you stop trusting.
+2. **Inside the drawer**, with a handle on the screen edge once it collapsed.
+   Worse: the control went away with the thing it opens, and the handle that
+   replaced it was somewhere else again — vertically centred, which is not where
+   anyone looks for a menu.
+3. **`position: fixed`, top-left, above the drawer's z-index, rendered once
+   outside both.** Verified at (10, 10) through docked → collapsed → docked, and
+   again on a phone through closed → open → closed.
+
+It is the behaviour every browser and YouTube have, and the reason is that a
+menu button is hit without looking. A fixed hit target costs a little layout
+work; a moving one costs a search every single time.
+
+**Two things have to clear it**, and `--menu-clear` is the one number they both
+read. The drawer's own wordmark is padded past it, which is where a logo sits
+next to a menu control anyway. And the page title is padded past it **only while
+the menu is undocked**, because that is the only time the content can reach the
+left edge of the screen — docked, it starts 260px in and the button is nowhere
+near it.
+
+The button sits **above** the drawer rather than below it, so an open drawer
+does not cover the control that closes it. Asserted with `elementFromPoint`
+rather than by reading the z-indexes, since that is the thing that actually
+decides which one you hit.
 
 **The breakpoint is `settings.drawer_breakpoint`, and the default moved from 900
 to 1200.** 900 answered "is there room for a drawer beside a *task list*" — one

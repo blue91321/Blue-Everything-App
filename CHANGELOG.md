@@ -87,11 +87,11 @@ files `npm version` does not touch.
 - **It can be hidden at every width now.** The toggle only appeared on narrow
   screens, so on a desktop the menu was permanent furniture — 260px you could
   not reclaim while reading something that wanted it.
-- **The button that hides it is in the menu**, at the edge it collapses towards,
-  rather than in the page header on the far side of the thing being hidden.
-- **Hidden, it leaves a handle magnetted to that edge**, so where it went and
-  how to get it back are the same place — and on a phone, the edge you would
-  already swipe from. The ☰ in the header is gone: one control for one thing.
+- **The ☰ is pinned to the top-left of the screen and never moves.** In the page
+  header it travelled with the content — docked, the header starts 260px in and
+  is centred in the rest, so toggling the menu slid the button up to 260px
+  sideways and you had to go and find it again. It is the same place in every
+  state now, which is what lets you hit it without looking.
 - **When it docks is a setting**, and the default moved from 900px to 1200px.
   900 was the answer to "is there room for a drawer beside a task list"; a
   screen with columns of its own is squeezed well above that. Four named widths
