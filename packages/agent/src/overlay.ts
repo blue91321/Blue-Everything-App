@@ -37,7 +37,8 @@
  * this same thread, which is what makes a koffi callback safe here: nothing is
  * ever invoked from a thread V8 has not heard of.
  */
-import koffi from 'koffi';
+import koffi from 'koffi';
+import { getNotificationState, NotificationState } from './win32.js';
 import { OVERLAY_GRID, placementCell } from '@everything/shared';
 
 const user32 = koffi.load('user32.dll');
@@ -161,6 +162,7 @@ const EnumDisplayMonitors = user32.func(
   'int __stdcall EnumDisplayMonitors(void *hdc, const void *clip, void *callback, intptr_t data)'
 );
 const MonitorFromWindow = user32.func('void * __stdcall MonitorFromWindow(void *hwnd, uint32_t flags)');
+const GetForegroundWindow = user32.func('void * __stdcall GetForegroundWindow()');
 
 // DrawText lives in user32, not gdi32 — it is a layout helper built on top of
 // GDI rather than a GDI primitive, and looking for it in the obvious library
@@ -800,6 +802,69 @@ export function createOverlay(handlers: {
   const MARGIN = 24;
 
   /**
+   * The screen a game currently owns outright, or null.
+   *
+   * ### Why this is not a focus problem
+   *
+   * The window already refuses focus every way Windows offers —
+   * `WS_EX_NOACTIVATE` at creation, `SW_SHOWNOACTIVATE` to show,
+   * `SWP_NOACTIVATE` to move — so it never takes the foreground from anything.
+   * A game losing focus when a popup appears is a different mechanism.
+   *
+   * **Exclusive fullscreen owns the display, not merely the screen.** A game in
+   * true D3D fullscreen has the output to itself, and for Windows to draw
+   * *anything* above it the exclusive mode has to break so the desktop compositor
+   * can take over. Many games treat that mode change as losing the display and
+   * minimise. No window style prevents it, because the cost is in compositing at
+   * all rather than in who has focus.
+   *
+   * So the only thing that actually works is to put the popup somewhere the game
+   * is not. With one monitor there is nowhere to go and this returns null; with
+   * more, the popup moves aside and the game is never touched.
+   *
+   * **Only for `RUNNING_D3D_FULL_SCREEN`, never for borderless.** Borderless is
+   * already composited, so a popup over it costs nothing and moving the window
+   * to another screen would be a change of behaviour bought for no reason. That
+   * is the whole reason the shell's own state is asked rather than the geometry
+   * check the games list uses: those two questions look identical and are not.
+   */
+  function screenOwnedByGame(): Screen | null {
+    if (getNotificationState() !== NotificationState.RUNNING_D3D_FULL_SCREEN) return null;
+
+    const hwnd = GetForegroundWindow();
+    if (!hwnd) return null;
+
+    const monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if (!monitor) return null;
+
+    const info = koffi.alloc(MONITORINFO, 1);
+    koffi.encode(info, MONITORINFO, {
+      cbSize: koffi.sizeof(MONITORINFO),
+      rcMonitor: { left: 0, top: 0, right: 0, bottom: 0 },
+      rcWork: { left: 0, top: 0, right: 0, bottom: 0 },
+      dwFlags: 0,
+    });
+    if (!GetMonitorInfoW(monitor, info)) return null;
+
+    const work = (koffi.decode(info, MONITORINFO) as { rcWork: Screen['work'] }).rcWork;
+    /*
+     * Matched by position rather than by handle, because `listScreens` builds
+     * its own list and the two are only guaranteed to agree about where the
+     * monitors are — which is all this needs. The work area rather than the
+     * full bounds, because that is the rectangle `Screen` already carries.
+     */
+    return (
+      listScreens().find(
+        (screen) =>
+          screen.work.left === work.left &&
+          screen.work.top === work.top &&
+          screen.work.right === work.right &&
+          screen.work.bottom === work.bottom
+      ) ?? null
+    );
+  }
+
+  /**
    * Put the window where you asked for it.
    *
    * `cursor` keeps the original behaviour — beside the pointer, flipped back
@@ -814,7 +879,26 @@ export function createOverlay(handlers: {
     // A named screen that has been unplugged falls back to the mouse's, rather
     // than putting the window somewhere that no longer exists.
     const named = placement.screen ? listScreens().find((s) => s.id === placement.screen) : undefined;
-    const work = named?.work ?? cursorWork;
+
+    /*
+     * Step out of the way of a game that owns its display.
+     *
+     * Skipped entirely when a screen was named: that is an explicit choice about
+     * where popups go, and quietly overriding it would be worse than the flicker
+     * this avoids. Skipped too when there is nowhere else to be.
+     */
+    let dodged: Screen | undefined;
+    if (!named) {
+      const owned = screenOwnedByGame();
+      if (owned) {
+        const others = listScreens().filter((screen) => screen.id !== owned.id);
+        // The primary if it is free, since that is where somebody is most likely
+        // to be looking; otherwise whichever is left.
+        dodged = others.find((screen) => screen.primary) ?? others[0];
+      }
+    }
+
+    const work = named?.work ?? dodged?.work ?? cursorWork;
 
     const cell = placementCell(placement.mode);
 

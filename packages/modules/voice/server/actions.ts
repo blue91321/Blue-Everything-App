@@ -31,6 +31,7 @@ import {
 import { isLaunchUrl } from '@everything/shared/games';
 import { db } from '@everything/server/module-api';
 import { games, habits, notes, settings, voiceCommands } from '@everything/server/module-api';
+import { saveNote } from '@everything/server/module-api';
 import { recordHabitDone } from '@everything/server/module-api';
 
 /** Something for the agent to do on the machine you are sitting at. */
@@ -570,7 +571,13 @@ export async function runCommand(
       const body = remainderAfterPhrase(text, phrase, wakeWord);
       if (!body) return { outcome: 'no-match', text, say: 'I heard the trigger but nothing to write down' };
 
-      const [note] = await db.insert(notes).values({ body }).returning({ id: notes.id });
+      /*
+        * Through `saveNote` rather than an insert of its own, so a dictated note
+        * is indexed like any other: it gets a title from its first line, its
+        * tags are found, and a `[[…]]` said aloud reaches the note it names.
+        * Inserting here directly was writing a row nothing could link to.
+        */
+      const note = await saveNote({ body });
       return { outcome: 'note-added', text, noteId: note.id, say: `Noted: ${body}` };
     }
 

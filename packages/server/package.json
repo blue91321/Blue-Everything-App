@@ -1,7 +1,7 @@
 {
   "name": "@everything/server",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.2",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -19,6 +19,7 @@
     "integrations-check": "tsx src/cli/integrations-check.ts",
     "features": "tsx src/cli/features.ts",
     "features-check": "tsx src/cli/features-check.ts",
+    "notes-check": "tsx src/cli/notes-check.ts",
     "modules-check": "node --import tsx src/cli/modules-check.ts",
     "weather-check": "node --import tsx ../modules/weather/server/cli/check.ts"
   },

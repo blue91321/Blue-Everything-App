@@ -150,6 +150,11 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
             : (body.voiceListenHotkey?.trim().toLowerCase() || null),
         voiceListenHotkeyWhileOff: toInt(body.voiceListenHotkeyWhileOff),
         dashboardRefreshSeconds: body.dashboardRefreshSeconds,
+        drawerBreakpoint: body.drawerBreakpoint,
+        // `toInt`, like every other boolean here — SQLite has no boolean type,
+        // and a conditional spread would drop the field on one branch and leave
+        // the schema's boolean where a number belongs.
+        drawerDocked: toInt(body.drawerDocked),
         gameDetectionEnabled: toInt(body.gameDetectionEnabled),
         interruptDuringGames: toInt(body.interruptDuringGames),
         overlayPlacement: body.overlayPlacement,

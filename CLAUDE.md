@@ -102,7 +102,9 @@ dependencies, which is 66KB gzipped and nearly all of it framework.
 - **Tasks** — the full list with editing, open above, done below.
 - **Habits** — *management*: reorder, edit, pause, delete, and a −/+ stepper to
   correct the tally. Ticking one off day to day belongs on the Dashboard.
-- **Notes**, **Settings**.
+- **Notes** — a linked notebook: folders, `[[wiki-links]]`, backlinks, tags, a
+  graph, and a way in from fourteen other apps. See **Notes** below.
+- **Settings**.
 
 ### The Dashboard's side column
 
@@ -154,11 +156,13 @@ Three details:
   layout question the child already knows the answer to. Where `:has()` is
   unsupported the page stays at its reading width with the panel stacked
   underneath — which is the narrow-screen layout, so the fallback is a real one.
-- **The breakpoint is 1100px, not the drawer's 900px**, and they are deliberately
-  different questions: 900 is "is there room for a drawer beside the content",
-  this is "is there room for a second column without squeezing the first". At
-  900 with the drawer showing, the task list would be left about 320px — narrower
-  than the phone layout it was designed for.
+- **The breakpoint is 1100px, not the drawer's**, and they are deliberately
+  different questions: the drawer's is "is there room for a drawer beside the
+  content", this is "is there room for a second column without squeezing the
+  first". At 900 — which is what the drawer's default used to be, and is now the
+  lowest it offers — with the drawer showing, the task list would be left about
+  320px, narrower than the phone layout it was designed for. That mismatch is
+  part of why the drawer's default moved to 1200.
 - **Panels are lazy, and one import nearly cost 9.5KB.** `panel.tsx` imported
   `STATE_LABEL` from `Friends.tsx`, so choosing the panel pulled in the whole
   Connections screen — searching, filtering, account linking — to render six
@@ -847,6 +851,20 @@ Worth adding to the list: **focus events join `ResizeObserver` and
 `requestAnimationFrame` as things that do not happen in a pane nobody is looking
 at.** All three have now cost a debugging session here.
 
+**And so do CSS transitions**, which is the newest member and the most
+misleading, because it does not look like a missing callback — it looks like a
+broken feature. Opening the drawer in a non-compositing pane left
+`getComputedStyle(...).transform` and `getBoundingClientRect()` reporting the
+*start* of the 0.22s slide indefinitely, so the drawer measured as off-canvas
+while its inline style said `translateX(0px)` and the backdrop sat at full
+opacity. Every piece of React state was correct and every measurement said the
+feature was broken.
+
+The tell is that the inline style and the computed style disagree. Setting
+`transition: none` and forcing a reflow snaps the value to its target, which is
+how to tell "the transition has not run" from "the value is wrong" — and worth
+doing before believing any geometry taken from a transitioning element here.
+
 **A failed save says so, and that was reported as the feature not working.**
 `commit()` first shipped with a `try/finally` and no `catch`. The route was new,
 the running server had not been restarted, every save answered 404, and the
@@ -924,12 +942,104 @@ Three things there are worth knowing:
 
 ### Navigation
 
-One left drawer, two behaviours, decided by a single `(min-width: 900px)` query:
+One left drawer, two behaviours, decided by a width you choose:
 
-- **Desktop** — always visible, content offset by its width.
-- **Phone** — slides over the content. Opens by dragging from the left edge or
-  with the ☰ button; closes by dragging back, tapping the backdrop, picking an
-  item, or Escape.
+- **Docked** — always visible, content offset by its width.
+- **Overlaid** — slides over the content. Opens by dragging from the left edge
+  or with the ☰; closes by dragging back, tapping the backdrop, picking an item,
+  or Escape.
+
+**It can be put away at every width, which it could not.** The toggle used to
+appear only below the breakpoint, so on a wide screen the menu was permanent
+furniture: 260px of navigation you could not reclaim while reading something
+that wanted the room.
+
+#### The ☰ is fixed to the top-left of the screen and never moves
+
+That is the whole feature, and it took three goes to get right — worth writing
+down because the first two were both reasonable and both wrong.
+
+1. **In the page header.** It moved with the content: docked, the header starts
+   260px in and its column is centred in what is left, so toggling the menu slid
+   the button up to 260px sideways. A control that is somewhere else every time
+   you look for it is one you stop trusting.
+2. **Inside the drawer**, with a handle on the screen edge once it collapsed.
+   Worse: the control went away with the thing it opens, and the handle that
+   replaced it was somewhere else again — vertically centred, which is not where
+   anyone looks for a menu.
+3. **`position: fixed`, top-left, above the drawer's z-index, rendered once
+   outside both.** Verified at (10, 10) through docked → collapsed → docked, and
+   again on a phone through closed → open → closed.
+
+It is the behaviour every browser and YouTube have, and the reason is that a
+menu button is hit without looking. A fixed hit target costs a little layout
+work; a moving one costs a search every single time.
+
+**Two things have to clear it**, and three custom properties are what keep them
+honest: `--menu-clear`, `--menu-top` and `--menu-size`.
+
+**The wordmark sits on the button's line**, and the alignment is derived rather
+than eyeballed. The drawer's head takes the button's own top offset as padding
+and reserves exactly the button's height, so `align-items: center` lands the
+logo's centre on the button's centre whatever those two numbers become. A
+hand-tuned `padding-top` would be right once and quietly wrong the first time
+the button changed size. Measured: button, logo and wordmark all centre on
+**y=26**.
+
+**The title steps aside only where it would actually be sat on.** The first
+version padded it whenever the menu was undocked, which was one rule and too
+blunt: the button is fixed near the left edge of the *screen* while the title
+sits in a column that is usually centred, so on a wide screen the indent only
+pushed the heading out of line with the cards beneath it — the thing a heading
+most needs to line up with.
+
+The real question is "has this column centred clear of the button yet", and it
+has a different answer per column width, so there is a rule per width: the
+720px reading column has by 820px, the Dashboard's 1140px one has by 1240px, and
+Notes has no maximum so it never does. Docked needs no rule at all, since the
+content starts 260px in.
+
+Verified across the matrix, undocked unless stated:
+
+| width | screen | title vs cards |
+| --- | --- | --- |
+| 1440 | Dashboard + panel, docked | aligned, 285 / 285 |
+| 1440 | Dashboard + panel | aligned, 155 / 155 |
+| 1440 | Notes | indented to 52 — it is full-bleed |
+| 900 | Dashboard + panel | indented to 52 — still full-bleed |
+| 900 | Tasks | aligned, 95 / 95 |
+| 375 | Dashboard | indented to 52 |
+
+The button sits **above** the drawer rather than below it, so an open drawer
+does not cover the control that closes it. Asserted with `elementFromPoint`
+rather than by reading the z-indexes, since that is the thing that actually
+decides which one you hit.
+
+**The breakpoint is `settings.drawer_breakpoint`, and the default moved from 900
+to 1200.** 900 answered "is there room for a drawer beside a *task list*" — one
+column of short lines — and a screen with columns of its own is squeezed a long
+way above that: at 900 with the drawer showing, the content is left about 640px.
+Offered as four named widths rather than a slider or a box, the same call the
+refresh rate makes: these are a handful of real answers and "1200" is not a
+decision anybody can make while "from a large laptop up" is. The top of the
+range means *never dock*, which is a legitimate choice rather than a broken one.
+
+**`settings.drawer_docked` is the default, not a live record of the toggle.**
+Collapsing the menu to read something is a thing you do for a minute, and
+persisting it would turn a temporary choice permanent by accident. The setting
+says how the app opens; the button says what you have done since.
+
+That distinction needed a guard. The shell reloads its settings on **every**
+change announced over the SSE stream — a habit ticked off on the phone comes
+down the same pipe — so an effect that simply applied `docked` would have
+snapped the menu back open under your hands on any unrelated save. A ref holds
+the last value actually applied, so only a change to *this* preference re-applies
+it. Verified: collapsed by hand, then an unrelated setting written, and it stayed
+collapsed.
+
+`drawerDocked` is a **`number` in `api.ts`**, like every other boolean on that
+type, because the row returns 0 or 1 — `voiceRetryMatchesFollowUp` is the
+cautionary tale and it is quoted at the top of that file.
 
 `useEdgeDrawer.ts` makes the drawer follow the finger rather than snapping at a
 threshold, because a menu that moves with you reads as a drawer and one that
@@ -1069,6 +1179,20 @@ alternative was an SVG rasteriser on the server or a visibly laggy logo.
 renderer) and in `styles.css` (for the app), because the PWA does not import
 shared and CSS cannot import TypeScript. Neither copy can go, so
 `make-icons.mjs` compares them and **fails the build** if they drift.
+
+**It also refuses a `var(--x)` that nothing declares**, and that check exists
+because of a real one. `--card` was used by nine rules and defined by none: the
+context menu, the gauge track, code blocks, the live thumbnail and four hover
+states. CSS has no error for this — an undefined custom property makes the
+*whole declaration* invalid, so `background: var(--card)` is not a wrong colour,
+it is **no background at all**. The right-click menu had been transparent for as
+long as it had existed, with the page showing through it, and nothing anywhere
+said so.
+
+It is the same class of mistake as the palette drift and is refused in the same
+place. `var(--x, fallback)` is exempt, since a fallback is a deliberate default
+rather than a typo. All nine became `--surface-raised`, which is what the name
+was reaching for — a surface lifted slightly off the one behind it.
 
 `logo_shape` is `image` when a picture is uploaded rather than there being a
 separate flag — the two are exclusive, and a `useCustomLogo` boolean alongside
@@ -1618,6 +1742,7 @@ npm run wake-probe -w @everything/agent    # what the wake partial says, block b
 npm run wake-falsing -w @everything/agent  # how often ordinary conversation wakes it
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
+npm run notes-check -w @everything/server  # the Markdown parser, wiki-links, tags, folders
 npm run integrations-check -w @everything/server  # the categoriser, the Takeout reader, the coursework rules
 
 npm run features         # what is switched on, and what is actually on disk
@@ -2291,6 +2416,498 @@ never break into a match.
 
 Note for tests: quiet hours default to 23:00–07:30, so anything asserting
 delivery must switch them off first or it passes or fails by time of day.
+
+## Notes
+
+A linked notebook rather than a list of text blobs.
+`npm run notes-check -w @everything/server` proves the text model — the parser,
+the link and tag extraction, the folder rules and the date reader — with no
+database and no network. Run it before trusting a change to any of them.
+
+**One parser, three renderers.** `packages/shared/src/notes.ts` turns Markdown
+into blocks; the screen, the PDF and the `.docx` all render *that*. The
+alternative is three readings of the same text that drift, and the drift is
+invisible until somebody opens an export and finds a table missing. It has **no
+imports at all** — which is what lets the PWA use it, since the rule is that the
+PWA never pulls in `@everything/shared`'s entry point and its zod.
+
+### Links are the feature
+
+`[[Wiki-links]]` in Obsidian's syntax, deliberately, because that is what makes
+the export a real vault rather than an approximation of one.
+
+**A link is matched on a key, not on the text.** `noteKey()` folds case and
+punctuation, so `[[reading LIST]]` finds "Reading list". Storing that key on the
+row rather than computing it per query is what makes the backlink lookup an
+index scan instead of a walk over every note.
+
+**A backlink is quoted with its line.** "Three notes link here" is nearly
+useless; the line the link sits in says *why*. That cost one real bug worth
+keeping: `contextAround` first searched the **rendered** text for the link — and
+rendering a wiki-link into its label is exactly what removes it, so every
+context came back empty. It searches the raw line and renders that line.
+
+**A link to a note that does not exist still works**, drawn dashed, and clicking
+it creates the note. They are listed under **not written yet**, which is the
+notebook telling you what it is missing — the one thing a plain list of notes
+can never do.
+
+**Tags are read out of the body, never stored beside it.** A second copy is a
+second thing to keep in step, and the first edit that bypassed the writer would
+desynchronise it silently. `extractTags` skips headings, URL fragments, bare
+numbers and code, all of which contain a `#` and none of which is a tag.
+
+**Reindexing is delete-then-rewrite, never a diff.** A note's links and tags are
+derived entirely from its body, so the body is the authority and a diff is an
+opportunity to disagree with it. `reindexNote` is the only writer.
+
+### The editor is one box
+
+Obsidian's split view is the thing most people turn off first: two copies of one
+note competing for the width, with the cursor in one and your eyes in the other.
+Here the note is rendered until you click into it, and what you type in is the
+raw Markdown. One column, and the switch is clicking the thing you want to
+change.
+
+**The renderer builds React elements and never `dangerouslySetInnerHTML`.** A
+note can arrive by dropping a stranger's Evernote export into the app, so its
+body is genuinely untrusted input — and this app's one reflected-XSS hole was
+found in the one place that assembles HTML by hand. A Markdown renderer emitting
+a string would be the second, over a far wider input. The one hole that survives
+building elements is the `href`, since React will set it to anything, so a link
+is restricted to `http:`, `https:`, `mailto:` and same-origin — the same rule
+voice commands follow. A refused link is **shown with its address** rather than
+dropped, because a link that vanishes looks like the renderer losing content.
+
+**A task checkbox is read-only.** Ticking it would have to write back into the
+Markdown by position, and a body edited from two places at once is how a note
+loses a paragraph. The box is a picture of the text.
+
+**Opening a note must not write it.** The autosave keeps a signature of the last
+thing written so an unchanged draft is never sent — and that ref started *empty*,
+so the first debounce fired 700ms after opening a note and saved it unchanged.
+That bumps `updatedAt`, and the list is sorted by it, so reading a note shuffled
+it to the top. It is seeded from what was loaded now. A notebook that rearranges
+itself as you browse it is worse than one that saves a little late.
+
+### The graph
+
+Hand-drawn SVG, like `Gauge.tsx` and the weather chart, for the same reason: a
+graph library would be the largest dependency in this repo, to draw circles and
+straight lines.
+
+**The layout is seeded from each note's id**, not from `Math.random`. A force
+simulation seeded randomly draws a different picture every time the tab is
+opened — and recognising the shape you saw yesterday is most of what a graph
+view is *for*. It runs to completion once rather than animating, since a
+simulation ticking behind a tab is exactly the sort of timer this project
+measures before adding.
+
+Only connected notes are labelled; two hundred labels is a grey rectangle. An
+unlinked note is drawn **hollow** rather than in another colour — the same
+distinction the `unknown` presence dot draws, and for the same reason: a filled
+shape in a second colour reads as a *kind* of note rather than one with no
+connections.
+
+### Attachments
+
+Dropped or pasted straight into the body. The allow-list is in `files.ts` and
+**SVG is deliberately not on it**: an SVG is a document that can carry script,
+so it is not an image for this purpose.
+
+They sit behind `/api/` like the habit pictures and for the same reason — they
+are your data, unlike the icons and the tones — so an `<img src>` cannot fetch
+one, and the bytes are fetched with the token and wrapped in an object URL.
+Revoked on unmount, or every render of a note with pictures leaks one per image.
+
+### Fourteen ways in, six ways out
+
+**The format is detected from the contents, not chosen from a dropdown.** Asking
+somebody which of fourteen formats their export is asks them the one thing they
+are least sure about, and the answer is sitting in the file.
+
+Reads: Obsidian vaults, Notion, Evernote `.enex`, Google Keep, Roam, Logseq,
+Joplin `.jex`, Bear, Standard Notes, Apple Notes, Markdown, Word, CSV and plain
+text. Writes: an Obsidian vault, Markdown, plain text, CSV, PDF and Word.
+
+**Two-phase, exactly like the vault's password import.** The first call reports
+what it found and writes nothing, because a mis-detected format produces a
+plausible number of plausible-looking rows and a wrong guess should cost a click
+rather than a thousand notes. Imports land in a folder you name: a folder can be
+taken apart afterwards and a merge into an existing notebook cannot.
+
+**No new dependencies.** The PDF writer, the `.docx` writer and the zip *writer*
+are hand-rolled, the same call `zip.ts`, `icon.ts` and the WAV writer already
+made. Three details that cost something to get right:
+
+- **The PDF is assembled as `latin1`, and that is load-bearing.** Every `xref`
+  offset is a byte count, so encoding the same string as UTF-8 shifts every
+  offset past the first non-ASCII character and produces a file that opens as
+  corrupt. It carries real Helvetica AFM widths rather than a fixed pitch,
+  because a PDF with no embedded font and guessed widths is a page of overlapping
+  words.
+- **The `.docx` uses direct formatting and no `styles.xml`.** A document
+  referring to a style it does not define is what triggers Word's "repair the
+  file" dialog — which reads as the export being broken, whatever it then
+  recovers.
+- **Filename collisions are resolved case-insensitively.** Two notes called
+  "Home" and "home" are two files on Linux and one on Windows, and the second
+  silently replacing the first is data loss inside a backup.
+
+**The vault export is a real Obsidian vault.** Unzip it into Obsidian and the
+links work, because they were Obsidian's syntax the whole time. Verified by
+round-tripping one back in.
+
+**What each format loses is on screen before you pick it.** PDF and Word flatten
+links, CSV and plain text flatten formatting too, and the PDF can only draw
+Latin alphabets — an emoji comes out as a question mark. Discovering that on
+opening the file is worse than reading it next to the button.
+
+### It takes the window, and that is the second exception to 720px
+
+`.app` is 720px because that is a comfortable measure for a **task list** — one
+column of short lines. Notes is three columns and one of them is a document, and
+inside 720px that document column measured **172px at a 1280px window**: a
+Markdown editor about twenty characters wide. The reading-width rule was right
+about the screen it was written for and wrong about this one.
+
+`.app:has(.notes)` lifts it, the same way `.app:has(.dash.has-panel)` already
+does for the Dashboard's second column — `:has()` rather than a class threaded
+down from `App`, because `App` does not read which screen wants what width and
+the child already knows. Where `:has()` is unsupported the page stays at 720px
+with the columns stacked, which is the phone layout, so the fallback is real.
+
+**There is no replacement cap, and that is the part worth arguing for.** A
+larger fixed number is still a fixed number: 1700px on a 3440px monitor leaves
+1500px of nothing, which is the same complaint one step further out. So the
+container is uncapped and the columns are `clamp`ed instead — a folder tree and
+a list of titles each want *some* of a wide window and neither should take a
+third of it, so they grow and stop, and everything left goes to the note.
+
+**What stops the prose sprawling is a measure on the text, not a narrow page.**
+`.md-p`, `.md-h`, `.md-list` and `.md-quote` cap at 90ch; tables, code blocks,
+rules and images are shapes rather than sentences and take the whole column. 90
+rather than the classical 70 because this only has to stop an ultrawide — a cap
+that bit on an ordinary monitor would be the narrowness arriving by a different
+route. At 1280px it does not bind at all.
+
+**The box you type in gets no measure.** Reading prose wants a short line;
+editing Markdown wants a table row, a long URL and a `[[link]]` not to wrap,
+since a wrapped table stops looking like a table. Measured: 172px → 505px at
+1280, 976px at 2560.
+
+#### The backlinks move beside the note when there is room
+
+A wide window gave the note a column far wider than its prose wants, so reading
+one left several hundred pixels blank down the right while the backlinks sat
+underneath — off the bottom of a long note, which is the half of the notebook
+you are least likely to scroll to and the half most worth seeing.
+
+**A container query, not a media query.** What decides whether they fit is the
+width of *that card*, which opening the drawer changes without the window moving
+at all; asking the viewport would put the rail back while the drawer squeezed
+the card. It is also pure CSS, so it works where `ResizeObserver` does not —
+worth knowing given that the weather graph needs three separate ways to measure
+itself for exactly that reason.
+
+**`has-rail` is a real class rather than letting an empty track collapse.** A
+grid gap is drawn between tracks whether or not the second holds anything, so a
+note with no links would carry a stray column of padding. `hasNoteLinks()` is
+the single statement of the condition, asked once by the layout and once by the
+panel that returns null on it.
+
+#### New is a menu, and folders can exist while empty
+
+**New** offers *Note* or *Folder*, from a table rather than two buttons, because
+that is the list which grows — a template, a note from the clipboard, a daily
+note are all the same shape and each is one entry rather than another control
+competing for the same corner. It reuses the right-click menu's own component:
+the measuring, the clamping to the viewport and the six ways it dismisses are
+the fiddly parts, and a second copy is a second one to keep right. Only where it
+opens differs, so `useButtonMenu` sits beside `useContextMenu` in the same file.
+
+**"New folder" needed somewhere to put the answer.** A folder was a path prefix
+on notes and nothing else — a good model, since it needs no maintenance, cannot
+disagree with where the notes actually are, and moves with one prefix rewrite.
+What it cannot do is hold *nothing*, so an empty folder could not exist at all.
+
+`note_folders` is the smallest fix: a list of paths made by hand, which
+`folderTree` unions with the derived ones at a count of zero. A folder that
+appears because a note is filed there still needs no row, and the two cannot
+contradict each other because **the derived side always wins on counts** —
+`counts.has` rather than `counts.set`, so a declared folder that has since been
+filled shows its real number.
+
+Three consequences worth knowing:
+
+- **Its ancestors are declared too.** A folder at `a/b/c` implies `a` and `a/b`,
+  and without them the tree renders a child indented under a parent that is not
+  there.
+- **The declarations move with the notes.** `moveDeclaredFolders` runs inside the
+  rename route, or moving an empty folder would appear to do nothing and moving
+  a full one would leave a ghost at the old path.
+- **The declarations move with the notes.** `moveDeclaredFolders` runs inside
+  the rename route, or moving an empty folder would appear to do nothing.
+
+**The name is typed in the tree, not in a `prompt`.** A modal dialogue sits in
+front of the thing you are adding to, so you cannot see where the folder is
+going while you name it. The field appears indented in the place the row will
+be, which is what every file manager does and says where it is landing without
+needing a sentence to explain it. **Enter commits and the blur is the fallback**
+— the ordering the habit stepper had to learn, because a document that is not
+focused dispatches no `blur` at all — with a `committed` ref so pressing Enter,
+which blurs an instant later, does not fire both.
+
+#### "Delete folder" means two things, so it offers both
+
+The first version disabled *Remove* on a folder with notes in it and labelled it
+*"Remove — 3 inside"*. That reads as a menu refusing to do the thing you opened
+it for, and it was solving the wrong problem: the action is not impossible, it
+is **ambiguous**. Deleting a folder can mean *throw away what is in it* or *get
+rid of the grouping*, and only one of those can be undone.
+
+So nothing is greyed. An empty folder offers **Delete folder**. One with
+something in it offers both, named for what each actually does:
+
+- **Keep the N notes, remove the folder** — the rename primitive again, `a/b`
+  into `a`, so the notes move up a level in one prefix rewrite and nothing is
+  touched note by note.
+- **Delete folder and N notes** — in the warning colour, and it asks first,
+  because there is no trash here. `notes=delete` on the route is the caller
+  stating which reading it meant; without it the endpoint still refuses and says
+  how many are in the way, so the destructive path is reachable only on purpose.
+
+Verified end to end: declining the confirmation left the note untouched,
+accepting removed folder and note together, and *Keep the notes* left the note
+alive one level up with the folder gone.
+
+#### "Not in a folder" was showing every note
+
+Reported, and it was one branch. Every other folder shows what is *under* it,
+which is right — a tree where clicking a parent shows nothing because everything
+sits one level down reads as broken. The root is the exception, because
+everything is under the root.
+
+The empty case pushed `undefined` into the condition list, `filter(Boolean)`
+dropped it, and the query went out with **no folder condition at all**. So the
+two entries in the tree rendered identical lists, and the one that answers "what
+have I not filed yet" was the one that broke. The root now means notes whose
+folder *is* the root; "All notes" is the separate question, asked by sending no
+folder at all. Smoke asserts the root is both non-empty and smaller than the
+whole list, since either alone would pass on an empty notebook.
+
+#### Branches fold, and stay folded
+
+An arrow beside any folder that has something inside it, and **only** those —
+a leaf gets a spacer of the same width instead, so names line up down the tree
+rather than jogging left and right depending on whether a folder has children.
+
+**The arrow is set larger than the row's type so that it *paints* the same size
+as a `<` or `>` beside it**, and matching the font-size alone does not achieve
+that. A geometric shape carries far less ink than punctuation at the same em:
+measured in the app's own font at 13.76px, `>` paints 8×7 while `▸` paints 6×5,
+about a quarter smaller. At 1.2rem the triangle paints 8×7 — the same. Worth
+knowing before "just make it the same font-size" looks like the obvious fix.
+
+**Collapsing hides every descendant, not only the children.** Shutting `a` has
+to take `a/b/c` with it; testing the parent alone would leave grandchildren on
+screen under a folder that is visibly not showing its own children, which reads
+as the tree being broken rather than folded.
+
+**Remembered in `localStorage`**, matching the voice command groups and for the
+reason they give: reopening them every visit is a chore. Deliberately *not* in
+`settings` beside the theme — this is a view preference about one screen on one
+device, and a tree you folded up on the phone should not fold up on the PC where
+there is room for it.
+
+**A folder row is now two controls, not one button.** The twist folds the branch
+and the name opens the folder, and a button inside a button is not something a
+browser will render. The drop target and the drag handle moved out to the row
+with them, so the whole width still takes a note and the whole width can still
+be picked up — including the arrow, which would otherwise be a dead strip down
+the side of the tree. Verified after the restructure that selecting, dropping
+and the drop highlight all still work.
+
+#### The folders inside the one you are in, among the notes
+
+Standing in a folder, the list leads with the folders directly inside it and
+then the notes — folders first, as every file manager orders them, because they
+are the smaller group and the one you are scanning for when navigating rather
+than reading.
+
+**They deliberately do not look like notes.** A note row is a `.card`: padded,
+on `--surface`, with a title, two clamped lines of preview and a date. A folder
+has none of those, so it is a single short line on `--surface-raised` with a
+glyph, a count and a chevron pointing inwards — 40px against 77px, and a
+different background. A place you go into should not look like a thing you open
+and read, or the only way to tell them apart is to click one and find out.
+
+**One level, not every descendant.** This is where you are standing, not a
+summary of everything beneath you; the sidebar is where the whole tree lives.
+
+**"Not in a folder" gets them too, and "All notes" does not.** The root is a
+real place, so it lists the top-level folders and the notes filed nowhere —
+which is what a file manager shows when you open a drive. "All notes" is a flat
+view of everything and has no inside. A search hides them for the same reason:
+you are looking across the whole notebook, and a folder row would answer a
+question you did not ask.
+
+That distinction matters most where the sidebar is not there. **On a phone the
+tree is off-screen**, so these rows are the only way down into the notebook
+rather than a duplicate of something already visible — which also makes this the
+first piece of folder navigation that works on touch at all.
+
+They are drop targets and drag sources like the tree's rows, and carry the same
+right-click menu, because they are the same folder seen twice. `useFolderDnd`
+holds the handlers once for both; each column keeps its own `over`, so they
+highlight independently rather than lighting up together.
+
+#### Dragging notes and folders about
+
+A note dragged onto a folder is filed there; a folder dragged onto another moves
+with everything under it; and either dropped on **Not in a folder** comes back
+out. "All notes" is deliberately *not* a target — it is a filter rather than a
+place, and accepting a drop there would have to silently pick a folder.
+
+**Moving a folder needed no new endpoint.** A folder here is a path prefix on
+notes rather than a row of its own, so moving `a/b` into `c` is renaming that
+prefix to `c/b` and every note underneath follows in one update. The rename
+route already existed for exactly that arithmetic.
+
+**The rules live in `shared` and both ends read them.** `canMoveFolder` refuses
+four things, and the third is the one that matters: **a folder cannot go inside
+its own descendant.** That would rewrite every path under it to a prefix that is
+itself about to move — which does not error, it silently mangles the tree. The
+fourth refusal is the no-op of dropping something where it already is, refused
+so the target never lights up rather than accepting a drop that changes nothing,
+which reads as the drag having failed.
+
+**`preventDefault` on `dragover` is the whole mechanism**, and calling it only
+for a legal move is what makes an illegal one show the browser's own "no entry"
+cursor with no styling required to say so.
+
+**The decision comes from a ref and the highlight from state, and that split is
+not tidiness.** `setDragging` in `dragstart` does not reach the handlers until
+React re-renders, and `dragover` can arrive in the same frame — which read
+`null`, refused to `preventDefault`, and made the first pass over a folder
+silently not a target. `useEdgeDrawer` documents this identical trap in the same
+words. It showed up here as `accepted: false` on a synthetic drag and would have
+shown up in real use as a drag that needed jiggling before it took.
+
+`dataTransfer` cannot answer this instead: a page may only read what is being
+dragged when it is **dropped**, so that a page cannot snoop on a file you drag
+past it. It still carries a plain text label, because Firefox will not begin a
+drag with nothing set and a title is the honest thing to hand any other app.
+
+**This is mouse-only, and that is a real gap rather than an oversight.** HTML5
+drag and drop does not exist on iOS, so on the phone a note is still moved by
+typing a path into the folder box on its editor, and a folder cannot be moved at
+all. That is not a regression — folders had no UI of any kind before this — but
+it is the half still missing, and a "move to…" picker is what would close it.
+
+Verified against the running app with probe notes rather than real ones, then
+deleted: a note into a folder and back out to the root, a folder with a nested
+child into a sibling (`zzprobe/from` → `zzprobe/to/from`, child following as
+`zzprobe/to/from/deeper`) and back out to the root, and all three refusals
+leaving the tree byte-identical.
+
+#### Whether three columns fit is asked of the columns, not of the window
+
+This was a `max-width: 1100px` media query, and it stopped being able to answer
+its own question the moment the menu's width became a setting. A media query
+asks the *window*; what decides whether three columns fit is the space they
+actually have, and the menu is 260px of that. At a 1250px window with the menu
+docked the notes screen has 990px and the viewport query cheerfully kept three
+columns in it — then collapsing the menu handed back 260px and nothing changed,
+because nothing in the query could see it.
+
+So `.notes` is a query container and the rule is `@container`. Measured at one
+fixed 1150px window: menu docked, the screen is **851px and stacks to one
+column**; menu collapsed, it is **1126px and lays out three** (170 / 248 / 684).
+No media query can tell those two apart.
+
+**Both containers are named, and that is load-bearing rather than tidy.**
+`.notes-note` is already a container for the backlinks rail, and the Back button
+sits inside it — so an unnamed `@container` would resolve against the nearest
+one, which is the note card, and hide the button whenever the *card* was wide.
+On a phone with a note open the card is the full width, which is exactly when
+the button is the only way out. `notes-screen` and `notes-card` say which
+question is being asked.
+
+**The tracks are `cqi` rather than `vw`** for the same reason: a percentage of
+the notes screen, so docking the menu narrows them instead of leaving them sized
+for room they no longer have.
+
+**The number changed with the unit, from 1100 to 900, and had to.** The old
+figure had the menu's width baked into it — it could not see the menu, so it
+compensated. 900 is what the columns genuinely need: 170 for the sidebar, 240
+for the list, 24 of gaps, and something worth having left for the note.
+
+Container queries are Chrome 105 and Safari 16, both below this app's existing
+floor of iOS 16.4 for web push, so unlike the `:has()` rules there is no older
+browser here to keep a fallback for.
+
+**One thing this turned up and did not change.** The sidebar is `position:
+sticky` and, in a notebook of half a dozen short notes, it is the tallest column
+— so the grid is exactly its height and sticky has nowhere to travel. That reads
+as broken and is not: with a long note open it pins at its `top` as intended,
+verified by scrolling 600px and watching it hold at 8px. Confirmed it predates
+the container work by toggling `container-type` off at runtime and measuring the
+same result both ways.
+
+#### On a phone a note is a place you go, not a row that grows
+
+Stacked into one column, an open note sat below the sidebar *and* the whole
+list, so tapping one scrolled you to the foot of the page to find it.
+
+The alternative was expanding it inline under the row you tapped, accordion
+style, and that is right for a preview and wrong for a document: the thing being
+opened is a full-screen editor with a title, a folder, a Markdown box and a
+backlinks panel, and putting one inside a list leaves it wearing the list's
+width with the rest of the list still above and below it. Every notes app on a
+phone uses a detail view, and the reason is the same one.
+
+So below the breakpoint the sidebar and the list are taken off screen and the
+note has the width, with a **‹ Back** button that exists only there — above it
+the list never left, so there is nowhere to go back to and the control would
+close a note for no visible reason.
+
+**`display: none`, not unmounting.** Going back is instant and the list returns
+with its scroll position and its search box exactly as they were. React keeps
+the state; CSS decides what is shown. The class is `has-open` on the layout,
+which is state React already had.
+
+#### And the editor header is one row
+
+Title, folder, then Edit and Delete. It was two rows of one field each, which
+paired Edit with the title and Delete with the folder — reading as though each
+button acted on the box beside it, with a destructive button sitting against a
+text field. The buttons wrap as a group, so a narrow column never drops Delete
+onto a line of its own underneath the folder box.
+
+### The screen is fetched, not bundled
+
+Notes is **the one core view behind `lazy`**. Every other one is a few kilobytes
+of form controls; this one carries a parser, a renderer, a graph and the
+transfer UI, and it put **8KB gzipped into the eager bundle** — on a bundle whose
+whole argument is that it is 92KB and almost entirely React. That is the 9.5KB
+the friends panel nearly cost, arriving by a different door.
+
+It takes the shape a feature's screen already has: its own chunk, its own
+Suspense boundary, fetched the first time the tab is opened. Measured: 92.6KB
+before any of this, 100.4KB bundled, **93.3KB** fetched, with the screen itself
+7.8KB gzipped and only when opened.
+
+### Two smaller things
+
+- **`saveNote` is exported from `module-api`**, because the voice feature's
+  `note` command and the HTTP route must write a note the same way. The habit
+  path learned this the expensive way: voice had its own copy of "record a
+  completion", identical to the route until gauge mode arrived, and then
+  silently did half the write.
+- **The list carries a `preview`, never the body.** A notes list is fetched on
+  every visit and on the Dashboard panel, and a notebook of long notes would send
+  the whole thing to draw two clamped lines.
 
 ## Password vault
 
@@ -3249,6 +3866,43 @@ The window is created lazily on first use and kept, because recreating it per
 utterance would waste the speed that justified building it. If it cannot be
 created at all, voice carries on without it — a missing overlay is a poor reason
 to lose the feature.
+
+### Exclusive fullscreen, and why no window style fixes it
+
+Reported from real use: in exclusive fullscreen, a popup made the game lose the
+display and minimise, so it had to be clicked back into.
+
+**It is not focus theft, and checking that first saved fixing the wrong thing.**
+The window already refuses focus every way Windows offers — `WS_EX_NOACTIVATE`
+at creation, `SW_SHOWNOACTIVATE` to show, `SWP_NOACTIVATE` to move, and
+`WS_EX_TOOLWINDOW` to stay out of Alt-Tab. It never takes the foreground.
+
+What happens instead is that **exclusive fullscreen owns the display rather than
+merely the screen**. A game in true D3D fullscreen has the output to itself, and
+for Windows to draw *anything* above it that mode has to break so the desktop
+compositor can take over. Plenty of games read that as losing the display and
+minimise. No style prevents it, because the cost is in compositing at all rather
+than in who has focus.
+
+So the only thing that works is to put the popup where the game is not.
+`screenOwnedByGame()` finds the monitor the foreground window has claimed and
+`place()` anchors to a different one — the primary if it is free, otherwise
+whichever is left. With one monitor there is nowhere to go and nothing changes.
+
+**Only for `RUNNING_D3D_FULL_SCREEN`, never for borderless.** Borderless is
+already composited, so a popup over it costs nothing, and moving the window to
+another screen would be a change of behaviour bought for no reason. That is why
+the *shell's* notification state is asked rather than the geometry check the
+games list uses: those two questions look identical and are not. It is also the
+same call `quietReason` makes about Do Not Disturb, so nothing new is bound.
+
+**A named screen wins.** Pinning the popup to a monitor is an explicit statement
+about where popups go, and quietly overriding it would be worse than the flicker
+this avoids.
+
+Verified on this machine mid-game: the shell reported `RUNNING_D3D_FULL_SCREEN`,
+the foreground window was a game owning the 3440×1440 primary, and the popup
+resolved to the 1920×1080 beside it.
 
 ### Where it appears, and what face it wears
 

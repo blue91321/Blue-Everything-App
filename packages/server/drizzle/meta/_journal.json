@@ -344,6 +344,27 @@
       "when": 1786064305000,
       "tag": "0048_dashboard_refresh",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1786064306000,
+      "tag": "0049_notes_like_obsidian",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1786064307000,
+      "tag": "0050_drawer_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "6",
+      "when": 1786064308000,
+      "tag": "0051_note_folders",
+      "breakpoints": true
     }
   ]
 }

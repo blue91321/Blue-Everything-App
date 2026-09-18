@@ -5,7 +5,230 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
-## Unreleased
+## 0.3.2
+
+### Notes, rebuilt as a linked notebook
+
+- **`[[Wiki-links]]`, and a panel saying who links back.** A backlink is quoted
+  with the line it appears in, so the list says *why* something links here rather
+  than only that it does. Links are matched case- and punctuation-insensitively,
+  so `[[reading LIST]]` finds "Reading list".
+- **A link to a note nobody has written yet still works** — it is drawn dashed,
+  and clicking it creates that note. The panel underneath lists every such link,
+  which is the notebook telling you what it is missing.
+- **Folders, as a tree in the sidebar**, with a whole folder renameable at once.
+- **`#tags`**, counted in the sidebar and clickable to filter. Read out of the
+  body rather than stored separately, so there is nothing to keep in step — and
+  deliberately not read out of headings, URL fragments or code.
+- **Full-text search** across every note, debounced so the list is not refetched
+  per keystroke.
+- **A graph view.** Hand-drawn SVG like the gauges and the weather chart, with a
+  layout seeded from each note's id so the same notebook always draws the same
+  shape — a graph that rearranges itself nightly is most of the point lost. A
+  note nothing links to is hollow rather than a different colour, the same
+  distinction the `unknown` presence dot draws.
+- **Images and attachments**, dropped or pasted into a note. Fetched with the
+  bearer token and wrapped in an object URL, exactly as the habit pictures are,
+  because an `<img src>` under `/api/` sends no token. SVG is deliberately not
+  an allowed type.
+- **The editor is one box, not a split view.** The note is rendered until you
+  click into it. Obsidian's two-pane view is the thing most people turn off
+  first: two copies of one note competing for the width.
+- **Autosave**, debounced, and flushed on the way out so closing mid-sentence
+  keeps what you typed.
+
+### Bringing notes in from somewhere else, and taking them out
+
+- **Fourteen formats read**: Obsidian vaults, Notion, Evernote `.enex`, Google
+  Keep, Roam, Logseq, Joplin `.jex`, Bear, Standard Notes, Apple Notes,
+  Markdown, Word, CSV and plain text. The format is **detected from the
+  contents**, not from a dropdown asking you to know what your own export is.
+- **Two-phase, like the vault's password import.** The first call reports what it
+  found and writes nothing, so a wrong guess costs a click rather than a thousand
+  rows. Imports land in a folder you name, because a folder can be taken apart
+  afterwards and a merge cannot.
+- **Six formats written**: an Obsidian vault, Markdown, plain text, CSV, PDF and
+  Word. The vault is a real one — unzip it into Obsidian and the `[[links]]`
+  work, because they were Obsidian's syntax all along.
+- **No new dependencies.** The PDF writer, the `.docx` writer and the zip
+  *writer* are hand-rolled, the same call the PNG encoder, the WAV writer and the
+  zip reader already made. One parser feeds the screen, the PDF and the Word
+  file, so an export cannot drift from what you were looking at.
+- **What each format loses is said before you pick it**, rather than discovered
+  on opening the file — PDF and Word flatten links, CSV and text flatten
+  formatting, and the PDF can only draw Latin alphabets.
+
+### The Notes screen uses the window
+
+- **The editor column was 172px wide at a 1280px window.** `.app` is capped at
+  720px — a reading width chosen for a task list — and three columns were being
+  folded into it, so the Markdown box came out about twenty characters across.
+  The Notes screen lifts the cap, the way the Dashboard's second column already
+  does.
+- **No replacement cap.** A bigger fixed number is still fixed: 1700px on a
+  3440px monitor leaves 1500px of nothing. The page is uncapped and the sidebar
+  and list `clamp` instead, so they grow with the window and stop, and the note
+  takes everything left. Measured: the editor column 172px → 505px at 1280,
+  and the page fills a 2560px window edge to edge.
+- **The prose is what has a measure, not the page** — paragraphs, headings,
+  lists and quotes cap at 90ch, while tables, code blocks and images take the
+  whole column. The box you *type* in has no cap at all, because a wrapped
+  Markdown table stops looking like a table.
+- **Backlinks sit beside the note when the card is wide enough**, in the space
+  the prose was leaving blank, instead of underneath where a long note pushed
+  them off the bottom. A container query rather than a media query: the drawer
+  narrows that card without the window moving.
+- **The editor header is one row** — title, folder, Edit, Delete. It was two
+  rows of one field each, which put Delete against a text box and read as though
+  each button acted on the field beside it.
+
+### The menu can be put away, and you choose when it docks
+
+- **It can be hidden at every width now.** The toggle only appeared on narrow
+  screens, so on a desktop the menu was permanent furniture — 260px you could
+  not reclaim while reading something that wanted it.
+- **The ☰ is pinned to the top-left of the screen and never moves.** In the page
+  header it travelled with the content — docked, the header starts 260px in and
+  is centred in the rest, so toggling the menu slid the button up to 260px
+  sideways and you had to go and find it again. It is the same place in every
+  state now, which is what lets you hit it without looking.
+- **"Blue Everything" sits on the button's line** in the drawer, derived from
+  the button's own offset and height rather than a hand-tuned number.
+- **The screen title only steps aside where the button would actually sit on
+  it** — otherwise it stays lined up with the cards below it, which on a wide
+  screen is what a heading needs.
+- **When it docks is a setting**, and the default moved from 900px to 1200px.
+  900 was the answer to "is there room for a drawer beside a task list"; a
+  screen with columns of its own is squeezed well above that. Four named widths
+  — *Early*, *Balanced*, *Late*, *Never* — rather than a number nobody can
+  reason about, and *Never* is a real choice.
+- **Whether it starts docked is a setting too.** Hiding it by hand stays
+  temporary and comes back next launch: the setting says how the app opens, the
+  button says what you have done since. An unrelated save can no longer snap it
+  back open, which took a guard — the shell reloads settings on every change
+  announced anywhere in the app.
+
+### The folder tree folds up
+
+- **An arrow beside every folder that has something inside it**, and only those
+  — a leaf keeps the space so names stay lined up.
+- Collapsing takes *every* descendant with it, not just the children.
+- **It is sized to paint like a `>`**, which takes a larger font-size than the
+  text beside it — a triangle carries about a quarter less ink than punctuation
+  at the same em.
+- **Remembered between visits**, per device, like the collapsed voice sections.
+
+### Folders show up among the notes
+
+- **Standing in a folder, the list leads with the folders inside it**, then the
+  notes — folders first, as a file manager orders them.
+- **They do not look like notes.** A note row is a padded card with a title,
+  preview and date; a folder is a single short line on a lighter surface with a
+  glyph, a count and a chevron. 40px against 77px.
+- One level down, not every descendant — the sidebar is where the whole tree is.
+- **"Not in a folder" gets them too**, because the root is a real place; *All
+  notes* does not, and a search hides them.
+- It matters most on a phone, where the sidebar is off-screen: these rows are
+  the first folder navigation that works on touch.
+- They take drops, can be dragged, and carry the same right-click menu.
+
+### The right-click menu had no background
+
+- **`--card` was used by nine rules and defined by none.** An undefined custom
+  property makes the whole declaration invalid, so those were not the wrong
+  colour — they had *no background at all*: the right-click menu, the gauge
+  track, code blocks, the live thumbnail and four hover states, all with the
+  page showing straight through them.
+- All nine now use `--surface-raised`, which is what the name was reaching for.
+- **The build refuses a `var(--x)` that nothing declares**, so the next typo in
+  a property name stops the build instead of quietly removing a background.
+
+### New asks what kind, and folders can be empty
+
+- **New** offers *Note* or *Folder*, from a list built to grow — a template or a
+  note from the clipboard is one entry rather than another button in the corner.
+- **A folder can now exist with nothing in it.** It used to be nothing but a
+  path prefix on notes, so "new folder" had nowhere to put the answer. Made
+  folders are recorded and shown at zero; ones that appear because a note is
+  filed there still need no record, and the notes always win on the count.
+- **The name is typed in the tree**, indented where the folder is about to
+  appear, rather than in a dialogue sitting in front of it. Enter commits,
+  Escape cancels.
+- **Right-clicking a folder greys nothing out.** "Delete folder" means two
+  different things and only one can be undone, so a folder with something in it
+  offers both: *Keep the N notes, remove the folder*, which moves them up a
+  level, and *Delete folder and N notes*, which asks first.
+
+### "Not in a folder" showed every note
+
+- It took the same "and everything under it" rule as every other folder — and
+  everything is under the root, so the condition dropped out entirely and the
+  two entries in the tree rendered identical lists. The root now means notes
+  filed nowhere; *All notes* remains the separate question.
+
+### Drag notes and folders about, like a file system
+
+- **Drag a note onto a folder** to file it, **a folder onto another** to move it
+  with everything underneath, and either onto **Not in a folder** to take it back
+  out. "All notes" is not a target — it is a filter, not a place.
+- **Moving a folder needed no new endpoint.** A folder is a path prefix on
+  notes, so moving `a/b` into `c` renames that prefix to `c/b` and every note
+  under it follows in one update.
+- **A folder cannot be dropped inside its own descendant**, onto itself, or
+  where it already is. The first is the one that matters: it would rewrite every
+  path under the folder to a prefix that is itself about to move, which does not
+  error — it silently mangles the tree. Illegal targets never light up and never
+  take the drop.
+- **Mouse only for now.** HTML5 drag and drop does not exist on iOS, so on the
+  phone a note is still moved by typing a path in its folder box, and a folder
+  cannot be moved at all.
+
+### The notes columns measure themselves, not the window
+
+- **Whether three columns fit is now asked of the space they have**, not of the
+  window. It was a viewport media query, which could not see the menu — so at a
+  1250px window with the menu docked the notes screen had 990px and still drew
+  three columns, and collapsing the menu handed back 260px without changing
+  anything.
+- Measured at one fixed 1150px window: menu docked → 851px → **one column**;
+  menu collapsed → 1126px → **three columns**. No media query can tell those
+  apart.
+- The threshold moved from 1100px of window to **900px of content**, because the
+  old number had the menu's width baked into it.
+
+### On a phone, a note is its own screen
+
+- **Opening a note used to scroll you to the bottom of the page**, below the
+  sidebar and the whole list, because one column meant everything stacked.
+- Below the breakpoint the list and sidebar now step aside and the note takes
+  the screen, with a **Back** button. Nothing is unmounted, so going back is
+  instant and the list keeps its scroll position and search text.
+
+### Two things this turned up
+
+- **Opening a note rewrote it.** The autosave's "have I written this already"
+  ref started empty, so the first debounce fired 700ms after *opening* a note and
+  saved it unchanged — bumping its timestamp and shuffling it to the top of a
+  list sorted by that. A notebook that rearranges itself as you read it is worse
+  than one that saves late.
+- **Notes is the one core screen that is now fetched rather than bundled.** It
+  carries a Markdown parser, a renderer, a graph and fourteen importers' worth of
+  transfer UI, and it put 8KB gzipped into the eager bundle — the same 9.5KB the
+  friends panel nearly cost, arriving by a different door. It has its own chunk
+  and its own Suspense boundary now, like a feature's screen: 100.4KB back down
+  to 93.3KB, against 92.6KB before any of this.
+
+### Notifications and exclusive fullscreen
+
+- **A popup no longer knocks a game out of exclusive fullscreen.** It was never
+  stealing focus — the window refuses it every way Windows offers. Exclusive
+  fullscreen owns the *display*, so drawing anything above it breaks the mode and
+  many games respond by minimising. The popup now appears on a monitor the game
+  is not using.
+- **Borderless is untouched**, because it is already composited and there is
+  nothing to break. A screen you pinned deliberately still wins.
+
+## 0.3.1
 
 ### A Games tab
 

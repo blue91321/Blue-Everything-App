@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { ServerUnreachable, api, clearToken, setToken, type Session } from './api';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
 import { setEnabledFeatures, webFeatures } from './features';
@@ -19,8 +19,22 @@ import { onNavigate } from './nav';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
-import { Notes } from './views/Notes';
 import { Settings } from './views/Settings';
+
+/*
+ * The one core screen that is fetched rather than bundled.
+ *
+ * Every other view here is a few kilobytes of form controls. Notes carries a
+ * Markdown parser, a renderer, a force-directed graph and fourteen importers'
+ * worth of transfer UI, and it put **8KB gzipped into the eager bundle** — on a
+ * 92KB bundle whose whole argument is that it is almost entirely React. That is
+ * the 9.5KB the friends panel nearly cost, arriving by a different door.
+ *
+ * So it takes the same shape a feature's screen already has: its own chunk, its
+ * own Suspense boundary, fetched the first time the tab is opened. A named
+ * export needs the `default` shim; `lazy` wants a module with one.
+ */
+const Notes = lazy(() => import('./views/Notes').then((m) => ({ default: m.Notes })));
 
 /**
  * The screens that are always here. Dashboard and Tasks are the nudge engine's
@@ -54,8 +68,19 @@ const CORE_NAV: NavItem[] = [
 
 type NavId = string;
 
-/** Below this the drawer slides over the content; above it, it's always there. */
-const DESKTOP_QUERY = '(min-width: 900px)';
+/**
+ * Below this the drawer slides over the content; at or above it, it docks.
+ *
+ * It was 900 and hard-coded, and 900 answered "is there room for a drawer
+ * beside a *task list*" — one column of short lines. A screen with columns of
+ * its own is squeezed a long way above that: at 900 with the drawer showing,
+ * the content is left about 640px. So the default is 1200 and the number is a
+ * setting, because the right answer depends on the monitor and on which screen
+ * you actually live in.
+ *
+ * Used until the real setting arrives, and as the fallback if it never does.
+ */
+const DEFAULT_DRAWER_BREAKPOINT = 1200;
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -94,7 +119,47 @@ export function App() {
    */
   const [logo, setLogo] = useState<{ shape: LogoShape; version: number }>({ shape: 'pause', version: 0 });
 
-  const isDesktop = useMediaQuery(DESKTOP_QUERY);
+  /**
+   * The two drawer settings, held here because the shell is what reads them.
+   *
+   * Defaults until the fetch lands, so the first paint has a drawer in the
+   * right place rather than one that jumps once settings arrive.
+   */
+  const [drawerPrefs, setDrawerPrefs] = useState({
+    breakpoint: DEFAULT_DRAWER_BREAKPOINT,
+    docked: true,
+  });
+
+  /** Is there room to dock it? */
+  const wide = useMediaQuery(`(min-width: ${drawerPrefs.breakpoint}px)`);
+
+  /**
+   * Collapsed by hand, on a screen wide enough to dock.
+   *
+   * Session state rather than a write back to the setting: collapsing the menu
+   * to read something is a thing you do for a minute, and persisting it would
+   * turn a temporary choice into a permanent one. The *setting* says how the
+   * app opens; this says what you have done since.
+   */
+  const [collapsed, setCollapsed] = useState(false);
+
+  /*
+   * Follow the stored default when it changes, without stomping a live toggle.
+   *
+   * The effect must not simply write `docked` on every settings change, or any
+   * unrelated save — a habit ticked off on the phone announces itself down the
+   * same SSE stream — would snap the menu back open under your hands. Only an
+   * actual change to *this* preference re-applies it.
+   */
+  const appliedDock = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (appliedDock.current === drawerPrefs.docked) return;
+    appliedDock.current = drawerPrefs.docked;
+    setCollapsed(!drawerPrefs.docked);
+  }, [drawerPrefs.docked]);
+
+  /** Docked open beside the content, as opposed to overlaying or hidden. */
+  const isDesktop = wide && !collapsed;
   const drawer = useEdgeDrawer(!isDesktop);
 
   /**
@@ -176,6 +241,11 @@ export function App() {
         applyLook(theme, accent);
         watchSystemTheme(theme, accent);
         setLogo({ shape, version });
+        setDrawerPrefs({
+          breakpoint: settings.drawerBreakpoint ?? DEFAULT_DRAWER_BREAKPOINT,
+          // `!== 0`, not `=== true`: the row returns 0 or 1. See `api.ts`.
+          docked: (settings.drawerDocked ?? 1) !== 0,
+        });
         // The tab icon is a real file, so it needs a URL that changes when the
         // mark does — the accent and the shape are both part of the answer.
         applyFavicon(`${accent}-${shape}-${version}`);
@@ -325,6 +395,19 @@ export function App() {
     if (!isDesktop) drawer.setOpen(false);
   }
 
+  /**
+   * Show or hide the menu, whichever kind of menu is on screen.
+   *
+   * Docked, hiding means undocking and giving the width back; overlaid, it
+   * means closing. One function so the button inside the drawer and the handle
+   * on the edge are the same control in two places rather than two controls
+   * with two behaviours to keep in step.
+   */
+  const setMenuShown = (next: boolean) => {
+    if (wide) setCollapsed(!next);
+    else drawer.setOpen(next);
+  };
+
   /*
    * Nothing else in the app navigates itself, so this is the whole of the port.
    * An unknown view is ignored rather than switched to: the caller is a menu
@@ -364,20 +447,46 @@ export function App() {
         />
       )}
 
+      {/*
+        One ☰, pinned to the top-left of the *screen*, never moving.
+
+        That fixed position is the whole feature, and it took two goes to get
+        right. In the page header the button moved with the content: docked, the
+        header starts 260px in and the column is centred in what is left, so
+        toggling the menu slid the button up to 260px sideways — you had to go
+        and find it again each time, which is exactly what makes a control feel
+        unreliable. Putting it inside the drawer was worse: it went away with
+        the thing it opens.
+
+        So it is `position: fixed` above the drawer, outside both, and it is in
+        the same place whatever the menu is doing — the thing every browser and
+        YouTube get right and the reason anybody can hit it without looking.
+
+        Top-left, never vertically centred: that is where a menu button is, and
+        a hit target you have to search for costs more than the pixels it saves.
+      */}
+      <button
+        className="menu"
+        onClick={() => setMenuShown(!shown)}
+        aria-label={shown ? 'Hide menu' : 'Show menu'}
+        aria-expanded={shown}
+      >
+        ☰
+      </button>
+
       <div className="app">
         <header className="top">
-          {!isDesktop && (
-            <button className="menu" onClick={drawer.toggle} aria-label="Open menu" aria-expanded={drawer.open}>
-              ☰
-            </button>
-          )}
           <h1>{current.label}</h1>
         </header>
 
         {current.id === 'dashboard' && <Dashboard />}
         {current.id === 'tasks' && <Tasks focus={focus} onFocused={clearFocus} />}
         {current.id === 'habits' && <Habits focus={focus} onFocused={clearFocus} />}
-        {current.id === 'notes' && <Notes />}
+        {current.id === 'notes' && (
+          <Suspense fallback={<div className="empty">loading…</div>}>
+            <Notes session={session} />
+          </Suspense>
+        )}
         {current.id === 'settings' && (
           <Settings session={session} onChanged={checkSession} focus={focus} onFocused={clearFocus} />
         )}

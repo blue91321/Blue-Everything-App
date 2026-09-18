@@ -336,18 +336,6 @@ header.top h1 {
   letter-spacing: -0.02em;
 }
 
-.menu {
-  background: none;
-  border: 0;
-  color: var(--text);
-  font-size: 22px;
-  line-height: 1;
-  padding: 6px 4px;
-  cursor: pointer;
-  /* Comfortable thumb target without shifting the title. */
-  margin-left: -4px;
-}
-
 section {
   margin-bottom: 24px;
 }
@@ -978,6 +966,109 @@ button {
   gap: 10px;
 }
 
+/*
+ * The menu button: top-left of the screen, and it never moves.
+ *
+ * `position: fixed` above the drawer's z-index, so it stays put whether the
+ * menu is docked beside the content, sliding over it, or away entirely. In the
+ * page header it travelled with the column — docked, the header starts 260px in
+ * and is centred in the rest, so toggling the menu slid the button sideways and
+ * you had to find it again every time.
+ */
+.menu {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + var(--menu-top));
+  left: calc(env(safe-area-inset-left) + 10px);
+  z-index: 40;
+  width: 36px;
+  height: var(--menu-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.menu:hover {
+  background: var(--surface-raised);
+}
+
+/*
+ * What the fixed button covers, given back as padding.
+ *
+ * One number in one place, because two things have to clear it and they are in
+ * different stacking contexts — the drawer's own heading, and the page title
+ * when the content reaches the left edge of the screen.
+ */
+:root {
+  --menu-clear: 40px;
+  /* Where the button's band starts and how tall it is. */
+  --menu-top: 10px;
+  --menu-size: 32px;
+}
+
+/*
+ * The wordmark sits beside the button, on its line, not under it.
+ *
+ * The alignment is derived rather than eyeballed: the head takes the button's
+ * own top offset as padding and reserves exactly the button's height, so
+ * `align-items: center` lands the logo's centre on the button's centre whatever
+ * those two numbers become. A hand-tuned `padding-top` would be right once and
+ * then quietly wrong the first time the button changed size.
+ */
+.drawer-head {
+  padding-left: calc(var(--menu-clear) + 12px);
+  padding-top: var(--menu-top);
+  min-height: calc(var(--menu-top) + var(--menu-size) + 12px);
+}
+
+/*
+ * The title steps aside only where it would actually be sat on.
+ *
+ * The button is fixed near the left edge of the *screen*; the title is in a
+ * column that is usually centred. Padding it whenever the menu is undocked was
+ * one rule and too blunt — on a wide screen the button is hundreds of pixels
+ * away and the indent only pushed the title out of line with the cards beneath
+ * it, which is the thing a heading most needs to line up with.
+ *
+ * So the question is "has this column centred clear of the button yet", and it
+ * has a different answer per column width. Each rule below states one of those
+ * widths; docked needs no rule at all, since the content starts 260px in.
+ */
+.shell:not(.desktop) header.top {
+  padding-left: var(--menu-clear);
+}
+
+/* A reading-width column (720px) has centred clear by here. */
+@media (min-width: 820px) {
+  .shell:not(.desktop) header.top {
+    padding-left: 0;
+  }
+
+  /*
+   * The two that are still against the edge at this width: the Dashboard when
+   * it is carrying a side column, which is 1140px wide, and Notes, which has no
+   * maximum at all and so never centres.
+   */
+  .shell:not(.desktop):has(.notes) header.top,
+  .shell:not(.desktop):has(.dash.has-panel) header.top {
+    padding-left: var(--menu-clear);
+  }
+}
+
+/* ...and the 1140px one has centred clear by here. Notes still has not. */
+@media (min-width: 1240px) {
+  .shell:not(.desktop):has(.dash.has-panel) header.top {
+    padding-left: 0;
+  }
+}
+
 .logo-mark {
   display: block;
   border-radius: 6px;
@@ -1291,7 +1382,7 @@ button {
 
 /* Whole even when empty, so the shape is still a shape rather than a gap. */
 .gauge-track {
-  fill: var(--card);
+  fill: var(--surface-raised);
 }
 
 .gauge-fill {
@@ -1374,7 +1465,7 @@ button {
   padding: 4px;
   display: flex;
   flex-direction: column;
-  background: var(--card);
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
@@ -1506,7 +1597,7 @@ button {
   flex: none;
   border-radius: 6px;
   object-fit: cover;
-  background: var(--card);
+  background: var(--surface-raised);
 }
 
 /*
@@ -1551,7 +1642,7 @@ button {
 
 .star:hover:not(:disabled),
 .star:focus-visible {
-  background: var(--card);
+  background: var(--surface-raised);
   color: var(--accent);
 }
 
@@ -1714,4 +1805,751 @@ button {
 }
 :root[data-theme='dark'] .hourly-rain {
   fill: #4c9be8;
+}
+
+/* ------------------------------------------------------------------ */
+/* Notes                                                               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The Notes screen takes the window, and that is a second exception rather than
+ * a loosening of the first.
+ *
+ * `.app` is 720px because that is a comfortable measure for a *task list* — one
+ * column of short lines. Notes is three columns and one of them is a document,
+ * and inside 720px that document column measured **172px** at a 1280px window:
+ * a Markdown editor about twenty characters wide. The reading-width rule was
+ * right about the screen it was written for and wrong about this one.
+ *
+ * `:has()` rather than a class from `App`, exactly as the Dashboard's panel
+ * column does it — `App` does not know which screen wants what width, and the
+ * child already does. Where `:has()` is unsupported the page stays at 720px
+ * with the columns stacked, which is the phone layout: a real fallback.
+ *
+ * There is **no cap at all**, which is the part worth arguing for. A larger
+ * fixed number is still a fixed number: 1700px on a 3440px monitor leaves
+ * 1500px of nothing, which is the same complaint one step further out. What
+ * stops the prose sprawling is a measure on `.md` below — that is a fact about
+ * sentences, and applying it to the whole page instead is what produced a
+ * 172px editor in the first place. The two are different problems and the
+ * container is the wrong place to solve either.
+ */
+.app:has(.notes) {
+  max-width: none;
+}
+
+/*
+ * Three columns on a desktop and a stack on a phone. `minmax(0, …)` on the
+ * middle and right is what actually lets them shrink — a grid track defaults to
+ * `min-content` and refuses to go below its longest word, which is the same
+ * trap `min-width: 0` fixes for the friends row and the weather graph.
+ *
+ * The first two are `clamp`ed rather than fixed: a folder tree and a list of
+ * titles both want *some* of a wide window and neither should take a third of
+ * it, so they grow with the viewport and stop. Everything left over goes to the
+ * note, which is the only column that can genuinely use it.
+ */
+/*
+ * The screen is a query container, so "is there room for three columns" is
+ * asked of the space the columns actually have.
+ *
+ * It was a `max-width: 1100px` media query, which asks the *window* — and the
+ * window stopped being the answer once the menu's width became a setting. At a
+ * 1250px window with the menu docked, the notes screen has 990px to work in and
+ * the viewport query happily kept three columns in it; collapse the menu and
+ * nothing about the columns changed even though 260px had just arrived. A media
+ * query cannot see the menu at all.
+ *
+ * **Both containers are named**, and that is load-bearing rather than tidy.
+ * `.notes-note` is itself a container (for the backlinks rail), and the Back
+ * button lives inside it — so an unnamed `@container` would resolve against the
+ * note card and hide the button whenever the *card* was wide, which on a phone
+ * with a note open is exactly when it is needed.
+ *
+ * Container queries are Chrome 105 and Safari 16, both below this app's
+ * existing floor of iOS 16.4 for web push, so there is no older browser here to
+ * keep a fallback for.
+ */
+.notes {
+  container: notes-screen / inline-size;
+}
+
+.notes-layout {
+  display: grid;
+  /*
+   * `cqi`, not `vw`: a percentage of the notes screen rather than of the
+   * window, so docking the menu narrows these tracks instead of leaving them
+   * sized for space they no longer have.
+   */
+  grid-template-columns:
+    clamp(170px, 13cqi, 260px)
+    minmax(0, clamp(240px, 22cqi, 460px))
+    minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+/* Only ever shown on the stacked layout, below. */
+.notes-back {
+  display: none;
+}
+
+/*
+ * 900px of *content*, which is a different number from the 1100px of window it
+ * replaces and a smaller one on purpose. The old figure had the menu's width
+ * baked into it — it had to, since it could not see it. This is the width the
+ * columns genuinely need: 170 for the sidebar, 240 for the list, 24 of gaps and
+ * something worth having left for the note.
+ */
+@container notes-screen (max-width: 900px) {
+  .notes-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /*
+   * One column means one thing at a time. With a note open the list and the
+   * sidebar are taken off screen rather than left stacked above it — stacked,
+   * opening a note put it below everything and tapping one scrolled you to the
+   * foot of the page to find it.
+   *
+   * `display: none` rather than unmounting, so Back is instant and the list
+   * comes back with the scroll position and the search box exactly as they
+   * were. React keeps the state; CSS decides what is shown.
+   */
+  .notes-layout.has-open > .notes-side,
+  .notes-layout.has-open > .notes-list {
+    display: none;
+  }
+
+  /* The way back, which only exists where there is something to go back to. */
+  .notes-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    font-size: 1.3rem;
+    line-height: 1;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+.notes-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: sticky;
+  top: 0.5rem;
+}
+
+.notes-side-head {
+  margin-top: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+}
+
+.notes-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.notes-folder {
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+/*
+ * A folder in the tree is a row of two controls, not one button.
+ *
+ * The twist and the name do different things — one folds the branch, the other
+ * opens the folder — and a button inside a button is not something a browser
+ * will render. The drop target and the drag handle live on the row, so the
+ * whole width takes a note and the whole width can be picked up, including the
+ * arrow; scoped to the row rather than the name button, or the arrow would be a
+ * dead strip down the side of the tree.
+ */
+/*
+ * The row sets the type size once and both controls inherit it, so the arrow is
+ * exactly as big as a `<` or `>` would be beside the folder's name rather than
+ * a size of its own that has to be kept in step by hand.
+ */
+.notes-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+
+.notes-folder-row:hover {
+  background: var(--surface-raised);
+}
+
+.notes-folder-row.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.notes-folder-row.on .meta {
+  color: var(--accent-text);
+  opacity: 0.8;
+}
+
+.notes-folder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  padding: 0.3rem 0.5rem 0.3rem 0.2rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+/*
+ * The arrow, and the space it keeps when a folder has nothing inside it.
+ *
+ * A fixed width either way, so names line up down the tree — labels that jog
+ * left and right by a few pixels depending on whether a folder has children are
+ * harder to scan than a column with a little empty space in it.
+ */
+.notes-twist {
+  flex: none;
+  width: 18px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  font: inherit;
+  /*
+   * Bigger than the row's type on purpose, so it *paints* the size a `<` or `>`
+   * does beside it.
+   *
+   * Matching the font-size alone is not enough and looks like a bug: a
+   * geometric shape carries far less ink than punctuation at the same em.
+   * Measured in the app's own font at 13.76px, `>` paints 8×7 and `▸` paints
+   * 6×5 — about a quarter smaller. 1.2rem brings the triangle's ink up to the
+   * same 7px, which is what "the same size as a greater-than sign" means when
+   * you are looking at it rather than reading the stylesheet.
+   */
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.notes-twist:hover {
+  color: var(--text);
+}
+
+.notes-folder-row.on .notes-twist {
+  color: var(--accent-text);
+}
+
+.notes-twist-empty {
+  cursor: default;
+}
+
+.notes-folder:hover {
+  background: var(--surface-raised);
+}
+
+.notes-folder.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.notes-folder.on .meta {
+  color: var(--accent-text);
+  opacity: 0.8;
+}
+
+/*
+ * The folder about to receive a drop.
+ *
+ * An outline rather than a fill: the selected folder is already a solid accent
+ * block, and a second solid state would make "this is the folder I am looking
+ * at" and "this is where it will land" the same picture. An inset outline also
+ * keeps the row from changing size, which would shove the rest of the tree down
+ * mid-drag and move the target out from under the cursor.
+ */
+.notes-folder.drop-here,
+.notes-subfolder.drop-here {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/*
+ * Only a row that is *being* dragged dims. Everything else stays put, because
+ * the one thing a drag needs is for the targets to hold still.
+ */
+.notes-row:active,
+.notes-folder:active {
+  cursor: grabbing;
+}
+
+/*
+ * Naming a new folder, where the folder is about to be.
+ *
+ * Sized and indented like the rows around it so the tree does not jump when it
+ * appears and again when it goes — the row it becomes should land in the space
+ * it was already occupying.
+ */
+.notes-new-folder {
+  width: auto;
+  align-self: stretch;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.86rem;
+  border-color: var(--accent);
+}
+
+.notes-drag-hint {
+  margin-top: 0.5rem;
+  line-height: 1.45;
+}
+
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  /* Its own scroll, so the sidebar and the note stay put while the list moves. */
+  max-height: calc(100vh - 8rem);
+  overflow-y: auto;
+}
+
+.notes-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.notes-row.on {
+  border-color: var(--accent);
+}
+
+/*
+ * A folder among the notes, and the styling is the feature.
+ *
+ * A note row is a `.card`: padded, on `--surface`, with a title, two clamped
+ * lines of preview and a date. A folder has none of those, so it is a single
+ * short line on `--surface-raised` with a glyph, a count and a chevron. The
+ * difference is meant to be obvious at a glance without reading either — a
+ * place you go into does not look like a thing you open and read.
+ */
+.notes-subfolder {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.notes-subfolder:hover {
+  border-color: var(--accent);
+}
+
+.notes-subfolder-glyph {
+  color: var(--accent);
+  flex: none;
+}
+
+/* Takes the slack, so the count and the chevron stay against the right edge. */
+.notes-subfolder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.notes-subfolder-go {
+  flex: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+/* Two lines of preview, clamped — a long note must not make a tall row. */
+.notes-peek {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/*
+ * A container query, not a media query, and the difference is the point: what
+ * decides whether the links fit beside the note is the width of *this card* —
+ * which the drawer being open changes without the window moving at all. Asking
+ * the viewport would put the rail back while the drawer squeezed the card.
+ *
+ * It is also pure CSS, so it works where `ResizeObserver` does not: a browser
+ * pane that is not compositing delivers no RO callbacks, which is why the
+ * weather graph has three separate ways to measure itself.
+ */
+.notes-note {
+  container: notes-card / inline-size;
+}
+
+.notes-work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@container notes-card (min-width: 1000px) {
+  .notes-work.has-rail {
+    grid-template-columns: minmax(0, 1fr) clamp(240px, 24cqi, 360px);
+  }
+
+  /* Beside the note it is a column, so it is divided like one. */
+  .notes-work.has-rail .notes-links {
+    margin-top: 0;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+    padding-top: 0;
+    padding-left: 0.9rem;
+    /* Follows a long note down rather than sitting at the top of one. */
+    position: sticky;
+    top: 0.5rem;
+  }
+}
+
+.notes-head {
+  align-items: center;
+}
+
+/*
+ * The title is the note's name, so it is set like one rather than like another
+ * settings field. Borderless until you go near it: a box round the title of the
+ * thing you are reading is chrome round the one piece of text that needs none.
+ */
+.notes-title-input {
+  font-size: 1.15rem;
+  font-weight: 600;
+  padding-left: 0.35rem;
+  background: transparent;
+  border-color: transparent;
+}
+
+.notes-title-input:hover {
+  border-color: var(--border);
+}
+
+.notes-title-input:focus {
+  background: var(--bg);
+  border-color: var(--accent);
+}
+
+/* Enough for a folder path, and it gives the rest back to the title. */
+.notes-title-field {
+  min-width: 10rem;
+}
+
+.notes-folder-field {
+  flex: 0 1 11rem;
+  min-width: 7rem;
+}
+
+/* Kept together when the row wraps, and last in the reading order either way. */
+.notes-head-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/*
+ * The box you type in fills its column, and is **not** given the measure the
+ * rendered note gets.
+ *
+ * They are different jobs. Reading prose wants a short line; editing Markdown
+ * wants to see a table row, a long URL and a `[[link]]` without any of them
+ * wrapping — wrapping is precisely what makes raw Markdown hard to read, since
+ * a wrapped table stops looking like a table.
+ *
+ * It also grows with the window rather than sitting at a fixed 24rem: on a tall
+ * screen the note should fill it, and the handle is still there to override.
+ */
+.notes-body {
+  width: 100%;
+  min-height: min(60vh, 34rem);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  resize: vertical;
+  /* Tabs in a note are indentation, not eight columns of nothing. */
+  tab-size: 2;
+}
+
+.notes-read {
+  min-height: 8rem;
+  padding-top: 0.25rem;
+}
+
+.notes-links {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+
+.notes-backlink {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 2px solid var(--border);
+  padding: 0.35rem 0.6rem;
+  margin-top: 0.3rem;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+}
+
+.notes-backlink:hover {
+  border-left-color: var(--accent);
+  background: var(--surface-raised);
+}
+
+.notes-drop {
+  display: block;
+  margin-top: 0.6rem;
+  padding: 1.2rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.notes-drop:hover {
+  border-color: var(--accent);
+}
+
+.notes-drop input {
+  display: none;
+}
+
+.notes-graph {
+  /* The SVG scales to the card; the card decides the height. */
+  width: 100%;
+  overflow: hidden;
+}
+
+.notes-graph-edge {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.notes-graph-node {
+  cursor: pointer;
+}
+
+.notes-graph-node circle {
+  fill: var(--accent);
+}
+
+/*
+ * A note nothing links to is hollow rather than a different colour — the same
+ * distinction the `unknown` presence dot draws, and for the same reason: a
+ * filled shape in another colour would read as a *kind* of note rather than as
+ * one with no connections.
+ */
+.notes-graph-node circle.lonely {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+.notes-graph-node text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.notes-graph-node:hover circle {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+
+/* --- rendered Markdown --------------------------------------------- */
+
+.md {
+  line-height: 1.65;
+  /*
+   * `break-word`, not `anywhere`. Both break a URL too long for the column;
+   * `anywhere` additionally breaks ordinary words at the end of ordinary lines
+   * and drags the element's min-content width to one character, which is the
+   * sort of thing that quietly ruins a grid track.
+   */
+  overflow-wrap: break-word;
+}
+
+/*
+ * A measure on the prose, not on the container — which is the distinction the
+ * 172px editor column got wrong in the other direction.
+ *
+ * Long lines are genuinely hard to read: the eye loses the start of the next
+ * one on the way back. But that is a fact about *sentences*, not about tables,
+ * code blocks or pictures, and capping the whole note would letterbox all of
+ * them to keep paragraphs comfortable. So the text blocks are capped and
+ * everything else below is free to use the column.
+ *
+ * 90ch rather than the classical 70: this only has to stop an ultrawide, and a
+ * cap that bites on an ordinary monitor would be the narrowness complaint
+ * arriving again by a different route. At a 1280px window it does not bind.
+ */
+.md-p,
+.md-h,
+.md-list,
+.md-quote {
+  max-width: 90ch;
+}
+
+/* A table, a code block or a picture is a shape; it gets the whole column. */
+.md-table-wrap,
+.md-code,
+.md-image,
+.md-rule {
+  max-width: 100%;
+}
+
+.md-h {
+  margin: 1.1em 0 0.4em;
+  line-height: 1.25;
+}
+
+.md-p {
+  margin: 0.55em 0;
+  white-space: pre-wrap;
+}
+
+.md-list {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+
+.md-list li {
+  margin: 0.15em 0;
+}
+
+.md-task {
+  list-style: none;
+  margin-left: -1.2em;
+}
+
+.md-task input {
+  margin-right: 0.4em;
+  width: auto;
+}
+
+.md-quote {
+  margin: 0.6em 0;
+  padding: 0.1em 0 0.1em 0.8em;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+
+.md-code {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6em 0.8em;
+  overflow-x: auto;
+  font-size: 0.85em;
+}
+
+.md-inline-code {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+  font-size: 0.9em;
+}
+
+.md-rule {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+
+/* A wide table scrolls rather than stretching the column it sits in. */
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+
+.md-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 0.3em 0.55em;
+  text-align: left;
+}
+
+.md-image {
+  max-width: 100%;
+  border-radius: 6px;
+  margin: 0.4em 0;
+}
+
+.md-wiki,
+.md-tag {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.md-wiki:hover,
+.md-tag:hover {
+  text-decoration: underline;
+}
+
+/*
+ * A link to a note nobody has written yet. Dashed rather than a different
+ * colour, so it still reads as a link — it works, it just creates the note
+ * rather than opening one.
+ */
+.md-wiki-new {
+  color: var(--muted);
+  border-bottom: 1px dashed var(--muted);
+}
+
+.md-tag {
+  color: var(--muted);
+}
+
+/* A link whose scheme a note may not open — shown with its address rather than
+   silently dropped, since a vanishing link looks like lost content. */
+.md-unsafe {
+  color: var(--muted);
+  text-decoration: line-through dotted;
 }

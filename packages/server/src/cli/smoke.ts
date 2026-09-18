@@ -1058,6 +1058,174 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   await app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardRefreshSeconds: 0 } });
   check('  ...and zero turns it back off', (await refreshNow()) === 0);
 
+  /*
+   * The menu drawer: where it docks itself, and whether it starts docked.
+   *
+   * The bounds are the interesting part. Both ends of the range are "off"
+   * wearing a number — below 600 nothing would ever dock and above 2400 nothing
+   * would ever undock — so a value outside them is a setting that silently does
+   * nothing, which is the failure this project refuses everywhere else.
+   */
+  const drawerNow = async () => (await app.inject({ method: 'GET', url: '/api/settings' })).json();
+  const defaults = await drawerNow();
+  check('the menu docks at 1200 by default, not the old 900', defaults.drawerBreakpoint === 1200, String(defaults.drawerBreakpoint));
+  check('  ...and starts docked', defaults.drawerDocked === 1, String(defaults.drawerDocked));
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 1500 } });
+  check('  ...the width can be moved', (await drawerNow()).drawerBreakpoint === 1500);
+
+  const tooNarrow = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 599 } });
+  check('  ...but not so low that nothing would ever dock', tooNarrow.statusCode === 400, `HTTP ${tooNarrow.statusCode}`);
+  const tooWide = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 2401 } });
+  check('  ...nor so high that nothing ever would', tooWide.statusCode === 400, `HTTP ${tooWide.statusCode}`);
+
+  /*
+   * Sent as a boolean and stored as 0/1. Asserted as a number on the way back
+   * because the PWA reads it that way — `voiceRetryMatchesFollowUp` was typed
+   * `boolean` in `api.ts`, `=== true` was quietly false against a `1`, and the
+   * card it controlled never hid while the setting saved perfectly.
+   */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerDocked: false } });
+  const off = await drawerNow();
+  check('  ...and it can start put away', off.drawerDocked === 0, `${typeof off.drawerDocked} ${off.drawerDocked}`);
+
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { drawerBreakpoint: 1200, drawerDocked: true } });
+  check('  ...and both go back', (await drawerNow()).drawerDocked === 1);
+
+  /*
+   * Dragging a folder somewhere else, over the wire.
+   *
+   * A folder here is a path prefix on notes rather than a row of its own, so a
+   * move is a rename of that prefix and every note underneath follows. The
+   * interesting assertion is the refusal: a folder dropped inside its own
+   * descendant would rewrite every path under it to a prefix that is itself
+   * about to move, which does not error — it silently mangles the tree.
+   */
+  const makeNote = (title: string, folder: string) =>
+    app.inject({ method: 'POST', url: '/api/notes', payload: { title, body: 'x', folder } });
+  await makeNote('Drag probe one', 'alpha');
+  await makeNote('Drag probe two', 'alpha/inner');
+
+  const moveFolder = (from: string, to: string) =>
+    app.inject({ method: 'POST', url: '/api/notes/folder/rename', payload: { from, to } });
+
+  const moved = await moveFolder('alpha', 'beta');
+  check('a folder moves, and takes its notes with it', moved.statusCode === 200, `HTTP ${moved.statusCode}`);
+  check('  ...both of them', moved.json().moved === 2, String(moved.json().moved));
+
+  const afterMove = (await app.inject({ method: 'GET', url: '/api/notes' })).json() as { folder: string }[];
+  const folders = afterMove.map((n) => n.folder);
+  check('  ...and the nested one keeps its place inside', folders.includes('beta/inner'), folders.join(' '));
+  check('  ...with nothing left at the old path', !folders.some((f) => f.startsWith('alpha')), folders.join(' '));
+
+  const intoItself = await moveFolder('beta', 'beta/inner');
+  check('a folder cannot be dropped inside its own descendant', intoItself.statusCode === 400, `HTTP ${intoItself.statusCode}`);
+  const ontoItself = await moveFolder('beta', 'beta');
+  check('  ...nor onto itself', ontoItself.statusCode === 400, `HTTP ${ontoItself.statusCode}`);
+  /*
+   * `betas` merely starts with `beta`; without the separator in the guard this
+   * reads as a descendant and an ordinary move between siblings is refused.
+   */
+  const sibling = await moveFolder('beta', 'betas');
+  check('  ...but a name that only starts the same is fine', sibling.statusCode === 200, `HTTP ${sibling.statusCode}`);
+
+  const toRoot = await moveFolder('betas', '');
+  check('and a folder can be taken out to the root', toRoot.statusCode === 200 && toRoot.json().folder === '', JSON.stringify(toRoot.json()));
+
+  /*
+   * "Not in a folder" and "All notes" are different questions.
+   *
+   * They rendered identical lists: the root took the same "and everything under
+   * it" rule every other folder takes, and everything is under the root. The
+   * empty case pushed `undefined`, which was filtered out, so the query went
+   * with no folder condition at all — and the one entry that answers "what have
+   * I not filed yet" was the one that broke.
+   */
+  await makeNote('Filed away', 'somewhere');
+  await makeNote('Loose page', '');
+  const atRoot = (await app.inject({ method: 'GET', url: '/api/notes?folder=' })).json() as { folder: string }[];
+  const everything = (await app.inject({ method: 'GET', url: '/api/notes' })).json() as unknown[];
+  check('the root holds only what is filed nowhere', atRoot.every((n) => n.folder === ''), atRoot.map((n) => n.folder).join('|'));
+  check('  ...which is fewer than every note', atRoot.length < everything.length, `${atRoot.length} of ${everything.length}`);
+  check('  ...and is not empty either', atRoot.length > 0, String(atRoot.length));
+
+  /*
+   * A folder that exists before anything is in it.
+   *
+   * Everywhere else a folder is a prefix on notes and needs no record; an empty
+   * one has no note to be a prefix of, which is why it gets a table.
+   */
+  const treePaths = async () =>
+    ((await app.inject({ method: 'GET', url: '/api/notes/tree' })).json().folders as { path: string }[]).map(
+      (f) => f.path
+    );
+
+  const made = await app.inject({ method: 'POST', url: '/api/notes/folder', payload: { path: 'empty/shelf' } });
+  check('an empty folder can be made', made.statusCode === 201, `HTTP ${made.statusCode}`);
+  const withEmpty = await treePaths();
+  check('  ...and appears in the tree with nothing in it', withEmpty.includes('empty/shelf'), withEmpty.join(' '));
+  // Or the tree would render a child indented under a parent that is not there.
+  check('  ...along with its parent', withEmpty.includes('empty'), withEmpty.join(' '));
+
+  const madeTwice = await app.inject({ method: 'POST', url: '/api/notes/folder', payload: { path: 'empty/shelf' } });
+  check('  ...making it twice is not an error', madeTwice.statusCode === 201, `HTTP ${madeTwice.statusCode}`);
+
+  /*
+   * The declaration has to travel with the notes. Without it, moving an empty
+   * folder would appear to do nothing at all.
+   */
+  await moveFolder('empty/shelf', 'moved/shelf');
+  const afterEmptyMove = await treePaths();
+  check('an empty folder moves too', afterEmptyMove.includes('moved/shelf'), afterEmptyMove.join(' '));
+  check('  ...leaving no ghost behind', !afterEmptyMove.includes('empty/shelf'), afterEmptyMove.join(' '));
+
+  const rm = (path: string) =>
+    app.inject({ method: 'DELETE', url: `/api/notes/folder?path=${encodeURIComponent(path)}` });
+
+  const gone = await rm('moved/shelf');
+  check('an empty folder can be removed', gone.statusCode === 200, `HTTP ${gone.statusCode}`);
+  check('  ...and leaves the tree', !(await treePaths()).includes('moved/shelf'));
+
+  /*
+   * A folder with notes in it is refused rather than cascading. "Delete folder"
+   * has a destructive reading and a harmless one, and this route may only
+   * perform the harmless one.
+   */
+  await makeNote('Folder guard probe', 'keepme');
+  const refused = await rm('keepme');
+  check('a folder with notes in it is not removed', refused.statusCode === 409, `HTTP ${refused.statusCode}`);
+  check('  ...and says how many are in the way', /1 note/.test(refused.json().error), refused.json().error);
+  check('  ...and is still there', (await treePaths()).includes('keepme'));
+
+  /*
+   * ...but it can be asked for by name, and that is the whole point of the
+   * refusal: the destructive reading of "delete folder" is reachable, and only
+   * reachable deliberately.
+   */
+  const noteCount = async () => ((await app.inject({ method: 'GET', url: '/api/notes' })).json() as unknown[]).length;
+  const beforeWipe = await noteCount();
+  const wiped = await app.inject({
+    method: 'DELETE',
+    url: '/api/notes/folder?path=keepme&notes=delete',
+  });
+  check('a folder can be deleted with its notes when asked', wiped.statusCode === 200, `HTTP ${wiped.statusCode}`);
+  check('  ...and says how many went', wiped.json().notesDeleted === 1, JSON.stringify(wiped.json()));
+  check('  ...the notes really are gone', (await noteCount()) === beforeWipe - 1);
+  check('  ...and so is the folder', !(await treePaths()).includes('keepme'));
+
+  /*
+   * Keeping the notes is the other reading, and it is the rename primitive
+   * again: `a/b` becomes `a`, so nothing is touched note by note and nothing
+   * can be half-done.
+   */
+  await makeNote('Dissolve probe', 'outer/inner');
+  const dissolved = await moveFolder('outer/inner', 'outer');
+  check('a folder can be dissolved into its parent instead', dissolved.statusCode === 200, `HTTP ${dissolved.statusCode}`);
+  const afterDissolve = (await app.inject({ method: 'GET', url: '/api/notes' })).json() as { title: string; folder: string }[];
+  const moved2 = afterDissolve.find((n) => n.title === 'Dissolve probe');
+  check('  ...with the note moved up rather than deleted', moved2?.folder === 'outer', String(moved2?.folder));
+  check('  ...and the inner folder gone', !(await treePaths()).includes('outer/inner'));
+
   const canStart = await app.inject({ method: 'GET', url: '/api/agent/start' });
   check('the app can offer to start the agent', canStart.statusCode === 200, `HTTP ${canStart.statusCode}`);
   check('  ...and knows whether it actually can', typeof canStart.json().available === 'boolean');

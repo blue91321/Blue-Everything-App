@@ -50,6 +50,87 @@ const THEME_LABELS: { id: AppTheme; label: string; hint: string }[] = [
  * are choosing by looking. The server is still the source of truth, and the
  * reload triggered by the save puts it right if the write failed.
  */
+/**
+ * The menu: when it docks itself, and whether it starts docked.
+ *
+ * Both are about the same 260px of screen, so they are one card rather than two
+ * scattered through Appearance.
+ */
+function MenuDrawer() {
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
+  const [busy, setBusy] = useState(false);
+
+  const breakpoint = settings.data?.drawerBreakpoint ?? 1200;
+  // `!== 0`, never `=== true`: the row returns 0 or 1.
+  const docked = (settings.data?.drawerDocked ?? 1) !== 0;
+  // At the top of the range the menu never docks, so "start docked" has nothing
+  // left to describe — it would be a switch with no effect and no explanation.
+  const neverDocks = breakpoint >= 2400;
+
+  async function save(next: { drawerBreakpoint?: number; drawerDocked?: boolean }) {
+    setBusy(true);
+    try {
+      await api.settings.update(next);
+      settings.reload();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section id="menu-drawer">
+      <h2>The menu</h2>
+
+      <div className="card">
+        <div className="title">When it sits beside the app</div>
+        <div className="meta" style={{ marginTop: 4 }}>
+          Below this width it becomes a button instead, and slides over the page when you press it. You
+          can hide it with that button at any width — this only decides where it starts.
+        </div>
+
+        <div className="row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
+          {DRAWER_WIDTHS.map(({ px, label, hint }) => (
+            <button
+              key={px}
+              className={breakpoint === px ? 'btn primary' : 'btn'}
+              disabled={busy}
+              title={hint}
+              onClick={() => void save({ drawerBreakpoint: px })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="meta" style={{ marginTop: 8 }}>
+          {DRAWER_WIDTHS.find((w) => w.px === breakpoint)?.hint ?? `From ${breakpoint}px up`}
+          {breakpoint < 2400 ? ` · ${breakpoint}px` : ''}
+        </div>
+      </div>
+
+      <div className="card">
+        <label className="row" style={{ gap: '.5rem', alignItems: 'flex-start' }}>
+          <input
+            type="checkbox"
+            checked={docked && !neverDocks}
+            disabled={busy || neverDocks}
+            onChange={(event) => void save({ drawerDocked: event.target.checked })}
+          />
+          <span>
+            <span className="title">Start with the menu showing</span>
+            <span className="meta" style={{ display: 'block', marginTop: 2 }}>
+              {neverDocks
+                ? // Said rather than left as a mysteriously dead checkbox.
+                  'Nothing to decide while the menu never sits beside the app.'
+                : 'Off opens straight into the app with the menu put away. Hiding it by hand is a separate, temporary thing — it comes back next time you open the app.'}
+            </span>
+          </span>
+        </label>
+      </div>
+    </section>
+  );
+}
+
 function Appearance() {
   const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const [busy, setBusy] = useState(false);
@@ -285,7 +366,24 @@ type TabId = (typeof TABS)[number]['id'];
  */
 const SECTION_TAB: Record<string, TabId> = {
   'dashboard-panel': 'general',
+  'menu-drawer': 'general',
 };
+
+/**
+ * The widths offered for docking the menu, as named alternatives.
+ *
+ * Named rather than a slider or a box, for the reason the refresh rate is: a
+ * slider suits a number on a continuum, and this is a handful of real answers
+ * where every position between them is a worse version of a neighbour. The
+ * labels say what each one *means* on a screen, because "1200" is not a
+ * decision anybody can make and "a large laptop" is.
+ */
+const DRAWER_WIDTHS = [
+  { px: 900, label: 'Early', hint: 'from a small laptop up — the old behaviour' },
+  { px: 1200, label: 'Balanced', hint: 'from a large laptop up' },
+  { px: 1500, label: 'Late', hint: 'only on a big monitor' },
+  { px: 2400, label: 'Never', hint: 'always a button, at every width' },
+];
 
 export function Settings({
   session,
@@ -403,6 +501,7 @@ function GeneralTab() {
   return (
     <>
       <Appearance />
+      <MenuDrawer />
       <DashboardPanel />
       <section>
         <h2>This app</h2>
@@ -1588,8 +1687,8 @@ function AddDeviceGuide({ onAdded }: { onAdded: () => void }) {
       </ol>
     </div>
   );
-}
-
+}
+
 /**
  * How often an open Dashboard refetches on its own.
  *

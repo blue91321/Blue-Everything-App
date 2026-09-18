@@ -45,19 +45,22 @@ export default function NotesPanel() {
       {shown.length === 0 && <div className="empty">Nothing written down yet.</div>}
 
       {shown.map((note) => {
-        const body = note.body.trim();
-        const clipped = body.length > PREVIEW_CHARS ? `${body.slice(0, PREVIEW_CHARS).trimEnd()}…` : body;
+        /*
+         * The server's own preview, which is the *rendered* first lines rather
+         * than raw Markdown. The list stopped carrying bodies when a sidebar of
+         * a thousand notes meant a megabyte per keystroke — and the preview is
+         * better here anyway, since a panel showing `# Heading` and `[[Link]]`
+         * is showing syntax rather than the note.
+         */
+        const clipped =
+          note.preview.length > PREVIEW_CHARS
+            ? `${note.preview.slice(0, PREVIEW_CHARS).trimEnd()}…`
+            : note.preview;
 
         return (
           <div className="card" key={note.id}>
-            {note.title && <div className="title truncate">{note.title}</div>}
-            {/* `pre-wrap` so a note written as three lines still reads as three
-                lines. Without it a jotted list collapses into one run-on
-                sentence, which is precisely the note you would fail to
-                recognise. */}
-            <div className="meta" style={{ whiteSpace: 'pre-wrap' }}>
-              {clipped}
-            </div>
+            <div className="title truncate">{note.title}</div>
+            <div className="meta">{clipped}</div>
             <div className="meta" style={{ opacity: 0.7, marginTop: 4 }}>
               {note.pinned ? '📌 ' : ''}
               {relative(note.updatedAt)}
