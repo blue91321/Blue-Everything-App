@@ -45,7 +45,15 @@ function managedLine(state: SourceState): { text: string; urgent: boolean } {
   }
 }
 
-export function SourceCard({ local, onExtensions }: { local: boolean; onExtensions: () => void }) {
+export function SourceCard({
+  local,
+  onExtensions,
+  onOpenUi,
+}: {
+  local: boolean;
+  onExtensions: () => void;
+  onOpenUi: () => void;
+}) {
   const state = useAsync(() => manga.source.get());
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -255,6 +263,15 @@ export function SourceCard({ local, onExtensions }: { local: boolean; onExtensio
           <div className="row">
             <button className="btn" onClick={onExtensions}>
               Manage extensions
+            </button>
+            {/*
+              * Suwayomi's own interface, framed rather than opened in a tab —
+              * which is also what makes it reachable from the phone, where
+              * 127.0.0.1 is the phone and an http frame in an https page is
+              * blocked outright.
+              */}
+            <button className="btn" onClick={onOpenUi}>
+              Open Suwayomi
             </button>
           </div>
         </>

@@ -36,6 +36,7 @@ import { SourceError, effectiveUrl, supportsExtensions, type ExtensionCatalogue 
 import { SuwayomiAdapter, DEFAULT_BASE_URL, KEIYOUSHI_REPO } from './suwayomi.js';
 import { suwayomiProcess, findJars } from './process.js';
 import { homedir } from 'node:os';
+import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
 export async function routes(app: FastifyInstance): Promise<void> {
   /** The library, already shaped for the screen. */
@@ -510,6 +511,54 @@ export async function routes(app: FastifyInstance): Promise<void> {
     series.checkedAt = null;
     write(store);
     return seriesSummary(series);
+  });
+
+  /* ---- Suwayomi's own UI, inside this app ---- */
+
+  /**
+   * Mint the cookie that lets the frame talk to the proxy.
+   *
+   * An ordinary authenticated `/api/` call, so the bearer token is still what
+   * proves who you are — the cookie only carries that proof somewhere a header
+   * cannot go. See `uiproxy.ts` for why a cookie and not a path token.
+   *
+   * **Not local-only**, unlike changing the source. Opening the UI is reading
+   * and managing *your* library, which is the whole point of wanting it on a
+   * phone; it changes nothing about which machine runs what.
+   */
+  app.post('/api/manga/ui-session', async (request, reply) => {
+    const store = read();
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return reply.code(400).send({ error: 'no source is configured' });
+
+    if (store.manageSuwayomi && store.suwayomiJar) {
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+      if (state.state !== 'running') {
+        return reply.code(502).send({ error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting' });
+      }
+    }
+
+    const { token, maxAgeSeconds } = mintSession();
+    /*
+     * `Secure` only when the request actually arrived over TLS. Set
+     * unconditionally it would be rejected over plain http to a tailnet address;
+     * behind `tailscale serve` the app sees loopback http, so the forwarded
+     * protocol is what tells the truth about the browser's connection.
+     */
+    const secure = request.protocol === 'https' || request.headers['x-forwarded-proto'] === 'https';
+    return reply.header('set-cookie', sessionCookie(token, maxAgeSeconds, secure)).send({ path: `${UI_PREFIX}/` });
+  });
+
+  registerUiProxy(app, {
+    target: () => effectiveUrl(read(), DEFAULT_BASE_URL),
+    ensure: async () => {
+      const store = read();
+      if (!store.manageSuwayomi || !store.suwayomiJar) return true;
+      const url = effectiveUrl(store, DEFAULT_BASE_URL);
+      if (!url) return false;
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+      return state.state === 'running';
+    },
   });
 
   /* ---- extensions ---- */

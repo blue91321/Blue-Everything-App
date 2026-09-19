@@ -2781,3 +2781,26 @@ button {
 .manga-ext-row:last-of-type {
   border-bottom: 0;
 }
+
+/*
+ * Suwayomi's own UI, framed.
+ *
+ * It is a whole application, so it gets the height rather than a box inside the
+ * page — a reader inside a 400px frame is not a reader. `100dvh` rather than
+ * `vh` because on a phone the browser chrome slides away, and `vh` would leave
+ * the bottom of it permanently under the address bar.
+ */
+.manga-frame-screen {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.manga-frame {
+  width: 100%;
+  height: calc(100dvh - 120px);
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}

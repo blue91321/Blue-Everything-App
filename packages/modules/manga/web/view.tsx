@@ -23,6 +23,7 @@ import { SourceCard } from './SourceCard';
 import { SourceLink } from './SourceLink';
 import { Chapters } from './Chapters';
 import { Extensions } from './Extensions';
+import { SuwayomiUI } from './SuwayomiUI';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -46,6 +47,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   /** Which series' chapters are open, if any. The reader lives inside it. */
   const [reading, setReading] = useState<string | null>(null);
   const [managingExtensions, setManagingExtensions] = useState(false);
+  const [suwayomiOpen, setSuwayomiOpen] = useState(false);
 
   /*
    * A search handed in from elsewhere — the Dashboard panel's rows land here
@@ -127,6 +129,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
    */
   if (reading) return <Chapters seriesId={reading} onClose={() => setReading(null)} />;
   if (managingExtensions) return <Extensions local={local} onClose={() => setManagingExtensions(false)} />;
+  if (suwayomiOpen) return <SuwayomiUI onClose={() => setSuwayomiOpen(false)} />;
 
   return (
     <div className="manga">
@@ -149,7 +152,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
         </p>
       </form>
 
-      <SourceCard local={local} onExtensions={() => setManagingExtensions(true)} />
+      <SourceCard local={local} onExtensions={() => setManagingExtensions(true)} onOpenUi={() => setSuwayomiOpen(true)} />
 
       {problem && <p className="banner">{problem}</p>}
 

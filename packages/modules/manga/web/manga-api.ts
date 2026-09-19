@@ -198,6 +198,11 @@ export const manga = {
     unlink: (id: string) => call<SeriesSummary>(`/api/manga/${id}/source`, { method: 'DELETE' }),
   },
 
+  ui: {
+    /** Mint the frame cookie, and get the path to point it at. */
+    session: () => call<{ path: string }>('/api/manga/ui-session', { method: 'POST' }),
+  },
+
   extensions: {
     list: (refresh = false) => call<ExtensionList>(`/api/manga/extensions${refresh ? '?refresh=1' : ''}`),
     install: (pkg: string, install = true) =>
