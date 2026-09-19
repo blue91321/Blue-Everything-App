@@ -190,6 +190,16 @@ export function registerUiProxy(
    * that leaking out to every other route in the app.
    */
   void app.register(async (scope) => {
+    /*
+     * The built-in parsers are removed first, and that is the whole fix.
+     *
+     * `addContentTypeParser('*')` is only a *fallback* — Fastify's inherited
+     * JSON parser still wins for `application/json`, so `request.body` arrived
+     * as a parsed object and `fetch` stringified it to `[object Object]`.
+     * Suwayomi answered 500 to every GraphQL call while the proxy looked
+     * perfectly healthy, because it was faithfully forwarding nonsense.
+     */
+    scope.removeAllContentTypeParsers();
     scope.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
 
   /**
