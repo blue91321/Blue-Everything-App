@@ -2655,3 +2655,40 @@ button {
   flex-direction: column;
   min-width: 0;
 }
+
+/* Where a series is read from, on its row and in the picker. */
+.manga-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.manga-source-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+/* A whole-row target, like the friends panel's, so a title is easy to hit. */
+.manga-source-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.manga-source-row:hover:not(:disabled) {
+  border-color: var(--accent);
+}

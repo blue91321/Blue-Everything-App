@@ -28,6 +28,29 @@ export interface SeriesSummary {
   anilistId: number | null;
   watching: boolean;
   notWatchingBecause: string | null;
+  source: { adapter: string; sourceName: string; title: string; mangaId: string } | null;
+}
+
+export interface SourceHealth {
+  reachable: boolean;
+  sources: string[];
+  problem: string | null;
+}
+
+export interface SourceState {
+  configured: boolean;
+  url: string | null;
+  defaultUrl: string;
+  /** Null when nothing is configured — which is not the same as unreachable. */
+  health: SourceHealth | null;
+}
+
+export interface SourceMatch {
+  id: string;
+  title: string;
+  sourceName: string;
+  url: string | null;
+  thumbnailUrl: string | null;
 }
 
 export interface Candidate {
@@ -91,6 +114,21 @@ export const manga = {
     call<SeriesSummary>('/api/manga', { method: 'POST', body: JSON.stringify(candidate) }),
   remove: (id: string) => call<{ ok: true }>(`/api/manga/${id}`, { method: 'DELETE' }),
   checkNow: () => call<SweepResult>('/api/manga/check', { method: 'POST' }),
+
+  source: {
+    get: () => call<SourceState>('/api/manga/source'),
+    set: (url: string) => call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ url }) }),
+    search: (id: string, q?: string) =>
+      call<{ results: SourceMatch[] }>(
+        `/api/manga/${id}/source/search${q ? `?q=${encodeURIComponent(q)}` : ''}`
+      ),
+    link: (id: string, match: SourceMatch) =>
+      call<SeriesSummary>(`/api/manga/${id}/source`, {
+        method: 'PUT',
+        body: JSON.stringify({ mangaId: match.id, title: match.title, sourceName: match.sourceName }),
+      }),
+    unlink: (id: string) => call<SeriesSummary>(`/api/manga/${id}/source`, { method: 'DELETE' }),
+  },
 };
 
 /**

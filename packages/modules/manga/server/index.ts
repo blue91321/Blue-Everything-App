@@ -16,12 +16,15 @@
  * requests. The handles are `unref`ed and cleared on close, or `smoke` and
  * `features-check` hang on an app that will not shut down.
  *
- * ### Nothing here is local-only
+ * ### The library is not local-only; the source is
  *
  * Adding a series is your data, like a habit, so it is editable from the phone.
- * The rule this does not meet is the one about writes that change *this
- * machine* — installing a package, minting a token, `features.json` — and a
- * reading list is not one of those.
+ * A reading list is not a write that changes *this machine*.
+ *
+ * Pointing the module at a **source** is, and it is gated. The stored URL is
+ * something the server then POSTs to on a timer, so a phone-settable version
+ * would turn a stolen device token into a server-side request forgery. That
+ * puts it with minting a device token and installing a package.
  */
 import type { FastifyInstance } from 'fastify';
 import { search, fetchCover, MangaDexError } from './mangadex.js';
@@ -29,6 +32,8 @@ import { CREDIT } from './mangaupdates.js';
 import { read, write, newSeries, findExisting, type Series } from './library.js';
 import { seriesSummary, recentReleases } from './present.js';
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
+import { SourceError } from './sources.js';
+import { SuwayomiAdapter, DEFAULT_BASE_URL } from './suwayomi.js';
 
 export async function routes(app: FastifyInstance): Promise<void> {
   /** The library, already shaped for the screen. */
@@ -201,6 +206,155 @@ export async function routes(app: FastifyInstance): Promise<void> {
     } catch {
       return reply.code(502).send({ error: 'could not fetch the cover' });
     }
+  });
+
+  /* ---- where chapters actually come from ---- */
+
+  /**
+   * Pointing this at a source is **local-only**, and that is a security gate
+   * rather than tidiness.
+   *
+   * The stored URL becomes a thing the *server* POSTs to on a timer. Settable
+   * from the phone, a stolen device token would turn this install into a probe
+   * for whatever it can reach — the ordinary shape of a server-side request
+   * forgery. Local-only puts it with minting a device token and installing a
+   * package: an attacker has to already be on this machine, at which point they
+   * do not need this route.
+   *
+   * No host allow-list on top of that, deliberately. Suwayomi is usually on
+   * loopback and legitimately might not be — a second machine on the LAN, or
+   * across a tailnet — and a list that blocked those would break real setups to
+   * re-solve a problem the local-only gate has already solved.
+   */
+  const localOnly = (request: { isLocal: boolean }) => {
+    if (!request.isLocal) {
+      throw Object.assign(new Error('the source can only be changed from the PC running the server'), {
+        statusCode: 403,
+      });
+    }
+  };
+
+  /** Is a source configured, and is it answering? */
+  app.get('/api/manga/source', async () => {
+    const { suwayomiUrl } = read();
+    if (!suwayomiUrl) {
+      /*
+       * "Not set up" and "set up and broken" are different states with different
+       * fixes, so they are never collapsed into one unreachable flag — the same
+       * distinction `features` and `featuresMissing` draw.
+       */
+      return { configured: false, url: null, defaultUrl: DEFAULT_BASE_URL, health: null };
+    }
+    const health = await new SuwayomiAdapter(suwayomiUrl).describe();
+    return { configured: true, url: suwayomiUrl, defaultUrl: DEFAULT_BASE_URL, health };
+  });
+
+  /** Set, or clear with an empty string. */
+  app.put('/api/manga/source', async (request, reply) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    const body = request.body as { url?: unknown } | null;
+    const raw = typeof body?.url === 'string' ? body.url.trim() : null;
+
+    if (raw === null) return reply.code(400).send({ error: 'send a url' });
+    if (raw === '') {
+      const store = read();
+      write({ ...store, suwayomiUrl: null });
+      return { configured: false, url: null, defaultUrl: DEFAULT_BASE_URL, health: null };
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      return reply.code(400).send({ error: 'that is not a URL' });
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return reply.code(400).send({ error: 'only http and https' });
+    }
+
+    // Stored without a trailing slash so the adapter can append `/api/graphql`
+    // without ever producing a double slash, which some proxies 404.
+    const url = `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}`;
+    const store = read();
+    write({ ...store, suwayomiUrl: url });
+
+    // Answered with the health check rather than `{ ok: true }`, so pressing
+    // Save tells you whether it worked instead of leaving you to go and look.
+    return { configured: true, url, defaultUrl: DEFAULT_BASE_URL, health: await new SuwayomiAdapter(url).describe() };
+  });
+
+  /** Find this series in the source's own catalogue, so it can be linked. */
+  app.get('/api/manga/:id/source/search', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { q } = request.query as { q?: string };
+    const store = read();
+    const series = store.series.find((s) => s.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+    if (!store.suwayomiUrl) return reply.code(400).send({ error: 'no source is configured' });
+
+    // Defaults to the series' own title, because that is what you want in nine
+    // cases out of ten and typing it again is a chore.
+    const query = (typeof q === 'string' && q.trim()) || series.title;
+
+    try {
+      return { results: await new SuwayomiAdapter(store.suwayomiUrl).search(query) };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /** Point a series at one of those results. */
+  app.put('/api/manga/:id/source', async (request, reply) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    const { id } = request.params as { id: string };
+    const body = request.body as { mangaId?: unknown; title?: unknown; sourceName?: unknown } | null;
+    if (typeof body?.mangaId !== 'string' || !body.mangaId) {
+      return reply.code(400).send({ error: 'that is not a source result' });
+    }
+
+    const store = read();
+    const series = store.series.find((s) => s.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+
+    series.source = {
+      adapter: 'suwayomi',
+      mangaId: body.mangaId,
+      title: typeof body.title === 'string' ? body.title.slice(0, 200) : series.title,
+      sourceName: typeof body.sourceName === 'string' ? body.sourceName.slice(0, 80) : 'Suwayomi',
+    };
+    /*
+     * The stored chapter is cleared, not kept.
+     *
+     * It was MangaUpdates' number and the source's is about to replace it — and
+     * the two routinely disagree by twenty chapters. Leaving the old one would
+     * make the next sweep compare a source number against a MangaUpdates number
+     * and raise a nudge for every chapter in between.
+     */
+    series.latestChapter = null;
+    series.sourceChapter = null;
+    series.sourceCheckedAt = null;
+    series.checkedAt = null;
+    write(store);
+
+    return seriesSummary(series);
+  });
+
+  app.delete('/api/manga/:id/source', async (request, reply) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    const { id } = request.params as { id: string };
+    const store = read();
+    const series = store.series.find((s) => s.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+
+    series.source = null;
+    series.sourceChapter = null;
+    series.sourceCheckedAt = null;
+    // Same reasoning as linking, in the other direction.
+    series.latestChapter = null;
+    series.checkedAt = null;
+    write(store);
+    return seriesSummary(series);
   });
 
   /* ---- the timer ---- */

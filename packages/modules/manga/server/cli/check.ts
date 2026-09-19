@@ -31,6 +31,8 @@ import {
 } from '../identity.js';
 import { alreadyRaised, type Store } from '../library.js';
 import { totalChaptersFrom } from '../mangaupdates.js';
+import { readableChapter } from '../sources.js';
+import { uploadedAtMs } from '../suwayomi.js';
 import { pollable, seriesUrl } from '../releases.js';
 
 let failures = 0;
@@ -156,6 +158,39 @@ check('nothing -> null', totalChaptersFrom(null) === null);
 check('a non-string -> null', totalChaptersFrom(41) === null);
 
 /* ------------------------------------------------------------------ */
+console.log('\nwhich number to believe\n');
+
+/*
+ * A source is serving the chapter, so it knows; MangaUpdates is a database of
+ * what groups have reported, so it lags. When a series is linked the source
+ * wins — *even if it is lower*, because a source that has fallen behind is
+ * still telling the truth about what you could open right now.
+ */
+check('a linked source wins', readableChapter(45, '23').chapter === '45');
+check('  ...and says which it was', readableChapter(45, '23').via === 'source');
+check('even when it is lower', readableChapter(12, '23').chapter === '12');
+check('unlinked falls back to MangaUpdates', readableChapter(null, '23').chapter === '23');
+check('  ...and says which it was', readableChapter(null, '23').via === 'mangaupdates');
+check('neither, and no claim is made', readableChapter(null, null).via === null);
+// Zero is a real chapter number on a few series and must not read as "nothing".
+check('chapter zero is a number, not nothing', readableChapter(0, '23').chapter === '0');
+check('a point-five survives the round trip', readableChapter(220.5, null).chapter === '220.5');
+
+/* ------------------------------------------------------------------ */
+console.log('\nSuwayomi timestamps\n');
+
+/*
+ * `uploadDate` is a `LongString` — epoch milliseconds as *text* — because
+ * GraphQL's `Int` is 32-bit and a millisecond timestamp overflows it. Parsing it
+ * is required rather than defensive.
+ */
+check('text milliseconds are parsed', uploadedAtMs('1789769064000') === 1789769064000);
+check('a number is taken as it is', uploadedAtMs(1789769064000) === 1789769064000);
+check('zero is their "no date", not 1970', uploadedAtMs('0') === null);
+check('nothing is null', uploadedAtMs(null) === null);
+check('nonsense is null', uploadedAtMs('soon') === null);
+
+/* ------------------------------------------------------------------ */
 console.log('\nthe rotation\n');
 
 const row = (over: Partial<Store['series'][number]>): Store['series'][number] => ({
@@ -169,6 +204,9 @@ const row = (over: Partial<Store['series'][number]>): Store['series'][number] =>
   status: 'ongoing',
   latestChapter: null,
   totalChapters: null,
+  source: null,
+  sourceChapter: null,
+  sourceCheckedAt: null,
   checkedAt: null,
   error: null,
   addedAt: 0,
@@ -176,6 +214,7 @@ const row = (over: Partial<Store['series'][number]>): Store['series'][number] =>
 });
 
 const store: Store = {
+  suwayomiUrl: null,
   series: [
     row({ id: 'recent', checkedAt: 1_000 }),
     row({ id: 'stale', checkedAt: 10 }),

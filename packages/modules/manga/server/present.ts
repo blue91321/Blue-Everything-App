@@ -49,6 +49,8 @@ export type SeriesSummary = {
   watching: boolean;
   /** Why not, when it is not. Null when it is. */
   notWatchingBecause: string | null;
+  /** Where this can be read, when it has been pointed at a source. */
+  source: { adapter: string; sourceName: string; title: string; mangaId: string } | null;
 };
 
 /**
@@ -59,6 +61,27 @@ export type SeriesSummary = {
  * a narrow fact as a broad one.
  */
 function chapterLine(series: Series): { chapterLabel: string; chapterTitle: string } {
+  /*
+   * A linked series is answered by its source, and the line says so.
+   *
+   * This is the case the whole source layer exists for. MangaUpdates logged
+   * chapter 23 of *Archmage Curriculum* while the site being read was on 45 —
+   * so a linked row must not merely show a different number, it must say where
+   * the number came from, or the two states are indistinguishable when one of
+   * them is wrong.
+   */
+  if (series.source && series.sourceChapter !== null) {
+    const via = series.source.sourceName || series.source.adapter;
+    const total = series.totalChapters;
+    return {
+      chapterLabel: `ch ${series.sourceChapter} · via ${via}`,
+      chapterTitle:
+        `Chapter ${series.sourceChapter} is the newest ${via} has. ` +
+        (total === null ? '' : `MangaUpdates counts ${total} written. `) +
+        'This is what you could actually open right now.',
+    };
+  }
+
   const read = series.latestChapter;
   const total = series.totalChapters;
 
@@ -94,7 +117,10 @@ function chapterLine(series: Series): { chapterLabel: string; chapterTitle: stri
 }
 
 export function seriesSummary(series: Series): SeriesSummary {
-  const trackable = series.muId !== null;
+  // A linked source is enough on its own: it answers the chapter question
+  // directly, so a series MangaUpdates has never heard of becomes watchable the
+  // moment you point it at somewhere it can be read.
+  const trackable = series.muId !== null || series.source !== null;
   const running = worthPolling(series.status);
   const watching = trackable && running;
 
@@ -113,10 +139,11 @@ export function seriesSummary(series: Series): SeriesSummary {
     malId: series.malId,
     anilistId: series.anilistId,
     watching,
+    source: series.source,
     notWatchingBecause: watching
       ? null
       : !trackable
-        ? 'MangaUpdates has no entry for it, so there is nothing to ask'
+        ? 'MangaUpdates has no entry for it — link it to a source and it can be watched anyway'
         : series.status === 'completed'
           ? 'there will be no more chapters'
           : 'it was cancelled',

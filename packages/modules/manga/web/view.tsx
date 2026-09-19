@@ -19,6 +19,8 @@ import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import type { FeatureViewProps } from '@app/features/index';
 import { Cover } from './Cover';
+import { SourceCard } from './SourceCard';
+import { SourceLink } from './SourceLink';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -29,7 +31,7 @@ const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
   unknown: 'status unknown',
 };
 
-export default function MangaView({ search, onFocused }: FeatureViewProps) {
+export default function MangaView({ search, onFocused, local }: FeatureViewProps) {
   useNow();
   const library = useAsync(() => manga.list());
 
@@ -132,6 +134,8 @@ export default function MangaView({ search, onFocused }: FeatureViewProps) {
         </p>
       </form>
 
+      <SourceCard local={local} />
+
       {problem && <p className="banner">{problem}</p>}
 
       {results !== null && (
@@ -200,6 +204,7 @@ export default function MangaView({ search, onFocused }: FeatureViewProps) {
                 */}
               {series.error && <span className="meta urgent">{series.error}</span>}
               {series.notWatchingBecause && <span className="meta">Not watched — {series.notWatchingBecause}</span>}
+              <SourceLink series={series} local={local} onChanged={() => library.reload()} />
             </div>
             <div className="manga-row-actions">
               {series.url && (

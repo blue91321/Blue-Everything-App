@@ -19,10 +19,14 @@
  *
  * ### Nothing here is a chapter
  *
- * This file holds titles, ids, a status and the number of the newest chapter
- * that exists. No page, no image, no source URL, and nothing that would tell you
- * where to read anything. That is what makes this half of the module
- * publishable, and it is a property worth keeping rather than a coincidence.
+ * Titles, ids, a status, chapter *numbers* — and, once you link one, the name of
+ * a source and an id within it. No page, no image, and no address: a
+ * `SeriesSource` says "Suwayomi calls this 412", which is meaningless without
+ * the Suwayomi you chose to run. Nothing in this repository will tell anybody
+ * where to read anything, which is what keeps this half publishable.
+ *
+ * That is a narrower claim than the one this comment made before sources
+ * existed, and it is narrower on purpose — it is the honest version.
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
@@ -55,6 +59,18 @@ export type Series = SeriesIds & {
    * second would nudge about chapters nobody has translated.
    */
   totalChapters: number | null;
+  /**
+   * Where this series can actually be read, when it has been pointed at one.
+   *
+   * Null for everything until you link it, which is the ordinary state and not a
+   * gap: the library works without a source, it just reports the narrower
+   * MangaUpdates number. Linked, the source becomes the authority for the
+   * chapter number, because it is the thing serving the chapter.
+   */
+  source: SeriesSource | null;
+  /** The newest chapter the source has, as of `sourceCheckedAt`. */
+  sourceChapter: number | null;
+  sourceCheckedAt: number | null;
   /** When MangaUpdates last answered about this series, successful or not. */
   checkedAt: number | null;
   /** Why the last check failed, if it did. Kept beside the data it could not replace. */
@@ -62,7 +78,26 @@ export type Series = SeriesIds & {
   addedAt: number;
 };
 
+/** A series as one source knows it. `mangaId` is opaque — Suwayomi's is numeric, another's may not be. */
+export type SeriesSource = {
+  adapter: string;
+  mangaId: string;
+  /** What the source calls it, which is often not what MangaDex calls it. */
+  title: string;
+  sourceName: string;
+};
+
 export type Store = {
+  /**
+   * Where Suwayomi is, when it is anywhere.
+   *
+   * Kept here rather than in core `settings` because core must not learn that a
+   * package exists — the same rule that keeps `hidden_providers` an opaque slug.
+   * Null means "not configured", which is distinct from the default URL being
+   * unreachable: one is a thing you have not done, the other is a thing that is
+   * broken, and they have different fixes.
+   */
+  suwayomiUrl: string | null;
   series: Series[];
   /** Raised-and-linked releases, so a task you deleted is never recreated. */
   links: ReleaseLink[];
@@ -87,13 +122,14 @@ export type ReleaseLink = {
   raisedAt: number;
 };
 
-const EMPTY: Store = { series: [], links: [] };
+const EMPTY: Store = { suwayomiUrl: null, series: [], links: [] };
 
 export function read(): Store {
-  if (!existsSync(STORE)) return { series: [], links: [] };
+  if (!existsSync(STORE)) return { ...EMPTY };
   try {
     const parsed = JSON.parse(readFileSync(STORE, 'utf8').replace(/^\uFEFF/, '')) as Partial<Store>;
     return {
+      suwayomiUrl: typeof parsed.suwayomiUrl === 'string' && parsed.suwayomiUrl ? parsed.suwayomiUrl : null,
       /*
        * Every optional field is filled in, not merely trusted.
        *
@@ -111,6 +147,9 @@ export function read(): Store {
         checkedAt: s.checkedAt ?? null,
         error: s.error ?? null,
         coverUrl: s.coverUrl ?? null,
+        source: s.source ?? null,
+        sourceChapter: s.sourceChapter ?? null,
+        sourceCheckedAt: s.sourceCheckedAt ?? null,
       })),
       links: Array.isArray(parsed.links) ? parsed.links : [],
     };
@@ -118,7 +157,7 @@ export function read(): Store {
     // A cache and a list, not a source of truth for anything irreplaceable.
     // Refusing to serve the screen over a stray comma would take away the only
     // place you could fix it.
-    return { ...EMPTY, series: [], links: [] };
+    return { ...EMPTY };
   }
 }
 
@@ -138,13 +177,19 @@ export function write(next: Store): void {
 }
 
 export function newSeries(
-  fields: Omit<Series, 'id' | 'addedAt' | 'checkedAt' | 'error' | 'latestChapter' | 'totalChapters'>
+  fields: Omit<
+    Series,
+    'id' | 'addedAt' | 'checkedAt' | 'error' | 'latestChapter' | 'totalChapters' | 'source' | 'sourceChapter' | 'sourceCheckedAt'
+  >
 ): Series {
   return {
     ...fields,
     id: randomUUID(),
     latestChapter: null,
     totalChapters: null,
+    source: null,
+    sourceChapter: null,
+    sourceCheckedAt: null,
     checkedAt: null,
     error: null,
     addedAt: Date.now(),

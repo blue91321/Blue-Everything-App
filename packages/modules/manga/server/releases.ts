@@ -35,6 +35,8 @@ import { resolvePush } from '@everything/shared';
 import { isNewerChapter, worthPolling } from './identity.js';
 import { read, write, alreadyRaised, type Series, type Store } from './library.js';
 import { readSeries, MangaUpdatesError, SPACING_MS } from './mangaupdates.js';
+import { SourceError } from './sources.js';
+import { SuwayomiAdapter } from './suwayomi.js';
 
 /**
  * How many series one sweep asks about.
@@ -70,7 +72,7 @@ export function seriesUrl(muId: number): string {
  */
 export function pollable(store: Store): Series[] {
   return store.series
-    .filter((s) => s.muId !== null && worthPolling(s.status))
+    .filter((s) => (s.muId !== null || s.source !== null) && worthPolling(s.status))
     .sort((a, b) => (a.checkedAt ?? 0) - (b.checkedAt ?? 0));
 }
 
@@ -85,28 +87,67 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
   const pushDefault = Boolean((await getSettings()).pushDefault);
   let announce = false;
 
-  for (const [index, series] of due.entries()) {
-    // Spacing between requests, never a burst — their policy asks for it and
-    // there is no published limit to check against.
-    if (index > 0) await sleep(SPACING_MS);
+  const suwayomi = store.suwayomiUrl ? new SuwayomiAdapter(store.suwayomiUrl) : null;
+  // Counts only the calls that leave this machine, so the first one is not
+  // preceded by a pointless pause and a run of linked series costs nothing.
+  let remoteCalls = 0;
 
+  for (const series of due) {
     const row = store.series.find((s) => s.id === series.id);
     if (!row) continue;
 
+    /*
+     * A linked series asks its source and nothing else.
+     *
+     * The source is the authority — it is the thing serving the chapter — and it
+     * is on this machine, so it costs no rate limit and needs no spacing. Asking
+     * MangaUpdates as well would be a remote request per series per sweep to
+     * refresh a number that is now only shown as context.
+     *
+     * The consequence, stated rather than discovered: `totalChapters` and
+     * `completed` stop being refreshed once a series is linked. Both keep their
+     * last value. That is the right trade — the number people read is the one
+     * the source gives, and the alternative is doubling the only requests here
+     * that anybody is rationing.
+     */
+    const viaSource = row.source !== null && suwayomi !== null && row.source.adapter === suwayomi.id;
+
+    // Spacing applies to MangaUpdates only. Their policy asks for it; a
+    // localhost GraphQL call does not need it and should not be slowed by it.
+    if (!viaSource && remoteCalls > 0) await sleep(SPACING_MS);
+
     try {
-      const reading = await readSeries(series.muId!);
-      row.checkedAt = now;
-      row.error = null;
-      // Written on every poll, including the first, so the count is on screen
-      // even for a series that has never gained a chapter while we watched.
-      row.totalChapters = reading.totalChapters;
-      result.checked += 1;
+      let fresh: string | null;
 
-      // Their judgement that the run has ended takes the series out of the
-      // rotation permanently, which is most of what keeps this cheap.
-      if (reading.completed && row.status === 'ongoing') row.status = 'completed';
+      if (viaSource) {
+        const latest = await suwayomi!.latestChapter(row.source!.mangaId);
+        row.sourceChapter = latest;
+        row.sourceCheckedAt = now;
+        row.checkedAt = now;
+        row.error = null;
+        result.checked += 1;
+        /*
+         * The source's answer, or nothing. `readableChapter` decides which
+         * number to *show* and is not what this needs: falling back to the
+         * stored value here would compare a number against itself and could
+         * never be news.
+         */
+        fresh = latest === null ? null : String(latest);
+      } else {
+        remoteCalls += 1;
+        const reading = await readSeries(series.muId!);
+        row.checkedAt = now;
+        row.error = null;
+        // Written on every poll, including the first, so the count is on screen
+        // even for a series that has never gained a chapter while we watched.
+        row.totalChapters = reading.totalChapters;
+        result.checked += 1;
 
-      const fresh = reading.latestChapter;
+        // Their judgement that the run has ended takes the series out of the
+        // rotation permanently, which is most of what keeps this cheap.
+        if (reading.completed && row.status === 'ongoing') row.status = 'completed';
+        fresh = reading.latestChapter;
+      }
 
       /*
        * Nothing seen before: record and say nothing.
@@ -156,7 +197,8 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
     } catch (error) {
       // Kept beside the reading it could not replace, so the screen can show
       // the last known chapter *and* why it is the last known one.
-      row.error = error instanceof MangaUpdatesError ? error.message : 'the check failed';
+      row.error =
+        error instanceof MangaUpdatesError || error instanceof SourceError ? error.message : 'the check failed';
       row.checkedAt = now;
       result.failed += 1;
       announce = true;
