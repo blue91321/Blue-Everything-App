@@ -9,17 +9,21 @@
  * rather than on a schema, so the day it goes dark is a new file in this folder
  * instead of a rewrite.
  *
- * The interface is deliberately **four methods**, arrived at by asking what the
- * library actually needs rather than what a source could offer:
+ * The interface is **five methods**, arrived at by asking what the library
+ * actually needs rather than what a source could offer:
  *
  *   - `describe()` — is it there, and what is it;
  *   - `search()` — find this series in the source's own catalogue;
  *   - `latestChapter()` — the newest chapter a person can actually open;
- *   - `chapters()` — the list, for the reader that is not built yet.
+ *   - `chapters()` — the list;
+ *   - `pages()` — where the images of one chapter are.
  *
- * Nothing about pages, downloads, categories or extensions. Those are Suwayomi
- * concepts, and putting them here would make the interface a description of
- * Suwayomi rather than of a source — which is the failure it exists to avoid.
+ * It was four until the reader was built, and `pages` is the honest fifth: you
+ * cannot read without it, and an adapter that could not answer it would not be a
+ * source. Still nothing about downloads, categories, extensions or library
+ * management — those are Suwayomi concepts, and putting them here would make the
+ * interface a description of Suwayomi rather than of a source, which is the
+ * failure it exists to avoid.
  *
  * ### This is the only part that answers the question the app is really asked
  *
@@ -80,7 +84,25 @@ export interface SourceAdapter {
    * having no chapters at all.
    */
   latestChapter(mangaId: string): Promise<number | null>;
-  chapters(mangaId: string): Promise<SourceChapter[]>;
+  /**
+   * The chapter list.
+   *
+   * `refresh` decides whether the source is asked again or its own cache is
+   * read. Opening a list should not scrape a website — that is seconds of
+   * latency and a request to somebody else's server for a screen you are only
+   * glancing at — so listing reads the cache and the release check refreshes.
+   */
+  chapters(mangaId: string, refresh?: boolean): Promise<SourceChapter[]>;
+  /**
+   * Where one chapter's images are, in reading order.
+   *
+   * **Opaque strings, handed back exactly as the source gave them.** Suwayomi
+   * returns paths like `/api/v1/manga/2/chapter/107/page/0`, and the number in
+   * the middle is its own indexing rather than anything we hold — so building
+   * these ourselves would be guessing at a scheme that is theirs to change. The
+   * caller proxies them; it never parses them.
+   */
+  pages(chapterId: string): Promise<string[]>;
 }
 
 /** Raised by an adapter for anything a person can act on. Anything else is a bug. */
@@ -106,4 +128,25 @@ export function readableChapter(
   }
   if (fromMangaUpdates) return { chapter: fromMangaUpdates, via: 'mangaupdates' };
   return { chapter: null, via: null };
+}
+
+/**
+ * Which address to actually talk to.
+ *
+ * When the app starts Suwayomi itself it already knows where it put it, so
+ * making somebody fill the address box in as well is a second setting that can
+ * only ever disagree with the first. It shipped that way for one run and the
+ * card reported a running Suwayomi as unconfigured — the URL was null because
+ * nobody had typed one, while a JVM the app had started sat answering on the
+ * default port.
+ *
+ * So an explicit URL always wins — that is how you point at an instance on
+ * another machine — and managing one falls back to its default port.
+ */
+export function effectiveUrl(
+  store: { suwayomiUrl: string | null; manageSuwayomi: boolean },
+  defaultUrl: string
+): string | null {
+  if (store.suwayomiUrl) return store.suwayomiUrl;
+  return store.manageSuwayomi ? defaultUrl : null;
 }

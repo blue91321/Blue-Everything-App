@@ -160,15 +160,42 @@ export class SuwayomiAdapter implements SourceAdapter {
     return out.slice(0, limit);
   }
 
-  async chapters(mangaId: string): Promise<SourceChapter[]> {
+  async chapters(mangaId: string, refresh = true): Promise<SourceChapter[]> {
     const id = Number.parseInt(mangaId, 10);
     if (!Number.isSafeInteger(id)) throw new SourceError('not a Suwayomi manga id');
 
+    if (!refresh) {
+      /*
+       * Suwayomi's own copy, with no request to the site at all.
+       *
+       * This is a *query* rather than the mutation below, and the difference is
+       * seconds: opening a chapter list should not scrape a website. The release
+       * check refreshes; the screen reads.
+       */
+      const cached = await this.gql<{
+        chapters: { nodes: Array<{ id: number; name: string; chapterNumber: number; uploadDate?: string | null; scanlator?: string | null }> };
+      }>(
+        `query Cached($id: Int!) {
+           chapters(condition: { mangaId: $id }, order: [{ by: SOURCE_ORDER }]) {
+             nodes { id name chapterNumber uploadDate scanlator }
+           }
+         }`,
+        { id }
+      );
+      return (cached.chapters?.nodes ?? []).map((c) => ({
+        id: String(c.id),
+        number: c.chapterNumber,
+        name: c.name,
+        uploadedAt: uploadedAtMs(c.uploadDate),
+        scanlator: c.scanlator ?? null,
+      }));
+    }
+
     /*
      * `fetchChapters: true` makes the server go and ask the source rather than
-     * answering from its own database. That is the whole point here — a cached
-     * answer is exactly the stale number this layer exists to replace — and it is
-     * why this is a mutation and why it is slower than a plain read.
+     * answering from its own database. That is the whole point for a release
+     * check — a cached answer is exactly the stale number this layer exists to
+     * replace — and it is why this is a mutation and why it is slower.
      */
     const data = await this.gql<{
       fetchMangaAndChapters: {
@@ -198,6 +225,28 @@ export class SuwayomiAdapter implements SourceAdapter {
       uploadedAt: uploadedAtMs(c.uploadDate),
       scanlator: c.scanlator ?? null,
     }));
+  }
+
+  async pages(chapterId: string): Promise<string[]> {
+    const id = Number.parseInt(chapterId, 10);
+    if (!Number.isSafeInteger(id)) throw new SourceError('not a Suwayomi chapter id');
+
+    /*
+     * A mutation, again, and for the same reason `fetchSourceManga` is one: it
+     * makes the server go to the site, work out the page list and cache it. A
+     * chapter that has never been opened has `pageCount: -1` until this runs.
+     */
+    const data = await this.gql<{ fetchChapterPages: { pages: string[] } }>(
+      `mutation Pages($id: Int!) {
+         fetchChapterPages(input: { chapterId: $id }) {
+           chapter { id pageCount }
+           pages
+         }
+       }`,
+      { id }
+    );
+
+    return (data.fetchChapterPages?.pages ?? []).filter((p) => typeof p === 'string' && p.length > 0);
   }
 
   async latestChapter(mangaId: string): Promise<number | null> {

@@ -28,11 +28,11 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { search, fetchCover, MangaDexError } from './mangadex.js';
-import { CREDIT } from './mangaupdates.js';
-import { read, write, newSeries, findExisting, type Series } from './library.js';
+import { CREDIT, readSeries } from './mangaupdates.js';
+import { read, write, newSeries, findExisting, type Series, type Store } from './library.js';
 import { seriesSummary, recentReleases } from './present.js';
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
-import { SourceError } from './sources.js';
+import { SourceError, effectiveUrl } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL } from './suwayomi.js';
 import { suwayomiProcess, findJars } from './process.js';
 import { homedir } from 'node:os';
@@ -245,8 +245,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * click away — the distinction `features` and `featuresMissing` draw.
    */
   app.get('/api/manga/source', async () => {
-    const { suwayomiUrl, suwayomiJar, manageSuwayomi } = read();
+    const store = read();
+    const { suwayomiUrl, suwayomiJar, manageSuwayomi } = store;
     const managed = suwayomiProcess.state;
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
 
     // Only offered when nothing is chosen yet: a scan of Downloads on every
     // poll would be disk work for a question already answered.
@@ -260,7 +262,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       foundJars,
     };
 
-    if (!suwayomiUrl) return { ...base, configured: false, url: null, health: null };
+    if (!url) return { ...base, configured: false, url: null, health: null };
 
     /*
      * Not asked while we are managing it and it is off — that is the ordinary
@@ -268,10 +270,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
      * case look broken. The `managed` state above already says what is true.
      */
     if (manageSuwayomi && managed.state !== 'running') {
-      return { ...base, configured: true, url: suwayomiUrl, health: null };
+      return { ...base, configured: true, url, health: null };
     }
 
-    return { ...base, configured: true, url: suwayomiUrl, health: await new SuwayomiAdapter(suwayomiUrl).describe() };
+    return { ...base, configured: true, url, health: await new SuwayomiAdapter(url).describe() };
   });
 
   /** Start it now, and wait until it answers. */
@@ -387,7 +389,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const store = read();
     const series = store.series.find((s) => s.id === id);
     if (!series) return reply.code(404).send({ error: 'no such series' });
-    if (!store.suwayomiUrl) return reply.code(400).send({ error: 'no source is configured' });
+    const sourceUrl = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!sourceUrl) return reply.code(400).send({ error: 'no source is configured' });
 
     // Defaults to the series' own title, because that is what you want in nine
     // cases out of ten and typing it again is a chore.
@@ -399,14 +402,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
      * startup. The sweep deliberately is not.
      */
     if (store.manageSuwayomi && store.suwayomiJar) {
-      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, store.suwayomiUrl ?? DEFAULT_BASE_URL);
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, sourceUrl);
       if (state.state !== 'running') {
         return reply.code(502).send({ error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting' });
       }
     }
 
     try {
-      return { results: await new SuwayomiAdapter(store.suwayomiUrl).search(query) };
+      return { results: await new SuwayomiAdapter(sourceUrl).search(query) };
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
       throw error;
@@ -444,6 +447,27 @@ export async function routes(app: FastifyInstance): Promise<void> {
     series.sourceChapter = null;
     series.sourceCheckedAt = null;
     series.checkedAt = null;
+
+    /*
+     * Ask MangaUpdates once, here, and never again for this series.
+     *
+     * A linked series stops polling them, so without this the "N written"
+     * context is lost the moment you link — which real use showed immediately:
+     * a series linked before its first check had no total at all, and the row
+     * lost the one number that says how much of the work a source is carrying.
+     *
+     * One request at link time is not the per-sweep cost that rule was avoiding,
+     * and a failure is ignored rather than blocking the link: the context is a
+     * nicety and the link is the thing you asked for.
+     */
+    if (series.muId !== null && series.totalChapters === null) {
+      try {
+        series.totalChapters = (await readSeries(series.muId)).totalChapters;
+      } catch {
+        // Left null. The row simply says less.
+      }
+    }
+
     write(store);
 
     return seriesSummary(series);
@@ -464,6 +488,165 @@ export async function routes(app: FastifyInstance): Promise<void> {
     series.checkedAt = null;
     write(store);
     return seriesSummary(series);
+  });
+
+  /* ---- reading ---- */
+
+  /**
+   * The source, started if we manage it and it is not up.
+   *
+   * Everything under here is something you did on purpose — opening a chapter
+   * list, turning a page — so it is allowed to spend the JVM's startup. The
+   * sweep is the one caller that deliberately does not.
+   */
+  type ReaderContext =
+    | { error: string; code: 400 | 404 | 502 }
+    | { store: Store; series: Series; adapter: SuwayomiAdapter; url: string };
+
+  /*
+   * Annotated rather than inferred. Without it TypeScript widens the two return
+   * shapes into one object with every field optional, so `ctx.code` arrives as
+   * `number | undefined` and the `'error' in ctx` check narrows nothing.
+   */
+  async function reader(seriesId: string): Promise<ReaderContext> {
+    const store = read();
+    const series = store.series.find((s) => s.id === seriesId);
+    if (!series) return { error: 'no such series', code: 404 as const };
+    if (!series.source) return { error: 'this series is not linked to a source', code: 400 as const };
+
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return { error: 'no source is configured', code: 400 as const };
+
+    if (store.manageSuwayomi && store.suwayomiJar) {
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url);
+      if (state.state !== 'running') {
+        return { error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting', code: 502 as const };
+      }
+    } else {
+      // Not managed, so nothing to start — but the idle timer still wants to
+      // know this is in use, in case management is switched on later.
+      suwayomiProcess.touch();
+    }
+
+    return { store, series, adapter: new SuwayomiAdapter(url), url };
+  }
+
+  /**
+   * The chapter list, from the source's own cache.
+   *
+   * `?refresh=1` goes and asks the site again. Off by default because opening a
+   * list should not scrape a website — that is seconds of latency and a request
+   * to somebody else's server for a screen you may only be glancing at.
+   */
+  app.get('/api/manga/:id/chapters', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { refresh } = request.query as { refresh?: string };
+    const ctx = await reader(id);
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    try {
+      const chapters = await ctx.adapter.chapters(ctx.series.source!.mangaId, refresh === '1');
+      const read_ = new Set(ctx.series.readChapters);
+      return {
+        seriesTitle: ctx.series.title,
+        sourceName: ctx.series.source!.sourceName,
+        chapters: chapters
+          // Newest first, which is how every reader in this space lists them and
+          // how anybody following a running series wants to see it.
+          .sort((a, b) => b.number - a.number)
+          .map((c) => ({ ...c, read: read_.has(c.number) })),
+      };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * One chapter's pages, as URLs this app will serve.
+   *
+   * The source's own paths are **never handed to the browser**. They point at
+   * Suwayomi, which has no authentication and is not what the PWA is talking to
+   * — and over Tailscale the phone cannot reach it at all. So each one becomes a
+   * proxied URL, and the path travels as an opaque parameter this server checks.
+   */
+  app.get('/api/manga/:id/chapters/:chapterId/pages', async (request, reply) => {
+    const { id, chapterId } = request.params as { id: string; chapterId: string };
+    const ctx = await reader(id);
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    try {
+      const pages = await ctx.adapter.pages(chapterId);
+      return {
+        pages: pages.map((path) => `/api/manga/${id}/page?p=${encodeURIComponent(path)}`),
+      };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * One page image.
+   *
+   * Behind `/api/` like the covers and the habit pictures, because what you are
+   * reading is as personal as anything else here — so the PWA fetches the bytes
+   * with the token and wraps them in an object URL rather than using `img src`.
+   *
+   * The path is checked against the exact shape Suwayomi publishes rather than
+   * trusted. It arrived from us a moment ago, but it travels through the browser
+   * to get here, so it is caller input by the time it is read — and an
+   * unchecked one would make this an open proxy to anything the server can
+   * reach, which is the same rule the game launcher and the cover route follow.
+   */
+  app.get('/api/manga/:id/page', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { p } = request.query as { p?: string };
+    if (!p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
+      return reply.code(400).send({ error: 'not a page' });
+    }
+
+    const ctx = await reader(id);
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    try {
+      const response = await fetch(`${ctx.url}${p}`, { signal: AbortSignal.timeout(30_000) });
+      if (!response.ok) return reply.code(502).send({ error: `the source answered ${response.status}` });
+      return reply
+        .header('content-type', response.headers.get('content-type') ?? 'image/jpeg')
+        // A page never changes once it exists, and a reader fetches it again on
+        // every revisit — so this is the one image here worth caching hard.
+        .header('cache-control', 'private, max-age=604800')
+        .send(Buffer.from(await response.arrayBuffer()));
+    } catch {
+      return reply.code(502).send({ error: 'could not fetch the page' });
+    }
+  });
+
+  /**
+   * Mark a chapter read, or not.
+   *
+   * Stored as a chapter *number* rather than the source's id, so relinking a
+   * series to a different source keeps your place. Written when a chapter is
+   * finished rather than on every page turn — see `readChapters`.
+   */
+  app.put('/api/manga/:id/read', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { chapter?: unknown; read?: unknown } | null;
+    const chapter = typeof body?.chapter === 'number' && Number.isFinite(body.chapter) ? body.chapter : null;
+    if (chapter === null) return reply.code(400).send({ error: 'which chapter?' });
+
+    const store = read();
+    const series = store.series.find((s) => s.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+
+    const marked = new Set(series.readChapters);
+    if (body?.read === false) marked.delete(chapter);
+    else marked.add(chapter);
+    series.readChapters = [...marked].sort((a, b) => a - b);
+    write(store);
+
+    return { readChapters: series.readChapters };
   });
 
   /* ---- the timer ---- */

@@ -62,6 +62,21 @@ export interface SourceState {
   health: SourceHealth | null;
 }
 
+export interface SourceChapter {
+  id: string;
+  number: number;
+  name: string;
+  uploadedAt: number | null;
+  scanlator: string | null;
+  read: boolean;
+}
+
+export interface ChapterList {
+  seriesTitle: string;
+  sourceName: string;
+  chapters: SourceChapter[];
+}
+
 export interface SourceMatch {
   id: string;
   title: string;
@@ -150,6 +165,32 @@ export const manga = {
         body: JSON.stringify({ mangaId: match.id, title: match.title, sourceName: match.sourceName }),
       }),
     unlink: (id: string) => call<SeriesSummary>(`/api/manga/${id}/source`, { method: 'DELETE' }),
+  },
+
+  reader: {
+    chapters: (id: string, refresh = false) =>
+      call<ChapterList>(`/api/manga/${id}/chapters${refresh ? '?refresh=1' : ''}`),
+    pages: (id: string, chapterId: string) =>
+      call<{ pages: string[] }>(`/api/manga/${id}/chapters/${chapterId}/pages`),
+    markRead: (id: string, chapter: number, read = true) =>
+      call<{ readChapters: number[] }>(`/api/manga/${id}/read`, {
+        method: 'PUT',
+        body: JSON.stringify({ chapter, read }),
+      }),
+
+    /**
+     * One page's bytes as an object URL.
+     *
+     * Not cached here, unlike covers: a chapter's images are tens of megabytes
+     * that nothing asks for again once you have moved on, and the caller revokes
+     * them on unmount. A cache would turn reading into a memory leak measured in
+     * chapters.
+     */
+    page: async (path: string): Promise<string> => {
+      const response = await fetch(path, { headers: { authorization: `Bearer ${getToken()}` } });
+      if (!response.ok) throw new Error(`page failed (${response.status})`);
+      return URL.createObjectURL(await response.blob());
+    },
   },
 };
 

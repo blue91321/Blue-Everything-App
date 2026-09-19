@@ -2692,3 +2692,78 @@ button {
 .manga-source-row:hover:not(:disabled) {
   border-color: var(--accent);
 }
+
+/* ---- Manga: the chapter list and the reader --------------------------- */
+
+.manga-chapters {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.manga-chapter-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.manga-chapter-row:hover {
+  background: var(--surface-raised);
+}
+
+/* Dimmed rather than hidden, like the finished tasks on the Dashboard: what you
+   have read is still part of the list, it is just behind you. */
+.manga-chapter-row.read .title {
+  opacity: 0.5;
+}
+
+.manga-reader-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 0;
+  background: var(--bg);
+}
+
+/*
+ * No gap and no padding between pages. A webtoon is one tall image cut into
+ * slices, so any space between them is a white line through the middle of a
+ * panel — the one piece of styling here that would be visibly wrong.
+ */
+.manga-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.manga-strip img {
+  display: block;
+  width: 100%;
+  /* Capped so a page-per-image series is readable on a wide monitor rather than
+     a metre tall, while a webtoon strip still fills a phone. */
+  max-width: 900px;
+  height: auto;
+}
+
+.manga-page-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 900px;
+  /* Something rather than nothing, so the strip has a shape while it fills in. */
+  min-height: 240px;
+  color: var(--muted);
+  background: var(--surface-raised);
+}

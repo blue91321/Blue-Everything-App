@@ -71,6 +71,18 @@ export type Series = SeriesIds & {
   /** The newest chapter the source has, as of `sourceCheckedAt`. */
   sourceChapter: number | null;
   sourceCheckedAt: number | null;
+  /**
+   * Chapter numbers you have read.
+   *
+   * Numbers rather than source chapter ids, deliberately: ids belong to one
+   * source, and relinking a series to a different one would otherwise lose every
+   * mark. A chapter number means the same thing wherever you read it.
+   *
+   * Written when a chapter is **finished**, not on every page turn — which is
+   * what keeps a JSON file the right shape for this. Per-page position would be
+   * a write per swipe, and that is the case this file is wrong for.
+   */
+  readChapters: number[];
   /** When MangaUpdates last answered about this series, successful or not. */
   checkedAt: number | null;
   /** Why the last check failed, if it did. Kept beside the data it could not replace. */
@@ -167,6 +179,7 @@ export function read(): Store {
         source: s.source ?? null,
         sourceChapter: s.sourceChapter ?? null,
         sourceCheckedAt: s.sourceCheckedAt ?? null,
+        readChapters: Array.isArray(s.readChapters) ? s.readChapters : [],
       })),
       links: Array.isArray(parsed.links) ? parsed.links : [],
     };
@@ -196,7 +209,16 @@ export function write(next: Store): void {
 export function newSeries(
   fields: Omit<
     Series,
-    'id' | 'addedAt' | 'checkedAt' | 'error' | 'latestChapter' | 'totalChapters' | 'source' | 'sourceChapter' | 'sourceCheckedAt'
+    | 'id'
+    | 'addedAt'
+    | 'checkedAt'
+    | 'error'
+    | 'latestChapter'
+    | 'totalChapters'
+    | 'source'
+    | 'sourceChapter'
+    | 'sourceCheckedAt'
+    | 'readChapters'
   >
 ): Series {
   return {
@@ -207,6 +229,7 @@ export function newSeries(
     source: null,
     sourceChapter: null,
     sourceCheckedAt: null,
+    readChapters: [],
     checkedAt: null,
     error: null,
     addedAt: Date.now(),

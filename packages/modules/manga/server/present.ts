@@ -74,7 +74,10 @@ function chapterLine(series: Series): { chapterLabel: string; chapterTitle: stri
     const via = series.source.sourceName || series.source.adapter;
     const total = series.totalChapters;
     return {
-      chapterLabel: `ch ${series.sourceChapter} · via ${via}`,
+      chapterLabel:
+        total === null
+          ? `ch ${series.sourceChapter} · via ${via}`
+          : `ch ${series.sourceChapter} of ${total} · via ${via}`,
       chapterTitle:
         `Chapter ${series.sourceChapter} is the newest ${via} has. ` +
         (total === null ? '' : `MangaUpdates counts ${total} written. `) +

@@ -21,6 +21,7 @@ import type { FeatureViewProps } from '@app/features/index';
 import { Cover } from './Cover';
 import { SourceCard } from './SourceCard';
 import { SourceLink } from './SourceLink';
+import { Chapters } from './Chapters';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -41,6 +42,8 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   const [problem, setProblem] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [sweep, setSweep] = useState<string | null>(null);
+  /** Which series' chapters are open, if any. The reader lives inside it. */
+  const [reading, setReading] = useState<string | null>(null);
 
   /*
    * A search handed in from elsewhere — the Dashboard panel's rows land here
@@ -112,6 +115,15 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
 
   const data = library.data;
   const now = Date.now();
+
+  /*
+   * The chapter list replaces the screen rather than sitting under it. Reading
+   * is a place you go, not a row that grows — the same call the Notes screen
+   * makes about opening a note on a phone, and for the same reason: what opens
+   * is a full-width document, and putting one inside a list leaves it wearing
+   * the list's width with the rest of the list above and below it.
+   */
+  if (reading) return <Chapters seriesId={reading} onClose={() => setReading(null)} />;
 
   return (
     <div className="manga">
@@ -207,6 +219,12 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               <SourceLink series={series} local={local} onChanged={() => library.reload()} />
             </div>
             <div className="manga-row-actions">
+              {/* Only when there is somewhere to read it from. */}
+              {series.source && (
+                <button className="btn primary" onClick={() => setReading(series.id)}>
+                  Read
+                </button>
+              )}
               {series.url && (
                 <a href={series.url} target="_blank" rel="noreferrer noopener" className="btn subtle">
                   Details
@@ -224,8 +242,18 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
             {data.watching > 0
               ? `Watching ${data.watching} for new chapters, about every half hour. Finished series are not checked.`
               : 'Nothing is being watched, so no requests are made.'}{' '}
-            {data.credit} Chapter numbers are the newest release it has logged — sites carrying unofficial
-            translations are often further ahead.
+            {/*
+              * Only said while something still depends on MangaUpdates. With
+              * every series linked to a source the sentence is simply false —
+              * those numbers come from the site itself — and a footer that
+              * contradicts the rows above it is worse than no footer.
+              */}
+            {data.series.some((s) => !s.source) && (
+              <>
+                {data.credit} Numbers without a source beside them are the newest release it has logged, and sites
+                carrying unofficial translations are often further ahead.
+              </>
+            )}
           </p>
         )}
       </div>

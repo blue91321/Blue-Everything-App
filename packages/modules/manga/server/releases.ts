@@ -35,8 +35,8 @@ import { resolvePush } from '@everything/shared';
 import { isNewerChapter, worthPolling } from './identity.js';
 import { read, write, alreadyRaised, type Series, type Store } from './library.js';
 import { readSeries, MangaUpdatesError, SPACING_MS } from './mangaupdates.js';
-import { SourceError } from './sources.js';
-import { SuwayomiAdapter } from './suwayomi.js';
+import { SourceError, effectiveUrl } from './sources.js';
+import { SuwayomiAdapter, DEFAULT_BASE_URL } from './suwayomi.js';
 import { suwayomiProcess } from './process.js';
 
 /**
@@ -88,7 +88,8 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
   const pushDefault = Boolean((await getSettings()).pushDefault);
   let announce = false;
 
-  const suwayomi = store.suwayomiUrl ? new SuwayomiAdapter(store.suwayomiUrl) : null;
+  const sourceUrl = effectiveUrl(store, DEFAULT_BASE_URL);
+  const suwayomi = sourceUrl ? new SuwayomiAdapter(sourceUrl) : null;
   // Counts only the calls that leave this machine, so the first one is not
   // preceded by a pointless pause and a run of linked series costs nothing.
   let remoteCalls = 0;

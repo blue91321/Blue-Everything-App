@@ -207,6 +207,7 @@ const row = (over: Partial<Store['series'][number]>): Store['series'][number] =>
   source: null,
   sourceChapter: null,
   sourceCheckedAt: null,
+  readChapters: [],
   checkedAt: null,
   error: null,
   addedAt: 0,
