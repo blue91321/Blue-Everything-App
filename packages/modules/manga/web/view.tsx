@@ -204,7 +204,8 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
           <p className="empty">Nothing yet. Search above to follow something.</p>
         )}
 
-        {data?.series.map((series) => (
+        <div className="manga-list">
+          {data?.series.map((series) => (
           <div className="manga-row" key={series.id}>
             <Cover path={series.coverPath} title={series.title} size={40} />
             <div className="manga-row-text">
@@ -241,7 +242,8 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               </button>
             </div>
           </div>
-        ))}
+          ))}
+        </div>
 
         {data && (
           <p className="meta">

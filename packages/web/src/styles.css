@@ -316,8 +316,22 @@ body {
 
 /* ---------- content ---------- */
 
+/*
+ * The page follows the window, and nothing here caps it.
+ *
+ * It was 720px — "a comfortable measure for a task list", which was true of the
+ * app when a task list was most of it. Two screens had already argued their way
+ * out with `:has()` escapes, and the Notes one reached the conclusion this now
+ * applies everywhere: *a larger fixed number is still a fixed number.* 1700px on
+ * a 3440px monitor leaves 1500px of nothing, which is the same complaint one
+ * step further out.
+ *
+ * So the container is uncapped and the measures live on the things that are
+ * about reading — `.md` prose at 90ch, and the list rule below. A cap on the
+ * page solves neither problem and creates a third.
+ */
 .app {
-  max-width: 720px;
+  max-width: none;
   margin: 0 auto;
   padding: 0 var(--gap) 48px;
   padding-top: env(safe-area-inset-top);
@@ -1341,16 +1355,12 @@ button {
 }
 
 /*
- * The container widens only when the Dashboard says it needs to.
+ * The Dashboard's second column needs no width rule any more.
  *
- * `:has()` rather than a class on `.app` set from `App`, because `App` does not
- * read settings and the child already knows the answer. Unsupported `:has()`
- * leaves `.app` at its reading width and the panel stacked underneath, which is
- * the narrow-screen layout — a real fallback, not a broken one.
+ * `.app:has(.dash.has-panel) { max-width: 1140px }` lived here to escape the
+ * page's 720px cap. With the cap gone it would only *narrow* the Dashboard
+ * against every other screen, which is the opposite of what it was for.
  */
-.app:has(.dash.has-panel) {
-  max-width: 1140px;
-}
 
 .dash-panel > .card {
   /* Tighter than the main column: this is a glance, not a list to work through. */
@@ -1811,32 +1821,7 @@ button {
 /* Notes                                                               */
 /* ------------------------------------------------------------------ */
 
-/*
- * The Notes screen takes the window, and that is a second exception rather than
- * a loosening of the first.
- *
- * `.app` is 720px because that is a comfortable measure for a *task list* — one
- * column of short lines. Notes is three columns and one of them is a document,
- * and inside 720px that document column measured **172px** at a 1280px window:
- * a Markdown editor about twenty characters wide. The reading-width rule was
- * right about the screen it was written for and wrong about this one.
- *
- * `:has()` rather than a class from `App`, exactly as the Dashboard's panel
- * column does it — `App` does not know which screen wants what width, and the
- * child already does. Where `:has()` is unsupported the page stays at 720px
- * with the columns stacked, which is the phone layout: a real fallback.
- *
- * There is **no cap at all**, which is the part worth arguing for. A larger
- * fixed number is still a fixed number: 1700px on a 3440px monitor leaves
- * 1500px of nothing, which is the same complaint one step further out. What
- * stops the prose sprawling is a measure on `.md` below — that is a fact about
- * sentences, and applying it to the whole page instead is what produced a
- * 172px editor in the first place. The two are different problems and the
- * container is the wrong place to solve either.
- */
-.app:has(.notes) {
-  max-width: none;
-}
+
 
 /*
  * Three columns on a desktop and a stack on a phone. `minmax(0, …)` on the
@@ -2803,4 +2788,100 @@ button {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+/* ---------- lists use the width, rather than stretching across it -------- */
+
+/*
+ * A wide window should hold *more* rows, not longer ones.
+ *
+ * Uncapping the page fixed "too narrow" and immediately created its opposite: at
+ * 1900px a task row was 1284px wide with its title on a 1222px line, a tick box
+ * at one end and a date at the other. Putting a cap back would bring the old
+ * complaint with it, and "a larger fixed number is still a fixed number" is
+ * already written down here as the reason not to.
+ *
+ * So the rows flow into columns. The window decides how many — one on a phone,
+ * two on a laptop, three or four on an ultrawide — with no breakpoint to pick
+ * and nothing to configure.
+ *
+ * ### Two selectors, because lists come in two shapes
+ *
+ * The Dashboard puts its cards straight into a `section`. Tasks wraps each row
+ * in an unclassed `div` so the card and its actions travel together, and puts
+ * those in the section instead. Both are lists; neither can see the other's
+ * shape. Keying on both is honest about what is actually in the markup — the
+ * alternative was threading a class through every component that renders a list,
+ * which is a wider change to say the same thing.
+ *
+ * `+ .card` and `> div > .card` also mean a section holding a *single* row does
+ * not flow. One card alone in a column beside empty space reads as a mistake.
+ */
+.app section:has(> .card + .card),
+.app section:has(> div > .card) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+  gap: var(--gap);
+  align-items: start;
+}
+
+/*
+ * Everything that is not a row spans the lot: the heading above them, the
+ * "nothing due" line that replaces them, the capture form at the top. Without
+ * this a heading takes one cell and the first row sits beside it, which reads as
+ * a layout accident rather than a list.
+ *
+ * Named rather than `:not(.card)`, because in the wrapped shape the rows
+ * themselves are unclassed divs — excluding by what they are not would span the
+ * rows and flow the headings, which is precisely backwards.
+ */
+.app section:has(> .card + .card) > h2,
+.app section:has(> .card + .card) > p,
+.app section:has(> .card + .card) > form,
+.app section:has(> .card + .card) > .empty,
+.app section:has(> .card + .card) > .banner,
+.app section:has(> div > .card) > h2,
+.app section:has(> div > .card) > p,
+.app section:has(> div > .card) > form,
+.app section:has(> div > .card) > .empty,
+.app section:has(> div > .card) > .banner {
+  grid-column: 1 / -1;
+}
+
+/*
+ * `min(420px, 100%)` rather than a bare 420px, and that is the part that is easy
+ * to get wrong. A `minmax(420px, …)` track refuses to go below 420 even when the
+ * container is narrower, so on a 375px phone the grid would overflow and the
+ * page would scroll sideways. The `min()` lets the track collapse to the
+ * container, which is the single-column layout.
+ */
+
+/*
+ * The manga list is a third shape: many rows inside one card.
+ *
+ * It flows for the same reason the others do — otherwise it is the one screen
+ * left with a title at the far left and its buttons 1,200px away, on the change
+ * that was specifically about that.
+ *
+ * The separator has to change with it. `border-bottom` draws a line under every
+ * row, which in a single column reads as a divider and in a grid reads as an
+ * underline beneath each cell; the rule below turns it off once the rows are
+ * side by side and lets the gap do the separating.
+ */
+.manga-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+  gap: 4px var(--gap);
+  align-items: start;
+}
+
+.manga-list .manga-row:last-of-type {
+  border-bottom: 1px solid var(--border);
+}
+
+/* The final row keeps no line when there is only one column, as before. */
+@media (max-width: 900px) {
+  .manga-list .manga-row:last-of-type {
+    border-bottom: 0;
+  }
 }
