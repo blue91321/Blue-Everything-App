@@ -45,7 +45,7 @@
  * So it is a plain `spawn` with this process as the parent, plus an `onClose`
  * hook and `stop()` on the way down.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, createWriteStream, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { dataDir } from '@everything/server/module-api';
@@ -77,6 +77,8 @@ class SuwayomiProcess {
   private child: ChildProcess | null = null;
   private status: ManagedState = { state: 'off' };
   private idleTimer: NodeJS.Timeout | null = null;
+  /** The port last used, so `stop()` can find an adopted process by it. */
+  private lastPort: number | null = null;
   /** The in-flight start, so five requests at once wait on one JVM. */
   private starting: Promise<ManagedState> | null = null;
 
@@ -112,12 +114,18 @@ class SuwayomiProcess {
      * dies, reported as a start failure while a perfectly good server sits there
      * answering — the most confusing outcome available.
      *
-     * The pid is null because we did not start it, which is honest: `stop()` can
-     * only kill what it spawned, and the screen says "running" either way.
+     * **Its pid is looked up rather than left null**, and that is the whole
+     * difference between adopting and merely tolerating. The first version
+     * recorded `pid: null` and called that honest — but `stop()` can only kill
+     * what it has a pid for, so the app reported a JVM as running and had no way
+     * to stop it. Found exactly that way: `restart.ps1` force-kills the server,
+     * so `onClose` never fires, the new process has no child handle, and the
+     * JVM from before the restart was adopted and then unstoppable.
      */
+    this.lastPort = portOf(baseUrl);
     const existing = await new SuwayomiAdapter(baseUrl).describe();
     if (existing.reachable) {
-      this.status = { state: 'running', since: Date.now(), pid: null };
+      this.status = { state: 'running', since: Date.now(), pid: pidListeningOn(portOf(baseUrl)) };
       return this.status;
     }
 
@@ -139,6 +147,9 @@ class SuwayomiProcess {
     this.status = { state: 'starting', since: begunAt };
 
     const port = portOf(baseUrl);
+    // Remembered so `stop()` can still find it if this process loses its handle
+    // — which is what a force-killed restart does.
+    this.lastPort = port;
     const log = createWriteStream(this.logPath(), { flags: 'a' });
     log.write(`\n--- starting ${new Date(begunAt).toISOString()} ${jarPath} (port ${port}) ---\n`);
 
@@ -270,9 +281,18 @@ class SuwayomiProcess {
     // stop as a crash.
     this.status = { state: 'off' };
 
-    const pid = this.child?.pid;
+    /*
+     * The pid we spawned, or whatever is holding the port.
+     *
+     * The fallback is not defensive padding — it is the only thing that can stop
+     * a JVM adopted after a restart, where this process never had a handle to
+     * it. `stop()` is only reachable while the app has been told it may start
+     * and stop Suwayomi, so killing what is on that port is inside the
+     * permission already given.
+     */
+    const pid = this.child?.pid ?? (this.lastPort !== null ? pidListeningOn(this.lastPort) : null);
     this.child = null;
-    if (pid === undefined) return;
+    if (pid === null || pid === undefined) return;
 
     if (process.platform === 'win32') {
       try {
@@ -299,6 +319,38 @@ class SuwayomiProcess {
 }
 
 export const suwayomiProcess = new SuwayomiProcess();
+
+/**
+ * Which process is listening on a port, when the platform can say.
+ *
+ * Windows only, via `Get-NetTCPConnection` — the one place this file asks the
+ * operating system a question rather than tracking its own child. It exists for
+ * the adopted case: a JVM left behind by a force-killed server has no parent to
+ * ask, and without this the app can see it running and never stop it.
+ *
+ * Synchronous on purpose. It runs on the stop path, which has no await to hang
+ * a promise off and must not leave a half-stopped state if something throws.
+ * Elsewhere it returns null, and the POSIX branch of `stop()` signals the
+ * process group instead.
+ */
+export function pidListeningOn(port: number): number | null {
+  if (process.platform !== 'win32') return null;
+  try {
+    const out = spawnSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess`,
+      ],
+      { encoding: 'utf8', timeout: 10_000 }
+    );
+    const pid = Number.parseInt((out.stdout ?? '').trim(), 10);
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The port out of a base URL, defaulting to Suwayomi's own. */
 export function portOf(baseUrl: string): number {
