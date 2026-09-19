@@ -97,6 +97,9 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
       const reading = await readSeries(series.muId!);
       row.checkedAt = now;
       row.error = null;
+      // Written on every poll, including the first, so the count is on screen
+      // even for a series that has never gained a chapter while we watched.
+      row.totalChapters = reading.totalChapters;
       result.checked += 1;
 
       // Their judgement that the run has ended takes the series out of the

@@ -15,6 +15,19 @@ export type SeriesSummary = {
   title: string;
   status: Series['status'];
   latestChapter: string | null;
+  totalChapters: number | null;
+  /**
+   * The chapter line, written once here rather than on each surface.
+   *
+   * It carries **two numbers on purpose**. `latestChapter` is the newest
+   * release MangaUpdates has logged — what somebody can actually read — and
+   * `totalChapters` is how many have been written. Showing only the first is
+   * what made this confidently wrong: *Archmage Curriculum* read "chapter 23"
+   * while 41 existed and an aggregator was carrying 45.
+   */
+  chapterLabel: string;
+  /** What those numbers mean, for the row's tooltip. A colour and a number say nothing on their own. */
+  chapterTitle: string;
   checkedAt: number | null;
   error: string | null;
   addedAt: number;
@@ -38,6 +51,48 @@ export type SeriesSummary = {
   notWatchingBecause: string | null;
 };
 
+/**
+ * The chapter line and the sentence explaining it.
+ *
+ * Kept together because they must never disagree: the moment the label says
+ * "ch 23" without the tooltip saying *which* 23, the screen is back to stating
+ * a narrow fact as a broad one.
+ */
+function chapterLine(series: Series): { chapterLabel: string; chapterTitle: string } {
+  const read = series.latestChapter;
+  const total = series.totalChapters;
+
+  if (read === null && total === null) {
+    return {
+      chapterLabel: 'not checked yet',
+      chapterTitle: 'MangaUpdates has not been asked about this one yet.',
+    };
+  }
+
+  // Known to exist but nothing released yet — rare, and the honest reading is
+  // that there is nothing to read rather than that we failed to look.
+  if (read === null) {
+    return {
+      chapterLabel: `${total} written`,
+      chapterTitle: `${total} chapters exist. MangaUpdates has logged no release yet.`,
+    };
+  }
+
+  if (total === null) {
+    return {
+      chapterLabel: `ch ${read}`,
+      chapterTitle: `Chapter ${read} is the newest release MangaUpdates has logged. It does not publish a total for this one.`,
+    };
+  }
+
+  return {
+    chapterLabel: `ch ${read} · ${total} written`,
+    chapterTitle:
+      `Chapter ${read} is the newest release MangaUpdates has logged; ${total} chapters have been written. ` +
+      'Sites carrying unofficial translations are often further ahead than either number.',
+  };
+}
+
 export function seriesSummary(series: Series): SeriesSummary {
   const trackable = series.muId !== null;
   const running = worthPolling(series.status);
@@ -48,6 +103,8 @@ export function seriesSummary(series: Series): SeriesSummary {
     title: series.title,
     status: series.status,
     latestChapter: series.latestChapter,
+    totalChapters: series.totalChapters,
+    ...chapterLine(series),
     checkedAt: series.checkedAt,
     error: series.error,
     addedAt: series.addedAt,

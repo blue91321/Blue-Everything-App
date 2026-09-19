@@ -30,6 +30,7 @@ import {
   worthPolling,
 } from '../identity.js';
 import { alreadyRaised, type Store } from '../library.js';
+import { totalChaptersFrom } from '../mangaupdates.js';
 import { pollable, seriesUrl } from '../releases.js';
 
 let failures = 0;
@@ -130,6 +131,31 @@ check('an unrecognised status reads as unknown', seriesStatus('something-else') 
 check('a missing status reads as unknown', seriesStatus(null) === 'unknown');
 
 /* ------------------------------------------------------------------ */
+console.log('\nhow many chapters exist\n');
+
+/*
+ * The bug this section exists for.
+ *
+ * `latest_chapter` is the newest release MangaUpdates has *logged*, not the
+ * newest chapter that exists. *Archmage Curriculum* read "chapter 23" — a LINE
+ * Webtoon release from 2026-09-12 — while its status said 41 chapters and an
+ * aggregator was carrying 45. Vinland Saga agreed with reality only because it
+ * is finished, which is exactly how the mistake survived the first check.
+ */
+check('41 Chapters (Ongoing) -> 41', totalChaptersFrom('41 Chapters (Ongoing)') === 41);
+check('singular is read too', totalChaptersFrom('1 Chapter (Ongoing)') === 1);
+// A volume count is not a chapter count, and multiplying would invent a number
+// nobody published.
+check('29 Volumes (Complete) -> null', totalChaptersFrom('29 Volumes (Complete)') === null);
+check(
+  'a mixed status takes the chapters',
+  totalChaptersFrom('5 Volumes (Ongoing)\n41 Chapters (Ongoing)') === 41
+);
+check('words alone -> null', totalChaptersFrom('Ongoing') === null);
+check('nothing -> null', totalChaptersFrom(null) === null);
+check('a non-string -> null', totalChaptersFrom(41) === null);
+
+/* ------------------------------------------------------------------ */
 console.log('\nthe rotation\n');
 
 const row = (over: Partial<Store['series'][number]>): Store['series'][number] => ({
@@ -142,6 +168,7 @@ const row = (over: Partial<Store['series'][number]>): Store['series'][number] =>
   muId: 1,
   status: 'ongoing',
   latestChapter: null,
+  totalChapters: null,
   checkedAt: null,
   error: null,
   addedAt: 0,

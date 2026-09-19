@@ -44,6 +44,14 @@ export type Candidate = SeriesIds & {
   year: number | null;
   coverUrl: string | null;
   /**
+   * Where the browser should fetch that cover from.
+   *
+   * Built here rather than assembled in the PWA, so the browser never takes a
+   * URL apart to guess at a route — the same reason the server hands over a
+   * redirect URI instead of letting the screen compose one.
+   */
+  coverPath: string | null;
+  /**
    * Can this series be watched for new chapters at all?
    *
    * False when MangaDex knows no MangaUpdates id for it — which happens for
@@ -87,6 +95,13 @@ function coverUrl(mangaId: string, relationships: any[]): string | null {
   return fileName ? `${COVERS}/${mangaId}/${fileName}.256.jpg` : null;
 }
 
+/** The proxy route for a candidate's cover, which has no library id yet. */
+function coverPath(mangaId: string, relationships: any[]): string | null {
+  const art = relationships?.find((r) => r?.type === 'cover_art');
+  const fileName = text(art?.attributes?.fileName);
+  return fileName ? `/api/manga/cover/mangadex/${mangaId}/${encodeURIComponent(fileName)}.256.jpg` : null;
+}
+
 async function get(path: string): Promise<any> {
   let response: Response;
   try {
@@ -126,6 +141,7 @@ export async function search(query: string, limit = 10): Promise<Candidate[]> {
       status: seriesStatus(m.attributes?.status),
       year: typeof m.attributes?.year === 'number' ? m.attributes.year : null,
       coverUrl: coverUrl(m.id, m.relationships ?? []),
+      coverPath: coverPath(m.id, m.relationships ?? []),
       trackable: ids.muId !== null,
     };
   });

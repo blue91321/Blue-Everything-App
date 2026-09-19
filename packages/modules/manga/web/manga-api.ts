@@ -16,6 +16,9 @@ export interface SeriesSummary {
   title: string;
   status: SeriesStatus;
   latestChapter: string | null;
+  totalChapters: number | null;
+  chapterLabel: string;
+  chapterTitle: string;
   checkedAt: number | null;
   error: string | null;
   addedAt: number;
@@ -37,6 +40,7 @@ export interface Candidate {
   status: SeriesStatus;
   year: number | null;
   coverUrl: string | null;
+  coverPath: string | null;
   trackable: boolean;
   already: boolean;
 }
@@ -102,22 +106,26 @@ export const manga = {
  */
 const covers = new Map<string, Promise<string>>();
 
-export function coverFor(id: string): Promise<string> {
-  const known = covers.get(id);
+/**
+ * `path` is always built by the server — a library row's `coverPath` or a search
+ * candidate's — so the browser never assembles one from a URL it took apart.
+ */
+export function coverFor(path: string): Promise<string> {
+  const known = covers.get(path);
   if (known) return known;
 
   const loading = (async () => {
-    const response = await fetch(`/api/manga/${id}/cover`, {
+    const response = await fetch(path, {
       headers: { authorization: `Bearer ${getToken()}` },
     });
     if (!response.ok) throw new Error(`no cover (${response.status})`);
     return URL.createObjectURL(await response.blob());
   })();
 
-  covers.set(id, loading);
+  covers.set(path, loading);
   // A failure must not be cached, or one flaky fetch means a row with no
   // picture for the rest of the session.
-  loading.catch(() => covers.delete(id));
+  loading.catch(() => covers.delete(path));
   return loading;
 }
 

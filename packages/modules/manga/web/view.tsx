@@ -140,7 +140,7 @@ export default function MangaView({ search, onFocused }: FeatureViewProps) {
           {results.length === 0 && <p className="empty">Nothing matched.</p>}
           {results.map((candidate) => (
             <div className="manga-row" key={candidate.mangadexId ?? candidate.title}>
-              <div className="manga-cover manga-cover-empty" style={{ width: 40, height: 56 }} aria-hidden="true" />
+              <Cover path={candidate.coverPath} title={candidate.title} size={40} />
               <div className="manga-row-text">
                 <span className="title truncate">{candidate.title}</span>
                 {candidate.subtitle && <span className="meta"> {candidate.subtitle}</span>}
@@ -184,11 +184,11 @@ export default function MangaView({ search, onFocused }: FeatureViewProps) {
 
         {data?.series.map((series) => (
           <div className="manga-row" key={series.id}>
-            <Cover id={series.id} title={series.title} size={40} />
+            <Cover path={series.coverPath} title={series.title} size={40} />
             <div className="manga-row-text">
               <span className="title truncate">{series.title}</span>
-              <span className="meta">
-                {series.latestChapter ? `chapter ${series.latestChapter}` : 'not checked yet'}
+              <span className="meta" title={series.chapterTitle}>
+                {series.chapterLabel}
                 {' · '}
                 {STATUS_LABEL[series.status]}
                 {series.checkedAt && ` · checked ${ageOf(series.checkedAt, now)}`}
@@ -219,7 +219,8 @@ export default function MangaView({ search, onFocused }: FeatureViewProps) {
             {data.watching > 0
               ? `Watching ${data.watching} for new chapters, about every half hour. Finished series are not checked.`
               : 'Nothing is being watched, so no requests are made.'}{' '}
-            {data.credit}
+            {data.credit} Chapter numbers are the newest release it has logged — sites carrying unofficial
+            translations are often further ahead.
           </p>
         )}
       </div>

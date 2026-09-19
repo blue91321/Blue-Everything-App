@@ -46,6 +46,15 @@ export type Series = SeriesIds & {
    * series raising a nudge about the chapter that was already out.
    */
   latestChapter: string | null;
+  /**
+   * How many chapters exist, when MangaUpdates says so.
+   *
+   * Kept beside `latestChapter` rather than replacing it because they answer
+   * different questions — what you can read, and what has been written. Showing
+   * only the first is what made the screen confidently wrong; showing only the
+   * second would nudge about chapters nobody has translated.
+   */
+  totalChapters: number | null;
   /** When MangaUpdates last answered about this series, successful or not. */
   checkedAt: number | null;
   /** Why the last check failed, if it did. Kept beside the data it could not replace. */
@@ -85,7 +94,24 @@ export function read(): Store {
   try {
     const parsed = JSON.parse(readFileSync(STORE, 'utf8').replace(/^\uFEFF/, '')) as Partial<Store>;
     return {
-      series: Array.isArray(parsed.series) ? parsed.series : [],
+      /*
+       * Every optional field is filled in, not merely trusted.
+       *
+       * A row written before a field existed has it `undefined`, not `null`, and
+       * the two are not interchangeable to code that tests `=== null` \u2014 which is
+       * how `totalChapters` would have rendered as "ch 23 \u00B7 undefined written"
+       * on a store that predated it. This file is a schema whether or not it is
+       * a table, and it gains fields; normalising here is what stops every
+       * reader downstream having to remember that.
+       */
+      series: (Array.isArray(parsed.series) ? parsed.series : []).map((s) => ({
+        ...s,
+        latestChapter: s.latestChapter ?? null,
+        totalChapters: s.totalChapters ?? null,
+        checkedAt: s.checkedAt ?? null,
+        error: s.error ?? null,
+        coverUrl: s.coverUrl ?? null,
+      })),
       links: Array.isArray(parsed.links) ? parsed.links : [],
     };
   } catch {
@@ -111,11 +137,14 @@ export function write(next: Store): void {
   renameSync(tmp, STORE);
 }
 
-export function newSeries(fields: Omit<Series, 'id' | 'addedAt' | 'checkedAt' | 'error' | 'latestChapter'>): Series {
+export function newSeries(
+  fields: Omit<Series, 'id' | 'addedAt' | 'checkedAt' | 'error' | 'latestChapter' | 'totalChapters'>
+): Series {
   return {
     ...fields,
     id: randomUUID(),
     latestChapter: null,
+    totalChapters: null,
     checkedAt: null,
     error: null,
     addedAt: Date.now(),

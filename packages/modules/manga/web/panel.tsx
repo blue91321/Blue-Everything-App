@@ -69,7 +69,7 @@ export default function MangaPanel() {
           onClick={() => goTo('manga', { search: release.title })}
           title={`${release.title} — chapter ${release.chapter}`}
         >
-          <Cover id={release.seriesId} title={release.title} size={34} />
+          <Cover path={release.coverPath} title={release.title} size={34} />
           <span className="manga-panel-text">
             <span className="title truncate">{release.title}</span>
             <span className="meta">

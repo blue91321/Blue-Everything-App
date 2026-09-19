@@ -40,12 +40,49 @@ export const SPACING_MS = 1_200;
 export class MangaUpdatesError extends Error {}
 
 export type SeriesReading = {
-  /** As they spell it. A number in their JSON, kept as text for display. */
+  /**
+   * The newest chapter **released by a group that reports to MangaUpdates**.
+   *
+   * Not "the newest chapter that exists", which is what this was first read as
+   * and what cost a real bug. For *Archmage Curriculum* this is 23 — a LINE
+   * Webtoon release from 2026-09-12 — while 41 chapters exist and an aggregator
+   * was carrying 45. Vinland Saga agreed with reality only because it is
+   * finished, so the mistake survived the first check.
+   *
+   * It is still the right thing to *nudge* on, because it is the newest chapter
+   * somebody can actually read. It is the wrong thing to *label* "chapter N".
+   */
   latestChapter: string | null;
+  /**
+   * How many chapters exist, out of their free-text `status` field.
+   *
+   * Null when the status counts volumes instead, or says nothing. Shown beside
+   * `latestChapter` so a single figure stops implying it is the whole story.
+   */
+  totalChapters: number | null;
   /** Their own judgement that the original run has ended. */
   completed: boolean;
   title: string | null;
 };
+
+/**
+ * `"41 Chapters (Ongoing)"` → 41.
+ *
+ * Free text, so this reads rather than parses: find a count that is explicitly
+ * *chapters* and ignore everything else. `"29 Volumes (Complete)"` gives null on
+ * purpose — a volume count is not a chapter count, and guessing a multiplier
+ * would invent a number nobody published.
+ *
+ * Their status can carry several lines for regional editions; the first chapter
+ * count wins, which is the one their own page leads with.
+ */
+export function totalChaptersFrom(status: unknown): number | null {
+  if (typeof status !== 'string') return null;
+  const m = /(\d+)\s+chapters?\b/i.exec(status);
+  if (!m) return null;
+  const n = Number.parseInt(m[1], 10);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
 
 export async function readSeries(muId: number): Promise<SeriesReading> {
   let response: Response;
@@ -78,6 +115,7 @@ export async function readSeries(muId: number): Promise<SeriesReading> {
         : typeof latest === 'string' && latest.trim()
           ? latest.trim()
           : null,
+    totalChapters: totalChaptersFrom(body.status),
     completed: body.completed === true,
     title: typeof body.title === 'string' ? body.title : null,
   };

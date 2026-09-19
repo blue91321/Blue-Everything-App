@@ -170,6 +170,39 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  /**
+   * A cover for something you have **not** added yet.
+   *
+   * The route above is keyed by library id, which a search result does not have
+   * — so candidates rendered a blank placeholder and every search was a list of
+   * grey rectangles, with the cover URL sitting unused in the response.
+   *
+   * This is the one place a caller names what to fetch, so the two path parts
+   * are pattern-checked rather than trusted: a MangaDex id is a UUID and a cover
+   * filename is a UUID plus an extension, optionally with their `.256.jpg`
+   * thumbnail suffix. The host is fixed here and `fetchCover` re-checks the
+   * assembled prefix, so the worst a crafted request can reach is a different
+   * cover on MangaDex. That is a narrower claim than "not an open proxy" by
+   * accident — it is two checks that are only equivalent while both are right,
+   * the arrangement the zip reader's path guard already uses.
+   */
+  app.get('/api/manga/cover/mangadex/:mangaId/:file', async (request, reply) => {
+    const { mangaId, file } = request.params as { mangaId: string; file: string };
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const FILE = /^[0-9a-f-]{36}\.(jpg|jpeg|png)(\.\d{2,4}\.jpg)?$/i;
+    if (!UUID.test(mangaId) || !FILE.test(file)) return reply.code(400).send({ error: 'not a cover' });
+
+    try {
+      const { body, contentType } = await fetchCover(`https://uploads.mangadex.org/covers/${mangaId}/${file}`);
+      return reply
+        .header('content-type', contentType)
+        .header('cache-control', 'private, max-age=86400')
+        .send(Buffer.from(body));
+    } catch {
+      return reply.code(502).send({ error: 'could not fetch the cover' });
+    }
+  });
+
   /* ---- the timer ---- */
 
   const sweep = async () => {

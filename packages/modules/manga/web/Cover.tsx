@@ -14,7 +14,7 @@
 import { useEffect, useState } from 'react';
 import { coverFor } from './manga-api';
 
-export function Cover({ id, title, size = 48 }: { id: string; title: string; size?: number }) {
+export function Cover({ path, title, size = 48 }: { path: string | null; title: string; size?: number }) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -22,14 +22,17 @@ export function Cover({ id, title, size = 48 }: { id: string; title: string; siz
     let alive = true;
     setUrl(null);
     setFailed(false);
-    coverFor(id).then(
+    // No path at all is a series MangaDex has no cover for — the placeholder is
+    // the whole answer, and asking would be a guaranteed 404 per row.
+    if (!path) return;
+    coverFor(path).then(
       (u) => alive && setUrl(u),
       () => alive && setFailed(true)
     );
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [path]);
 
   const style = { width: size, height: Math.round(size * 1.4) } as const;
 
@@ -39,7 +42,7 @@ export function Cover({ id, title, size = 48 }: { id: string; title: string; siz
   if (!url) {
     return (
       <div className="manga-cover manga-cover-empty" style={style} aria-hidden="true">
-        {failed ? '' : '…'}
+        {failed || !path ? '' : '…'}
       </div>
     );
   }
