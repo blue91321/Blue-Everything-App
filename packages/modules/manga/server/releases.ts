@@ -37,6 +37,7 @@ import { read, write, alreadyRaised, type Series, type Store } from './library.j
 import { readSeries, MangaUpdatesError, SPACING_MS } from './mangaupdates.js';
 import { SourceError } from './sources.js';
 import { SuwayomiAdapter } from './suwayomi.js';
+import { suwayomiProcess } from './process.js';
 
 /**
  * How many series one sweep asks about.
@@ -102,15 +103,25 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
      * The source is the authority — it is the thing serving the chapter — and it
      * is on this machine, so it costs no rate limit and needs no spacing. Asking
      * MangaUpdates as well would be a remote request per series per sweep to
-     * refresh a number that is now only shown as context.
+     * refresh a number now shown only as context, so `totalChapters` and
+     * `completed` stop being refreshed once a series is linked and keep their
+     * last value.
      *
-     * The consequence, stated rather than discovered: `totalChapters` and
-     * `completed` stop being refreshed once a series is linked. Both keep their
-     * last value. That is the right trade — the number people read is the one
-     * the source gives, and the alternative is doubling the only requests here
-     * that anybody is rationing.
+     * **A sweep never starts Suwayomi**, which is what keeps "on demand" true.
+     *
+     * Waking a 166MB JVM every half hour to ask a dozen questions is the
+     * always-running option wearing a timer, and it is the trade this project
+     * refuses everywhere else. So the source is used when it happens to be up —
+     * because you have been reading — and MangaUpdates answers when it is not.
+     *
+     * The consequence is worth stating: a linked series checked while Suwayomi
+     * is down reports the narrower number until the next time you open it. That
+     * is a stale number rather than a wrong one, and the row says where it came
+     * from either way.
      */
-    const viaSource = row.source !== null && suwayomi !== null && row.source.adapter === suwayomi.id;
+    const sourceUp = suwayomiProcess.state.state === 'running' || !store.manageSuwayomi;
+    const viaSource =
+      row.source !== null && suwayomi !== null && row.source.adapter === suwayomi.id && sourceUp;
 
     // Spacing applies to MangaUpdates only. Their policy asks for it; a
     // localhost GraphQL call does not need it and should not be slowed by it.
@@ -120,19 +131,54 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
       let fresh: string | null;
 
       if (viaSource) {
-        const latest = await suwayomi!.latestChapter(row.source!.mangaId);
-        row.sourceChapter = latest;
-        row.sourceCheckedAt = now;
-        row.checkedAt = now;
-        row.error = null;
-        result.checked += 1;
-        /*
-         * The source's answer, or nothing. `readableChapter` decides which
-         * number to *show* and is not what this needs: falling back to the
-         * stored value here would compare a number against itself and could
-         * never be news.
-         */
-        fresh = latest === null ? null : String(latest);
+        try {
+          const latest = await suwayomi!.latestChapter(row.source!.mangaId);
+          row.sourceChapter = latest;
+          row.sourceCheckedAt = now;
+          row.checkedAt = now;
+          row.error = null;
+          result.checked += 1;
+          /*
+           * The source's answer, or nothing. `readableChapter` decides which
+           * number to *show* and is not what this needs: falling back to the
+           * stored value here would compare a number against itself and could
+           * never be news.
+           */
+          fresh = latest === null ? null : String(latest);
+        } catch (error) {
+          /*
+           * A source that will not answer falls back rather than failing the row.
+           *
+           * Extensions break and servers stop. A linked series going silent
+           * about its chapter count over that would be worse than the narrower
+           * MangaUpdates number it had before it was linked — so the fallback is
+           * taken and the row says it was taken, rather than quietly presenting
+           * one service's answer as the other's.
+           *
+           * With no MangaUpdates id there is nothing to fall back *to*, so the
+           * error stands and the outer handler records it.
+           */
+          if (series.muId === null) throw error;
+          const why = error instanceof SourceError ? error.message : 'the source failed';
+
+          remoteCalls += 1;
+          const reading = await readSeries(series.muId);
+          row.checkedAt = now;
+          row.totalChapters = reading.totalChapters;
+          if (reading.completed && row.status === 'ongoing') row.status = 'completed';
+          /*
+           * The stale source number is cleared, not kept.
+           *
+           * The row would otherwise print "ch 45 · via Suwayomi" above a line
+           * saying it is showing MangaUpdates — a label and its own explanation
+           * contradicting each other, which is worse than losing a number that
+           * comes back on the next successful check.
+           */
+          row.sourceChapter = null;
+          row.error = `${why} — showing MangaUpdates for now`;
+          result.checked += 1;
+          fresh = reading.latestChapter;
+        }
       } else {
         remoteCalls += 1;
         const reading = await readSeries(series.muId!);

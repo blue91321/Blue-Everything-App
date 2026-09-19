@@ -215,6 +215,8 @@ const row = (over: Partial<Store['series'][number]>): Store['series'][number] =>
 
 const store: Store = {
   suwayomiUrl: null,
+  suwayomiJar: null,
+  manageSuwayomi: false,
   series: [
     row({ id: 'recent', checkedAt: 1_000 }),
     row({ id: 'stale', checkedAt: 10 }),

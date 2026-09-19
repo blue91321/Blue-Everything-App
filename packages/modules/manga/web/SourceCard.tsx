@@ -1,42 +1,75 @@
 /**
- * Where chapters come from, and whether it is answering.
+ * Where chapters come from, and whether it is running.
  *
- * Its own component because it is the one part of this screen that can be in
- * four states with four different fixes — not configured, configured and
- * unreachable, reachable with no extensions, and working — and a card that
- * collapsed those into "not working" would be the write-only switch the Voice
- * screen exists as a warning about.
+ * Its own component because this is the one part of the screen that can be in
+ * six states with six different fixes — no jar chosen, jar chosen but management
+ * off, off and startable, starting, running, failed — and a card that collapsed
+ * them into "not working" would be the write-only switch the Voice screen exists
+ * as a warning about.
  *
- * It says plainly that Suwayomi is a separate program you run yourself. Nothing
- * here installs, downloads or starts it, and a card implying otherwise would be
- * a promise this module cannot keep.
+ * It says plainly that Suwayomi is a separate program. The app can **start** one
+ * you have downloaded; it does not ship, bundle or download it, and a card
+ * implying otherwise would be a promise the package cannot keep — its extensions
+ * are Android APKs and the artifact is 166MB.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAsync } from '@app/useAsync';
-import { manga } from './manga-api';
+import { manga, type SourceState } from './manga-api';
+
+const RELEASES = 'https://github.com/Suwayomi/Suwayomi-Server/releases/latest';
+
+function managedLine(state: SourceState): { text: string; urgent: boolean } {
+  if (!state.manage) return { text: 'Not managed — start Suwayomi yourself.', urgent: false };
+  switch (state.managed.state) {
+    case 'running':
+      return { text: 'Running. It will stop on its own after a while unused.', urgent: false };
+    case 'starting':
+      // Named rather than shown as a spinner, because a JVM is seconds and a
+      // silent wait of that length reads as nothing having happened.
+      return { text: 'Starting — a JVM takes a few seconds…', urgent: false };
+    case 'failed':
+      return { text: state.managed.problem, urgent: true };
+    default:
+      return { text: 'Off. It starts when you search sources, and stops when idle.', urgent: false };
+  }
+}
 
 export function SourceCard({ local }: { local: boolean }) {
   const state = useAsync(() => manga.source.get());
   const [draft, setDraft] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
   const data = state.data;
-  const value = draft ?? data?.url ?? data?.defaultUrl ?? '';
+  const url = draft ?? data?.url ?? data?.defaultUrl ?? '';
 
-  async function save(url: string) {
-    setSaving(true);
+  /*
+   * While it is starting, keep asking. There is no push from the server and the
+   * change announcer does not fire for a process that has not written anything,
+   * so without this the card would sit on "Starting…" until something unrelated
+   * reloaded it.
+   */
+  useEffect(() => {
+    if (data?.managed.state !== 'starting') return;
+    const timer = setInterval(() => state.reload(), 2000);
+    return () => clearInterval(timer);
+  }, [data?.managed.state, state]);
+
+  async function act(fn: () => Promise<unknown>) {
+    setBusy(true);
     setProblem(null);
     try {
-      await manga.source.set(url);
+      await fn();
       setDraft(null);
       state.reload();
     } catch (error) {
-      setProblem(error instanceof Error ? error.message : 'could not save that');
+      setProblem(error instanceof Error ? error.message : 'that did not work');
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   }
+
+  const managed = data ? managedLine(data) : null;
 
   return (
     <details className="card">
@@ -45,69 +78,132 @@ export function SourceCard({ local }: { local: boolean }) {
         {data && (
           <span className="meta">
             {' · '}
-            {!data.configured
+            {!data.jar && !data.configured
               ? 'not set up'
-              : data.health?.reachable
-                ? `${data.health.sources.length} source${data.health.sources.length === 1 ? '' : 's'}`
-                : 'not answering'}
+              : data.manage
+                ? data.managed.state
+                : data.health?.reachable
+                  ? `${data.health.sources.length} sources`
+                  : 'not answering'}
           </span>
         )}
       </summary>
 
       <p className="meta">
-        MangaUpdates only knows what scanlation groups have reported to it, which runs behind what sites actually
-        carry. Pointing this at a reader that holds your sources lets it answer with what you could open right now.
+        MangaUpdates only knows what scanlation groups have reported, which runs behind what sites actually carry.
+        Pointing this at a reader that holds your sources lets it answer with what you could open right now.
       </p>
       <p className="meta">
-        Suwayomi is a separate program you run yourself — nothing here installs, downloads or starts it. Once it is
-        running, give its address below.
+        Suwayomi is a separate program — its extensions are Android packages and the download is 166MB, so it cannot
+        live inside this app. Download the <code>.jar</code> from{' '}
+        <a href={RELEASES} target="_blank" rel="noreferrer noopener">
+          its releases page
+        </a>
+        , then point this at it and the app will start and stop it for you.
       </p>
 
-      {/*
-        * Changing this is refused away from the PC, because the address becomes
-        * something the server POSTs to on a timer. Said here rather than left
-        * to a 403, since from the phone the field would otherwise just fail.
-        */}
       {!local && <p className="meta urgent">This can only be changed from the PC running the server.</p>}
-
-      <div className="row">
-        <input
-          value={value}
-          disabled={!local || saving}
-          placeholder={data?.defaultUrl ?? 'http://127.0.0.1:4567'}
-          onChange={(e) => setDraft(e.target.value)}
-          aria-label="Suwayomi address"
-        />
-        <button className="btn primary" disabled={!local || saving || !value.trim()} onClick={() => save(value.trim())}>
-          {saving ? 'Checking…' : 'Save'}
-        </button>
-        {data?.configured && (
-          <button className="btn subtle" disabled={!local || saving} onClick={() => save('')}>
-            Clear
-          </button>
-        )}
-      </div>
-
       {problem && <p className="banner">{problem}</p>}
       {state.error && <p className="banner">Could not load: {state.error.message}</p>}
 
-      {data?.configured && data.health && !data.health.reachable && (
-        <p className="meta urgent">{data.health.problem}</p>
-      )}
+      {/* ---- the jar ---- */}
+      {data && (
+        <>
+          <label className="meta" htmlFor="manga-jar">
+            Suwayomi jar
+          </label>
+          <div className="row">
+            <input
+              id="manga-jar"
+              defaultValue={data.jar ?? ''}
+              disabled={!local || busy}
+              placeholder="C:\\…\\Suwayomi-Server-v2.3.2243.jar"
+              onBlur={(e) => {
+                const next = e.target.value.trim();
+                if (next !== (data.jar ?? '')) void act(() => manga.source.setJar(next));
+              }}
+            />
+          </div>
 
-      {/*
-        * Running with nothing installed is its own state and its own fix. It
-        * looks identical to "broken" from a chapter count that never moves, so
-        * it is named rather than left to be worked out.
-        */}
-      {data?.health?.reachable && data.health.sources.length === 0 && (
-        <p className="meta urgent">
-          It is answering, but has no sources installed — add an extension repository in Suwayomi first.
-        </p>
-      )}
+          {/*
+            * Offered, never chosen for you. A guessed path that happened to be
+            * wrong would start something nobody asked for — the same rule the
+            * series matcher follows.
+            */}
+          {data.foundJars.length > 0 && (
+            <p className="meta">
+              Found:{' '}
+              {data.foundJars.map((path) => (
+                <button key={path} className="btn subtle" disabled={!local || busy} onClick={() => void act(() => manga.source.setJar(path))}>
+                  {path.split(/[\\/]/).pop()}
+                </button>
+              ))}
+            </p>
+          )}
 
-      {data?.health?.reachable && data.health.sources.length > 0 && (
-        <p className="meta">Searching: {data.health.sources.slice(0, 6).join(', ')}</p>
+          <div className="row">
+            <label className="meta">
+              <input
+                type="checkbox"
+                checked={data.manage}
+                disabled={!local || busy || !data.jar}
+                onChange={(e) => void act(() => manga.source.setManage(e.target.checked))}
+              />{' '}
+              Let the app start and stop it
+            </label>
+          </div>
+
+          {managed && <p className={managed.urgent ? 'meta urgent' : 'meta'}>{managed.text}</p>}
+
+          {data.manage && local && (
+            <div className="row">
+              <button className="btn" disabled={busy || data.managed.state === 'starting'} onClick={() => void act(() => manga.source.start())}>
+                {data.managed.state === 'starting' ? 'Starting…' : 'Start now'}
+              </button>
+              <button className="btn subtle" disabled={busy || data.managed.state !== 'running'} onClick={() => void act(() => manga.source.stop())}>
+                Stop
+              </button>
+            </div>
+          )}
+
+          {/* ---- the address ---- */}
+          <label className="meta" htmlFor="manga-url">
+            Address
+          </label>
+          <div className="row">
+            <input
+              id="manga-url"
+              value={url}
+              disabled={!local || busy}
+              placeholder={data.defaultUrl}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <button className="btn primary" disabled={!local || busy || !url.trim()} onClick={() => void act(() => manga.source.set(url.trim()))}>
+              Save
+            </button>
+            {data.configured && (
+              <button className="btn subtle" disabled={!local || busy} onClick={() => void act(() => manga.source.set(''))}>
+                Clear
+              </button>
+            )}
+          </div>
+
+          {data.health && !data.health.reachable && <p className="meta urgent">{data.health.problem}</p>}
+
+          {/*
+            * Running with nothing installed is its own state and its own fix. It
+            * looks identical to "broken" from a chapter count that never moves,
+            * so it is named rather than left to be worked out.
+            */}
+          {data.health?.reachable && data.health.sources.length === 0 && (
+            <p className="meta urgent">
+              It is answering, but has no sources installed — add an extension repository in Suwayomi first.
+            </p>
+          )}
+          {data.health?.reachable && data.health.sources.length > 0 && (
+            <p className="meta">Searching: {data.health.sources.slice(0, 6).join(', ')}</p>
+          )}
+        </>
       )}
     </details>
   );

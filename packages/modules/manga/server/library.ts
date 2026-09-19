@@ -98,6 +98,21 @@ export type Store = {
    * broken, and they have different fixes.
    */
   suwayomiUrl: string | null;
+  /**
+   * The Suwayomi jar this app may start, when you have pointed it at one.
+   *
+   * Separate from `suwayomiUrl` because they are different claims: a URL says
+   * where to talk to one, a jar says we may run one. Somebody with Suwayomi
+   * already running as a service wants the first and not the second.
+   */
+  suwayomiJar: string | null;
+  /**
+   * May the app start and stop it?
+   *
+   * Off unless you say so. Starting a 166MB JVM is not something to do to
+   * somebody as a side effect of opening a tab they were only browsing.
+   */
+  manageSuwayomi: boolean;
   series: Series[];
   /** Raised-and-linked releases, so a task you deleted is never recreated. */
   links: ReleaseLink[];
@@ -122,7 +137,7 @@ export type ReleaseLink = {
   raisedAt: number;
 };
 
-const EMPTY: Store = { suwayomiUrl: null, series: [], links: [] };
+const EMPTY: Store = { suwayomiUrl: null, suwayomiJar: null, manageSuwayomi: false, series: [], links: [] };
 
 export function read(): Store {
   if (!existsSync(STORE)) return { ...EMPTY };
@@ -130,6 +145,8 @@ export function read(): Store {
     const parsed = JSON.parse(readFileSync(STORE, 'utf8').replace(/^\uFEFF/, '')) as Partial<Store>;
     return {
       suwayomiUrl: typeof parsed.suwayomiUrl === 'string' && parsed.suwayomiUrl ? parsed.suwayomiUrl : null,
+      suwayomiJar: typeof parsed.suwayomiJar === 'string' && parsed.suwayomiJar ? parsed.suwayomiJar : null,
+      manageSuwayomi: parsed.manageSuwayomi === true,
       /*
        * Every optional field is filled in, not merely trusted.
        *

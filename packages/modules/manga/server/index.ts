@@ -34,6 +34,8 @@ import { seriesSummary, recentReleases } from './present.js';
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
 import { SourceError } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL } from './suwayomi.js';
+import { suwayomiProcess, findJars } from './process.js';
+import { homedir } from 'node:os';
 
 export async function routes(app: FastifyInstance): Promise<void> {
   /** The library, already shaped for the screen. */
@@ -234,32 +236,106 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
   };
 
-  /** Is a source configured, and is it answering? */
+  /**
+   * Is a source configured, is it answering, and may we run it ourselves?
+   *
+   * All four of "not set up", "set up and broken", "off but startable" and
+   * "running" are reported separately. Collapsing any pair of them into one flag
+   * gives a screen that says "not working" to a person whose actual fix is one
+   * click away — the distinction `features` and `featuresMissing` draw.
+   */
   app.get('/api/manga/source', async () => {
-    const { suwayomiUrl } = read();
-    if (!suwayomiUrl) {
-      /*
-       * "Not set up" and "set up and broken" are different states with different
-       * fixes, so they are never collapsed into one unreachable flag — the same
-       * distinction `features` and `featuresMissing` draw.
-       */
-      return { configured: false, url: null, defaultUrl: DEFAULT_BASE_URL, health: null };
+    const { suwayomiUrl, suwayomiJar, manageSuwayomi } = read();
+    const managed = suwayomiProcess.state;
+
+    // Only offered when nothing is chosen yet: a scan of Downloads on every
+    // poll would be disk work for a question already answered.
+    const foundJars = suwayomiJar ? [] : findJars(homedir());
+
+    const base = {
+      defaultUrl: DEFAULT_BASE_URL,
+      jar: suwayomiJar,
+      manage: manageSuwayomi,
+      managed,
+      foundJars,
+    };
+
+    if (!suwayomiUrl) return { ...base, configured: false, url: null, health: null };
+
+    /*
+     * Not asked while we are managing it and it is off — that is the ordinary
+     * resting state, and reporting it as "unreachable" would make the normal
+     * case look broken. The `managed` state above already says what is true.
+     */
+    if (manageSuwayomi && managed.state !== 'running') {
+      return { ...base, configured: true, url: suwayomiUrl, health: null };
     }
-    const health = await new SuwayomiAdapter(suwayomiUrl).describe();
-    return { configured: true, url: suwayomiUrl, defaultUrl: DEFAULT_BASE_URL, health };
+
+    return { ...base, configured: true, url: suwayomiUrl, health: await new SuwayomiAdapter(suwayomiUrl).describe() };
+  });
+
+  /** Start it now, and wait until it answers. */
+  app.post('/api/manga/source/start', async (request, reply) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    const { suwayomiJar, suwayomiUrl } = read();
+    if (!suwayomiJar) return reply.code(400).send({ error: 'no Suwayomi jar has been chosen' });
+    return suwayomiProcess.ensureRunning(suwayomiJar, suwayomiUrl ?? DEFAULT_BASE_URL);
+  });
+
+  /** Stop it now, rather than waiting out the idle timer. */
+  app.post('/api/manga/source/stop', async (request) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    suwayomiProcess.stop();
+    return suwayomiProcess.state;
   });
 
   /** Set, or clear with an empty string. */
   app.put('/api/manga/source', async (request, reply) => {
     localOnly(request as unknown as { isLocal: boolean });
-    const body = request.body as { url?: unknown } | null;
+    const body = request.body as { url?: unknown; jar?: unknown; manage?: unknown } | null;
+
+    /*
+     * The jar and the switch are set through the same route as the URL, and each
+     * key is optional — omitted means "leave it", which is the shape the
+     * integrations credential form already uses. A single endpoint keeps the
+     * three from being saved in an order that briefly makes no sense, such as
+     * managing switched on with no jar chosen.
+     */
+    if (body && ('jar' in body || 'manage' in body)) {
+      const store = read();
+      const jar = 'jar' in body ? (typeof body.jar === 'string' && body.jar.trim() ? body.jar.trim() : null) : store.suwayomiJar;
+      const manage = 'manage' in body ? body.manage === true : store.manageSuwayomi;
+
+      // Switching management on with nothing to run is a setting that could only
+      // fail later, so it is refused now with the reason.
+      if (manage && !jar) return reply.code(400).send({ error: 'choose a Suwayomi jar first' });
+      // Stopped rather than orphaned: turning management off while it is up
+      // would leave a JVM nobody owns holding the port.
+      if (!manage) suwayomiProcess.stop();
+
+      write({ ...store, suwayomiJar: jar, manageSuwayomi: manage });
+      if (!('url' in (body ?? {}))) {
+        const after = read();
+        return {
+          configured: Boolean(after.suwayomiUrl),
+          url: after.suwayomiUrl,
+          defaultUrl: DEFAULT_BASE_URL,
+          jar: after.suwayomiJar,
+          manage: after.manageSuwayomi,
+          managed: suwayomiProcess.state,
+          foundJars: after.suwayomiJar ? [] : findJars(homedir()),
+          health: null,
+        };
+      }
+    }
+
     const raw = typeof body?.url === 'string' ? body.url.trim() : null;
 
     if (raw === null) return reply.code(400).send({ error: 'send a url' });
     if (raw === '') {
       const store = read();
       write({ ...store, suwayomiUrl: null });
-      return { configured: false, url: null, defaultUrl: DEFAULT_BASE_URL, health: null };
+      return sourceState(null, null);
     }
 
     let parsed: URL;
@@ -280,8 +356,29 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
     // Answered with the health check rather than `{ ok: true }`, so pressing
     // Save tells you whether it worked instead of leaving you to go and look.
-    return { configured: true, url, defaultUrl: DEFAULT_BASE_URL, health: await new SuwayomiAdapter(url).describe() };
+    return sourceState(url, await new SuwayomiAdapter(url).describe());
   });
+
+  /**
+   * One shape for the source card, so a save and a reload never disagree.
+   *
+   * Both were assembled by hand at first and the PUT quietly omitted the jar and
+   * the managed state — so saving an address blanked half the card until the
+   * next poll refilled it, which reads as the save having lost something.
+   */
+  function sourceState(url: string | null, health: Awaited<ReturnType<SuwayomiAdapter['describe']>> | null) {
+    const after = read();
+    return {
+      configured: Boolean(url),
+      url,
+      defaultUrl: DEFAULT_BASE_URL,
+      jar: after.suwayomiJar,
+      manage: after.manageSuwayomi,
+      managed: suwayomiProcess.state,
+      foundJars: after.suwayomiJar ? [] : findJars(homedir()),
+      health,
+    };
+  }
 
   /** Find this series in the source's own catalogue, so it can be linked. */
   app.get('/api/manga/:id/source/search', async (request, reply) => {
@@ -295,6 +392,18 @@ export async function routes(app: FastifyInstance): Promise<void> {
     // Defaults to the series' own title, because that is what you want in nine
     // cases out of ten and typing it again is a chore.
     const query = (typeof q === 'string' && q.trim()) || series.title;
+
+    /*
+     * This is the "on demand" in on-demand: searching sources is something you
+     * pressed a button to do, so it is allowed to spend the ten seconds of JVM
+     * startup. The sweep deliberately is not.
+     */
+    if (store.manageSuwayomi && store.suwayomiJar) {
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, store.suwayomiUrl ?? DEFAULT_BASE_URL);
+      if (state.state !== 'running') {
+        return reply.code(502).send({ error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting' });
+      }
+    }
 
     try {
       return { results: await new SuwayomiAdapter(store.suwayomiUrl).search(query) };
@@ -381,5 +490,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
   app.addHook('onClose', () => {
     clearTimeout(firstRun);
     clearInterval(repeat);
+    /*
+     * Suwayomi goes down with us. A surviving child would hold port 4567 with
+     * nobody owning it, and the next start would fail against a server that
+     * cannot be stopped from inside the app — the opposite requirement to the
+     * tray's, whose children must outlive the process that spawned them.
+     */
+    suwayomiProcess.stop();
   });
 }

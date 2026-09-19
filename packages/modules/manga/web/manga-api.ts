@@ -37,11 +37,28 @@ export interface SourceHealth {
   problem: string | null;
 }
 
+/** What the app's own Suwayomi process is doing, when it is managing one. */
+export type ManagedState =
+  | { state: 'off' }
+  | { state: 'starting'; since: number }
+  | { state: 'running'; since: number; pid: number | null }
+  | { state: 'failed'; problem: string };
+
 export interface SourceState {
   configured: boolean;
   url: string | null;
   defaultUrl: string;
-  /** Null when nothing is configured — which is not the same as unreachable. */
+  /** The jar this app may run, when one has been chosen. */
+  jar: string | null;
+  /** May the app start and stop it? */
+  manage: boolean;
+  managed: ManagedState;
+  /** Jars found lying around, offered only while none is chosen. */
+  foundJars: string[];
+  /**
+   * Null when nothing is configured **or** when we manage it and it is simply
+   * off — the resting state, which is not the same as unreachable.
+   */
   health: SourceHealth | null;
 }
 
@@ -118,6 +135,11 @@ export const manga = {
   source: {
     get: () => call<SourceState>('/api/manga/source'),
     set: (url: string) => call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ url }) }),
+    setJar: (jar: string) => call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ jar }) }),
+    setManage: (manage: boolean) =>
+      call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ manage }) }),
+    start: () => call<ManagedState>('/api/manga/source/start', { method: 'POST' }),
+    stop: () => call<ManagedState>('/api/manga/source/stop', { method: 'POST' }),
     search: (id: string, q?: string) =>
       call<{ results: SourceMatch[] }>(
         `/api/manga/${id}/source/search${q ? `?q=${encodeURIComponent(q)}` : ''}`
