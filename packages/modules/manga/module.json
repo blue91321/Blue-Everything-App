@@ -1,0 +1,9 @@
+{
+  "id": "manga",
+  "label": "Manga",
+  "blurb": "Your reading list, and a nudge when a chapter you are waiting for lands.",
+  "version": "0.3.2",
+  "author": "blue91321",
+  "server": "server/index.ts",
+  "notes": "Uses MangaDex for metadata and MangaUpdates for release dates. Neither needs an account for what this does. No chapters are fetched or stored by this package."
+}

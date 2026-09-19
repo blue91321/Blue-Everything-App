@@ -1,0 +1,134 @@
+/**
+ * Talking to this package's own endpoints.
+ *
+ * Its own thin client rather than entries on `api` in core, because core must
+ * not know a package exists — the same rule that keeps `hidden_providers` an
+ * opaque slug and `tasks.source` an unvalidated string. What it borrows from
+ * core is `getToken`, since every `/api/` call needs the bearer token and there
+ * is no sense keeping a second copy of where it is stored.
+ */
+import { getToken } from '@app/api';
+
+export type SeriesStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
+
+export interface SeriesSummary {
+  id: string;
+  title: string;
+  status: SeriesStatus;
+  latestChapter: string | null;
+  checkedAt: number | null;
+  error: string | null;
+  addedAt: number;
+  coverPath: string | null;
+  url: string | null;
+  malId: number | null;
+  anilistId: number | null;
+  watching: boolean;
+  notWatchingBecause: string | null;
+}
+
+export interface Candidate {
+  mangadexId: string | null;
+  malId: number | null;
+  anilistId: number | null;
+  muId: number | null;
+  title: string;
+  subtitle: string | null;
+  status: SeriesStatus;
+  year: number | null;
+  coverUrl: string | null;
+  trackable: boolean;
+  already: boolean;
+}
+
+export interface RecentRelease {
+  seriesId: string;
+  title: string;
+  chapter: string;
+  raisedAt: number;
+  coverPath: string | null;
+  url: string | null;
+}
+
+export interface Library {
+  series: SeriesSummary[];
+  /** What landed lately, which is what the panel draws. */
+  recent: RecentRelease[];
+  credit: string;
+  watching: number;
+}
+
+export interface SweepResult {
+  checked: number;
+  raised: number;
+  failed: number;
+  series: SeriesSummary[];
+}
+
+async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    headers: {
+      ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
+      authorization: `Bearer ${getToken()}`,
+    },
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+export const manga = {
+  list: () => call<Library>('/api/manga'),
+  search: (q: string) => call<{ results: Candidate[] }>(`/api/manga/search?q=${encodeURIComponent(q)}`),
+  add: (candidate: Candidate) =>
+    call<SeriesSummary>('/api/manga', { method: 'POST', body: JSON.stringify(candidate) }),
+  remove: (id: string) => call<{ ok: true }>(`/api/manga/${id}`, { method: 'DELETE' }),
+  checkNow: () => call<SweepResult>('/api/manga/check', { method: 'POST' }),
+};
+
+/**
+ * A cover, fetched with the token and handed back as an object URL.
+ *
+ * An `img src` sends no Authorization header, and these sit behind `/api/`
+ * because a picture in your reading list is your data — the same bind the habit
+ * pictures are in, solved the same way.
+ *
+ * Cached by series id rather than by URL, because a series' cover never changes
+ * without the series changing. The promise is cached, not the result, so two
+ * rows rendering at once share one request rather than racing.
+ */
+const covers = new Map<string, Promise<string>>();
+
+export function coverFor(id: string): Promise<string> {
+  const known = covers.get(id);
+  if (known) return known;
+
+  const loading = (async () => {
+    const response = await fetch(`/api/manga/${id}/cover`, {
+      headers: { authorization: `Bearer ${getToken()}` },
+    });
+    if (!response.ok) throw new Error(`no cover (${response.status})`);
+    return URL.createObjectURL(await response.blob());
+  })();
+
+  covers.set(id, loading);
+  // A failure must not be cached, or one flaky fetch means a row with no
+  // picture for the rest of the session.
+  loading.catch(() => covers.delete(id));
+  return loading;
+}
+
+/** How long ago, in the words the rest of the app uses. */
+export function ageOf(at: number | null, now: number): string | null {
+  if (at === null) return null;
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}

@@ -2553,3 +2553,105 @@ button {
   color: var(--muted);
   text-decoration: line-through dotted;
 }
+
+/* ---- Manga: the reading list and its panel ----------------------------- */
+
+/*
+ * The row is the friends row's shape — a picture, two lines of text, and
+ * trailing controls — so it takes the two rules that row had to learn.
+ *
+ * `min-width: 0` on the text column is what actually lets it ellipsis: a flex
+ * child defaults to `min-width: auto` and refuses to shrink below its content,
+ * which is what left the friends list with a 32px text column and thirteen
+ * names broken over two lines. `flex-wrap` lets the buttons drop underneath
+ * instead of squeezing the part worth reading, rather than hiding them below a
+ * breakpoint — the title and the chapter number are the whole row.
+ */
+.manga-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.manga-row:last-of-type {
+  border-bottom: 0;
+}
+
+.manga-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.manga-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manga-cover {
+  flex: 0 0 auto;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--surface-raised);
+}
+
+/*
+ * A placeholder of the same size rather than nothing, so a row does not change
+ * height when its picture lands — a list that reflows as covers arrive is worse
+ * than one that never had them.
+ */
+.manga-cover-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.manga-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.manga-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/*
+ * The whole row is the button, like the friends panel's, and for the reason
+ * stated there: in a 320px column an icon per row is width taken from the thing
+ * the column is for, and a row-sized hit target is easier to hit than a 20px
+ * square.
+ */
+.manga-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.manga-panel-row:hover {
+  background: var(--surface-raised);
+}
+
+.manga-panel-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
