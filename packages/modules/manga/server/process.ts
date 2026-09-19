@@ -98,6 +98,24 @@ class SuwayomiProcess {
     if (this.status.state === 'running') return this.status;
     if (this.starting) return this.starting;
 
+    /*
+     * Something is already answering there — adopt it rather than spawn.
+     *
+     * Two ways this happens and both are ordinary: you run Suwayomi yourself and
+     * switch management on afterwards, or a previous stop left part of its tree
+     * behind. Spawning into an occupied port produces a JVM that cannot bind and
+     * dies, reported as a start failure while a perfectly good server sits there
+     * answering — the most confusing outcome available.
+     *
+     * The pid is null because we did not start it, which is honest: `stop()` can
+     * only kill what it spawned, and the screen says "running" either way.
+     */
+    const existing = await new SuwayomiAdapter(baseUrl).describe();
+    if (existing.reachable) {
+      this.status = { state: 'running', since: Date.now(), pid: null };
+      return this.status;
+    }
+
     if (!existsSync(jarPath)) {
       // Named rather than a generic failure: "you have not downloaded it" and
       // "it will not start" are different problems with different fixes.
@@ -209,6 +227,25 @@ class SuwayomiProcess {
     this.idleTimer.unref();
   }
 
+  /**
+   * Stop it, and everything it started.
+   *
+   * **`child.kill()` is not enough, and finding that out cost a real orphan.**
+   * Suwayomi's launcher forks a *second* JVM and execs the server in it, so the
+   * process we spawn is a parent that exits leaving its child running — which
+   * then kept port 4567 answering HTTP 200 after `stop()` had reported `off`.
+   * That child had three of its own (CEF's renderers), so this is a tree rather
+   * than a pair.
+   *
+   * The consequence is the one this file's header warns about: an orphaned JVM
+   * nobody owns, holding the port, with the next start unable to bind and unable
+   * to stop it from inside the app.
+   *
+   * `taskkill /T /F` walks the tree. There is no portable Node equivalent —
+   * `child.kill()` signals one process, and a detached process group is not a
+   * thing Windows has in the POSIX sense — so this is platform-specific on
+   * purpose, with a plain `kill` everywhere else.
+   */
   stop(): void {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
@@ -217,8 +254,32 @@ class SuwayomiProcess {
     // Set before killing, so the `exit` handler does not report a deliberate
     // stop as a crash.
     this.status = { state: 'off' };
-    this.child?.kill();
+
+    const pid = this.child?.pid;
     this.child = null;
+    if (pid === undefined) return;
+
+    if (process.platform === 'win32') {
+      try {
+        // Fire and forget: nothing waits on a stop, and a failure here is
+        // logged by the caller noticing the port is still answering.
+        spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }).unref();
+      } catch {
+        // Nothing left to try. The next `ensureRunning` will adopt whatever is
+        // still on the port rather than spawning a second one that cannot bind.
+      }
+      return;
+    }
+
+    try {
+      process.kill(-pid, 'SIGTERM');
+    } catch {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        // Already gone.
+      }
+    }
   }
 }
 
