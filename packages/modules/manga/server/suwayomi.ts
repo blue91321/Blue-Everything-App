@@ -250,6 +250,19 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     };
 
     await Promise.all(Array.from({ length: Math.min(4, sources.length) }, worker));
+
+    /*
+     * Sorted by source, because searching concurrently made the order whatever
+     * finished first — so the same query listed its results differently each
+     * time, and picking "the first Archmage Curriculum" landed on MangaFire's
+     * *Spanish* source, which has no chapters for it.
+     *
+     * A person choosing from this list reads the source name, so nothing was
+     * hidden — but a list that reshuffles between identical searches is one you
+     * cannot point at, and the concurrency that caused it was not a reason to
+     * accept it.
+     */
+    out.sort((a, b) => a.sourceName.localeCompare(b.sourceName) || a.title.localeCompare(b.title));
     return out.slice(0, limit);
   }
 
