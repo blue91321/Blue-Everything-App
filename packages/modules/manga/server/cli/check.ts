@@ -31,7 +31,7 @@ import {
 } from '../identity.js';
 import { alreadyRaised, type Store } from '../library.js';
 import { totalChaptersFrom } from '../mangaupdates.js';
-import { readableChapter } from '../sources.js';
+import { readableChapter, titleScore, rankMatches } from '../sources.js';
 import { uploadedAtMs } from '../suwayomi.js';
 import { portOf } from '../process.js';
 import { pollable, seriesUrl } from '../releases.js';
@@ -190,6 +190,44 @@ check('a number is taken as it is', uploadedAtMs(1789769064000) === 178976906400
 check('zero is their "no date", not 1970', uploadedAtMs('0') === null);
 check('nothing is null', uploadedAtMs(null) === null);
 check('nonsense is null', uploadedAtMs('soon') === null);
+
+/* ------------------------------------------------------------------ */
+console.log('\nranking what a source found\n');
+
+/*
+ * The bug this replaced: results were sorted by source name then alphabetically
+ * by title, so searching "Eleceed" put it *eleventh*, between "Douka Watashi
+ * Yori" and "Junji Ito Masterpiece", once per installed MangaFire language. The
+ * sources rank their own results perfectly well; the merge threw that away.
+ */
+check('an exact title wins', titleScore('eleceed', 'Eleceed') === 100);
+check('case and punctuation do not matter', titleScore('ELECEED!', 'eleceed') === 100);
+check('a prefix beats a substring', titleScore('vinland', 'Vinland Saga') > titleScore('saga', 'Vinland Saga'));
+// The noise this is meant to sink: a source asked for "eleceed" returning an
+// artbook that shares no word with it.
+check('an unrelated title scores nothing', titleScore('eleceed', 'Selected Pandemonium Artbook') === 0);
+check('a partial word match scores between', (() => {
+  const s = titleScore('archmage curriculum', 'Archmage Transcending Through Regression');
+  return s > 0 && s < 60;
+})());
+
+const found = rankMatches('eleceed', [
+  { title: 'Ao no Miburo', sourceName: 'MangaFire (EN)' },
+  { title: 'Selected Pandemonium Artbook', sourceName: 'MangaFire (EN)' },
+  { title: 'Eleceed', sourceName: 'MangaFire (ES-419)' },
+  { title: 'Eleceed', sourceName: 'MangaFire (EN)' },
+  { title: 'Junji Ito Masterpieces', sourceName: 'MangaFire (EN)' },
+]);
+check('the thing you searched for is first', found[0].title === 'Eleceed', found.map((f) => f.title)[0]);
+// Both languages of the same title sit together rather than the whole list
+// repeating once per language, which is what made it unreadable.
+check('its other language is second', found[1].title === 'Eleceed');
+check('the noise sinks', found.at(-1)!.title.startsWith('Selected') || found.at(-1)!.title.startsWith('Junji'));
+// Stable, which was the point of the sort it replaced.
+check(
+  'the same query ranks the same way twice',
+  JSON.stringify(rankMatches('eleceed', found)) === JSON.stringify(rankMatches('eleceed', found))
+);
 
 /* ------------------------------------------------------------------ */
 console.log('\nfinding the port to stop\n');

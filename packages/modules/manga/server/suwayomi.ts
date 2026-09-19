@@ -42,6 +42,7 @@ import {
   type SourceExtension,
   type SourceHealth,
   type SourceMatch,
+  rankMatches,
 } from './sources.js';
 
 /** Suwayomi's own default. Overridable, because nothing says it has to be here. */
@@ -252,18 +253,14 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     await Promise.all(Array.from({ length: Math.min(4, sources.length) }, worker));
 
     /*
-     * Sorted by source, because searching concurrently made the order whatever
-     * finished first — so the same query listed its results differently each
-     * time, and picking "the first Archmage Curriculum" landed on MangaFire's
-     * *Spanish* source, which has no chapters for it.
+     * Ranked against the query, not sorted by source.
      *
-     * A person choosing from this list reads the source name, so nothing was
-     * hidden — but a list that reshuffles between identical searches is one you
-     * cannot point at, and the concurrency that caused it was not a reason to
-     * accept it.
+     * Concurrency made the raw order whatever finished first, and the first fix
+     * for that sorted by source then title — stable, and useless: the thing you
+     * searched for landed eleventh, once per installed language. `rankMatches`
+     * keeps it stable *and* puts the answer first. See its note.
      */
-    out.sort((a, b) => a.sourceName.localeCompare(b.sourceName) || a.title.localeCompare(b.title));
-    return out.slice(0, limit);
+    return rankMatches(query, out).slice(0, limit);
   }
 
   async chapters(mangaId: string, refresh = true): Promise<SourceChapter[]> {

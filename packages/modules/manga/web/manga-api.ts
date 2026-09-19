@@ -190,6 +190,10 @@ export const manga = {
       call<{ results: SourceMatch[] }>(
         `/api/manga/${id}/source/search${q ? `?q=${encodeURIComponent(q)}` : ''}`
       ),
+    count: (id: string, mangaId: string) =>
+      call<{ chapters: number; latest: number | null }>(
+        `/api/manga/${id}/source/count?mangaId=${encodeURIComponent(mangaId)}`
+      ),
     link: (id: string, match: SourceMatch) =>
       call<SeriesSummary>(`/api/manga/${id}/source`, {
         method: 'PUT',

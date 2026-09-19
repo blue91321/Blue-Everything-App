@@ -207,3 +207,70 @@ export function supportsExtensions(adapter: SourceAdapter): adapter is SourceAda
  * you read every day or twice a month.
  */
 export type SuwayomiMode = 'on-demand' | 'always';
+
+/**
+ * How well a result's title answers what was typed.
+ *
+ * ### Why this exists at all
+ *
+ * The sources rank their own results perfectly well — MangaFire returns
+ * *Eleceed* first for "eleceed" — and the merge threw that away. Results were
+ * sorted by source name then alphabetically by title, so the thing you searched
+ * for sat eleventh between "Douka Watashi Yori" and "Junji Ito Masterpiece",
+ * once per installed language. Sorting made the list *stable*, which was the
+ * point, and *useless*, which was not.
+ *
+ * So: score against the query first, and use the source's own ordering only to
+ * break ties. Stable and useful.
+ */
+function normalise(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
+export function titleScore(query: string, title: string): number {
+  const q = normalise(query);
+  const t = normalise(title);
+  if (!q || !t) return 0;
+
+  if (t === q) return 100;
+  if (t.startsWith(q)) return 80;
+  if (t.includes(q)) return 60;
+
+  /*
+   * Otherwise, how much of the query the title actually accounts for. A source
+   * searching "eleceed" and returning "Selected Pandemonium Artbook" shares no
+   * word with it and scores zero — which is how the noise ends up at the bottom
+   * rather than interleaved with the answer.
+   */
+  const wanted = new Set(q.split(' '));
+  const have = new Set(t.split(' '));
+  let hits = 0;
+  for (const word of wanted) if (have.has(word)) hits += 1;
+  return Math.round((hits / wanted.size) * 50);
+}
+
+/**
+ * Best answers first, with each source's own ordering kept as the tie-break.
+ *
+ * Language variants of one site therefore sit together under the title they
+ * share, rather than the whole result set repeating once per language — which
+ * is what made the list unreadable when MangaFire registered seven of them.
+ */
+export function rankMatches<T extends { title: string; sourceName: string }>(
+  query: string,
+  matches: readonly T[]
+): Array<T & { score: number }> {
+  return matches
+    .map((match, index) => ({ ...match, score: titleScore(query, match.title), index }))
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.title.localeCompare(b.title) ||
+        a.sourceName.localeCompare(b.sourceName) ||
+        a.index - b.index
+    )
+    .map(({ index: _index, ...rest }) => rest as T & { score: number });
+}

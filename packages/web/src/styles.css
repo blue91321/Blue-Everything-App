@@ -2885,3 +2885,39 @@ button {
     border-bottom: 0;
   }
 }
+
+/*
+ * A source picker takes the row, and the row takes the list.
+ *
+ * It used to render inside `.manga-row-text`, which beside a cover and three
+ * buttons leaves about 230px — every candidate read "Ao no Miburo —S..." and the
+ * source name wrapped under it. Moving it out of the text column gets the row's
+ * width; collapsing the grid gets the card's.
+ *
+ * `:has()` rather than state passed down from the list, because the list does
+ * not know a picker is open and has no business learning — the same reasoning
+ * that put `.app:has(.dash.has-panel)` in CSS rather than in `App`.
+ */
+.manga-list:has(.manga-source-picker) {
+  grid-template-columns: 1fr;
+}
+
+.manga-source-picker {
+  flex-basis: 100%;
+}
+
+/* Source name and chapter count sit together at the end of each candidate. */
+.manga-source-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+/*
+ * The count is the thing being compared, so it is the one piece of this row that
+ * is not muted.
+ */
+.manga-source-meta .meta.strong {
+  color: var(--text);
+}

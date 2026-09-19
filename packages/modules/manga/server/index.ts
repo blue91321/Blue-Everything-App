@@ -439,6 +439,63 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  /**
+   * How many chapters one candidate actually has.
+   *
+   * Its own endpoint, asked one result at a time, because **the count is not
+   * free**. Suwayomi stores a manga record when you search but no chapters —
+   * `chapters.totalCount` reads 0 for every fresh result — so the only way to
+   * know is to make it go and scrape that series' chapter list.
+   *
+   * Folding it into the search would mean a scrape per result before anything
+   * appeared, turning a third of a second into the better part of a minute. So
+   * the list arrives ranked and immediately, and the browser fills the counts in
+   * behind it, for the few results worth considering.
+   *
+   * It is also the number that decides the choice. Two sources carrying the same
+   * title are not equivalent — MangaFire's Spanish source had *none* of Archmage
+   * Curriculum while its English one had 45 — and without the count that is
+   * invisible until after you have linked it and the row goes quiet.
+   */
+  app.get('/api/manga/:id/source/count', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { mangaId } = request.query as { mangaId?: string };
+    if (!mangaId) return reply.code(400).send({ error: 'which candidate?' });
+
+    const store = read();
+    if (!store.series.some((s) => s.id === id)) return reply.code(404).send({ error: 'no such series' });
+
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return reply.code(400).send({ error: 'no source is configured' });
+
+    if (store.manageSuwayomi && store.suwayomiJar) {
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+      if (state.state !== 'running') {
+        return reply.code(502).send({ error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting' });
+      }
+    }
+
+    try {
+      const chapters = await new SuwayomiAdapter(url).chapters(mangaId, true);
+      const numbers = chapters.map((c) => c.number).filter((n) => Number.isFinite(n));
+      return {
+        chapters: chapters.length,
+        /** The newest number, which is what the row will show once it is linked. */
+        latest: numbers.length > 0 ? Math.max(...numbers) : null,
+      };
+    } catch (error) {
+      /*
+       * A source with nothing for this id answers "No chapters found", which is
+       * an *answer* rather than a failure — it is exactly what you wanted to
+       * know before choosing. Reported as zero rather than as an error, so the
+       * row says "no chapters" instead of going blank.
+       */
+      const message = error instanceof SourceError ? error.message : 'the source failed';
+      if (/no chapters/i.test(message)) return { chapters: 0, latest: null };
+      return reply.code(502).send({ error: message });
+    }
+  });
+
   /** Point a series at one of those results. */
   app.put('/api/manga/:id/source', async (request, reply) => {
     localOnly(request as unknown as { isLocal: boolean });

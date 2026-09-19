@@ -223,8 +223,15 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
                 */}
               {series.error && <span className="meta urgent">{series.error}</span>}
               {series.notWatchingBecause && <span className="meta">Not watched — {series.notWatchingBecause}</span>}
-              <SourceLink series={series} local={local} onChanged={() => library.reload()} />
             </div>
+            {/*
+              * Outside the text column, so the picker gets the row's whole
+              * width rather than the ~230px left over beside a cover and three
+              * buttons — which is what made every result read "Ao no Miburo
+              * —S...". `.manga-row` already wraps, so this lands on its own
+              * line.
+              */}
+            <SourceLink series={series} local={local} onChanged={() => library.reload()} />
             <div className="manga-row-actions">
               {/* Only when there is somewhere to read it from. */}
               {series.source && (
