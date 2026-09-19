@@ -6,7 +6,7 @@
  * fields is two chances to disagree, and the one that disagrees is the one
  * nobody looks at twice.
  */
-import { worthPolling } from './identity.js';
+import { chapterValue, worthPolling } from './identity.js';
 import type { Series, Store } from './library.js';
 import { seriesUrl } from './releases.js';
 
@@ -72,7 +72,16 @@ function chapterLine(series: Series): { chapterLabel: string; chapterTitle: stri
    */
   if (series.source && series.sourceChapter !== null) {
     const via = series.source.sourceName || series.source.adapter;
-    const total = series.totalChapters;
+    /*
+     * The total is dropped when the source is *ahead* of it.
+     *
+     * "ch 45 of 41" is two honest numbers from two services and reads as a bug —
+     * which is worse than saying less. MangaUpdates counts what has been written
+     * and lags behind sites carrying unofficial translations, so a source
+     * running ahead is the ordinary case rather than a contradiction to explain.
+     * It stays in the tooltip, where there is room to say which is which.
+     */
+    const total = series.totalChapters !== null && series.totalChapters >= series.sourceChapter ? series.totalChapters : null;
     return {
       chapterLabel:
         total === null
@@ -104,10 +113,15 @@ function chapterLine(series: Series): { chapterLabel: string; chapterTitle: stri
     };
   }
 
-  if (total === null) {
+  // Same rule unlinked: "ch 418 · 417 written" is two services disagreeing by
+  // one, printed as though it were a fact about the series.
+  if (total === null || (chapterValue(read) ?? 0) > total) {
     return {
       chapterLabel: `ch ${read}`,
-      chapterTitle: `Chapter ${read} is the newest release MangaUpdates has logged. It does not publish a total for this one.`,
+      chapterTitle:
+        total === null
+          ? `Chapter ${read} is the newest release MangaUpdates has logged. It does not publish a total for this one.`
+          : `Chapter ${read} is the newest release MangaUpdates has logged, which is ahead of the ${total} it counts as written.`,
     };
   }
 
