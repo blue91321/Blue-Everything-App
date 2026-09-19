@@ -217,8 +217,20 @@ export function SourceLink({
             ) : match.chapters === 0 ? (
               <span className="meta urgent">no chapters</span>
             ) : (
+              /*
+               * How far it goes, not how many rows it has.
+               *
+               * MangaFire's English Eleceed lists 862 entries for 418 chapters —
+               * duplicates across scanlation groups — so "862 ch" is a number
+               * about the listing rather than about the series, and next to
+               * "347" from another source it invites exactly the wrong
+               * comparison. The highest chapter is what the row will show once
+               * this is linked, so it is what the choice should be made on.
+               */
               <span className="meta strong">
-                {match.chapters} ch{match.latest ? ` · to ${match.latest}` : ''}
+                {match.latest !== null && match.latest !== undefined
+                  ? `up to ${match.latest}`
+                  : `${match.chapters} chapters`}
               </span>
             )}
           </span>
