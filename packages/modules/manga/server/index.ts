@@ -32,8 +32,8 @@ import { CREDIT, readSeries } from './mangaupdates.js';
 import { read, write, newSeries, findExisting, type Series, type Store } from './library.js';
 import { seriesSummary, recentReleases } from './present.js';
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
-import { SourceError, effectiveUrl } from './sources.js';
-import { SuwayomiAdapter, DEFAULT_BASE_URL } from './suwayomi.js';
+import { SourceError, effectiveUrl, supportsExtensions, type ExtensionCatalogue } from './sources.js';
+import { SuwayomiAdapter, DEFAULT_BASE_URL, KEIYOUSHI_REPO } from './suwayomi.js';
 import { suwayomiProcess, findJars } from './process.js';
 import { homedir } from 'node:os';
 
@@ -258,6 +258,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       defaultUrl: DEFAULT_BASE_URL,
       jar: suwayomiJar,
       manage: manageSuwayomi,
+      mode: store.suwayomiMode,
       managed,
       foundJars,
     };
@@ -281,7 +282,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
     localOnly(request as unknown as { isLocal: boolean });
     const { suwayomiJar, suwayomiUrl } = read();
     if (!suwayomiJar) return reply.code(400).send({ error: 'no Suwayomi jar has been chosen' });
-    return suwayomiProcess.ensureRunning(suwayomiJar, suwayomiUrl ?? DEFAULT_BASE_URL);
+    const { suwayomiMode } = read();
+    return suwayomiProcess.ensureRunning(suwayomiJar, suwayomiUrl ?? DEFAULT_BASE_URL, suwayomiMode);
   });
 
   /** Stop it now, rather than waiting out the idle timer. */
@@ -294,7 +296,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
   /** Set, or clear with an empty string. */
   app.put('/api/manga/source', async (request, reply) => {
     localOnly(request as unknown as { isLocal: boolean });
-    const body = request.body as { url?: unknown; jar?: unknown; manage?: unknown } | null;
+    const body = request.body as { url?: unknown; jar?: unknown; manage?: unknown; mode?: unknown } | null;
 
     /*
      * The jar and the switch are set through the same route as the URL, and each
@@ -303,10 +305,11 @@ export async function routes(app: FastifyInstance): Promise<void> {
      * three from being saved in an order that briefly makes no sense, such as
      * managing switched on with no jar chosen.
      */
-    if (body && ('jar' in body || 'manage' in body)) {
+    if (body && ('jar' in body || 'manage' in body || 'mode' in body)) {
       const store = read();
       const jar = 'jar' in body ? (typeof body.jar === 'string' && body.jar.trim() ? body.jar.trim() : null) : store.suwayomiJar;
       const manage = 'manage' in body ? body.manage === true : store.manageSuwayomi;
+      const mode = 'mode' in body ? (body.mode === 'always' ? 'always' : 'on-demand') : store.suwayomiMode;
 
       // Switching management on with nothing to run is a setting that could only
       // fail later, so it is refused now with the reason.
@@ -315,7 +318,24 @@ export async function routes(app: FastifyInstance): Promise<void> {
       // would leave a JVM nobody owns holding the port.
       if (!manage) suwayomiProcess.stop();
 
-      write({ ...store, suwayomiJar: jar, manageSuwayomi: manage });
+      write({ ...store, suwayomiJar: jar, manageSuwayomi: manage, suwayomiMode: mode });
+
+      /*
+       * Switching to `always` while it is off starts it now rather than at the
+       * next thing that happens to need it — otherwise choosing "always on"
+       * would leave it off, which is the setting failing to mean what it says.
+       * Switching to `on-demand` arms the idle timer, so it winds down on its
+       * own rather than staying up until a restart.
+       */
+      if (manage && jar) {
+        const url = effectiveUrl({ suwayomiUrl: store.suwayomiUrl, manageSuwayomi: manage }, DEFAULT_BASE_URL)!;
+        if (mode === 'always' && suwayomiProcess.state.state === 'off') {
+          void suwayomiProcess.ensureRunning(jar, url, mode);
+        } else {
+          suwayomiProcess.touch(mode);
+        }
+      }
+
       if (!('url' in (body ?? {}))) {
         const after = read();
         return {
@@ -324,6 +344,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
           defaultUrl: DEFAULT_BASE_URL,
           jar: after.suwayomiJar,
           manage: after.manageSuwayomi,
+          mode: after.suwayomiMode,
           managed: suwayomiProcess.state,
           foundJars: after.suwayomiJar ? [] : findJars(homedir()),
           health: null,
@@ -376,6 +397,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       defaultUrl: DEFAULT_BASE_URL,
       jar: after.suwayomiJar,
       manage: after.manageSuwayomi,
+      mode: after.suwayomiMode,
       managed: suwayomiProcess.state,
       foundJars: after.suwayomiJar ? [] : findJars(homedir()),
       health,
@@ -402,7 +424,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
      * startup. The sweep deliberately is not.
      */
     if (store.manageSuwayomi && store.suwayomiJar) {
-      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, sourceUrl);
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, sourceUrl, store.suwayomiMode);
       if (state.state !== 'running') {
         return reply.code(502).send({ error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting' });
       }
@@ -490,6 +512,132 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return seriesSummary(series);
   });
 
+  /* ---- extensions ---- */
+
+  /**
+   * The source, for the extension screen.
+   *
+   * Extensions are **not** a `SourceAdapter` method — they are a capability an
+   * adapter may also have, and `supportsExtensions` asks rather than assumes.
+   * An adapter that talks to one site has nothing to install, and its screen
+   * should say so instead of erroring.
+   */
+  type CatalogueContext =
+    | { error: string; code: 400 | 502 }
+    | { adapter: SuwayomiAdapter & ExtensionCatalogue; store: Store };
+
+  // Annotated for the same reason `reader()` is: without it TypeScript widens
+  // the two shapes into one object with every field optional, and `ctx.code`
+  // arrives as `number | undefined`.
+  async function catalogue(): Promise<CatalogueContext> {
+    const store = read();
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return { error: 'no source is configured', code: 400 as const };
+
+    if (store.manageSuwayomi && store.suwayomiJar) {
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+      if (state.state !== 'running') {
+        return { error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting', code: 502 as const };
+      }
+    }
+
+    const adapter = new SuwayomiAdapter(url);
+    if (!supportsExtensions(adapter)) return { error: 'this source does not manage extensions', code: 400 as const };
+    return { adapter, store };
+  }
+
+  /**
+   * Everything the repositories offer, and where they are listed from.
+   *
+   * `?refresh=1` re-reads the repos, which fetches a large index — so the screen
+   * shows the stored list and refreshing is a button.
+   */
+  app.get('/api/manga/extensions', async (request, reply) => {
+    const { refresh } = request.query as { refresh?: string };
+    const ctx = await catalogue();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    try {
+      const [extensions, repos] = await Promise.all([ctx.adapter.extensions(refresh === '1'), ctx.adapter.repos()]);
+      return {
+        extensions,
+        repos,
+        /*
+         * Offered by name, because a fresh Suwayomi ships with no repositories
+         * and finds nothing — which is the commonest confusing first experience
+         * here, and not one anybody should have to solve by going and finding a
+         * URL.
+         */
+        suggestedRepo: KEIYOUSHI_REPO,
+      };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /** Install one, or remove it. Local-only, like everything that runs code here. */
+  app.put('/api/manga/extensions/:pkg', async (request, reply) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    const { pkg } = request.params as { pkg: string };
+    const body = request.body as { install?: unknown } | null;
+    const ctx = await catalogue();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    try {
+      if (body?.install === false) await ctx.adapter.uninstallExtension(pkg);
+      else await ctx.adapter.installExtension(pkg);
+      // Answered with the fresh list so the row updates from its own response
+      // rather than a second request.
+      return { extensions: await ctx.adapter.extensions(false) };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * Which repositories to list from.
+   *
+   * Local-only: a repository is a URL the *source* then downloads and runs code
+   * from, which is a larger thing than any other setting here and belongs with
+   * installing a package.
+   */
+  app.put('/api/manga/extensions/repos', async (request, reply) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    const body = request.body as { repos?: unknown } | null;
+    if (!Array.isArray(body?.repos)) return reply.code(400).send({ error: 'send a list of repositories' });
+
+    const repos: string[] = [];
+    for (const raw of body.repos) {
+      if (typeof raw !== 'string' || !raw.trim()) continue;
+      let parsed: URL;
+      try {
+        parsed = new URL(raw.trim());
+      } catch {
+        return reply.code(400).send({ error: `not a URL: ${String(raw).slice(0, 80)}` });
+      }
+      if (parsed.protocol !== 'https:') {
+        // https only, unlike the Suwayomi address itself. That one is usually
+        // loopback; this is a URL something downloads executable extensions
+        // from, and over plain http anybody on the path chooses what runs.
+        return reply.code(400).send({ error: 'repositories must be https' });
+      }
+      repos.push(parsed.toString());
+    }
+
+    const ctx = await catalogue();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    try {
+      const saved = await ctx.adapter.setRepos(repos);
+      return { repos: saved, extensions: await ctx.adapter.extensions(true) };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
   /* ---- reading ---- */
 
   /**
@@ -518,14 +666,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
     if (!url) return { error: 'no source is configured', code: 400 as const };
 
     if (store.manageSuwayomi && store.suwayomiJar) {
-      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url);
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
       if (state.state !== 'running') {
         return { error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting', code: 502 as const };
       }
     } else {
       // Not managed, so nothing to start — but the idle timer still wants to
       // know this is in use, in case management is switched on later.
-      suwayomiProcess.touch();
+      suwayomiProcess.touch(store.suwayomiMode);
     }
 
     return { store, series, adapter: new SuwayomiAdapter(url), url };
@@ -662,6 +810,30 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
   };
 
+  /*
+   * `always` starts shortly after the app, not with it.
+   *
+   * A delayed, `unref`ed timer rather than a call at registration, which is the
+   * same idiom the coursework sweep uses and for a sharper reason here: `smoke`
+   * and `features-check` build an app, assert and close it, and a JVM spawned at
+   * registration would be started by every one of those runs. Nothing
+   * short-lived reaches twenty seconds, and `onClose` stops it if anything does.
+   *
+   * It stays off in `on-demand`, which is the default — a fresh install spawns
+   * nothing whatever this file does.
+   */
+  const bootStart = setTimeout(() => {
+    const store = read();
+    if (!store.manageSuwayomi || store.suwayomiMode !== 'always' || !store.suwayomiJar) return;
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return;
+    void suwayomiProcess.ensureRunning(store.suwayomiJar, url, 'always').catch(() => {
+      // Recorded on the process state and shown on the card. Never thrown: this
+      // runs with nobody waiting on it.
+    });
+  }, 20_000);
+  bootStart.unref();
+
   // Shortly after boot as well as on the interval, or a restart means half an
   // hour of not knowing about anything published while the machine was off.
   const firstRun = setTimeout(() => void sweep(), 45_000);
@@ -671,6 +843,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
   firstRun.unref();
   repeat.unref();
   app.addHook('onClose', () => {
+    clearTimeout(bootStart);
     clearTimeout(firstRun);
     clearInterval(repeat);
     /*

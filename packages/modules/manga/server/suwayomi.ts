@@ -34,14 +34,22 @@
  * it is theirs rather than ours. It is written down here so nobody "corrects" it
  * to a query and finds the field does not exist.
  */
-import { SourceError, type SourceAdapter, type SourceChapter, type SourceHealth, type SourceMatch } from './sources.js';
+import {
+  SourceError,
+  type ExtensionCatalogue,
+  type SourceAdapter,
+  type SourceChapter,
+  type SourceExtension,
+  type SourceHealth,
+  type SourceMatch,
+} from './sources.js';
 
 /** Suwayomi's own default. Overridable, because nothing says it has to be here. */
 export const DEFAULT_BASE_URL = 'http://127.0.0.1:4567';
 
 type Json = Record<string, any>;
 
-export class SuwayomiAdapter implements SourceAdapter {
+export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
   readonly id = 'suwayomi';
   readonly label = 'Suwayomi';
 
@@ -83,6 +91,79 @@ export class SuwayomiAdapter implements SourceAdapter {
     if (!body.data) throw new SourceError('Suwayomi returned no data');
     return body.data;
   }
+
+  /* ---- extensions ---- */
+
+  async repos(): Promise<string[]> {
+    const data = await this.gql<{ settings: { extensionRepos: string[] | null } }>(
+      `query { settings { extensionRepos } }`
+    );
+    return data.settings?.extensionRepos ?? [];
+  }
+
+  async setRepos(urls: string[]): Promise<string[]> {
+    const data = await this.gql<{ setSettings: { settings: { extensionRepos: string[] | null } } }>(
+      `mutation SetRepos($input: SetSettingsInput!) {
+         setSettings(input: $input) { settings { extensionRepos } }
+       }`,
+      { input: { settings: { extensionRepos: urls } } }
+    );
+    return data.setSettings?.settings?.extensionRepos ?? [];
+  }
+
+  /**
+   * Everything the repositories offer.
+   *
+   * `refresh` re-reads the repos, which is a network fetch of a large index —
+   * so the screen reads the stored list and refreshing is a button.
+   *
+   * **The first refresh after adding a repo returns nothing**, reliably. Seen on
+   * a clean install: `fetchExtensions` answered with an empty list, and calling
+   * it again immediately answered with 1,396. It appears to kick off the load
+   * and report what it had rather than what it fetched. So a refresh that comes
+   * back empty is tried once more before being believed — an empty list is
+   * otherwise indistinguishable from a repository URL that is wrong.
+   */
+  async extensions(refresh = false): Promise<SourceExtension[]> {
+    const FIELDS = 'pkgName name lang versionName isInstalled hasUpdate isNsfw iconUrl';
+
+    if (refresh) {
+      const first = await this.gql<{ fetchExtensions: { extensions: any[] } }>(
+        `mutation { fetchExtensions(input: {}) { extensions { ${FIELDS} } } }`
+      );
+      const got = first.fetchExtensions?.extensions ?? [];
+      if (got.length > 0) return got.map(toExtension);
+
+      const again = await this.gql<{ fetchExtensions: { extensions: any[] } }>(
+        `mutation { fetchExtensions(input: {}) { extensions { ${FIELDS} } } }`
+      );
+      return (again.fetchExtensions?.extensions ?? []).map(toExtension);
+    }
+
+    const data = await this.gql<{ extensions: { nodes: any[] } }>(
+      `query { extensions { nodes { ${FIELDS} } } }`
+    );
+    return (data.extensions?.nodes ?? []).map(toExtension);
+  }
+
+  async installExtension(pkg: string): Promise<void> {
+    await this.setInstalled(pkg, true);
+  }
+
+  async uninstallExtension(pkg: string): Promise<void> {
+    await this.setInstalled(pkg, false);
+  }
+
+  private async setInstalled(pkg: string, install: boolean): Promise<void> {
+    await this.gql(
+      `mutation Set($input: UpdateExtensionInput!) {
+         updateExtension(input: $input) { extension { pkgName isInstalled } }
+       }`,
+      { input: { id: pkg, patch: install ? { install: true } : { uninstall: true } } }
+    );
+  }
+
+  /* ---- reading ---- */
 
   async describe(): Promise<SourceHealth> {
     try {
@@ -261,10 +342,33 @@ export class SuwayomiAdapter implements SourceAdapter {
 }
 
 /**
+ * Where extensions are listed from.
+ *
+ * Suwayomi ships with none, which is why a fresh install has one source called
+ * "Local source" and finds nothing — the commonest confusing first experience
+ * here, and why the screen offers the community repository by name rather than
+ * leaving you to find a URL.
+ */
+export const KEIYOUSHI_REPO = 'https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json';
+
+/**
  * Suwayomi sends timestamps as `LongString` — epoch milliseconds as *text*,
  * because GraphQL's `Int` is 32-bit and a millisecond timestamp does not fit.
  * Parsing it as a number is therefore required rather than defensive.
  */
+function toExtension(raw: any): SourceExtension {
+  return {
+    pkg: String(raw.pkgName ?? ''),
+    name: String(raw.name ?? ''),
+    lang: String(raw.lang ?? ''),
+    version: String(raw.versionName ?? ''),
+    installed: raw.isInstalled === true,
+    hasUpdate: raw.hasUpdate === true,
+    nsfw: raw.isNsfw === true,
+    iconUrl: typeof raw.iconUrl === 'string' && raw.iconUrl ? raw.iconUrl : null,
+  };
+}
+
 export function uploadedAtMs(raw: unknown): number | null {
   if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
   if (typeof raw !== 'string' || !raw.trim()) return null;

@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { dataDir } from '@everything/server/module-api';
 import type { SeriesIds, SeriesStatus } from './identity.js';
+import type { SuwayomiMode } from './sources.js';
 
 const STORE = join(dataDir, 'manga.json');
 
@@ -125,6 +126,15 @@ export type Store = {
    * somebody as a side effect of opening a tab they were only browsing.
    */
   manageSuwayomi: boolean;
+  /**
+   * How eagerly to run it — see `SuwayomiMode`.
+   *
+   * Defaults to `on-demand`, which is the setting that respects this project's
+   * own numbers: a 166MB JVM resident all day for something used in bursts is
+   * the trade Electron was rejected over. `always` is offered because somebody
+   * who reads daily would rather spend the memory than six seconds every time.
+   */
+  suwayomiMode: SuwayomiMode;
   series: Series[];
   /** Raised-and-linked releases, so a task you deleted is never recreated. */
   links: ReleaseLink[];
@@ -149,7 +159,14 @@ export type ReleaseLink = {
   raisedAt: number;
 };
 
-const EMPTY: Store = { suwayomiUrl: null, suwayomiJar: null, manageSuwayomi: false, series: [], links: [] };
+const EMPTY: Store = {
+  suwayomiUrl: null,
+  suwayomiJar: null,
+  manageSuwayomi: false,
+  suwayomiMode: 'on-demand',
+  series: [],
+  links: [],
+};
 
 export function read(): Store {
   if (!existsSync(STORE)) return { ...EMPTY };
@@ -159,6 +176,7 @@ export function read(): Store {
       suwayomiUrl: typeof parsed.suwayomiUrl === 'string' && parsed.suwayomiUrl ? parsed.suwayomiUrl : null,
       suwayomiJar: typeof parsed.suwayomiJar === 'string' && parsed.suwayomiJar ? parsed.suwayomiJar : null,
       manageSuwayomi: parsed.manageSuwayomi === true,
+      suwayomiMode: parsed.suwayomiMode === 'always' ? 'always' : 'on-demand',
       /*
        * Every optional field is filled in, not merely trusted.
        *

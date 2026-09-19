@@ -37,6 +37,33 @@ export interface SourceHealth {
   problem: string | null;
 }
 
+/**
+ * How eagerly the app runs a source it manages.
+ *
+ * `on-demand` keeps a 166MB JVM off the machine for the hours you are not
+ * reading, at six seconds when you are. `always` spends the memory to make
+ * opening a chapter instant.
+ */
+export type SuwayomiMode = 'on-demand' | 'always';
+
+export interface SourceExtension {
+  pkg: string;
+  name: string;
+  lang: string;
+  version: string;
+  installed: boolean;
+  hasUpdate: boolean;
+  nsfw: boolean;
+  iconUrl: string | null;
+}
+
+export interface ExtensionList {
+  extensions: SourceExtension[];
+  repos: string[];
+  /** Offered by name, because a fresh Suwayomi has none and finds nothing. */
+  suggestedRepo: string;
+}
+
 /** What the app's own Suwayomi process is doing, when it is managing one. */
 export type ManagedState =
   | { state: 'off' }
@@ -52,6 +79,8 @@ export interface SourceState {
   jar: string | null;
   /** May the app start and stop it? */
   manage: boolean;
+  /** How eagerly, when it does. */
+  mode: SuwayomiMode;
   managed: ManagedState;
   /** Jars found lying around, offered only while none is chosen. */
   foundJars: string[];
@@ -153,6 +182,8 @@ export const manga = {
     setJar: (jar: string) => call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ jar }) }),
     setManage: (manage: boolean) =>
       call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ manage }) }),
+    setMode: (mode: SuwayomiMode) =>
+      call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ mode }) }),
     start: () => call<ManagedState>('/api/manga/source/start', { method: 'POST' }),
     stop: () => call<ManagedState>('/api/manga/source/stop', { method: 'POST' }),
     search: (id: string, q?: string) =>
@@ -165,6 +196,17 @@ export const manga = {
         body: JSON.stringify({ mangaId: match.id, title: match.title, sourceName: match.sourceName }),
       }),
     unlink: (id: string) => call<SeriesSummary>(`/api/manga/${id}/source`, { method: 'DELETE' }),
+  },
+
+  extensions: {
+    list: (refresh = false) => call<ExtensionList>(`/api/manga/extensions${refresh ? '?refresh=1' : ''}`),
+    install: (pkg: string, install = true) =>
+      call<{ extensions: SourceExtension[] }>(`/api/manga/extensions/${encodeURIComponent(pkg)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ install }),
+      }),
+    setRepos: (repos: string[]) =>
+      call<ExtensionList>('/api/manga/extensions/repos', { method: 'PUT', body: JSON.stringify({ repos }) }),
   },
 
   reader: {

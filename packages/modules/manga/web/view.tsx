@@ -22,6 +22,7 @@ import { Cover } from './Cover';
 import { SourceCard } from './SourceCard';
 import { SourceLink } from './SourceLink';
 import { Chapters } from './Chapters';
+import { Extensions } from './Extensions';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -44,6 +45,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   const [sweep, setSweep] = useState<string | null>(null);
   /** Which series' chapters are open, if any. The reader lives inside it. */
   const [reading, setReading] = useState<string | null>(null);
+  const [managingExtensions, setManagingExtensions] = useState(false);
 
   /*
    * A search handed in from elsewhere — the Dashboard panel's rows land here
@@ -124,6 +126,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
    * the list's width with the rest of the list above and below it.
    */
   if (reading) return <Chapters seriesId={reading} onClose={() => setReading(null)} />;
+  if (managingExtensions) return <Extensions local={local} onClose={() => setManagingExtensions(false)} />;
 
   return (
     <div className="manga">
@@ -146,7 +149,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
         </p>
       </form>
 
-      <SourceCard local={local} />
+      <SourceCard local={local} onExtensions={() => setManagingExtensions(true)} />
 
       {problem && <p className="banner">{problem}</p>}
 

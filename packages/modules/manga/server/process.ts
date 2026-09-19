@@ -13,17 +13,21 @@
  * So it cannot live *inside* the package. What it can do is stop being
  * something you launch by hand, which is what this file is for.
  *
- * ### On demand, because the alternative fails this project's own test
+ * ### On demand by default, and that default is argued for
  *
  * A JVM running Suwayomi sits in the 150–250MB range this repo rejected
  * Electron over, and voice's 198MB is described here as "uncomfortable". Paying
  * that all day for something used in bursts is not a trade this app makes
- * anywhere else.
+ * anywhere else — so `on-demand` starts it when something needs a source and
+ * stops it after `IDLE_STOP_MS` unused. The sweep already falls back to
+ * MangaUpdates when no source answers, so a stopped Suwayomi degrades to the old
+ * behaviour rather than to an error.
  *
- * So it starts when something actually needs a source and stops after
- * `IDLE_STOP_MS` without one. The sweep already falls back to MangaUpdates when
- * no source answers, so a stopped Suwayomi degrades to the old behaviour rather
- * than to an error.
+ * `always` is offered beside it because the trade genuinely goes the other way
+ * for somebody who reads every day: it starts shortly after the app and never
+ * idle-stops, so opening a chapter costs nothing instead of six seconds. The
+ * setting exists because neither answer is right for everybody, not because the
+ * default was a guess.
  *
  * **The honest cost is the startup.** A JVM plus extension loading is seconds,
  * not milliseconds — nothing like the 0.2s that made push-to-talk affordable for
@@ -46,6 +50,7 @@ import { existsSync, mkdirSync, createWriteStream, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { dataDir } from '@everything/server/module-api';
 import { SuwayomiAdapter } from './suwayomi.js';
+import type { SuwayomiMode } from './sources.js';
 
 /** Stop it after this long with nothing asking it anything. */
 export const IDLE_STOP_MS = 15 * 60_000;
@@ -92,8 +97,8 @@ class SuwayomiProcess {
    * Idempotent and safe to call from every route that needs a source: a second
    * caller during startup joins the first rather than spawning a second JVM.
    */
-  async ensureRunning(jarPath: string, baseUrl: string): Promise<ManagedState> {
-    this.touch();
+  async ensureRunning(jarPath: string, baseUrl: string, mode: SuwayomiMode = 'on-demand'): Promise<ManagedState> {
+    this.touch(mode);
 
     if (this.status.state === 'running') return this.status;
     if (this.starting) return this.starting;
@@ -123,13 +128,13 @@ class SuwayomiProcess {
       return this.status;
     }
 
-    this.starting = this.launch(jarPath, baseUrl).finally(() => {
+    this.starting = this.launch(jarPath, baseUrl, mode).finally(() => {
       this.starting = null;
     });
     return this.starting;
   }
 
-  private async launch(jarPath: string, baseUrl: string): Promise<ManagedState> {
+  private async launch(jarPath: string, baseUrl: string, mode: SuwayomiMode): Promise<ManagedState> {
     const begunAt = Date.now();
     this.status = { state: 'starting', since: begunAt };
 
@@ -192,7 +197,7 @@ class SuwayomiProcess {
       const health = await adapter.describe();
       if (health.reachable) {
         this.status = { state: 'running', since: Date.now(), pid: this.child?.pid ?? null };
-        this.touch();
+        this.touch(mode);
         return this.status;
       }
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
@@ -218,9 +223,19 @@ class SuwayomiProcess {
     return this.status.state === 'failed' ? this.status.problem : null;
   }
 
-  /** Push the idle deadline out. Called whenever anything asks the source something. */
-  touch(): void {
+  /**
+   * Push the idle deadline out. Called whenever anything asks the source
+   * something.
+   *
+   * In `always` mode there is no deadline to push — and any existing one is
+   * cleared, so switching the mode while it is running takes effect at once
+   * rather than at the next timer that was already armed.
+   */
+  touch(mode: SuwayomiMode = 'on-demand'): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+    if (mode === 'always') return;
+
     this.idleTimer = setTimeout(() => this.stop(), IDLE_STOP_MS);
     // Must never hold the process open, or `smoke` and `features-check` hang on
     // an app that will not close.

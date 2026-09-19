@@ -150,3 +150,60 @@ export function effectiveUrl(
   if (store.suwayomiUrl) return store.suwayomiUrl;
   return store.manageSuwayomi ? defaultUrl : null;
 }
+
+/**
+ * Extensions are **not** part of `SourceAdapter`, and that is the whole point.
+ *
+ * The interface above is five methods because those are the five things the
+ * library needs of *any* source. Extensions are a Suwayomi concept — a
+ * different adapter might talk to one site and have no notion of installing
+ * anything — so putting them there would turn a description of "a source" into
+ * a description of Suwayomi, which is the failure that interface exists to
+ * avoid.
+ *
+ * So it is a separate capability an adapter may also implement, and the screen
+ * asks whether it does rather than assuming. An adapter without it simply offers
+ * no extensions tab.
+ */
+export type SourceExtension = {
+  /** The package name, which is its id. Opaque. */
+  pkg: string;
+  name: string;
+  lang: string;
+  version: string;
+  installed: boolean;
+  /** Has an update waiting. */
+  hasUpdate: boolean;
+  /** Said out loud rather than filtered, so nothing is hidden by a judgement we made. */
+  nsfw: boolean;
+  iconUrl: string | null;
+};
+
+export interface ExtensionCatalogue {
+  /** Where extensions are listed from. Several are allowed. */
+  repos(): Promise<string[]>;
+  setRepos(urls: string[]): Promise<string[]>;
+  /** Everything the repos offer. `refresh` re-reads them. */
+  extensions(refresh?: boolean): Promise<SourceExtension[]>;
+  installExtension(pkg: string): Promise<void>;
+  uninstallExtension(pkg: string): Promise<void>;
+}
+
+/** Does this adapter manage its own extensions? Asked, never assumed. */
+export function supportsExtensions(adapter: SourceAdapter): adapter is SourceAdapter & ExtensionCatalogue {
+  return typeof (adapter as Partial<ExtensionCatalogue>).extensions === 'function';
+}
+
+/**
+ * How eagerly the app runs a source it manages.
+ *
+ * `on-demand` starts it when something needs it and stops it after a while
+ * unused, which keeps a 166MB JVM off the machine for the hours you are not
+ * reading. `always` starts it shortly after the app does and never idle-stops,
+ * so opening a chapter is instant instead of costing a JVM boot.
+ *
+ * Two real preferences rather than a performance knob: one trades seconds for
+ * memory, the other memory for seconds, and which is right depends on whether
+ * you read every day or twice a month.
+ */
+export type SuwayomiMode = 'on-demand' | 'always';

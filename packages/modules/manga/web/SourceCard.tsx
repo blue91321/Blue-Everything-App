@@ -22,7 +22,12 @@ function managedLine(state: SourceState): { text: string; urgent: boolean } {
   if (!state.manage) return { text: 'Not managed — start Suwayomi yourself.', urgent: false };
   switch (state.managed.state) {
     case 'running':
-      return { text: 'Running. It will stop on its own after a while unused.', urgent: false };
+      // The sentence has to follow the mode, or the card promises an idle stop
+      // that will never come.
+      return {
+        text: state.mode === 'always' ? 'Running, and staying up.' : 'Running. It will stop on its own after a while unused.',
+        urgent: false,
+      };
     case 'starting':
       // Named rather than shown as a spinner, because a JVM is seconds and a
       // silent wait of that length reads as nothing having happened.
@@ -30,11 +35,17 @@ function managedLine(state: SourceState): { text: string; urgent: boolean } {
     case 'failed':
       return { text: state.managed.problem, urgent: true };
     default:
-      return { text: 'Off. It starts when you search sources, and stops when idle.', urgent: false };
+      return {
+        text:
+          state.mode === 'always'
+            ? 'Off — it starts shortly after the app, or press Start now.'
+            : 'Off. It starts when you search or read, and stops when idle.',
+        urgent: false,
+      };
   }
 }
 
-export function SourceCard({ local }: { local: boolean }) {
+export function SourceCard({ local, onExtensions }: { local: boolean; onExtensions: () => void }) {
   const state = useAsync(() => manga.source.get());
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -153,6 +164,38 @@ export function SourceCard({ local }: { local: boolean }) {
             </label>
           </div>
 
+          {/*
+            * Two named alternatives, so two buttons rather than a slider — the
+            * same call the live-stream scope makes. A slider would have two
+            * positions, no labels at the stops, and no way to show which is on.
+            */}
+          {data.manage && (
+            <div className="row">
+              <button
+                className={data.mode === 'on-demand' ? 'btn primary' : 'btn'}
+                disabled={!local || busy}
+                onClick={() => void act(() => manga.source.setMode('on-demand'))}
+              >
+                Only when I need it
+              </button>
+              <button
+                className={data.mode === 'always' ? 'btn primary' : 'btn'}
+                disabled={!local || busy}
+                onClick={() => void act(() => manga.source.setMode('always'))}
+              >
+                Always on
+              </button>
+            </div>
+          )}
+
+          {data.manage && (
+            <p className="meta">
+              {data.mode === 'always'
+                ? 'Started shortly after the app and left running, so opening a chapter is instant. Costs a few hundred megabytes of memory all day.'
+                : 'Started when you search or read, and stopped after fifteen minutes unused. Costs about six seconds the first time, and nothing the rest of the day.'}
+            </p>
+          )}
+
           {managed && <p className={managed.urgent ? 'meta urgent' : 'meta'}>{managed.text}</p>}
 
           {data.manage && local && (
@@ -203,6 +246,17 @@ export function SourceCard({ local }: { local: boolean }) {
           {data.health?.reachable && data.health.sources.length > 0 && (
             <p className="meta">Searching: {data.health.sources.slice(0, 6).join(', ')}</p>
           )}
+
+          {/*
+            * Always offered, not only once something is reachable: the screen it
+            * opens is where you go *because* nothing is installed, and hiding it
+            * until things work would hide it exactly when it is needed.
+            */}
+          <div className="row">
+            <button className="btn" onClick={onExtensions}>
+              Manage extensions
+            </button>
+          </div>
         </>
       )}
     </details>
