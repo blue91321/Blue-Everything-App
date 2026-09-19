@@ -190,9 +190,16 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
   /**
    * Search every installed source and merge the results.
    *
-   * One request per source, which is why `limit` bounds the *sources* asked as
-   * well as the rows returned — an install with thirty extensions would
-   * otherwise make thirty upstream requests for one keystroke's worth of query.
+   * **Every one, not the first few.** This capped at eight sources to bound the
+   * upstream requests, and installing MangaFire exposed the flaw immediately: it
+   * registers one source per language, so eleven sources existed and three were
+   * silently never searched. A series missing because of a cap nothing mentions
+   * is indistinguishable from a series that is not there — and the cap was
+   * solving a problem this screen does not have, since searching is a button
+   * press rather than a keystroke.
+   *
+   * Bounded by concurrency instead, so eleven sources are four requests at a
+   * time rather than eleven at once.
    */
   async search(query: string, limit = 20): Promise<SourceMatch[]> {
     const data = await this.gql<{ sources: { nodes: Array<{ id: string; displayName: string }> } }>(
@@ -204,40 +211,45 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     }
 
     const out: SourceMatch[] = [];
-    for (const source of sources.slice(0, 8)) {
-      if (out.length >= limit) break;
-      try {
-        const found = await this.gql<{
-          fetchSourceManga: { mangas: Array<{ id: number; title: string; realUrl?: string | null; thumbnailUrl?: string | null }> };
-        }>(
-          `mutation Search($input: FetchSourceMangaInput!) {
-             fetchSourceManga(input: $input) {
-               hasNextPage
-               mangas { id title realUrl thumbnailUrl }
-             }
-           }`,
-          { input: { source: source.id, type: 'SEARCH', page: 1, query } }
-        );
+    let next = 0;
 
-        for (const m of found.fetchSourceManga?.mangas ?? []) {
-          out.push({
-            id: String(m.id),
-            title: m.title,
-            sourceName: source.displayName,
-            url: m.realUrl ?? null,
-            thumbnailUrl: m.thumbnailUrl ?? null,
-          });
+    const worker = async () => {
+      while (next < sources.length) {
+        const source = sources[next++];
+        try {
+          const found = await this.gql<{
+            fetchSourceManga: { mangas: Array<{ id: number; title: string; realUrl?: string | null; thumbnailUrl?: string | null }> };
+          }>(
+            `mutation Search($input: FetchSourceMangaInput!) {
+               fetchSourceManga(input: $input) {
+                 hasNextPage
+                 mangas { id title realUrl thumbnailUrl }
+               }
+             }`,
+            { input: { source: source.id, type: 'SEARCH', page: 1, query } }
+          );
+
+          for (const m of found.fetchSourceManga?.mangas ?? []) {
+            out.push({
+              id: String(m.id),
+              title: m.title,
+              sourceName: source.displayName,
+              url: m.realUrl ?? null,
+              thumbnailUrl: m.thumbnailUrl ?? null,
+            });
+          }
+        } catch {
+          /*
+           * One source failing must not fail the search. Extensions break
+           * constantly — a site changes its markup and that one extension throws
+           * — and a search returning nothing because the fourth of eleven
+           * sources is broken is indistinguishable from a series not existing.
+           */
         }
-      } catch {
-        /*
-         * One source failing must not fail the search. Extensions break
-         * constantly — a site changes its markup and that one extension throws —
-         * and a search that returns nothing because the fourth of eight sources
-         * is broken is indistinguishable from a series not existing.
-         */
       }
-    }
+    };
 
+    await Promise.all(Array.from({ length: Math.min(4, sources.length) }, worker));
     return out.slice(0, limit);
   }
 
