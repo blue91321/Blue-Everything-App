@@ -33,6 +33,7 @@ import { alreadyRaised, type Store } from '../library.js';
 import { totalChaptersFrom } from '../mangaupdates.js';
 import { readableChapter } from '../sources.js';
 import { uploadedAtMs } from '../suwayomi.js';
+import { portOf } from '../process.js';
 import { pollable, seriesUrl } from '../releases.js';
 
 let failures = 0;
@@ -189,6 +190,23 @@ check('a number is taken as it is', uploadedAtMs(1789769064000) === 178976906400
 check('zero is their "no date", not 1970', uploadedAtMs('0') === null);
 check('nothing is null', uploadedAtMs(null) === null);
 check('nonsense is null', uploadedAtMs('soon') === null);
+
+/* ------------------------------------------------------------------ */
+console.log('\nfinding the port to stop\n');
+
+/*
+ * Load-bearing for the kill path. An adopted Suwayomi is found by the port it
+ * listens on, because a force-killed restart leaves this process no handle to
+ * it — and that fallback is the only thing that can stop an orphan at all.
+ * Getting the port wrong means looking up the wrong process, or none.
+ */
+check('an explicit port', portOf('http://127.0.0.1:4567') === 4567);
+check('a different one', portOf('http://127.0.0.1:8080') === 8080);
+check('http defaults to 80', portOf('http://example.test') === 80);
+check('https defaults to 443', portOf('https://example.test') === 443);
+// Never NaN, which would be handed to a process lookup.
+check("nonsense falls back to Suwayomi's own", portOf('not a url') === 4567);
+check('empty falls back too', portOf('') === 4567);
 
 /* ------------------------------------------------------------------ */
 console.log('\nthe rotation\n');
