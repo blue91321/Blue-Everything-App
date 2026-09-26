@@ -3039,3 +3039,13 @@ button {
   flex: 0 1 12rem;
   min-width: 0;
 }
+
+/* The picker takes what it needs, so "Browse from" stays on one line beside it. */
+.manga-browse > .row label {
+  white-space: nowrap;
+}
+
+.manga-browse > .row select {
+  flex: 0 1 22rem;
+  min-width: 0;
+}
