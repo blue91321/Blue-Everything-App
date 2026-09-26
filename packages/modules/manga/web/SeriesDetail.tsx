@@ -93,7 +93,18 @@ export function SeriesDetail({
   const first = page ? [...page.chapters].sort((a, b) => a.number - b.number)[0] ?? null : null;
   const blurb = page?.description ?? null;
   const long = blurb !== null && blurb.length > BLURB_CLAMP;
-  const people = page ? [...new Set([page.author, page.artist].filter(Boolean))].join(' · ') : '';
+  // Sites put the artist among the authors as often as not ("Ye Xiao, Wuer
+  // Manhua" and "Wuer Manhua"), so names are split and each said once.
+  const people = page
+    ? [
+        ...new Set(
+          [page.author, page.artist]
+            .flatMap((p) => (p ?? '').split(','))
+            .map((n) => n.trim())
+            .filter(Boolean)
+        ),
+      ].join(', ')
+    : '';
 
   return (
     <div className="manga-detail">
