@@ -33,6 +33,21 @@ const BLURB_CLAMP = 420;
 
 type Chapter = SeriesDetailPage['chapters'][number];
 
+/**
+ * "Also on MangaFire" while reading MangaFire's copy reads as a mistake — it is
+ * the same site's other edition of the series (the original and an "(Official)"
+ * or colour one), so those are counted separately from other sites.
+ */
+function alsoOn(others: BrowseResult[], here: string): string {
+  const elsewhere = [...new Set(others.map((o) => o.sourceName).filter((n) => n !== here))];
+  const editions = others.filter((o) => o.sourceName === here).length;
+  const parts = [
+    elsewhere.length > 0 ? `Also on ${elsewhere.join(', ')}` : null,
+    editions > 0 ? `${editions} other edition${editions === 1 ? '' : 's'} on ${here}` : null,
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
 export function SeriesDetail({
   result,
   others,
@@ -194,7 +209,7 @@ export function SeriesDetail({
 
       {others.length > 0 && (
         <details className="manga-compare-other">
-          <summary>Also on {[...new Set(others.map((o) => o.sourceName))].join(', ')}</summary>
+          <summary>{alsoOn(others, result.sourceName)}</summary>
           {others.map((o) => (
             <div className="row between" key={`${o.sourceName}:${o.id}`}>
               <span className="meta truncate">
