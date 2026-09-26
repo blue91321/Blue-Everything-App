@@ -183,6 +183,8 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
         onClose={() => {
           setReading(null);
           setContinuing(false);
+          // The place was saved without announcing itself; this list should know.
+          library.reload();
         }}
         onCompare={() => {
           setComparing({ id: reading, from: 'chapters' });
@@ -358,16 +360,22 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               {/* Only when there is somewhere to read it from. */}
               {series.source &&
                 (series.position ? (
-                  // Straight back to the page — the whole reason to keep it.
+                  /*
+                   * Straight back to the page — the whole reason to keep it. The
+                   * chapter and not the page: the page is saved quietly as you
+                   * scroll, so a list drawn earlier (or on the other device) has
+                   * an old one, while the chapter is announced when it changes.
+                   * Pressing it reads the place fresh either way.
+                   */
                   <button
                     className="btn primary"
-                    title={`${series.position.chapterName}, page ${series.position.page + 1} of ${series.position.pages}, on ${series.position.source}`}
+                    title={`${series.position.chapterName}, on ${series.position.source}`}
                     onClick={() => {
                       setContinuing(true);
                       setReading(series.id);
                     }}
                   >
-                    Continue ch {chapterText(series.position.chapter)} · p{series.position.page + 1}
+                    Continue ch {chapterText(series.position.chapter)}
                   </button>
                 ) : (
                   <button className="btn primary" onClick={() => setReading(series.id)}>
