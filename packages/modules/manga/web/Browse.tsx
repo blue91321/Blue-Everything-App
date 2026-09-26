@@ -17,8 +17,9 @@
  * declares rather than a fixed form, so a new extension's filters appear without
  * this file changing.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Cover } from './Cover';
+import { SeriesDetail } from './SeriesDetail';
 import { languageName } from './judge';
 import {
   manga,
@@ -41,6 +42,28 @@ export function Browse({ onFollowed, onRead }: { onFollowed: () => void; onRead:
   /** Series followed from this screen since it opened, by result key, so buttons change at once. */
   const [followed, setFollowed] = useState<Record<string, string>>({});
   const [note, setNote] = useState<string | null>(null);
+  /**
+   * The series whose page is open, and the other sources' copies of it when it
+   * came from a search. The lists stay mounted underneath, hidden, so Back
+   * returns to the same page of results rather than the top of an empty one.
+   */
+  const [detail, setDetail] = useState<{ result: BrowseResult; others: BrowseResult[] } | null>(null);
+  /*
+   * Where the list was scrolled to, so Back lands on the cover you tapped rather
+   * than the top of fifty. The page itself opens at the top: arriving halfway
+   * down a description is arriving in the middle of it.
+   */
+  const scrolledTo = useRef(0);
+  const open = (result: BrowseResult, others: BrowseResult[] = []) => {
+    scrolledTo.current = window.scrollY;
+    setDetail({ result, others });
+    window.scrollTo(0, 0);
+  };
+  const back = () => {
+    setDetail(null);
+    // After the list is shown again, or there is nothing to scroll yet.
+    setTimeout(() => window.scrollTo(0, scrolledTo.current), 0);
+  };
 
   useEffect(() => {
     manga.browse.get().then(setState, (e: unknown) => setProblem(e instanceof Error ? e.message : 'could not reach your sources'));
@@ -97,6 +120,24 @@ export function Browse({ onFollowed, onRead }: { onFollowed: () => void; onRead:
 
   return (
     <div className="card manga-browse">
+      {note && <p className="meta">{note}</p>}
+
+      {detail && (
+        <SeriesDetail
+          key={keyOf(detail.result)}
+          result={detail.result}
+          others={detail.others}
+          following={followingOf(detail.result)}
+          onBack={back}
+          onOpen={(o) =>
+            setDetail({ result: o, others: [detail.result, ...detail.others.filter((x) => keyOf(x) !== keyOf(o))] })
+          }
+          onFollow={follow}
+          onRead={onRead}
+        />
+      )}
+
+      <div hidden={detail !== null}>
       <div className="row">
         <label className="meta" htmlFor="manga-browse-source">
           Browse from
@@ -118,8 +159,6 @@ export function Browse({ onFollowed, onRead }: { onFollowed: () => void; onRead:
         ))}
       </div>
 
-      {note && <p className="meta">{note}</p>}
-
       {source && sub !== 'search' && (
         <SourceList
           key={`${source.id}:${sub}`}
@@ -128,11 +167,13 @@ export function Browse({ onFollowed, onRead }: { onFollowed: () => void; onRead:
           following={followingOf}
           onFollow={follow}
           onRead={onRead}
+          onOpen={open}
         />
       )}
       {sub === 'search' && (
-        <Search state={state} following={followingOf} onFollow={follow} onRead={onRead} />
+        <Search state={state} following={followingOf} onFollow={follow} onRead={onRead} onOpen={open} />
       )}
+      </div>
     </div>
   );
 }
@@ -147,12 +188,14 @@ function SourceList({
   following,
   onFollow,
   onRead,
+  onOpen,
 }: {
   sourceId: string;
   type: 'popular' | 'latest';
   following: (r: BrowseResult) => string | null;
   onFollow: (r: BrowseResult) => Promise<void>;
   onRead: (id: string) => void;
+  onOpen: (r: BrowseResult) => void;
 }) {
   const [results, setResults] = useState<BrowseResult[]>([]);
   const [page, setPage] = useState(0);
@@ -192,7 +235,7 @@ function SourceList({
       {results.length === 0 && !loading && !problem && <p className="empty">This source listed nothing.</p>}
       <div className="manga-browse-grid">
         {results.map((r) => (
-          <Tile key={keyOf(r)} result={r} following={following(r)} onFollow={onFollow} onRead={onRead} />
+          <Tile key={keyOf(r)} result={r} following={following(r)} onFollow={onFollow} onRead={onRead} onOpen={onOpen} />
         ))}
       </div>
       {more && results.length > 0 && (
@@ -209,19 +252,22 @@ function Tile({
   following,
   onFollow,
   onRead,
+  onOpen,
 }: {
   result: BrowseResult;
   following: string | null;
   onFollow: (r: BrowseResult) => Promise<void>;
   onRead: (id: string) => void;
+  onOpen: (r: BrowseResult) => void;
 }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="manga-browse-tile">
-      <Cover path={result.coverPath} title={result.title} size={110} />
-      <span className="title manga-browse-title" title={result.title}>
-        {result.title}
-      </span>
+      {/* The cover and title are one button: a real one, so it takes Enter and is announced as something to press. */}
+      <button className="manga-browse-open" onClick={() => onOpen(result)} title={result.title}>
+        <Cover path={result.coverPath} title={result.title} size={110} />
+        <span className="title manga-browse-title">{result.title}</span>
+      </button>
       {following ? (
         <button className="btn subtle" onClick={() => onRead(following)}>
           Following · Read
@@ -253,11 +299,13 @@ function Search({
   following,
   onFollow,
   onRead,
+  onOpen,
 }: {
   state: BrowseState;
   following: (r: BrowseResult) => string | null;
   onFollow: (r: BrowseResult) => Promise<void>;
   onRead: (id: string) => void;
+  onOpen: (r: BrowseResult, others: BrowseResult[]) => void;
 }) {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<GroupedSearch | null>(null);
@@ -437,12 +485,14 @@ function Search({
         const sources = [...new Set(g.entries.map((e) => e.sourceName))];
         return (
           <div className="manga-row" key={g.key}>
-            <Cover path={lead.coverPath} title={g.title} size={48} />
+            <button className="manga-browse-open" onClick={() => onOpen(lead, g.entries.slice(1))} aria-label={`About ${g.title}`}>
+              <Cover path={lead.coverPath} title={g.title} size={48} />
+            </button>
             <div className="manga-row-text">
-              <span className="title truncate">
+              <button className="manga-browse-open title truncate" onClick={() => onOpen(lead, g.entries.slice(1))}>
                 {g.title}
                 {followingId && <span className="manga-flag good"> · following</span>}
-              </span>
+              </button>
               <span className="meta">
                 {g.preferred ? '' : `not on ${chosen?.name ?? 'the chosen source'} · `}
                 on {sources.length} source{sources.length === 1 ? '' : 's'}: {sources.join(', ')}

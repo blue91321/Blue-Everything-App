@@ -237,6 +237,29 @@ export interface GroupedSearch {
   languages: string[] | null;
 }
 
+/** A source's series, for its detail page — see the route of the same path. */
+export interface SeriesDetailPage {
+  id: string;
+  title: string;
+  author: string | null;
+  artist: string | null;
+  description: string | null;
+  genres: string[];
+  status: 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'licensed' | 'unknown';
+  url: string | null;
+  sourceId: string | null;
+  sourceName: string;
+  lang: string | null;
+  /** The site would not answer; this is Suwayomi's stored copy. */
+  stale: boolean;
+  coverPath: string | null;
+  following: string | null;
+  /** Newest first. Nothing is marked read, since nothing is followed yet. */
+  chapters: Array<Omit<SourceChapter, 'read'>>;
+  profile: ChapterProfile;
+  chaptersProblem: string | null;
+}
+
 export interface Candidate {
   mangadexId: string | null;
   malId: number | null;
@@ -360,6 +383,11 @@ export const manga = {
       allLanguages: boolean;
       only: string[] | null;
     }) => call<GroupedSearch>('/api/manga/browse/search', { method: 'POST', body: JSON.stringify(body) }),
+    detail: (mangaId: string) => call<SeriesDetailPage>(`/api/manga/browse/manga/${encodeURIComponent(mangaId)}`),
+    pages: (mangaId: string, chapterId: string) =>
+      call<{ pages: string[] }>(
+        `/api/manga/browse/manga/${encodeURIComponent(mangaId)}/chapters/${encodeURIComponent(chapterId)}/pages`
+      ),
     follow: (result: BrowseResult) =>
       call<{ series: SeriesSummary; matchedOn: 'mangadex' | 'existing' | null }>('/api/manga/follow-source', {
         method: 'POST',

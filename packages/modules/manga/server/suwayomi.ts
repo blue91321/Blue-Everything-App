@@ -48,6 +48,41 @@ import {
 } from './sources.js';
 import { fromSuwayomiFilter, type SourceFilter } from './browse.js';
 
+/** A series as its source describes it — see `SuwayomiAdapter.details`. */
+export type SeriesDetails = {
+  id: string;
+  title: string;
+  author: string | null;
+  artist: string | null;
+  description: string | null;
+  genres: string[];
+  status: 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'licensed' | 'unknown';
+  thumbnailUrl: string | null;
+  url: string | null;
+  sourceId: string | null;
+  sourceName: string;
+  lang: string | null;
+  /** True when the site would not answer and this is Suwayomi's stored copy. */
+  stale: boolean;
+};
+
+/**
+ * Suwayomi's statuses, folded to the library's words plus one.
+ *
+ * `LICENSED` keeps its own value rather than reading as cancelled: it is a
+ * series taken down from a scanlation site because an official release exists.
+ * The run has not ended — it has stopped *on this source* — and the page says
+ * that, since it is exactly what you want to know before following from here.
+ */
+const STATUS: Record<string, SeriesDetails['status']> = {
+  ONGOING: 'ongoing',
+  COMPLETED: 'completed',
+  PUBLISHING_FINISHED: 'completed',
+  ON_HIATUS: 'hiatus',
+  CANCELLED: 'cancelled',
+  LICENSED: 'licensed',
+};
+
 /** One installed source, as the Browse tab offers it. */
 export type BrowseSource = { id: string; name: string; lang: string; supportsLatest: boolean };
 
@@ -379,6 +414,52 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       searched: sources.length,
       skipped,
       available: [...counts].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count),
+    };
+  }
+
+  /**
+   * One series as its source describes it: blurb, people, genres, status.
+   *
+   * A browse result carries a title and a cover and nothing else — Suwayomi
+   * stores the rest only once somebody asks — so this asks. `fetchManga` goes
+   * to the site; if the site will not answer, Suwayomi's stored copy is read
+   * instead and the page says less rather than failing, because a detail page
+   * that errors over a blurb loses the chapters and the Follow button with it.
+   */
+  async details(mangaId: string): Promise<SeriesDetails> {
+    const id = Number.parseInt(mangaId, 10);
+    if (!Number.isSafeInteger(id)) throw new SourceError('not a Suwayomi manga id');
+    const FIELDS = 'id title author artist description genre status thumbnailUrl realUrl source { id displayName lang }';
+
+    let manga: Json | null = null;
+    let stale = false;
+    try {
+      const data = await this.gql<{ fetchManga: { manga: Json } }>(
+        `mutation Details($id: Int!) { fetchManga(input: { id: $id }) { manga { ${FIELDS} } } }`,
+        { id }
+      );
+      manga = data.fetchManga?.manga ?? null;
+    } catch {
+      const data = await this.gql<{ manga: Json }>(`query Stored($id: Int!) { manga(id: $id) { ${FIELDS} } }`, { id });
+      manga = data.manga ?? null;
+      stale = true;
+    }
+    if (!manga) throw new SourceError('the source has no such series');
+
+    return {
+      id: String(manga.id),
+      title: String(manga.title ?? ''),
+      author: manga.author || null,
+      artist: manga.artist || null,
+      description: typeof manga.description === 'string' && manga.description.trim() ? manga.description.trim() : null,
+      genres: Array.isArray(manga.genre) ? manga.genre.filter((g: unknown) => typeof g === 'string' && g.trim()) : [],
+      status: STATUS[manga.status as string] ?? 'unknown',
+      thumbnailUrl: manga.thumbnailUrl ?? null,
+      url: manga.realUrl ?? null,
+      sourceId: manga.source ? String(manga.source.id) : null,
+      sourceName: manga.source?.displayName ?? 'Suwayomi',
+      lang: manga.source?.lang || null,
+      stale,
     };
   }
 

@@ -3049,3 +3049,82 @@ button {
   flex: 0 1 22rem;
   min-width: 0;
 }
+
+/* ---- Manga: one series from a source ---------------------------------- */
+
+/* A cover or a title you tap to open. A real button, dressed as what it holds. */
+.manga-browse-open {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.manga-row-text > .manga-browse-open {
+  display: block;
+  text-align: left;
+}
+
+.manga-browse-open:hover .manga-browse-title,
+.manga-row-text > .manga-browse-open:hover {
+  color: var(--accent);
+}
+
+.manga-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.manga-detail > * {
+  max-width: 100%;
+}
+
+/* Cover beside the facts, and above them once there is not room for both. */
+.manga-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  width: 100%;
+}
+
+.manga-detail-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.manga-detail-title {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.manga-detail-facts .manga-row-actions {
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+/* Prose, so it takes the measure the notes do rather than the window's width. */
+.manga-detail-blurb {
+  margin: 0;
+  max-width: 90ch;
+  white-space: pre-line;
+  line-height: 1.5;
+}
+
+.manga-detail .manga-chapters {
+  width: 100%;
+}

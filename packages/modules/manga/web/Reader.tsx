@@ -58,11 +58,19 @@ const IN_FLIGHT = 3;
 
 export function Reader({
   seriesId,
+  preview,
   chapter,
   onClose,
   onFinished,
 }: {
-  seriesId: string;
+  /** A followed series. */
+  seriesId?: string;
+  /**
+   * Or a source's series id, read before following — from its detail page in
+   * Browse. Nothing is marked read then, so the last button says "next" rather
+   * than "finished".
+   */
+  preview?: string;
   chapter: { id: string; number: number; name: string };
   onClose: () => void;
   onFinished: (chapterNumber: number) => void;
@@ -81,7 +89,9 @@ export function Reader({
       setTotal(null);
       setProblem(null);
       try {
-        const { pages } = await manga.reader.pages(seriesId, chapter.id);
+        const { pages } = preview
+          ? await manga.browse.pages(preview, chapter.id)
+          : await manga.reader.pages(seriesId!, chapter.id);
         if (!alive) return;
         setTotal(pages.length);
         setUrls(new Array(pages.length).fill(null));
@@ -120,7 +130,7 @@ export function Reader({
       alive = false;
       for (const url of made) URL.revokeObjectURL(url);
     };
-  }, [seriesId, chapter.id]);
+  }, [seriesId, preview, chapter.id]);
 
   // Back to the top when the chapter changes, or reading the next one starts you
   // at the bottom of it.
@@ -169,7 +179,7 @@ export function Reader({
             * past as finished.
             */}
           <button className="btn primary" onClick={() => onFinished(chapter.number)}>
-            Finished — next chapter
+            {preview ? 'Next chapter' : 'Finished — next chapter'}
           </button>
         </div>
       )}

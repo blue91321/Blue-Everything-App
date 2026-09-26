@@ -1219,6 +1219,99 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return { series: seriesSummary(series), matchedOn: best ? 'mangadex' : null };
   });
 
+  /**
+   * One series from a source, for the page you get by tapping it in Browse:
+   * what the site says about it, and its chapters.
+   *
+   * Chapters are read from Suwayomi's copy first and fetched from the site only
+   * when there is none — which, for something you have only ever seen in a
+   * list, is nearly always, since nothing asks for its chapters until now. A
+   * chapter list that will not load is reported beside the details rather than
+   * failing the page, so the blurb and Follow survive a flaky site.
+   */
+  app.get('/api/manga/browse/manga/:mangaId', async (request, reply) => {
+    const { mangaId } = request.params as { mangaId: string };
+    if (!/^\d{1,20}$/.test(mangaId)) return reply.code(400).send({ error: 'not a source series' });
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    try {
+      const details = await ctx.adapter.details(mangaId);
+      let chapters: Awaited<ReturnType<SuwayomiAdapter['chapters']>> = [];
+      let chaptersProblem: string | null = null;
+      try {
+        chapters = await ctx.adapter.chapters(mangaId, false);
+        if (chapters.length === 0) chapters = await ctx.adapter.chapters(mangaId, true);
+      } catch (error) {
+        chaptersProblem = error instanceof SourceError ? error.message : 'could not list its chapters';
+      }
+      const { following } = present(ctx.store, {
+        id: details.id,
+        title: details.title,
+        sourceName: details.sourceName,
+        lang: details.lang,
+        url: details.url,
+        thumbnailUrl: details.thumbnailUrl,
+      });
+      return {
+        ...details,
+        // Only a link a person can follow: the site's own http(s) page.
+        url: details.url && /^https?:\/\//i.test(details.url) ? details.url : null,
+        coverPath: thumbPath(details.thumbnailUrl),
+        following,
+        chapters: [...chapters].sort((a, b) => b.number - a.number),
+        profile: profileChapters(chapters),
+        chaptersProblem,
+      };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * A chapter's pages, for reading something you have not followed.
+   *
+   * Nothing is marked read — there is no series to keep a place in — which the
+   * page says. The pages come back as this app's URLs, for the reason the
+   * followed reader's do.
+   */
+  app.get('/api/manga/browse/manga/:mangaId/chapters/:chapterId/pages', async (request, reply) => {
+    const { mangaId, chapterId } = request.params as { mangaId: string; chapterId: string };
+    if (!/^\d{1,20}$/.test(mangaId) || !/^\d{1,20}$/.test(chapterId)) {
+      return reply.code(400).send({ error: 'not a chapter' });
+    }
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    try {
+      const pages = await ctx.adapter.pages(chapterId);
+      return { pages: pages.map((path) => `/api/manga/browse/page?p=${encodeURIComponent(path)}`) };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /** One page image for the preview reader — checked exactly as the followed reader's are. */
+  app.get('/api/manga/browse/page', async (request, reply) => {
+    const { p } = request.query as { p?: string };
+    if (!p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
+      return reply.code(400).send({ error: 'not a page' });
+    }
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    try {
+      const response = await fetch(`${ctx.url}${p}`, { signal: AbortSignal.timeout(30_000) });
+      if (!response.ok) return reply.code(502).send({ error: `the source answered ${response.status}` });
+      return reply
+        .header('content-type', response.headers.get('content-type') ?? 'image/jpeg')
+        .header('cache-control', 'private, max-age=604800')
+        .send(Buffer.from(await response.arrayBuffer()));
+    } catch {
+      return reply.code(502).send({ error: 'could not fetch the page' });
+    }
+  });
+
   /* ---- reading ---- */
 
   /**
