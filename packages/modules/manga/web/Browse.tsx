@@ -35,7 +35,19 @@ type Sub = 'popular' | 'latest' | 'search';
 
 const SUB_LABEL: Record<Sub, string> = { popular: 'Popular', latest: 'Recently released', search: 'Search' };
 
-export function Browse({ onFollowed, onRead }: { onFollowed: () => void; onRead: (seriesId: string) => void }) {
+export function Browse({
+  onFollowed,
+  onRead,
+  search,
+}: {
+  onFollowed: () => void;
+  onRead: (seriesId: string) => void;
+  /**
+   * A search asked for from elsewhere — the library's Details on a series with
+   * no source yet. `at` makes asking twice for the same title a second request.
+   */
+  search?: { query: string; at: number } | null;
+}) {
   const [state, setState] = useState<BrowseState | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [sub, setSub] = useState<Sub>('popular');
@@ -105,6 +117,12 @@ export function Browse({ onFollowed, onRead }: { onFollowed: () => void; onRead:
 
   const followingOf = (r: BrowseResult) => followed[keyOf(r)] ?? r.following;
 
+  useEffect(() => {
+    if (!search) return;
+    setDetail(null);
+    setSub('search');
+  }, [search?.at]);
+
   if (problem) return <p className="banner">{problem}</p>;
   if (!state) return <p className="empty">Asking your sources what they have…</p>;
   if (state.sources.length === 0) {
@@ -171,7 +189,7 @@ export function Browse({ onFollowed, onRead }: { onFollowed: () => void; onRead:
         />
       )}
       {sub === 'search' && (
-        <Search state={state} following={followingOf} onFollow={follow} onRead={onRead} onOpen={open} />
+        <Search state={state} following={followingOf} onFollow={follow} onRead={onRead} onOpen={open} asked={search ?? null} />
       )}
       </div>
     </div>
@@ -300,12 +318,14 @@ function Search({
   onFollow,
   onRead,
   onOpen,
+  asked,
 }: {
   state: BrowseState;
   following: (r: BrowseResult) => string | null;
   onFollow: (r: BrowseResult) => Promise<void>;
   onRead: (id: string) => void;
   onOpen: (r: BrowseResult, others: BrowseResult[]) => void;
+  asked: { query: string; at: number } | null;
 }) {
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<GroupedSearch | null>(null);
@@ -349,15 +369,25 @@ function Search({
 
   const changeList = Object.values(changes);
 
-  async function run(event?: React.FormEvent) {
+  // A search asked for from the library: filled in and run, so it lands with
+  // the answers rather than an empty box.
+  useEffect(() => {
+    if (!asked) return;
+    setQuery(asked.query);
+    void run(undefined, asked.query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked?.at]);
+
+  async function run(event?: React.FormEvent, text: string = query) {
     event?.preventDefault();
-    if (!query.trim() && changeList.length === 0) return;
+    const words = text.trim();
+    if (!words && changeList.length === 0) return;
     setSearching(true);
     setProblem(null);
     try {
       setResult(
         await manga.browse.search({
-          query: query.trim(),
+          query: words,
           source: chosen?.id ?? null,
           changes: changeList,
           allLanguages,

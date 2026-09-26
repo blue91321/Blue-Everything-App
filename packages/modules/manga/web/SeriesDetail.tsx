@@ -56,6 +56,8 @@ export function SeriesDetail({
   onOpen,
   onFollow,
   onRead,
+  ownSeriesId,
+  updatesUrl,
 }: {
   result: BrowseResult;
   /** The same series on other sources, when it was opened from a search. */
@@ -67,6 +69,15 @@ export function SeriesDetail({
   onOpen: (r: BrowseResult) => void;
   onFollow: (r: BrowseResult) => Promise<void>;
   onRead: (seriesId: string) => void;
+  /**
+   * The library series whose linked source *is* this copy — set when the page
+   * is opened from the library's Details. Reading then keeps your place like
+   * the library's own reader does, since this is the same series on the same
+   * source rather than a preview of something you might follow.
+   */
+  ownSeriesId?: string;
+  /** Its MangaUpdates page, which is where Details used to go. */
+  updatesUrl?: string | null;
 }) {
   const [page, setPage] = useState<SeriesDetailPage | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -93,10 +104,11 @@ export function SeriesDetail({
   if (open && page) {
     return (
       <Reader
-        preview={result.id}
+        {...(ownSeriesId ? { seriesId: ownSeriesId } : { preview: result.id })}
         chapter={open}
         onClose={() => setOpen(null)}
-        onFinished={(n) => {
+        onFinished={async (n) => {
+          if (ownSeriesId) await manga.reader.markRead(ownSeriesId, n).catch(() => undefined);
           // Next *up* by number, as the followed reader does; the list is newest-first.
           const next = page.chapters.filter((c) => c.number > n).sort((a, b) => a.number - b.number)[0];
           setOpen(next ?? null);
@@ -170,9 +182,14 @@ export function SeriesDetail({
               </button>
             )}
             {page?.url && (
-              // The site itself, in a new tab — the one link here that leaves the app.
+              // The site itself, in a new tab — one of the two links here that leave the app.
               <a className="btn subtle" href={page.url} target="_blank" rel="noreferrer noopener">
                 On the site
+              </a>
+            )}
+            {updatesUrl && (
+              <a className="btn subtle" href={updatesUrl} target="_blank" rel="noreferrer noopener">
+                MangaUpdates
               </a>
             )}
           </div>
@@ -226,6 +243,12 @@ export function SeriesDetail({
       <h3>Chapters</h3>
       {!followingId && page && page.chapters.length > 0 && (
         <p className="meta">You can read before following. Nothing is marked read until you follow it.</p>
+      )}
+      {followingId && !ownSeriesId && page && page.chapters.length > 0 && (
+        <p className="meta">
+          You follow this series, but reading from this page does not mark anything — open it from your library to keep
+          your place.
+        </p>
       )}
       {page?.chaptersProblem && <p className="banner">Could not list its chapters: {page.chaptersProblem}</p>}
       {page && !page.chaptersProblem && page.chapters.length === 0 && (

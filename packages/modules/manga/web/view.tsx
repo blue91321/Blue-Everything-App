@@ -26,6 +26,7 @@ import { Extensions } from './Extensions';
 import { SuwayomiUI } from './SuwayomiUI';
 import { Compare } from './Compare';
 import { Browse } from './Browse';
+import { SeriesDetail } from './SeriesDetail';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -59,6 +60,10 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   const [comparing, setComparing] = useState<{ id: string; from: 'list' | 'chapters' } | null>(null);
   /** Your list, or browsing your sources. `useState`, like every other bit of navigation here. */
   const [tab, setTab] = useState<'library' | 'browse'>('library');
+  /** A library series whose source page is open — Details on a linked row. */
+  const [details, setDetails] = useState<string | null>(null);
+  /** A search handed to Browse — Details on a row with no source yet. */
+  const [browseSearch, setBrowseSearch] = useState<{ query: string; at: number } | null>(null);
   const [browsed, setBrowsed] = useState(false);
   useEffect(() => {
     if (tab === 'browse') setBrowsed(true);
@@ -179,6 +184,38 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
       />
     );
   }
+  if (!overlay && details) {
+    const own = data?.series.find((s) => s.id === details);
+    if (own?.source) {
+      overlay = (
+        <div className="card manga-browse">
+          <SeriesDetail
+            result={{
+              id: own.source.mangaId,
+              title: own.source.title,
+              sourceName: own.source.sourceName,
+              lang: null,
+              url: null,
+              thumbnailUrl: null,
+              coverPath: own.coverPath,
+              following: own.id,
+            }}
+            others={[]}
+            following={own.id}
+            ownSeriesId={own.id}
+            updatesUrl={own.url}
+            onBack={() => setDetails(null)}
+            onOpen={() => undefined}
+            onFollow={async () => undefined}
+            onRead={(id) => {
+              setDetails(null);
+              setReading(id);
+            }}
+          />
+        </div>
+      );
+    }
+  }
   if (!overlay && managingExtensions) overlay = <Extensions local={local} onClose={() => setManagingExtensions(false)} />;
   if (!overlay && suwayomiOpen) overlay = <SuwayomiUI onClose={() => setSuwayomiOpen(false)} />;
 
@@ -201,7 +238,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
         */}
       {(tab === 'browse' || browsed) && (
         <div hidden={tab !== 'browse'}>
-          <Browse onFollowed={() => library.reload()} onRead={(id) => setReading(id)} />
+          <Browse onFollowed={() => library.reload()} onRead={(id) => setReading(id)} search={browseSearch} />
         </div>
       )}
 
@@ -316,11 +353,26 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
                   Read
                 </button>
               )}
-              {series.url && (
-                <a href={series.url} target="_blank" rel="noreferrer noopener" className="btn subtle">
-                  Details
-                </a>
-              )}
+              {/*
+                * The source's page for this series, the one Browse shows — or,
+                * with no source linked yet, a search of every source for it,
+                * since there is no one page to show until you pick where to read.
+                * MangaUpdates, which this used to open, is linked from the page.
+                */}
+              <button
+                className="btn subtle"
+                onClick={() => {
+                  if (series.source) {
+                    setDetails(series.id);
+                    window.scrollTo(0, 0);
+                  } else {
+                    setTab('browse');
+                    setBrowseSearch({ query: series.title, at: Date.now() });
+                  }
+                }}
+              >
+                Details
+              </button>
               <button className="btn danger" onClick={() => remove(series)}>
                 Remove
               </button>
