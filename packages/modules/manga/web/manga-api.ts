@@ -34,7 +34,24 @@ export interface SeriesSummary {
 export interface SourceHealth {
   reachable: boolean;
   sources: string[];
+  /** Languages the installed sources cover, most sources first. Optional: older servers omit it. */
+  languages?: Array<{ code: string; count: number }>;
   problem: string | null;
+}
+
+/** What one source search asked, as well as what it found. */
+export interface SourceSearch {
+  results: SourceMatch[];
+  /** How many sources were asked. Optional: an older server does not say. */
+  searched?: number;
+  /** How many were left out by language. */
+  skipped?: number;
+  /** The languages the search was limited to, or null when it asked every one. */
+  languages?: string[] | null;
+  /** The saved setting, which a one-off wide search does not change. */
+  readLanguages?: string[];
+  /** Every language the installed sources cover, most sources first. */
+  available?: Array<{ code: string; count: number }>;
 }
 
 /**
@@ -75,6 +92,8 @@ export interface SourceState {
   configured: boolean;
   url: string | null;
   defaultUrl: string;
+  /** Languages whose sources a search asks. Optional: an older server does not send it. */
+  readLanguages?: string[];
   /** The jar this app may run, when one has been chosen. */
   jar: string | null;
   /** May the app start and stop it? */
@@ -209,10 +228,16 @@ export const manga = {
       call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ mode }) }),
     start: () => call<ManagedState>('/api/manga/source/start', { method: 'POST' }),
     stop: () => call<ManagedState>('/api/manga/source/stop', { method: 'POST' }),
-    search: (id: string, q?: string) =>
-      call<{ results: SourceMatch[] }>(
-        `/api/manga/${id}/source/search${q ? `?q=${encodeURIComponent(q)}` : ''}`
-      ),
+    /** `allLanguages` is a one-off wider search; it does not change the setting. */
+    search: (id: string, q?: string, allLanguages = false) => {
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      if (allLanguages) params.set('all', '1');
+      const query = params.toString();
+      return call<SourceSearch>(`/api/manga/${id}/source/search${query ? `?${query}` : ''}`);
+    },
+    setLanguages: (languages: string[]) =>
+      call<{ languages: string[] }>('/api/manga/languages', { method: 'PUT', body: JSON.stringify({ languages }) }),
     count: (id: string, mangaId: string) =>
       call<{ chapters: number; latest: number | null; profile?: ChapterProfile }>(
         `/api/manga/${id}/source/count?mangaId=${encodeURIComponent(mangaId)}`

@@ -42,7 +42,9 @@ import {
   type SourceExtension,
   type SourceHealth,
   type SourceMatch,
+  type SearchOutcome,
   rankMatches,
+  sourcesToSearch,
 } from './sources.js';
 
 /** Suwayomi's own default. Overridable, because nothing says it has to be here. */
@@ -168,12 +170,16 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
 
   async describe(): Promise<SourceHealth> {
     try {
-      const data = await this.gql<{ sources: { nodes: Array<{ displayName: string }> } }>(
-        `query { sources { nodes { id displayName } } }`
+      const data = await this.gql<{ sources: { nodes: Array<{ displayName: string; lang: string }> } }>(
+        `query { sources { nodes { id displayName lang } } }`
       );
+      const nodes = data.sources?.nodes ?? [];
+      const counts = new Map<string, number>();
+      for (const n of nodes) if (n.lang) counts.set(n.lang, (counts.get(n.lang) ?? 0) + 1);
       return {
         reachable: true,
-        sources: (data.sources?.nodes ?? []).map((s) => s.displayName).filter(Boolean),
+        sources: nodes.map((s) => s.displayName).filter(Boolean),
+        languages: [...counts].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count),
         problem: null,
       };
     } catch (error) {
@@ -202,14 +208,19 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
    * Bounded by concurrency instead, so eleven sources are four requests at a
    * time rather than eleven at once.
    */
-  async search(query: string, limit = 20): Promise<SourceMatch[]> {
+  async search(
+    query: string,
+    { limit = 40, languages = null }: { limit?: number; languages?: readonly string[] | null } = {}
+  ): Promise<SearchOutcome> {
     const data = await this.gql<{ sources: { nodes: Array<{ id: string; displayName: string; lang: string }> } }>(
       `query { sources { nodes { id displayName lang } } }`
     );
-    const sources = data.sources?.nodes ?? [];
-    if (sources.length === 0) {
+    const installed = data.sources?.nodes ?? [];
+    if (installed.length === 0) {
       throw new SourceError('Suwayomi is running but has no sources installed — add an extension repository first');
     }
+
+    const { searched: sources, skipped } = sourcesToSearch(installed, languages);
 
     const out: SourceMatch[] = [];
     let next = 0;
@@ -261,7 +272,22 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
      * searched for landed eleventh, once per installed language. `rankMatches`
      * keeps it stable *and* puts the answer first. See its note.
      */
-    return rankMatches(query, out).slice(0, limit);
+    /*
+     * The limit was 20 and silently cut the answer off: with MangaDex's sixty
+     * languages installed, twenty MangaDex rows filled it before MangaFire's
+     * English source was reached. Filtering by language is the real fix; the
+     * limit is raised so that it binds only in the unusual case, where it cuts
+     * the *worst* matches because they are ranked first.
+     */
+    const counts = new Map<string, number>();
+    for (const s of installed) if (s.lang) counts.set(s.lang, (counts.get(s.lang) ?? 0) + 1);
+
+    return {
+      matches: rankMatches(query, out).slice(0, limit),
+      searched: sources.length,
+      skipped,
+      available: [...counts].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count),
+    };
   }
 
   async chapters(mangaId: string, refresh = true): Promise<SourceChapter[]> {

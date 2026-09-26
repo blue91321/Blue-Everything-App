@@ -265,6 +265,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
     const base = {
       defaultUrl: DEFAULT_BASE_URL,
+      readLanguages: store.readLanguages,
       jar: suwayomiJar,
       manage: manageSuwayomi,
       mode: store.suwayomiMode,
@@ -416,7 +417,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
   /** Find this series in the source's own catalogue, so it can be linked. */
   app.get('/api/manga/:id/source/search', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { q } = request.query as { q?: string };
+    const { q, all } = request.query as { q?: string; all?: string };
     const store = read();
     const series = store.series.find((s) => s.id === id);
     if (!series) return reply.code(404).send({ error: 'no such series' });
@@ -440,7 +441,19 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      return { results: await new SuwayomiAdapter(sourceUrl).search(query) };
+      const outcome = await new SuwayomiAdapter(sourceUrl).search(query, {
+        // `?all=1` is the comparison screen's "include other languages" — a
+        // one-off, deliberately not a change to the setting.
+        languages: all === '1' ? null : store.readLanguages,
+      });
+      return {
+        results: outcome.matches,
+        searched: outcome.searched,
+        skipped: outcome.skipped,
+        languages: all === '1' ? null : store.readLanguages,
+        readLanguages: store.readLanguages,
+        available: outcome.available,
+      };
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
       throw error;
@@ -660,6 +673,33 @@ export async function routes(app: FastifyInstance): Promise<void> {
     series.checkedAt = null;
     write(store);
     return seriesSummary(series);
+  });
+
+  /**
+   * Which languages a search asks.
+   *
+   * Its own route rather than part of `PUT /api/manga/source`, because that one
+   * is local-only — it sets an address the server then POSTs to — and this sets
+   * nothing of the kind. Choosing which of your sources are searched is a
+   * reading preference, and belongs on the phone as much as the PC.
+   */
+  app.put('/api/manga/languages', async (request, reply) => {
+    const body = request.body as { languages?: unknown } | null;
+    if (!Array.isArray(body?.languages)) return reply.code(400).send({ error: 'send a list of languages' });
+
+    const languages = [
+      ...new Set(
+        body.languages
+          .filter((l): l is string => typeof l === 'string')
+          .map((l) => l.trim())
+          // Extension language codes are short tags like `en` or `pt-BR`.
+          .filter((l) => /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(l))
+      ),
+    ].slice(0, 30);
+
+    const store = read();
+    write({ ...store, readLanguages: languages });
+    return { languages };
   });
 
   /* ---- Suwayomi's own UI, inside this app ---- */

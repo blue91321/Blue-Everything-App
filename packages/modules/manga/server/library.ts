@@ -33,7 +33,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { dataDir } from '@everything/server/module-api';
 import type { SeriesIds, SeriesStatus } from './identity.js';
-import type { SuwayomiMode } from './sources.js';
+import { DEFAULT_LANGUAGES, type SuwayomiMode } from './sources.js';
 
 const STORE = join(dataDir, 'manga.json');
 
@@ -135,6 +135,14 @@ export type Store = {
    * who reads daily would rather spend the memory than six seconds every time.
    */
   suwayomiMode: SuwayomiMode;
+  /**
+   * Languages whose sources a search asks, as extension language codes.
+   *
+   * English by default, since every source this library started with was
+   * English, and changeable on the source card. Not local-only: it decides
+   * which of your sources are *searched*, not what this machine runs.
+   */
+  readLanguages: string[];
   series: Series[];
   /** Raised-and-linked releases, so a task you deleted is never recreated. */
   links: ReleaseLink[];
@@ -159,17 +167,30 @@ export type ReleaseLink = {
   raisedAt: number;
 };
 
-const EMPTY: Store = {
-  suwayomiUrl: null,
-  suwayomiJar: null,
-  manageSuwayomi: false,
-  suwayomiMode: 'on-demand',
-  series: [],
-  links: [],
-};
+/**
+ * A fresh empty store, built anew on every call.
+ *
+ * It was a module-level constant copied with `{ ...EMPTY }`, and a spread is
+ * shallow: the copy shared the constant's `series` array, so adding a series to
+ * a library with no file yet pushed onto the *default itself*. Harmless while the
+ * file then existed — and wrong the moment it was deleted with the server
+ * running, when the next read handed back a library with somebody's old series
+ * already in it. Test clean-up in this module did exactly that, repeatedly.
+ */
+function emptyStore(): Store {
+  return {
+    suwayomiUrl: null,
+    suwayomiJar: null,
+    manageSuwayomi: false,
+    suwayomiMode: 'on-demand',
+    readLanguages: [...DEFAULT_LANGUAGES],
+    series: [],
+    links: [],
+  };
+}
 
 export function read(): Store {
-  if (!existsSync(STORE)) return { ...EMPTY };
+  if (!existsSync(STORE)) return emptyStore();
   try {
     const parsed = JSON.parse(readFileSync(STORE, 'utf8').replace(/^\uFEFF/, '')) as Partial<Store>;
     return {
@@ -177,6 +198,10 @@ export function read(): Store {
       suwayomiJar: typeof parsed.suwayomiJar === 'string' && parsed.suwayomiJar ? parsed.suwayomiJar : null,
       manageSuwayomi: parsed.manageSuwayomi === true,
       suwayomiMode: parsed.suwayomiMode === 'always' ? 'always' : 'on-demand',
+      readLanguages:
+        Array.isArray(parsed.readLanguages) && parsed.readLanguages.every((l) => typeof l === 'string')
+          ? parsed.readLanguages
+          : [...DEFAULT_LANGUAGES],
       /*
        * Every optional field is filled in, not merely trusted.
        *
@@ -205,7 +230,7 @@ export function read(): Store {
     // A cache and a list, not a source of truth for anything irreplaceable.
     // Refusing to serve the screen over a stray comma would take away the only
     // place you could fix it.
-    return { ...EMPTY };
+    return emptyStore();
   }
 }
 

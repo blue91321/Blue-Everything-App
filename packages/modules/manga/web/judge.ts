@@ -212,3 +212,22 @@ export function judgeSources(rows: readonly SourceRow[]): Verdict {
 
   return { flags, summary: parts.join(' · ') };
 }
+
+/**
+ * `es-419` as "Latin American Spanish", for the language chips.
+ *
+ * `Intl.DisplayNames` is a global rather than an import, so this file still
+ * imports nothing. Guarded, because an unrecognised tag throws rather than
+ * returning undefined — and extension codes are not all BCP 47.
+ */
+export function languageName(code: string): string {
+  if (code === 'all') return 'Every language';
+  if (code === 'localsourcelang') return 'Your own files';
+  try {
+    const name = new Intl.DisplayNames(['en'], { type: 'language' }).of(code);
+    if (name && name.toLowerCase() !== code.toLowerCase()) return name;
+  } catch {
+    // Fall through to the code itself.
+  }
+  return code.toUpperCase();
+}

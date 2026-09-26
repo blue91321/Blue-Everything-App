@@ -71,6 +71,14 @@ export type SourceHealth = {
   reachable: boolean;
   /** Names of the sources it can search, when it has any installed. */
   sources: string[];
+  /**
+   * Which languages those sources cover, and how many of each.
+   *
+   * Optional because an adapter may not know. It is what the "languages I
+   * read" chips are built from, so they only ever offer languages you can
+   * actually search.
+   */
+  languages?: Array<{ code: string; count: number }>;
   /** Why not, when `reachable` is false. Shown rather than logged. */
   problem: string | null;
 };
@@ -82,7 +90,15 @@ export interface SourceAdapter {
   readonly label: string;
 
   describe(): Promise<SourceHealth>;
-  search(query: string, limit?: number): Promise<SourceMatch[]>;
+  /**
+   * Titles matching `query`, best first.
+   *
+   * `languages` narrows which of the adapter's sources are asked — null for all.
+   * The answer says how many were asked and how many skipped, because a search
+   * that quietly left most of your sources out would read as those sources not
+   * having the series.
+   */
+  search(query: string, options?: { limit?: number; languages?: readonly string[] | null }): Promise<SearchOutcome>;
   /**
    * The newest chapter number available, or null when the source has none.
    *
@@ -111,6 +127,17 @@ export interface SourceAdapter {
    */
   pages(chapterId: string): Promise<string[]>;
 }
+
+export type SearchOutcome = {
+  matches: SourceMatch[];
+  searched: number;
+  skipped: number;
+  /**
+   * Every language the installed sources cover, most sources first — so the
+   * screen can offer exactly the languages there are, where the search is.
+   */
+  available: Array<{ code: string; count: number }>;
+};
 
 /** Raised by an adapter for anything a person can act on. Anything else is a bug. */
 export class SourceError extends Error {}
@@ -450,4 +477,41 @@ export function judgePages(pages: number, samples: readonly PageSample[]): PageV
   }
 
   return { pages, state: 'fine', problem: null };
+}
+
+/**
+ * Codes that are not a language, and so are never filtered out.
+ *
+ * `all` is a source serving every language from one listing; `localsourcelang`
+ * is Suwayomi's Local source — your own files on disk. Leaving either out
+ * because it is not "English" would be reading a label as a language.
+ */
+export const ALWAYS_SEARCHED = new Set(['all', 'localsourcelang']);
+
+/** The default, until you say otherwise on the source card. */
+export const DEFAULT_LANGUAGES = ['en'];
+
+/**
+ * Which installed sources a search should ask.
+ *
+ * ### Why this exists
+ *
+ * Installing MangaDex registers **one source per language — about sixty**. With
+ * it installed there were 82 sources across 63 languages and 7 in English, and a
+ * comparison of Eleceed came back as twenty MangaDex languages in alphabetical
+ * order — Afrikaans, Azerbaijani, Belarusian, every one empty — while MangaFire's
+ * English source, the one that actually reaches 418, fell off the end of the
+ * list entirely.
+ *
+ * Tachiyomi and Mihon answer this with "languages I read", and so does this.
+ * `null` means every language, which the comparison screen offers as a one-off.
+ */
+export function sourcesToSearch<T extends { lang: string }>(
+  sources: readonly T[],
+  languages: readonly string[] | null
+): { searched: T[]; skipped: number } {
+  if (languages === null || languages.length === 0) return { searched: [...sources], skipped: 0 };
+  const wanted = new Set(languages.map((l) => l.toLowerCase()));
+  const searched = sources.filter((s) => ALWAYS_SEARCHED.has(s.lang) || wanted.has(s.lang.toLowerCase()));
+  return { searched, skipped: sources.length - searched.length };
 }

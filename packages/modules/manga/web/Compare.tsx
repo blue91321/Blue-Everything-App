@@ -36,8 +36,9 @@ import {
   type PageCheck,
   type SeriesSummary,
   type SourceMatch,
+  type SourceSearch,
 } from './manga-api';
-import { chapterText, judgeSources, type Flag, type SourceRow } from './judge';
+import { chapterText, judgeSources, languageName, type Flag, type SourceRow } from './judge';
 
 /** At or above this, a result's title is the title searched for. See `titleScore`. */
 const SAME_TITLE = 60;
@@ -134,6 +135,11 @@ export function Compare({
   const [searching, setSearching] = useState(false);
   const [linking, setLinking] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  /** A one-off search across every language, without changing the setting. */
+  const [wide, setWide] = useState(false);
+  /** What the last search asked, so the screen can say what it left out. */
+  const [scope, setScope] = useState<Omit<SourceSearch, 'results'> | null>(null);
+  const [savingLanguages, setSavingLanguages] = useState(false);
 
   const patch = (key: string, change: Partial<Row>) =>
     setRows((current) => (current ?? []).map((r) => (keyOf(r) === key ? { ...r, ...change } : r)));
@@ -175,13 +181,14 @@ export function Compare({
     await Promise.all(Array.from({ length: Math.min(AT_ONCE, order.length) }, worker));
   }
 
-  async function find(q: string) {
+  async function find(q: string, allLanguages = wide) {
     setSearching(true);
     setProblem(null);
     setRows(null);
     try {
-      const { results } = await manga.source.search(series.id, q);
+      const { results, ...asked } = await manga.source.search(series.id, q, allLanguages);
       setRows(results);
+      setScope(asked);
       void count(results);
     } catch (error) {
       setProblem(error instanceof Error ? error.message : 'the search failed');
@@ -281,6 +288,74 @@ export function Compare({
       </form>
 
       {problem && <p className="banner">{problem}</p>}
+
+      {/*
+        * What the search asked, said out loud. A search limited to your
+        * languages that did not say so would read as every other source lacking
+        * the series — the silent cap that hid MangaFire's English source behind
+        * twenty empty MangaDex languages, arriving by a different door.
+        */}
+      {scope?.searched !== undefined && (
+        <p className="meta">
+          {scope.languages
+            ? `Searched ${scope.searched} source${scope.searched === 1 ? '' : 's'} in ${scope.languages
+                .map(languageName)
+                .join(', ')}${scope.skipped ? ` — ${scope.skipped} in other languages left out` : ''}. `
+            : `Searched every installed source (${scope.searched}). `}
+          <button
+            className="btn subtle"
+            disabled={searching}
+            onClick={() => {
+              setWide(!wide);
+              void find(query, !wide);
+            }}
+          >
+            {wide ? 'Only my languages' : 'Include other languages'}
+          </button>
+        </p>
+      )}
+
+      {/*
+        * The setting, where it matters. Offered from the languages your sources
+        * actually cover, so there is nothing here that cannot be searched.
+        */}
+      {scope?.available && scope.available.length > 1 && (
+        <details className="manga-compare-other">
+          <summary>Languages I read: {(scope.readLanguages ?? []).map(languageName).join(', ') || 'every language'}</summary>
+          <div className="manga-flags">
+            {scope.available
+              .filter((l) => l.code !== 'all' && l.code !== 'localsourcelang')
+              .map((l) => {
+                const on = (scope.readLanguages ?? []).includes(l.code);
+                return (
+                  <button
+                    key={l.code}
+                    className={on ? 'btn primary' : 'btn subtle'}
+                    disabled={savingLanguages}
+                    onClick={async () => {
+                      const current = scope.readLanguages ?? [];
+                      const next = on ? current.filter((c) => c !== l.code) : [...current, l.code];
+                      setSavingLanguages(true);
+                      try {
+                        await manga.source.setLanguages(next);
+                        setWide(false);
+                        await find(query, false);
+                      } finally {
+                        setSavingLanguages(false);
+                      }
+                    }}
+                  >
+                    {languageName(l.code)} · {l.count}
+                  </button>
+                );
+              })}
+          </div>
+          <p className="meta">
+            Sources that serve every language, and your own files, are always searched. Choosing none searches
+            everything.
+          </p>
+        </details>
+      )}
       {searching && !rows && <p className="empty">Asking every installed source…</p>}
 
       {verdict.summary && <p className="manga-compare-summary">{verdict.summary}</p>}

@@ -31,10 +31,17 @@ import {
 } from '../identity.js';
 import { alreadyRaised, type Store } from '../library.js';
 import { totalChaptersFrom } from '../mangaupdates.js';
-import { readableChapter, titleScore, rankMatches, profileChapters, judgePages } from '../sources.js';
+import {
+  readableChapter,
+  titleScore,
+  rankMatches,
+  profileChapters,
+  judgePages,
+  sourcesToSearch,
+} from '../sources.js';
 // A browser-half file with no imports, tested from here the way smoke tests
 // integrations/web/presence.ts.
-import { judgeSources, type SourceRow } from '../../web/judge.js';
+import { judgeSources, languageName, type SourceRow } from '../../web/judge.js';
 import { uploadedAtMs } from '../suwayomi.js';
 import { portOf } from '../process.js';
 import { pollable, seriesUrl } from '../releases.js';
@@ -379,6 +386,47 @@ check(
 check('nothing counted yet has no verdict', judgeSources([src('A', null, { counted: false })]).summary === null);
 
 /* ------------------------------------------------------------------ */
+console.log('\nwhich sources a search asks\n');
+
+/*
+ * The install that forced this: MangaDex registers a source per language, so 82
+ * sources across 63 languages, 7 of them English — and a comparison of Eleceed
+ * came back as twenty empty MangaDex languages while MangaFire's English source,
+ * the one that reaches 418, fell off the end of the list.
+ */
+const installed = [
+  { name: 'MangaFire (EN)', lang: 'en' },
+  { name: 'Asura Scans (EN)', lang: 'en' },
+  { name: 'MangaDex (AF)', lang: 'af' },
+  { name: 'MangaDex (AZ)', lang: 'az' },
+  { name: 'MangaFire (PT-BR)', lang: 'pt-BR' },
+  { name: 'Comick', lang: 'all' },
+  { name: 'Local source', lang: 'localsourcelang' },
+];
+const english = sourcesToSearch(installed, ['en']);
+check(
+  'only the languages you read are asked',
+  english.searched.map((s) => s.name).join(', ') === 'MangaFire (EN), Asura Scans (EN), Comick, Local source',
+  english.searched.map((s) => s.name).join(', ')
+);
+// Reported, so the screen can say how many were left out rather than a short
+// list reading as those sources not having the series.
+check('and the rest are counted, not silently dropped', english.skipped === 3);
+check('a multi-language source is never filtered out', english.searched.some((s) => s.lang === 'all'));
+check('nor are your own files', english.searched.some((s) => s.lang === 'localsourcelang'));
+check('codes match whatever their case', sourcesToSearch(installed, ['PT-br']).searched.some((s) => s.name === 'MangaFire (PT-BR)'));
+check('null asks every source', sourcesToSearch(installed, null).searched.length === installed.length);
+// An empty choice would otherwise search nothing and find nothing — which reads
+// as every source lacking the series.
+check('an empty choice asks every source rather than none', sourcesToSearch(installed, []).searched.length === installed.length);
+
+check('a code becomes its name', languageName('en') === 'English', languageName('en'));
+check('a regional code keeps its region', languageName('es-419').includes('Spanish'), languageName('es-419'));
+check('the non-languages read as what they are', languageName('localsourcelang') === 'Your own files');
+// An unrecognised tag throws inside Intl rather than returning undefined.
+check('a tag Intl cannot read falls back to the code', languageName('not a tag!') === 'NOT A TAG!');
+
+/* ------------------------------------------------------------------ */
 console.log('\nfinding the port to stop\n');
 
 /*
@@ -424,6 +472,7 @@ const store: Store = {
   suwayomiJar: null,
   manageSuwayomi: false,
   suwayomiMode: 'on-demand',
+  readLanguages: ['en'],
   series: [
     row({ id: 'recent', checkedAt: 1_000 }),
     row({ id: 'stale', checkedAt: 10 }),
