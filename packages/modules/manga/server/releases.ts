@@ -5,14 +5,18 @@
  * reader: nothing else knows you are mid-match. The rest — the library, the
  * covers, the ids — exists to give this something worth saying.
  *
- * ### A task *and* a nudge, which are two different things
+ * ### A nudge, and a task only if you asked for one
  *
- * The **task** is the durable record: it sits under *Anytime* with no due date,
- * it is what you tick off when you have read the chapter, and it survives the
- * nudge being missed. The **nudge** is the interruption, and it is raised
- * directly rather than left to `sweepDueTasks`, because that sweep only ever
- * queues a task that is *coming due* — and a chapter release has no due date
- * that would be honest to invent.
+ * The **nudge** is the interruption, and it is raised directly rather than left
+ * to `sweepDueTasks`, because that sweep only ever queues a task that is
+ * *coming due* — and a chapter release has no due date that would be honest to
+ * invent.
+ *
+ * The **task** is optional and off by default (`releaseTasks`). It is the
+ * durable record — under *Anytime* with no due date, ticked off once read, and
+ * surviving a missed nudge — which is worth having for one series and a chore
+ * across twenty, where the task list becomes a reading log. The Manga screen's
+ * own list already says what is new, so nothing is lost by leaving it off.
  *
  * Inventing one would not merely be untidy. A `dueAt` in the past makes a task a
  * **passed deadline**, and this project's nudge policy is explicit that a passed
@@ -28,7 +32,9 @@
  * Linking the nudge to the task with `taskId` buys the last piece for free:
  * `freshenForDelivery` drops a nudge whose task has been completed, so reading
  * the chapter during a long session means the reminder is quietly dropped at the
- * stopping point rather than delivered about something already done.
+ * stopping point rather than delivered about something already done. With no
+ * task, the release link keeps the nudge's id and marking the chapter read in
+ * the reader expires it instead — the same outcome by the route that exists.
  */
 import { db, tasks, nudges, changes, getSettings } from '@everything/server/module-api';
 import { resolvePush } from '@everything/shared';
@@ -214,30 +220,40 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
       // Belt and braces against a sweep that overlapped itself.
       if (alreadyRaised(store, row.id, fresh)) continue;
 
-      const [task] = await db
-        .insert(tasks)
-        .values({
-          title: `${row.title} — chapter ${fresh}`,
-          notes: null,
-          // Deliberately no due date. See the note at the top of this file.
-          dueAt: null,
-          source: 'manga',
-          sourceUrl: row.muId ? seriesUrl(row.muId) : null,
-        })
-        .returning();
+      const task = store.releaseTasks
+        ? (
+            await db
+              .insert(tasks)
+              .values({
+                title: `${row.title} — chapter ${fresh}`,
+                notes: null,
+                // Deliberately no due date. See the note at the top of this file.
+                dueAt: null,
+                source: 'manga',
+                sourceUrl: row.muId ? seriesUrl(row.muId) : null,
+              })
+              .returning()
+          )[0]
+        : null;
 
-      await db.insert(nudges).values({
+      const [nudge] = await db.insert(nudges).values({
         title: row.title,
         body: `Chapter ${fresh} is out`,
-        taskId: task.id,
+        taskId: task?.id ?? null,
         earliestAt: now,
         expiresAt: now + NUDGE_LIFE_MS,
         // Never breaks a match, and carries no deadline to escalate through.
         minQuality: 'any',
         pushToPhone: resolvePush(null, pushDefault) ? 1 : 0,
-      });
+      }).returning();
 
-      store.links.push({ seriesId: row.id, chapter: fresh, taskId: task.id, raisedAt: now });
+      store.links.push({
+        seriesId: row.id,
+        chapter: fresh,
+        taskId: task?.id ?? null,
+        nudgeId: nudge.id,
+        raisedAt: now,
+      });
       row.latestChapter = fresh;
       result.raised += 1;
       announce = true;

@@ -196,6 +196,8 @@ export interface Library {
   recent: RecentRelease[];
   credit: string;
   watching: number;
+  /** Whether a new chapter also becomes a task. Optional: an older server does not send it. */
+  releaseTasks?: boolean;
 }
 
 export interface SweepResult {
@@ -227,6 +229,8 @@ export const manga = {
     call<SeriesSummary>('/api/manga', { method: 'POST', body: JSON.stringify(candidate) }),
   remove: (id: string) => call<{ ok: true }>(`/api/manga/${id}`, { method: 'DELETE' }),
   checkNow: () => call<SweepResult>('/api/manga/check', { method: 'POST' }),
+  setReleaseTasks: (on: boolean) =>
+    call<{ releaseTasks: boolean }>('/api/manga/release-tasks', { method: 'PUT', body: JSON.stringify({ on }) }),
 
   source: {
     get: () => call<SourceState>('/api/manga/source'),

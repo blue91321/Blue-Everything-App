@@ -170,6 +170,16 @@ export type Store = {
    * which of your sources are *searched*, not what this machine runs.
    */
   readLanguages: string[];
+  /**
+   * Whether a new chapter also becomes a task, as well as a nudge.
+   *
+   * Off by default. The nudge is the point — it is what waits for a stopping
+   * point and tells you — while a task per chapter turns the task list into a
+   * reading log, and one that grows by every chapter of every series you follow.
+   * Somebody who wants the chapter to sit on the Dashboard until ticked off can
+   * say so; nobody should have to clear a list of chapters to find their tasks.
+   */
+  releaseTasks: boolean;
   series: Series[];
   /** Raised-and-linked releases, so a task you deleted is never recreated. */
   links: ReleaseLink[];
@@ -182,8 +192,9 @@ export type Store = {
  * table because the table belongs to a different package and two modules
  * writing one table is the `cache.json` collision one level up.
  *
- * `taskId: null` means "raised once, and the task is gone" — a decision, not a
- * gap, and never acted on again. Without that, deleting the task for a chapter
+ * `taskId: null` means "raised once, and there is no task" — because the task
+ * was deleted, or because chapters were not being made into tasks — a decision,
+ * not a gap, and never acted on again. Without that, deleting the task for a chapter
  * you have read recreates it on the next poll, within the half hour, with
  * nothing on screen to explain why.
  */
@@ -191,6 +202,12 @@ export type ReleaseLink = {
   seriesId: string;
   chapter: string;
   taskId: string | null;
+  /**
+   * The nudge raised for it, so reading the chapter can cancel a nudge still
+   * waiting. With a task, finishing the task did that; without one, this does.
+   * Absent on links written before it existed.
+   */
+  nudgeId?: string | null;
   raisedAt: number;
 };
 
@@ -211,6 +228,7 @@ function emptyStore(): Store {
     manageSuwayomi: false,
     suwayomiMode: 'on-demand',
     readLanguages: [...DEFAULT_LANGUAGES],
+    releaseTasks: false,
     series: [],
     links: [],
   };
@@ -229,6 +247,7 @@ export function read(): Store {
         Array.isArray(parsed.readLanguages) && parsed.readLanguages.every((l) => typeof l === 'string')
           ? parsed.readLanguages
           : [...DEFAULT_LANGUAGES],
+      releaseTasks: parsed.releaseTasks === true,
       /*
        * Every optional field is filled in, not merely trusted.
        *

@@ -27,6 +27,9 @@
  * puts it with minting a device token and installing a package.
  */
 import type { FastifyInstance } from 'fastify';
+import { and, eq, inArray } from 'drizzle-orm';
+import { db, nudges } from '@everything/server/module-api';
+import { chapterValue } from './identity.js';
 import { search, fetchCover, MangaDexError } from './mangadex.js';
 import { CREDIT, readSeries } from './mangaupdates.js';
 import { read, write, newSeries, findExisting, type Series, type Store } from './library.js';
@@ -58,7 +61,26 @@ export async function routes(app: FastifyInstance): Promise<void> {
       credit: CREDIT,
       /** How many rows the sweep is still watching, so the screen can say so. */
       watching: pollable(store).length,
+      /** Whether a new chapter also becomes a task — see `Store.releaseTasks`. */
+      releaseTasks: store.releaseTasks,
     };
+  });
+
+  /**
+   * Whether new chapters also become tasks.
+   *
+   * Not local-only: it decides what lands in your task list, which is yours to
+   * change from the phone like the list itself. Affects releases from here on —
+   * tasks already made stay, since removing them would delete things you may
+   * have ticked or edited.
+   */
+  app.put('/api/manga/release-tasks', async (request, reply) => {
+    const body = request.body as { on?: unknown } | null;
+    if (typeof body?.on !== 'boolean') return reply.code(400).send({ error: 'send on: true or false' });
+    const store = read();
+    store.releaseTasks = body.on;
+    write(store);
+    return { releaseTasks: store.releaseTasks };
   });
 
   /** Candidates from MangaDex for what was typed. Writes nothing. */
@@ -1031,6 +1053,25 @@ export async function routes(app: FastifyInstance): Promise<void> {
     else marked.add(chapter);
     series.readChapters = [...marked].sort((a, b) => a - b);
     write(store);
+
+    /*
+     * Reading a chapter answers the nudge about it. With a task, ticking the
+     * task off did this through `freshenForDelivery`; with tasks switched off
+     * this is the only route, so a chapter read on the phone mid-match is not
+     * announced at the next stopping point. Only a nudge still waiting —
+     * `expired` is what happened to it, the state freshening uses too.
+     */
+    if (body?.read !== false) {
+      const waiting = store.links
+        .filter((l) => l.seriesId === id && l.nudgeId && chapterValue(l.chapter) !== null && chapterValue(l.chapter)! <= chapter)
+        .map((l) => l.nudgeId!);
+      if (waiting.length > 0) {
+        await db
+          .update(nudges)
+          .set({ state: 'expired' })
+          .where(and(inArray(nudges.id, waiting), eq(nudges.state, 'pending')));
+      }
+    }
 
     return { readChapters: series.readChapters };
   });

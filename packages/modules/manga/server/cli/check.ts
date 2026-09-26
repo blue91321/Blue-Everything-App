@@ -547,6 +547,7 @@ const store: Store = {
   manageSuwayomi: false,
   suwayomiMode: 'on-demand',
   readLanguages: ['en'],
+  releaseTasks: false,
   series: [
     row({ id: 'recent', checkedAt: 1_000 }),
     row({ id: 'stale', checkedAt: 10 }),

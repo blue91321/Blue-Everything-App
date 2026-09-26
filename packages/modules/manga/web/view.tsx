@@ -44,6 +44,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   const [searching, setSearching] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [savingReleaseTasks, setSavingReleaseTasks] = useState(false);
   const [sweep, setSweep] = useState<string | null>(null);
   /** Which series' chapters are open, if any. The reader lives inside it. */
   const [reading, setReading] = useState<string | null>(null);
@@ -311,6 +312,32 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               </>
             )}
           </p>
+        )}
+
+        {/*
+          * Beside the sentence about watching, because it is the other half of
+          * the same question: what happens when a chapter lands. Hidden against
+          * an older server, which would ignore it.
+          */}
+        {data?.releaseTasks !== undefined && (
+          <label className="meta">
+            <input
+              type="checkbox"
+              checked={data.releaseTasks}
+              disabled={savingReleaseTasks}
+              onChange={async (e) => {
+                setSavingReleaseTasks(true);
+                try {
+                  await manga.setReleaseTasks(e.target.checked);
+                  library.reload();
+                } finally {
+                  setSavingReleaseTasks(false);
+                }
+              }}
+            />{' '}
+            Also add each new chapter to Tasks. You are told when one lands either way; this puts it on the
+            Dashboard until you tick it off.
+          </label>
         )}
       </div>
     </div>
