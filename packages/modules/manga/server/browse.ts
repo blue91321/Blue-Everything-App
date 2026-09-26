@@ -28,6 +28,24 @@
  * Imports nothing, like `judge.ts`, so `manga-check` can prove all of it.
  */
 
+/**
+ * MangaDex and MangaUpdates: databases first, places to read second.
+ *
+ * Both are where a series is *catalogued* — every title is there, which is why
+ * they come back for nearly every search — and neither is usually where it is
+ * furthest along. MangaDex carries only what groups upload to it, and is often
+ * hundreds of chapters short (Eleceed: 390 with 287 missing, against 419
+ * elsewhere). Listed first because "MangaDex" sorts before "MangaFire", they
+ * read as the recommendation while being the weakest option.
+ *
+ * So they go last among equals, and first only when their number says they are
+ * genuinely ahead. Matched on the name, since that is what every list here
+ * carries; "MangaDex (EN)" and a future "MangaUpdates" both count.
+ */
+export function isIndexSource(name: string): boolean {
+  return /^manga\s?(dex|updates)\b/i.test(name.trim());
+}
+
 /** A filter as a source declares it, reduced to what the screen draws. */
 export type SourceFilter =
   | { kind: 'checkbox'; name: string; default: boolean }
@@ -257,6 +275,7 @@ export function groupMatches<T extends GroupEntry>(
           (a, b) =>
             Number(isPreferred(b.m)) - Number(isPreferred(a.m)) ||
             (b.m.score ?? 0) - (a.m.score ?? 0) ||
+            Number(isIndexSource(a.m.sourceName)) - Number(isIndexSource(b.m.sourceName)) ||
             a.at - b.at
         )
         .map((e) => e.m);

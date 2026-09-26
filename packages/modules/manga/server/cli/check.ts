@@ -41,11 +41,11 @@ import {
 } from '../sources.js';
 // A browser-half file with no imports, tested from here the way smoke tests
 // integrations/web/presence.ts.
-import { judgeSources, languageName, type SourceRow } from '../../web/judge.js';
+import { judgeSources, languageName, orderSources, type SourceRow } from '../../web/judge.js';
 import { uploadedAtMs } from '../suwayomi.js';
 import { portOf } from '../process.js';
 import { pollable, seriesUrl } from '../releases.js';
-import { fromSuwayomiFilter, groupKey, groupMatches, toSuwayomiChanges } from '../browse.js';
+import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiChanges } from '../browse.js';
 import { thumbPath } from '../present.js';
 
 let failures = 0;
@@ -509,6 +509,65 @@ check('a page is not a cover', thumbPath('/api/v1/manga/12/chapter/1/page/0') ==
 check('a climb out is refused', thumbPath('/api/v1/manga/12/../../settings') === null);
 check('an outside address is refused', thumbPath('https://example.com/cover.jpg') === null);
 check('nothing is nothing', thumbPath(null) === null);
+
+/* ------------------------------------------------------------------ */
+console.log('\ncatalogues go first only when they are ahead\n');
+
+check('MangaDex is a catalogue', isIndexSource('MangaDex (EN)') && isIndexSource('mangadex'));
+check('so is MangaUpdates', isIndexSource('MangaUpdates') && isIndexSource('Manga Updates'));
+check('MangaFire is not', !isIndexSource('MangaFire (EN)'));
+check('nor is a name that merely contains it', !isIndexSource('NotMangaDex Mirror'));
+
+// The reason: "MangaDex" sorts before "MangaFire", so an equal title put it first.
+const tied = rankMatches('eleceed', [
+  { title: 'Eleceed', sourceName: 'MangaDex (EN)' },
+  { title: 'Eleceed', sourceName: 'MangaFire (EN)' },
+]);
+check('an equal match on a reading site ranks above a catalogue', tied[0].sourceName === 'MangaFire (EN)');
+const better = rankMatches('eleceed', [
+  { title: 'Eleceed', sourceName: 'MangaDex (EN)' },
+  { title: 'Eleceed (Official)', sourceName: 'MangaFire (EN)' },
+]);
+check('but a better match still wins, wherever it is', better[0].sourceName === 'MangaDex (EN)');
+const rowOrder = groupMatches([m('Eleceed', '9', 100, 'a'), m('Eleceed', '1', 100, 'b')].map((x, i) => ({ ...x, sourceName: i === 0 ? 'MangaDex (EN)' : 'MangaFire (EN)' })), null);
+check('inside a search row, the catalogue copy is not the lead', rowOrder[0].entries[0].sourceName === 'MangaFire (EN)');
+
+// The comparison screen, with the real Eleceed numbers: MangaDex was listed first
+// at 390 against three sources at 419.
+const eleceedRows = [
+  src('MangaDex (EN)', 390, { missing: 287, missingSample: [23, 24, 25, 26, 27], distinct: 103 }),
+  src('MangaFire (EN)', 419),
+  src('Manhwa18.cc (EN)', 419),
+  src('Webtoons.com (EN)', 404),
+  src('Empty', null),
+];
+const ordered = orderSources(eleceedRows, judgeSources(eleceedRows)).map((r) => r.sourceName);
+check('furthest first', ordered[0] === 'MangaFire (EN)' && ordered[1] === 'Manhwa18.cc (EN)', ordered.join(', '));
+check('MangaDex where its number puts it', ordered.indexOf('MangaDex (EN)') === 3, ordered.join(', '));
+check('nothing at all last', ordered[4] === 'Empty');
+
+const dexTied = [src('MangaDex (EN)', 419), src('MangaFire (EN)', 419)];
+check('level with another source, it is not first', orderSources(dexTied, judgeSources(dexTied))[0].sourceName === 'MangaFire (EN)');
+
+const dexAhead = [src('MangaDex (EN)', 421), src('MangaFire (EN)', 419), src('Asura', 419)];
+check('genuinely ahead, it is first', orderSources(dexAhead, judgeSources(dexAhead))[0].sourceName === 'MangaDex (EN)');
+
+// Far ahead is a claim waiting on your review, and a catalogue does not lead on a claim.
+const dexClaims = [src('MangaDex (EN)', 450), src('MangaFire (EN)', 419), src('Asura', 418)];
+const claimVerdict = judgeSources(dexClaims);
+check('far ahead is flagged for review', 'MangaDex (EN)' in claimVerdict.awaiting);
+check('and does not lead until you say it is real', orderSources(dexClaims, claimVerdict)[0].sourceName === 'MangaFire (EN)');
+const dexConfirmed = [src('MangaDex (EN)', 450, { review: { verdict: 'real', upTo: 450 } }), src('MangaFire (EN)', 419), src('Asura', 418)];
+check('once you do, it leads', orderSources(dexConfirmed, judgeSources(dexConfirmed))[0].sourceName === 'MangaDex (EN)');
+
+// Any other source keeps its place by its claim, flagged — Archmage today:
+// MangaFire's 46 is right, and burying it under Webtoons' 25 would be wrong.
+const archmageRows = [src('Webtoons.com (EN)', 25), src('MangaFire (EN)', 46)];
+check('a reading site ahead is not held back by the rule', orderSources(archmageRows, judgeSources(archmageRows))[0].sourceName === 'MangaFire (EN)');
+
+const pending = [src('MangaDex (EN)', null, { counted: false }), src('Slow', null, { counted: false }), src('MangaFire (EN)', 419)];
+check('rows still counting wait below the counted ones', orderSources(pending, judgeSources(pending))[0].sourceName === 'MangaFire (EN)');
+check('and a catalogue waits behind them', orderSources(pending, judgeSources(pending))[1].sourceName === 'Slow');
 
 /* ------------------------------------------------------------------ */
 console.log('\nyour verdict on a flag\n');

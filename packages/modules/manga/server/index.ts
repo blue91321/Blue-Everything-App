@@ -34,7 +34,7 @@ import { search, fetchCover, MangaDexError, type Candidate } from './mangadex.js
 import { CREDIT, readSeries } from './mangaupdates.js';
 import { read, write, newSeries, findExisting, type Series, type Store } from './library.js';
 import { seriesSummary, recentReleases, thumbPath, THUMB_PATH } from './present.js';
-import { groupKey, groupMatches, toSuwayomiChanges, type FilterChange } from './browse.js';
+import { groupKey, groupMatches, isIndexSource, toSuwayomiChanges, type FilterChange } from './browse.js';
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
 import {
   SourceError,
@@ -966,7 +966,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       const all = await ctx.adapter.listSources();
       const sources = sourcesToSearch(all, ctx.store.readLanguages)
         .searched.filter((s) => s.lang !== 'localsourcelang')
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .sort((a, b) => Number(isIndexSource(a.name)) - Number(isIndexSource(b.name)) || a.name.localeCompare(b.name));
       const selected = sources.find((s) => s.id === ctx.store.browseSource)?.id ?? sources[0]?.id ?? null;
       return { sources, selected, readLanguages: ctx.store.readLanguages, installed: all.length };
     } catch (error) {

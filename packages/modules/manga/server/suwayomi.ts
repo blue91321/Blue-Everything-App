@@ -46,7 +46,7 @@ import {
   rankMatches,
   sourcesToSearch,
 } from './sources.js';
-import { fromSuwayomiFilter, type SourceFilter } from './browse.js';
+import { fromSuwayomiFilter, isIndexSource, type SourceFilter } from './browse.js';
 
 /** A series as its source describes it — see `SuwayomiAdapter.details`. */
 export type SeriesDetails = {
@@ -235,7 +235,10 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       for (const n of nodes) if (n.lang) counts.set(n.lang, (counts.get(n.lang) ?? 0) + 1);
       return {
         reachable: true,
-        sources: nodes.map((s) => s.displayName).filter(Boolean),
+        sources: nodes
+          .map((s) => s.displayName)
+          .filter(Boolean)
+          .sort((a, b) => Number(isIndexSource(a)) - Number(isIndexSource(b)) || a.localeCompare(b)),
         languages: [...counts].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count),
         problem: null,
       };

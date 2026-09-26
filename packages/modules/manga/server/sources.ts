@@ -37,6 +37,8 @@
  * every series until you point it at something.
  */
 
+import { isIndexSource } from './browse.js';
+
 /** A source's own idea of a series, before it is joined to anything of ours. */
 export type SourceMatch = {
   /** Opaque to us. Suwayomi's is a numeric manga id; another adapter's may not be. */
@@ -304,6 +306,8 @@ export function rankMatches<T extends { title: string; sourceName: string }>(
     .sort(
       (a, b) =>
         b.score - a.score ||
+        // An equal match on a reading site beats one on a catalogue — see `isIndexSource`.
+        Number(isIndexSource(a.sourceName)) - Number(isIndexSource(b.sourceName)) ||
         a.title.localeCompare(b.title) ||
         a.sourceName.localeCompare(b.sourceName) ||
         a.index - b.index

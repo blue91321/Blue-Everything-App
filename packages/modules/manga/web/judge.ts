@@ -50,6 +50,8 @@ export type SourceRow = {
   newestUpload: number | null;
   /** False while the count is still in flight — excluded from every verdict. */
   counted: boolean;
+  /** The count was asked for and failed — "could not ask", not "has none". */
+  failed?: boolean;
   /** Your verdict on this source's claim to be ahead, if you have given one. */
   review?: Review | null;
 };
@@ -98,6 +100,59 @@ export const AHEAD_MARGIN = 2;
  * carry on.
  */
 export const STALE_BEHIND_MS = 90 * 24 * 60 * 60_000;
+
+/**
+ * MangaDex and MangaUpdates: databases first, places to read second.
+ *
+ * Both are where a series is *catalogued* — every title is there, which is why
+ * they come back for nearly every search — and neither is usually where it is
+ * furthest along. MangaDex carries only what groups upload to it, and is often
+ * hundreds of chapters short (Eleceed: 390 with 287 missing, against 419
+ * elsewhere). Listed first because "MangaDex" sorts before "MangaFire", they
+ * read as the recommendation while being the weakest option.
+ *
+ * So they go last among equals, and first only when their number says they are
+ * genuinely ahead. The server has the same function in `browse.ts`; this file
+ * imports nothing, so it keeps its own copy. Matched on the name, since that is what every list here
+ * carries; "MangaDex (EN)" and a future "MangaUpdates" both count.
+ */
+export function isIndexSource(name: string): boolean {
+  return /^manga\s?(dex|updates)\b/i.test(name.trim());
+}
+
+/**
+ * The order to list sources in: furthest first.
+ *
+ * By the number, so the top row is the answer to "where is it furthest" —
+ * except that a catalogue (`isIndexSource`) leads only when it is strictly
+ * ahead *and* that lead is not waiting on your review, and a claim you marked
+ * not real counts for no more than the furthest trusted source. Rows still
+ * counting keep their place below the counted ones, then failed counts, then
+ * sources with nothing.
+ */
+export function orderSources<T extends SourceRow>(rows: readonly T[], verdict: Verdict): T[] {
+  const withChapters = rows.filter((r) => r.counted && r.latest !== null && r.distinct > 0);
+  const doubted = (r: SourceRow) =>
+    (r.review?.verdict === 'fake' && r.latest !== null && r.latest >= r.review.upTo) ||
+    (isIndexSource(r.sourceName) && verdict.awaiting[r.key] !== undefined);
+  const hasChapters = new Set(withChapters.map((r) => r.key));
+  const trustedTop = Math.max(-Infinity, ...withChapters.filter((r) => !doubted(r)).map((r) => r.latest!));
+
+  const tier = (r: SourceRow) =>
+    hasChapters.has(r.key) ? 0 : !r.counted && !r.failed ? 1 : r.failed ? 2 : 3;
+  const value = (r: SourceRow) => (doubted(r) && trustedTop > -Infinity ? Math.min(r.latest!, trustedTop) : r.latest!);
+
+  return rows
+    .map((r, at) => ({ r, at }))
+    .sort(
+      (a, b) =>
+        tier(a.r) - tier(b.r) ||
+        (tier(a.r) === 0 ? value(b.r) - value(a.r) : 0) ||
+        Number(isIndexSource(a.r.sourceName)) - Number(isIndexSource(b.r.sourceName)) ||
+        a.at - b.at
+    )
+    .map((x) => x.r);
+}
 
 /** `418` rather than `418.0`, and `220.5` kept. */
 export function chapterText(n: number): string {

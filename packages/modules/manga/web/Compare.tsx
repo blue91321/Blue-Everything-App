@@ -39,7 +39,7 @@ import {
   type SourceReview,
   type SourceSearch,
 } from './manga-api';
-import { chapterText, judgeSources, languageName, type Flag, type SourceRow } from './judge';
+import { chapterText, judgeSources, languageName, orderSources, type Flag, type SourceRow } from './judge';
 
 /** At or above this, a result's title is the title searched for. See `titleScore`. */
 const SAME_TITLE = 60;
@@ -89,6 +89,7 @@ function toSourceRow(r: Row, reviews: readonly SourceReview[]): SourceRow {
     missing: r.profile?.missing ?? 0,
     missingSample: r.profile?.missingSample ?? [],
     newestUpload: r.profile?.newestUpload ?? null,
+    failed: r.countFailed === true,
     // A count that failed is left out rather than read as zero — "we could not
     // ask" and "it has none" are different answers, and only one rules it out.
     counted: r.profile !== undefined && !r.counting,
@@ -308,9 +309,13 @@ export function Compare({
     }
   }
 
-  const same = sinkEmpty((rows ?? []).filter(isSameTitle));
+  const sameRows = (rows ?? []).filter(isSameTitle);
   const other = sinkEmpty((rows ?? []).filter((r) => !isSameTitle(r)));
-  const verdict = judgeSources(same.map((r) => toSourceRow(r, reviews)));
+  const verdict = judgeSources(sameRows.map((r) => toSourceRow(r, reviews)));
+  // Furthest first — see `orderSources`, which is also what keeps MangaDex off
+  // the top unless it is genuinely ahead.
+  const byKey = new Map(sameRows.map((r) => [keyOf(r), r]));
+  const same = orderSources(sameRows.map((r) => toSourceRow(r, reviews)), verdict).map((s) => byKey.get(s.key)!);
   const isCurrent = (r: Row) => series.source?.mangaId === r.id && series.source?.sourceName === r.sourceName;
 
   const renderRow = (r: Row, flags: Flag[] | undefined) => (
