@@ -180,6 +180,12 @@ export type Store = {
    * say so; nobody should have to clear a list of chapters to find their tasks.
    */
   releaseTasks: boolean;
+  /**
+   * The source the Browse tab lists from, and whose results a search puts first.
+   * An opaque source id; one that is no longer installed is simply not found,
+   * and the tab falls back to the first source it has.
+   */
+  browseSource: string | null;
   series: Series[];
   /** Raised-and-linked releases, so a task you deleted is never recreated. */
   links: ReleaseLink[];
@@ -229,6 +235,7 @@ function emptyStore(): Store {
     suwayomiMode: 'on-demand',
     readLanguages: [...DEFAULT_LANGUAGES],
     releaseTasks: false,
+    browseSource: null,
     series: [],
     links: [],
   };
@@ -248,6 +255,7 @@ export function read(): Store {
           ? parsed.readLanguages
           : [...DEFAULT_LANGUAGES],
       releaseTasks: parsed.releaseTasks === true,
+      browseSource: typeof parsed.browseSource === 'string' && parsed.browseSource ? parsed.browseSource : null,
       /*
        * Every optional field is filled in, not merely trusted.
        *

@@ -166,6 +166,77 @@ export interface PageCheck {
   problem: string | null;
 }
 
+/* ---- browsing: see `server/browse.ts` for why each of these is shaped so ---- */
+
+export interface BrowseSource {
+  id: string;
+  name: string;
+  lang: string;
+  /** Not every source keeps a list of recent releases. */
+  supportsLatest: boolean;
+}
+
+export interface BrowseState {
+  /** The sources in the languages you read. */
+  sources: BrowseSource[];
+  selected: string | null;
+  readLanguages: string[];
+  /** Every source installed, whatever its language. */
+  installed: number;
+}
+
+export interface BrowseResult extends SourceMatch {
+  sourceId?: string;
+  coverPath: string | null;
+  /** The id of a series you follow that this is — by this copy, or by name. */
+  following: string | null;
+}
+
+/** A filter as a source declares it. Redeclared by hand, as `api.ts` does, since the PWA imports nothing from the server. */
+export type SourceFilter =
+  | { kind: 'checkbox'; name: string; default: boolean }
+  | { kind: 'tristate'; name: string; default: TriState }
+  | { kind: 'select'; name: string; values: string[]; default: number }
+  | { kind: 'sort'; name: string; values: string[]; default: { index: number; ascending: boolean } | null }
+  | { kind: 'text'; name: string; default: string }
+  | { kind: 'group'; name: string; filters: SourceFilter[] }
+  | { kind: 'header'; name: string }
+  | { kind: 'separator' };
+
+export type TriState = 'ignore' | 'include' | 'exclude';
+
+export type FilterChange = {
+  position: number;
+  inner?: number;
+  checkbox?: boolean;
+  tristate?: TriState;
+  select?: number;
+  sort?: { index: number; ascending: boolean };
+  text?: string;
+};
+
+export interface ResultGroup {
+  key: string;
+  title: string;
+  score: number;
+  /** Whether the source you browse from has it. */
+  preferred: boolean;
+  entries: BrowseResult[];
+  following: string | null;
+}
+
+export interface GroupedSearch {
+  groups: ResultGroup[];
+  searched: number;
+  skipped: number;
+  preferred: { id: string; name: string } | null;
+  preferredProblem: string | null;
+  filtersApplied: number;
+  filtersDropped: number;
+  onlyPreferred: boolean;
+  languages: string[] | null;
+}
+
 export interface Candidate {
   mangadexId: string | null;
   malId: number | null;
@@ -270,6 +341,30 @@ export const manga = {
         body: JSON.stringify({ key, upTo, verdict }),
       }),
     unlink: (id: string) => call<SeriesSummary>(`/api/manga/${id}/source`, { method: 'DELETE' }),
+  },
+
+  browse: {
+    get: () => call<BrowseState>('/api/manga/browse'),
+    setSource: (id: string) =>
+      call<{ selected: string }>('/api/manga/browse/source', { method: 'PUT', body: JSON.stringify({ id }) }),
+    list: (source: string, type: 'popular' | 'latest', page: number) =>
+      call<{ results: BrowseResult[]; hasNextPage: boolean; page: number }>(
+        `/api/manga/browse/list?source=${encodeURIComponent(source)}&type=${type}&page=${page}`
+      ),
+    filters: (source: string) =>
+      call<{ filters: SourceFilter[] }>(`/api/manga/browse/filters?source=${encodeURIComponent(source)}`),
+    search: (body: {
+      query: string;
+      source: string | null;
+      changes: FilterChange[];
+      allLanguages: boolean;
+      only: string[] | null;
+    }) => call<GroupedSearch>('/api/manga/browse/search', { method: 'POST', body: JSON.stringify(body) }),
+    follow: (result: BrowseResult) =>
+      call<{ series: SeriesSummary; matchedOn: 'mangadex' | 'existing' | null }>('/api/manga/follow-source', {
+        method: 'POST',
+        body: JSON.stringify({ mangaId: result.id, title: result.title, sourceName: result.sourceName }),
+      }),
   },
 
   ui: {

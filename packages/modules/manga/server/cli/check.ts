@@ -45,6 +45,8 @@ import { judgeSources, languageName, type SourceRow } from '../../web/judge.js';
 import { uploadedAtMs } from '../suwayomi.js';
 import { portOf } from '../process.js';
 import { pollable, seriesUrl } from '../releases.js';
+import { fromSuwayomiFilter, groupKey, groupMatches, toSuwayomiChanges } from '../browse.js';
+import { thumbPath } from '../present.js';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -417,6 +419,94 @@ check(
 check('nothing counted yet has no verdict', judgeSources([src('A', null, { counted: false })]).summary === null);
 
 /* ------------------------------------------------------------------ */
+console.log('\nbrowsing: one row per series\n');
+
+check('case and punctuation fold', groupKey('Solo Leveling!') === groupKey('solo leveling'));
+check('a bracketed aside folds', groupKey('Solo Leveling (Official)') === groupKey('Solo Leveling [Colored]'));
+check('accents fold', groupKey('Pokémon Adventures') === groupKey('Pokemon Adventures'));
+// A sequel is a different series, and folding it in would mix two chapter counts.
+check('a subtitle does not', groupKey('Solo Leveling: Ragnarok') !== groupKey('Solo Leveling'));
+
+const m = (title: string, sourceId: string, score: number, id = title + sourceId) => ({
+  id,
+  title,
+  sourceId,
+  sourceName: `S${sourceId}`,
+  lang: 'en',
+  score,
+});
+const grouped = groupMatches(
+  [
+    m('Solo Leveling', '1', 100),
+    m('Solo Leveling: Ragnarok', '2', 80),
+    m('SOLO LEVELING (Official)', '2', 100),
+    m('Solo Leveling: Ragnarok', '3', 80),
+    m('Solo Leveling', '3', 100),
+  ],
+  '2'
+);
+check('the same series from three sources is one row', grouped.length === 2, grouped.map((g) => g.title).join(' / '));
+check('the chosen source leads its row', grouped[0].entries[0].sourceId === '2' && grouped[0].title === 'SOLO LEVELING (Official)');
+check('every source is still listed', grouped[0].entries.length === 3);
+check('a row the chosen source is in comes first', grouped[0].preferred && grouped[1].preferred);
+const notChosen = groupMatches([m('Other', '1', 100), m('Mine', '2', 60)], '2');
+check('it outranks a better title match from elsewhere', notChosen[0].title === 'Mine');
+const noneChosen = groupMatches([m('Weak', '1', 60), m('Strong', '1', 100), m('Strong', '3', 100)], null);
+check('with no choice, the best match leads', noneChosen[0].title === 'Strong');
+check('and more sources beat fewer on a tie', groupMatches([m('A', '1', 100), m('B', '1', 100), m('B', '3', 100)], null)[0].title === 'B');
+
+console.log('\nbrowsing: filters\n');
+
+// Real shapes, from MangaFire's and MangaDex's own filter lists.
+const filters = [
+  fromSuwayomiFilter({ __typename: 'GroupFilter', name: 'Genres', filters: [
+    { __typename: 'TriStateFilter', name: 'Action', triDefault: 'IGNORE' },
+    { __typename: 'TriStateFilter', name: 'Comedy', triDefault: 'IGNORE' },
+  ] }),
+  fromSuwayomiFilter({ __typename: 'SeparatorFilter', name: '' }),
+  fromSuwayomiFilter({ __typename: 'SelectFilter', name: 'Sort by', selectDefault: 1, values: ['Latest', 'Best match'] }),
+  fromSuwayomiFilter({ __typename: 'TextFilter', name: 'Minimum chapters', textDefault: '' }),
+  fromSuwayomiFilter({ __typename: 'SortFilter', name: 'Sort', values: ['A-Z', 'Follows'], sortDefault: { index: 1, ascending: false } }),
+  fromSuwayomiFilter({ __typename: 'CheckBoxFilter', name: 'Has chapters', checkDefault: false }),
+  fromSuwayomiFilter({ __typename: 'SomethingNew', name: '?' }),
+];
+check('each kind is read', filters.map((f) => f.kind).join(',') === 'group,separator,select,text,sort,checkbox,separator');
+check('a default is read from its alias', filters[2].kind === 'select' && filters[2].default === 1);
+check('a group keeps what is inside', filters[0].kind === 'group' && filters[0].filters.length === 2);
+
+const sent = toSuwayomiChanges(filters, [
+  { position: 0, inner: 1, tristate: 'include' },
+  { position: 0, inner: 0, tristate: 'exclude' },
+  { position: 2, select: 0 },
+  { position: 3, text: '20' },
+  { position: 4, sort: { index: 0, ascending: true } },
+  { position: 5, checkbox: true },
+]);
+check('every valid change is sent', sent.input.length === 6 && sent.dropped === 0);
+check('a change inside a group rides groupChange', JSON.stringify(sent.input[0]) === '{"position":0,"groupChange":{"position":1,"triState":"INCLUDE"}}');
+check('two changes in one group are two entries', sent.input[1].groupChange?.position === 0);
+check('a select sends its index', sent.input[2].selectState === 0);
+
+const refused = toSuwayomiChanges(filters, [
+  { position: 3, checkbox: true }, // a checkbox value at a text box
+  { position: 2, select: 9 }, // past the end of the list
+  { position: 1, text: 'x' }, // a separator
+  { position: 99, checkbox: true }, // nothing there
+  { position: 0, inner: 7, tristate: 'include' }, // nothing inside at 7
+]);
+check('changes that do not fit are dropped, and counted', refused.input.length === 0 && refused.dropped === 5);
+
+console.log('\nbrowsing: covers\n');
+
+// The cover proxy's guard. Anything it lets through, the server will fetch.
+check('a Suwayomi thumbnail is served', thumbPath('/api/v1/manga/12/thumbnail') === '/api/manga/thumb?p=%2Fapi%2Fv1%2Fmanga%2F12%2Fthumbnail');
+check('with its host and cache-buster taken off', thumbPath('http://127.0.0.1:4567/api/v1/manga/12/thumbnail?v=3') === thumbPath('/api/v1/manga/12/thumbnail'));
+check('a page is not a cover', thumbPath('/api/v1/manga/12/chapter/1/page/0') === null);
+check('a climb out is refused', thumbPath('/api/v1/manga/12/../../settings') === null);
+check('an outside address is refused', thumbPath('https://example.com/cover.jpg') === null);
+check('nothing is nothing', thumbPath(null) === null);
+
+/* ------------------------------------------------------------------ */
 console.log('\nyour verdict on a flag\n');
 
 /*
@@ -548,6 +638,7 @@ const store: Store = {
   suwayomiMode: 'on-demand',
   readLanguages: ['en'],
   releaseTasks: false,
+  browseSource: null,
   series: [
     row({ id: 'recent', checkedAt: 1_000 }),
     row({ id: 'stale', checkedAt: 10 }),

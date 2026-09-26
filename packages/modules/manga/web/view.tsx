@@ -25,6 +25,7 @@ import { Chapters } from './Chapters';
 import { Extensions } from './Extensions';
 import { SuwayomiUI } from './SuwayomiUI';
 import { Compare } from './Compare';
+import { Browse } from './Browse';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -56,6 +57,12 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
    * where you came from, rather than dropping you at the top of the library.
    */
   const [comparing, setComparing] = useState<{ id: string; from: 'list' | 'chapters' } | null>(null);
+  /** Your list, or browsing your sources. `useState`, like every other bit of navigation here. */
+  const [tab, setTab] = useState<'library' | 'browse'>('library');
+  const [browsed, setBrowsed] = useState(false);
+  useEffect(() => {
+    if (tab === 'browse') setBrowsed(true);
+  }, [tab]);
 
   /*
    * A search handed in from elsewhere — the Dashboard panel's rows land here
@@ -114,7 +121,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
       const result = await manga.checkNow();
       setSweep(
         result.raised > 0
-          ? `${result.raised} new chapter${result.raised === 1 ? '' : 's'} — added to your tasks`
+          ? `${result.raised} new chapter${result.raised === 1 ? '' : 's'}${library.data?.releaseTasks ? ' — added to your tasks' : ''}`
           : `Checked ${result.checked}${result.failed ? `, ${result.failed} failed` : ''}. Nothing new.`
       );
       library.reload();
@@ -134,7 +141,13 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
    * makes about opening a note on a phone, and for the same reason: what opens
    * is a full-width document, and putting one inside a list leaves it wearing
    * the list's width with the rest of the list above and below it.
+   *
+   * Replaced, but not unmounted. The tabs stay underneath, hidden, so opening a
+   * series you found while browsing and coming back returns you to your search
+   * and its results rather than an empty box — `display: none` for the reason
+   * Notes uses it, since React keeps the state and CSS decides what is shown.
    */
+  let overlay: React.ReactNode = null;
   if (comparing) {
     const compared = data?.series.find((s) => s.id === comparing.id);
     if (compared) {
@@ -142,7 +155,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
         setComparing(null);
         if (comparing.from === 'chapters') setReading(compared.id);
       };
-      return (
+      overlay = (
         <Compare
           series={compared}
           onClose={back}
@@ -154,8 +167,8 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
       );
     }
   }
-  if (reading) {
-    return (
+  if (!overlay && reading) {
+    overlay = (
       <Chapters
         seriesId={reading}
         onClose={() => setReading(null)}
@@ -166,11 +179,33 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
       />
     );
   }
-  if (managingExtensions) return <Extensions local={local} onClose={() => setManagingExtensions(false)} />;
-  if (suwayomiOpen) return <SuwayomiUI onClose={() => setSuwayomiOpen(false)} />;
+  if (!overlay && managingExtensions) overlay = <Extensions local={local} onClose={() => setManagingExtensions(false)} />;
+  if (!overlay && suwayomiOpen) overlay = <SuwayomiUI onClose={() => setSuwayomiOpen(false)} />;
 
   return (
-    <div className="manga">
+    <>
+    {overlay}
+    <div className="manga" hidden={overlay !== null}>
+      <div className="tabs" role="tablist">
+        {(['library', 'browse'] as const).map((t) => (
+          <button key={t} role="tab" aria-selected={tab === t} className={`tab${tab === t ? ' on' : ''}`} onClick={() => setTab(t)}>
+            {t === 'library' ? 'Library' : 'Browse'}
+          </button>
+        ))}
+      </div>
+
+      {/*
+        * Browse mounts the first time it is opened — it starts Suwayomi, which
+        * somebody only looking at their list should not pay for — and then stays,
+        * hidden, so switching tabs keeps what you were looking at.
+        */}
+      {(tab === 'browse' || browsed) && (
+        <div hidden={tab !== 'browse'}>
+          <Browse onFollowed={() => library.reload()} onRead={(id) => setReading(id)} />
+        </div>
+      )}
+
+      <div hidden={tab !== 'library'}>
       <form className="card manga-search" onSubmit={runSearch}>
         <label htmlFor="manga-q">Follow a series</label>
         <div className="row">
@@ -340,6 +375,8 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
           </label>
         )}
       </div>
+      </div>
     </div>
+    </>
   );
 }

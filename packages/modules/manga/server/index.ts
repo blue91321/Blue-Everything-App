@@ -30,10 +30,11 @@ import type { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, nudges } from '@everything/server/module-api';
 import { chapterValue } from './identity.js';
-import { search, fetchCover, MangaDexError } from './mangadex.js';
+import { search, fetchCover, MangaDexError, type Candidate } from './mangadex.js';
 import { CREDIT, readSeries } from './mangaupdates.js';
 import { read, write, newSeries, findExisting, type Series, type Store } from './library.js';
-import { seriesSummary, recentReleases } from './present.js';
+import { seriesSummary, recentReleases, thumbPath, THUMB_PATH } from './present.js';
+import { groupKey, groupMatches, toSuwayomiChanges, type FilterChange } from './browse.js';
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
 import {
   SourceError,
@@ -43,6 +44,10 @@ import {
   judgePages,
   type ExtensionCatalogue,
   type PageSample,
+  sourcesToSearch,
+  rankMatches,
+  titleScore,
+  type SourceMatch,
 } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL, KEIYOUSHI_REPO } from './suwayomi.js';
 import { suwayomiProcess, findJars } from './process.js';
@@ -896,6 +901,322 @@ export async function routes(app: FastifyInstance): Promise<void> {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
       throw error;
     }
+  });
+
+  /* ---- browsing ---- */
+
+  /**
+   * The source, up — for things that are not about one series.
+   *
+   * The same start-on-demand as the reader: browsing is something you opened a
+   * tab to do, so it may spend the JVM's startup.
+   */
+  type ReadyContext = { error: string; code: 400 | 502 } | { store: Store; adapter: SuwayomiAdapter; url: string };
+
+  async function ready(): Promise<ReadyContext> {
+    const store = read();
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return { error: 'no source is configured', code: 400 as const };
+    if (store.manageSuwayomi && store.suwayomiJar) {
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+      if (state.state !== 'running') {
+        return { error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting', code: 502 as const };
+      }
+    } else {
+      suwayomiProcess.touch(store.suwayomiMode);
+    }
+    return { store, adapter: new SuwayomiAdapter(url), url };
+  }
+
+  const SOURCE_ID = /^\d{1,25}$/;
+
+  /**
+   * What a result looks like to the screen: a cover it can fetch, and whether
+   * you already follow it — by this exact copy, or by a series of the same name
+   * from anywhere.
+   */
+  function present<T extends SourceMatch>(store: Store, match: T) {
+    const following =
+      store.series.find(
+        (s) =>
+          (s.source?.mangaId === match.id && s.source?.sourceName === match.sourceName) ||
+          groupKey(s.title) === groupKey(match.title) ||
+          (s.source !== null && groupKey(s.source.title) === groupKey(match.title))
+      )?.id ?? null;
+    return { ...match, coverPath: thumbPath(match.thumbnailUrl), following };
+  }
+
+  /**
+   * The sources Browse can list from — the languages you read, like search —
+   * and which one it lists from now.
+   */
+  app.get('/api/manga/browse', async (_request, reply) => {
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    try {
+      const all = await ctx.adapter.listSources();
+      const sources = sourcesToSearch(all, ctx.store.readLanguages)
+        .searched.filter((s) => s.lang !== 'localsourcelang')
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const selected = sources.find((s) => s.id === ctx.store.browseSource)?.id ?? sources[0]?.id ?? null;
+      return { sources, selected, readLanguages: ctx.store.readLanguages, installed: all.length };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * Which source to browse from. Not local-only — it is a preference about
+   * reading, and it lives on the server so the phone and the PC browse the same
+   * one, as the theme does.
+   */
+  app.put('/api/manga/browse/source', async (request, reply) => {
+    const body = request.body as { id?: unknown } | null;
+    if (typeof body?.id !== 'string' || !SOURCE_ID.test(body.id)) return reply.code(400).send({ error: 'which source?' });
+    const store = read();
+    store.browseSource = body.id;
+    write(store);
+    return { selected: store.browseSource };
+  });
+
+  /** One page of a source's popular list or its newest releases. */
+  app.get('/api/manga/browse/list', async (request, reply) => {
+    const { source, type, page } = request.query as { source?: string; type?: string; page?: string };
+    if (!source || !SOURCE_ID.test(source)) return reply.code(400).send({ error: 'which source?' });
+    if (type !== 'popular' && type !== 'latest') return reply.code(400).send({ error: 'popular or latest' });
+    const n = Number.parseInt(page ?? '1', 10);
+    if (!Number.isInteger(n) || n < 1 || n > 500) return reply.code(400).send({ error: 'not a page' });
+
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    try {
+      const meta = (await ctx.adapter.listSources()).find((s) => s.id === source);
+      if (!meta) return reply.code(404).send({ error: 'that source is not installed any more' });
+      if (type === 'latest' && !meta.supportsLatest) {
+        return reply.code(400).send({ error: `${meta.name} does not list recent releases` });
+      }
+      const got = await ctx.adapter.browse(
+        { id: meta.id, displayName: meta.name, lang: meta.lang },
+        type === 'popular' ? 'POPULAR' : 'LATEST',
+        n
+      );
+      return { results: got.matches.map((m) => present(ctx.store, m)), hasNextPage: got.hasNextPage, page: n };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /** A source's own filters, for the search panel. */
+  app.get('/api/manga/browse/filters', async (request, reply) => {
+    const { source } = request.query as { source?: string };
+    if (!source || !SOURCE_ID.test(source)) return reply.code(400).send({ error: 'which source?' });
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    try {
+      return { filters: await ctx.adapter.filters(source) };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * Search every source, grouped by series, the chosen source first.
+   *
+   * The chosen source is searched with its own filters; every other source with
+   * the query alone, since filters mean something different on each. A search
+   * with filters and no words can only go to the chosen source — the others
+   * have nothing to be asked — and the answer says so rather than presenting
+   * one source's results as everyone's.
+   */
+  app.post('/api/manga/browse/search', async (request, reply) => {
+    const body = request.body as {
+      query?: unknown;
+      source?: unknown;
+      changes?: unknown;
+      allLanguages?: unknown;
+      only?: unknown;
+    } | null;
+    const query = typeof body?.query === 'string' ? body.query.trim().slice(0, 200) : '';
+    const sourceId = typeof body?.source === 'string' && SOURCE_ID.test(body.source) ? body.source : null;
+    const changes = Array.isArray(body?.changes) ? (body.changes.slice(0, 300) as FilterChange[]) : [];
+    const only =
+      Array.isArray(body?.only) && body.only.every((s) => typeof s === 'string' && SOURCE_ID.test(s))
+        ? (body.only as string[])
+        : null;
+    if (!query && changes.length === 0) return reply.code(400).send({ error: 'type a title, or choose a filter' });
+
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    const languages = body?.allLanguages === true ? null : ctx.store.readLanguages;
+
+    try {
+      const installed = await ctx.adapter.listSources();
+      const meta = sourceId ? installed.find((s) => s.id === sourceId) ?? null : null;
+
+      let applied = 0;
+      let dropped = 0;
+      let preferredProblem: string | null = null;
+
+      const preferred = (async () => {
+        if (!meta) return [] as SourceMatch[];
+        let input: Array<Record<string, unknown>> = [];
+        if (changes.length > 0) {
+          const checked = toSuwayomiChanges(await ctx.adapter.filters(meta.id), changes);
+          input = checked.input;
+          applied = input.length;
+          dropped = checked.dropped;
+        }
+        if (!query && input.length === 0) return [];
+        try {
+          return (
+            await ctx.adapter.browse({ id: meta.id, displayName: meta.name, lang: meta.lang }, 'SEARCH', 1, query, input)
+          ).matches;
+        } catch (error) {
+          // Reported beside the other sources' results rather than failing
+          // them: one broken extension is the ordinary case, and losing every
+          // other source's answer over it would read as nothing existing.
+          preferredProblem = error instanceof SourceError ? error.message : 'the search failed';
+          return [];
+        }
+      })();
+
+      const others = query
+        ? ctx.adapter.search(query, { limit: 400, languages, only, exclude: meta?.id ?? null })
+        : Promise.resolve(null);
+
+      const [mine, rest] = await Promise.all([preferred, others]);
+      const ranked = query ? rankMatches(query, [...mine, ...(rest?.matches ?? [])]) : mine.map((m) => ({ ...m, score: 0 }));
+      const groups = groupMatches(
+        ranked.map((m) => present(ctx.store, m)),
+        meta?.id ?? null
+      ).map((g) => ({ ...g, following: g.entries.find((e) => e.following)?.following ?? null }));
+
+      return {
+        groups,
+        searched: (rest?.searched ?? 0) + (meta ? 1 : 0),
+        skipped: rest?.skipped ?? 0,
+        preferred: meta ? { id: meta.id, name: meta.name } : null,
+        preferredProblem,
+        filtersApplied: applied,
+        filtersDropped: dropped,
+        /** True when there were filters and no words, so only the chosen source was asked. */
+        onlyPreferred: !query,
+        languages,
+      };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * A cover from a source.
+   *
+   * Proxied for the reason pages are: Suwayomi has no authentication and the
+   * phone cannot reach it. Checked against the one shape Suwayomi publishes, or
+   * this would be an open proxy to anything the server can reach.
+   */
+  app.get('/api/manga/thumb', async (request, reply) => {
+    const { p } = request.query as { p?: string };
+    if (!p || !THUMB_PATH.test(p)) return reply.code(400).send({ error: 'not a cover' });
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    try {
+      const response = await fetch(`${ctx.url}${p}`, { signal: AbortSignal.timeout(30_000) });
+      if (!response.ok) return reply.code(502).send({ error: `the source answered ${response.status}` });
+      return reply
+        .header('content-type', response.headers.get('content-type') ?? 'image/jpeg')
+        .header('cache-control', 'private, max-age=86400')
+        .send(Buffer.from(await response.arrayBuffer()));
+    } catch {
+      return reply.code(502).send({ error: 'could not fetch the cover' });
+    }
+  });
+
+  /**
+   * Follow something found while browsing, already linked to where it was found.
+   *
+   * It is also looked up on MangaDex by name, because that is what gives it a
+   * MangaUpdates id, a MyAnimeList id for exporting later, and a proper cover.
+   * Only a close match is taken — a title starting with what the source calls it
+   * or better — since attaching the wrong series' ids would be worse than none.
+   * With no match it is still followed: a linked series is watched through its
+   * source, and the row says where its numbers come from.
+   *
+   * Already following that series by name, without a source? Then this links
+   * the source to it rather than making a second row for the same thing.
+   */
+  app.post('/api/manga/follow-source', async (request, reply) => {
+    const body = request.body as { mangaId?: unknown; title?: unknown; sourceName?: unknown } | null;
+    if (typeof body?.mangaId !== 'string' || !/^\d{1,20}$/.test(body.mangaId)) {
+      return reply.code(400).send({ error: 'that is not a source result' });
+    }
+    const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : '';
+    const sourceName = typeof body.sourceName === 'string' ? body.sourceName.slice(0, 80) : '';
+    if (!title || !sourceName) return reply.code(400).send({ error: 'that is not a source result' });
+
+    const store = read();
+    const same = store.series.find((s) => s.source?.mangaId === body.mangaId && s.source?.sourceName === sourceName);
+    if (same) return reply.code(409).send({ error: `already following ${same.title}`, id: same.id });
+
+    let best: Candidate | null = null;
+    try {
+      const found = await search(title, 8);
+      let bestScore = 0;
+      for (const c of found) {
+        const score = Math.max(titleScore(title, c.title), c.subtitle ? titleScore(title, c.subtitle) : 0);
+        if (score >= 80 && score > bestScore) {
+          best = c;
+          bestScore = score;
+        }
+      }
+    } catch {
+      // MangaDex being down is not a reason to refuse. The series is followed
+      // through its source either way; it just arrives without the extra ids.
+    }
+
+    const link = { adapter: 'suwayomi', mangaId: body.mangaId, title, sourceName };
+    const existing = best ? findExisting(store, best) : undefined;
+    if (existing) {
+      if (existing.source) {
+        return reply
+          .code(409)
+          .send({ error: `already following ${existing.title}, from ${existing.source.sourceName}`, id: existing.id });
+      }
+      existing.source = link;
+      existing.latestChapter = null;
+      existing.sourceChapter = null;
+      existing.sourceCheckedAt = null;
+      existing.checkedAt = null;
+      write(store);
+      return { series: seriesSummary(existing), matchedOn: 'existing' };
+    }
+
+    const series = newSeries({
+      mangadexId: best?.mangadexId ?? null,
+      malId: best?.malId ?? null,
+      anilistId: best?.anilistId ?? null,
+      muId: best?.muId ?? null,
+      title: best?.title ?? title,
+      coverUrl: best?.coverUrl?.startsWith('https://uploads.mangadex.org/') ? best.coverUrl : null,
+      status: best?.status ?? 'unknown',
+    });
+    series.source = link;
+    // One MangaUpdates read for the "N written" context, as linking does —
+    // after this the series is watched through its source.
+    if (series.muId !== null) {
+      try {
+        series.totalChapters = (await readSeries(series.muId)).totalChapters;
+      } catch {
+        // Left null. The row simply says less.
+      }
+    }
+    store.series.push(series);
+    write(store);
+    return { series: seriesSummary(series), matchedOn: best ? 'mangadex' : null };
   });
 
   /* ---- reading ---- */

@@ -44,6 +44,8 @@ export type SourceMatch = {
   title: string;
   /** The source that holds it, for when several are installed. */
   sourceName: string;
+  /** That source's own id, when the adapter has one. What Browse prefers by. */
+  sourceId?: string;
   /**
    * The source's language, as its extension declares it (`en`, `es-419`).
    *

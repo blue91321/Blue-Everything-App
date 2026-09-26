@@ -46,6 +46,28 @@ import {
   rankMatches,
   sourcesToSearch,
 } from './sources.js';
+import { fromSuwayomiFilter, type SourceFilter } from './browse.js';
+
+/** One installed source, as the Browse tab offers it. */
+export type BrowseSource = { id: string; name: string; lang: string; supportsLatest: boolean };
+
+type SourceNode = { id: string; displayName: string; lang: string };
+
+/**
+ * Every member of the filter union, with `default` aliased per member.
+ *
+ * GraphQL refuses one field name with a different type on different members of
+ * a union — `default` is a Boolean on a checkbox and an Int on a select — so the
+ * obvious query fails outright. The aliases are what `fromSuwayomiFilter` reads.
+ */
+const FILTER_FIELDS = `__typename
+  ... on CheckBoxFilter { name checkDefault: default }
+  ... on SelectFilter { name selectDefault: default values }
+  ... on TriStateFilter { name triDefault: default }
+  ... on TextFilter { name textDefault: default }
+  ... on SortFilter { name values sortDefault: default { index ascending } }
+  ... on HeaderFilter { name }
+  ... on SeparatorFilter { name }`;
 
 /** Suwayomi's own default. Overridable, because nothing says it has to be here. */
 export const DEFAULT_BASE_URL = 'http://127.0.0.1:4567';
@@ -194,6 +216,80 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     }
   }
 
+  /* ---- browsing ---- */
+
+  async listSources(): Promise<BrowseSource[]> {
+    const data = await this.gql<{
+      sources: { nodes: Array<SourceNode & { supportsLatest: boolean }> };
+    }>(`query { sources { nodes { id displayName lang supportsLatest } } }`);
+    return (data.sources?.nodes ?? []).map((s) => ({
+      id: String(s.id),
+      name: s.displayName,
+      lang: s.lang,
+      supportsLatest: s.supportsLatest === true,
+    }));
+  }
+
+  /**
+   * One page of one source: its popular list, its newest releases, or a search.
+   *
+   * `filters` is already Suwayomi's `FilterChangeInput` — see
+   * `toSuwayomiChanges`, which is what checks them.
+   */
+  async browse(
+    source: SourceNode,
+    type: 'POPULAR' | 'LATEST' | 'SEARCH',
+    page: number,
+    query?: string,
+    filters?: Json[]
+  ): Promise<{ matches: SourceMatch[]; hasNextPage: boolean }> {
+    const found = await this.gql<{
+      fetchSourceManga: {
+        hasNextPage: boolean;
+        mangas: Array<{ id: number; title: string; realUrl?: string | null; thumbnailUrl?: string | null }>;
+      };
+    }>(
+      `mutation Browse($input: FetchSourceMangaInput!) {
+         fetchSourceManga(input: $input) {
+           hasNextPage
+           mangas { id title realUrl thumbnailUrl }
+         }
+       }`,
+      {
+        input: {
+          source: source.id,
+          type,
+          page,
+          ...(query ? { query } : {}),
+          ...(filters && filters.length > 0 ? { filters } : {}),
+        },
+      }
+    );
+    return {
+      hasNextPage: found.fetchSourceManga?.hasNextPage === true,
+      matches: (found.fetchSourceManga?.mangas ?? []).map((m) => ({
+        id: String(m.id),
+        title: m.title,
+        sourceId: String(source.id),
+        sourceName: source.displayName,
+        lang: source.lang || null,
+        url: m.realUrl ?? null,
+        thumbnailUrl: m.thumbnailUrl ?? null,
+      })),
+    };
+  }
+
+  /** A source's own filters, as it declares them. */
+  async filters(sourceId: string): Promise<SourceFilter[]> {
+    const data = await this.gql<{ source: { filters: Json[] } }>(
+      `query Filters($id: LongString!) {
+         source(id: $id) { filters { ${FILTER_FIELDS} ... on GroupFilter { name filters { ${FILTER_FIELDS} } } } }
+       }`,
+      { id: sourceId }
+    );
+    return (data.source?.filters ?? []).map(fromSuwayomiFilter);
+  }
+
   /**
    * Search every installed source and merge the results.
    *
@@ -210,7 +306,19 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
    */
   async search(
     query: string,
-    { limit = 40, languages = null }: { limit?: number; languages?: readonly string[] | null } = {}
+    {
+      limit = 40,
+      languages = null,
+      only = null,
+      exclude = null,
+    }: {
+      limit?: number;
+      languages?: readonly string[] | null;
+      /** Ask just these source ids — the Browse tab's "which sources" filter. */
+      only?: readonly string[] | null;
+      /** Leave this one out, because the caller is asking it separately with its own filters. */
+      exclude?: string | null;
+    } = {}
   ): Promise<SearchOutcome> {
     const data = await this.gql<{ sources: { nodes: Array<{ id: string; displayName: string; lang: string }> } }>(
       `query { sources { nodes { id displayName lang } } }`
@@ -220,7 +328,12 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       throw new SourceError('Suwayomi is running but has no sources installed — add an extension repository first');
     }
 
-    const { searched: sources, skipped } = sourcesToSearch(installed, languages);
+    const byLanguage = sourcesToSearch(installed, languages);
+    const wanted = only ? new Set(only) : null;
+    const sources = byLanguage.searched.filter(
+      (s) => String(s.id) !== exclude && (wanted === null || wanted.has(String(s.id)))
+    );
+    const skipped = byLanguage.skipped;
 
     const out: SourceMatch[] = [];
     let next = 0;
@@ -229,28 +342,7 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       while (next < sources.length) {
         const source = sources[next++];
         try {
-          const found = await this.gql<{
-            fetchSourceManga: { mangas: Array<{ id: number; title: string; realUrl?: string | null; thumbnailUrl?: string | null }> };
-          }>(
-            `mutation Search($input: FetchSourceMangaInput!) {
-               fetchSourceManga(input: $input) {
-                 hasNextPage
-                 mangas { id title realUrl thumbnailUrl }
-               }
-             }`,
-            { input: { source: source.id, type: 'SEARCH', page: 1, query } }
-          );
-
-          for (const m of found.fetchSourceManga?.mangas ?? []) {
-            out.push({
-              id: String(m.id),
-              title: m.title,
-              sourceName: source.displayName,
-              lang: source.lang || null,
-              url: m.realUrl ?? null,
-              thumbnailUrl: m.thumbnailUrl ?? null,
-            });
-          }
+          out.push(...(await this.browse(source, 'SEARCH', 1, query)).matches);
         } catch {
           /*
            * One source failing must not fail the search. Extensions break

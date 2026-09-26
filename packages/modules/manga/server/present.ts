@@ -135,6 +135,38 @@ function chapterLine(series: Series): { chapterLabel: string; chapterTitle: stri
   };
 }
 
+/**
+ * Where a series' cover comes from: MangaDex's, or failing that its source's.
+ *
+ * A series followed from the Browse tab may have no MangaDex entry at all, and
+ * a library row with a blank where every other row has a picture reads as
+ * something having failed. The source's thumbnail is the same picture you
+ * chose it by. It goes through `thumbPath`, which is the only way the browser
+ * reaches a Suwayomi image.
+ */
+export function coverPathOf(series: Series): string | null {
+  if (series.coverUrl) return `/api/manga/${series.id}/cover`;
+  if (series.source?.adapter === 'suwayomi' && /^\d+$/.test(series.source.mangaId)) {
+    return thumbPath(`/api/v1/manga/${series.source.mangaId}/thumbnail`);
+  }
+  return null;
+}
+
+/**
+ * A Suwayomi thumbnail as a URL this app serves, or null for anything else.
+ *
+ * Built here so the browser never assembles one, and checked against the one
+ * shape Suwayomi publishes — the route checks it again, since by then it has
+ * travelled through the browser and is caller input.
+ */
+export function thumbPath(thumbnailUrl: string | null | undefined): string | null {
+  if (!thumbnailUrl) return null;
+  const path = thumbnailUrl.replace(/^https?:\/\/[^/]+/, '').replace(/\?.*$/, '');
+  return THUMB_PATH.test(path) ? `/api/manga/thumb?p=${encodeURIComponent(path)}` : null;
+}
+
+export const THUMB_PATH = /^\/api\/v1\/manga\/\d+\/thumbnail$/;
+
 export function seriesSummary(series: Series): SeriesSummary {
   // A linked source is enough on its own: it answers the chapter question
   // directly, so a series MangaUpdates has never heard of becomes watchable the
@@ -153,7 +185,7 @@ export function seriesSummary(series: Series): SeriesSummary {
     checkedAt: series.checkedAt,
     error: series.error,
     addedAt: series.addedAt,
-    coverPath: series.coverUrl ? `/api/manga/${series.id}/cover` : null,
+    coverPath: coverPathOf(series),
     url: series.muId ? seriesUrl(series.muId) : null,
     malId: series.malId,
     anilistId: series.anilistId,
@@ -210,7 +242,7 @@ export function recentReleases(store: Store, limit = 8): RecentRelease[] {
           title: series.title,
           chapter: link.chapter,
           raisedAt: link.raisedAt,
-          coverPath: series.coverUrl ? `/api/manga/${series.id}/cover` : null,
+          coverPath: coverPathOf(series),
           url: series.muId ? seriesUrl(series.muId) : null,
         },
       ];
