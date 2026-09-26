@@ -2649,34 +2649,9 @@ button {
   flex-wrap: wrap;
 }
 
-.manga-source-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  margin-top: 6px;
-}
 
-/* A whole-row target, like the friends panel's, so a title is easy to hit. */
-.manga-source-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-}
 
-.manga-source-row:hover:not(:disabled) {
-  border-color: var(--accent);
-}
+
 
 /* ---- Manga: the chapter list and the reader --------------------------- */
 
@@ -2886,38 +2861,76 @@ button {
   }
 }
 
+
+
+/* ---- Manga: one series across every source --------------------------- */
+
 /*
- * A source picker takes the row, and the row takes the list.
- *
- * It used to render inside `.manga-row-text`, which beside a cover and three
- * buttons leaves about 230px — every candidate read "Ao no Miburo —S..." and the
- * source name wrapped under it. Moving it out of the text column gets the row's
- * width; collapsing the grid gets the card's.
- *
- * `:has()` rather than state passed down from the list, because the list does
- * not know a picker is open and has no business learning — the same reasoning
- * that put `.app:has(.dash.has-panel)` in CSS rather than in `App`.
+ * The answer, before the rows that justify it. With seven sources carrying the
+ * same title the rows are the evidence; this line is what you came to find out.
  */
-.manga-list:has(.manga-source-picker) {
-  grid-template-columns: 1fr;
+.manga-compare-summary {
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  font-weight: 600;
 }
 
-.manga-source-picker {
-  flex-basis: 100%;
-}
-
-/* Source name and chapter count sit together at the end of each candidate. */
-.manga-source-meta {
+.manga-compare-row {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The source you are reading from now, so switching is a decision about it. */
+.manga-compare-row.current {
+  border-left: 3px solid var(--accent);
+  padding-left: 9px;
+}
+
+.manga-compare-other > summary {
+  cursor: pointer;
+  padding: 10px 0 4px;
+  color: var(--muted);
+}
+
+.manga-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
 }
 
 /*
- * The count is the thing being compared, so it is the one piece of this row that
- * is not muted.
+ * The tone is in the glyph as well as the colour, so a flag still reads for
+ * somebody who cannot tell green from red. Warnings take the text colour rather
+ * than a yellow: the only yellow declared here is the "away" presence dot, and
+ * that one carries a meaning learned from every chat client on the machine.
  */
-.manga-source-meta .meta.strong {
+.manga-flag {
+  font-size: 0.85rem;
+}
+
+.manga-flag.good {
+  color: var(--ok);
+}
+
+.manga-flag.warn {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.manga-flag.bad {
+  color: var(--danger);
+}
+
+.manga-flag.info {
+  color: var(--muted);
+}
+
+.meta .strong {
   color: var(--text);
 }

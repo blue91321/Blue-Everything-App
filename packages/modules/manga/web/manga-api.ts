@@ -110,8 +110,31 @@ export interface SourceMatch {
   id: string;
   title: string;
   sourceName: string;
+  /** The source's language code. Optional: an older server does not send it. */
+  lang?: string | null;
   url: string | null;
   thumbnailUrl: string | null;
+  /** How well the title answers the search, 0–100. Optional for the same reason. */
+  score?: number;
+}
+
+/** The shape of one source's chapter list — see `profileChapters` on the server. */
+export interface ChapterProfile {
+  entries: number;
+  distinct: number;
+  first: number | null;
+  latest: number | null;
+  latestChapterId: string | null;
+  missing: number;
+  missingSample: number[];
+  newestUpload: number | null;
+}
+
+/** Whether a chapter's pages are real — see `judgePages` on the server. */
+export interface PageCheck {
+  pages: number;
+  state: 'fine' | 'suspicious' | 'broken';
+  problem: string | null;
 }
 
 export interface Candidate {
@@ -191,9 +214,11 @@ export const manga = {
         `/api/manga/${id}/source/search${q ? `?q=${encodeURIComponent(q)}` : ''}`
       ),
     count: (id: string, mangaId: string) =>
-      call<{ chapters: number; latest: number | null }>(
+      call<{ chapters: number; latest: number | null; profile?: ChapterProfile }>(
         `/api/manga/${id}/source/count?mangaId=${encodeURIComponent(mangaId)}`
       ),
+    check: (id: string, chapterId: string) =>
+      call<PageCheck>(`/api/manga/${id}/source/check?chapterId=${encodeURIComponent(chapterId)}`),
     link: (id: string, match: SourceMatch) =>
       call<SeriesSummary>(`/api/manga/${id}/source`, {
         method: 'PUT',

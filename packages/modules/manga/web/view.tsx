@@ -24,6 +24,7 @@ import { SourceLink } from './SourceLink';
 import { Chapters } from './Chapters';
 import { Extensions } from './Extensions';
 import { SuwayomiUI } from './SuwayomiUI';
+import { Compare } from './Compare';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -48,6 +49,12 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   const [reading, setReading] = useState<string | null>(null);
   const [managingExtensions, setManagingExtensions] = useState(false);
   const [suwayomiOpen, setSuwayomiOpen] = useState(false);
+  /**
+   * Which series is being compared across sources, and where it was opened
+   * from — so Back and switching return you to the chapter list if that is
+   * where you came from, rather than dropping you at the top of the library.
+   */
+  const [comparing, setComparing] = useState<{ id: string; from: 'list' | 'chapters' } | null>(null);
 
   /*
    * A search handed in from elsewhere — the Dashboard panel's rows land here
@@ -127,7 +134,37 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
    * is a full-width document, and putting one inside a list leaves it wearing
    * the list's width with the rest of the list above and below it.
    */
-  if (reading) return <Chapters seriesId={reading} onClose={() => setReading(null)} />;
+  if (comparing) {
+    const compared = data?.series.find((s) => s.id === comparing.id);
+    if (compared) {
+      const back = () => {
+        setComparing(null);
+        if (comparing.from === 'chapters') setReading(compared.id);
+      };
+      return (
+        <Compare
+          series={compared}
+          onClose={back}
+          onLinked={() => {
+            library.reload();
+            back();
+          }}
+        />
+      );
+    }
+  }
+  if (reading) {
+    return (
+      <Chapters
+        seriesId={reading}
+        onClose={() => setReading(null)}
+        onCompare={() => {
+          setComparing({ id: reading, from: 'chapters' });
+          setReading(null);
+        }}
+      />
+    );
+  }
   if (managingExtensions) return <Extensions local={local} onClose={() => setManagingExtensions(false)} />;
   if (suwayomiOpen) return <SuwayomiUI onClose={() => setSuwayomiOpen(false)} />;
 
@@ -231,7 +268,11 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               * —S...". `.manga-row` already wraps, so this lands on its own
               * line.
               */}
-            <SourceLink series={series} local={local} onChanged={() => library.reload()} />
+            <SourceLink
+              series={series}
+              onCompare={() => setComparing({ id: series.id, from: 'list' })}
+              onChanged={() => library.reload()}
+            />
             <div className="manga-row-actions">
               {/* Only when there is somewhere to read it from. */}
               {series.source && (

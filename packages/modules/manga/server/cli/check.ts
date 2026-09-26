@@ -31,7 +31,10 @@ import {
 } from '../identity.js';
 import { alreadyRaised, type Store } from '../library.js';
 import { totalChaptersFrom } from '../mangaupdates.js';
-import { readableChapter, titleScore, rankMatches } from '../sources.js';
+import { readableChapter, titleScore, rankMatches, profileChapters, judgePages } from '../sources.js';
+// A browser-half file with no imports, tested from here the way smoke tests
+// integrations/web/presence.ts.
+import { judgeSources, type SourceRow } from '../../web/judge.js';
 import { uploadedAtMs } from '../suwayomi.js';
 import { portOf } from '../process.js';
 import { pollable, seriesUrl } from '../releases.js';
@@ -228,6 +231,152 @@ check(
   'the same query ranks the same way twice',
   JSON.stringify(rankMatches('eleceed', found)) === JSON.stringify(rankMatches('eleceed', found))
 );
+
+/* ------------------------------------------------------------------ */
+console.log('\nreading the shape of a chapter list\n');
+
+const ch = (number: number, uploadedAt: number | null = null, id = String(number)) => ({
+  id,
+  number,
+  name: `Chapter ${number}`,
+  uploadedAt,
+  scanlator: null,
+});
+
+const whole = profileChapters([ch(1), ch(2), ch(3), ch(4)]);
+check('a complete list has no gaps', whole.missing === 0 && whole.latest === 4 && whole.first === 1);
+check('the newest chapter keeps its id, so its pages can be checked', whole.latestChapterId === '4');
+
+const gappy = profileChapters([ch(1), ch(2), ch(6), ch(7)]);
+check('chapters skipped are counted', gappy.missing === 3, String(gappy.missing));
+check('and named', gappy.missingSample.join(',') === '3,4,5');
+
+// Duplicates across scanlation groups — MangaFire's English Eleceed listed 862
+// rows for 418 chapters. That is not a fault, and it is why neither raw number
+// is shown as how far a source goes.
+const dupes = profileChapters([ch(1, null, 'a'), ch(1, null, 'b'), ch(2, null, 'c'), ch(2, null, 'd')]);
+check('duplicate rows are not extra chapters', dupes.entries === 4 && dupes.distinct === 2 && dupes.missing === 0);
+
+check('a point-five is not a gap', profileChapters([ch(1), ch(1.5), ch(2)]).missing === 0);
+
+// A site that picked the series up at chapter 300 is not three hundred chapters
+// short — that is its catalogue, not a hole in it.
+const late = profileChapters([ch(300), ch(301), ch(302)]);
+check('gaps are counted from where the source starts, not from 1', late.missing === 0 && late.first === 300);
+
+check('nothing at all is an honest empty profile', profileChapters([]).latest === null && profileChapters([]).distinct === 0);
+check('a nonsense number is ignored', profileChapters([ch(Number.NaN), ch(3)]).latest === 3);
+// Walking a hundred thousand integers would be the one slow thing here, and a
+// number that absurd is already flagged by the consensus check.
+check('an absurd range is not walked', profileChapters([ch(1), ch(99999)]).missing === 0);
+check('the newest upload is found', profileChapters([ch(1, 100), ch(2, 300), ch(3, 200)]).newestUpload === 300);
+
+/* ------------------------------------------------------------------ */
+console.log('\nwhether pages are real\n');
+
+const img = (bytes: number) => ({ ok: true, bytes, contentType: 'image/webp' });
+
+check('ordinary pages are fine', judgePages(11, [img(215_000), img(90_000), img(44_000)]).state === 'fine');
+check('no pages at all is broken', judgePages(0, []).state === 'broken');
+check('a page that will not load is broken', judgePages(11, [img(90_000), { ok: false, bytes: 0, contentType: null }]).state === 'broken');
+// A CDN serving its error page where the image should be — the commonest form
+// "corrupted" takes, and one a byte count alone would miss.
+check(
+  'html where an image should be is broken',
+  judgePages(11, [img(90_000), { ok: true, bytes: 40_000, contentType: 'text/html; charset=utf-8' }]).state === 'broken'
+);
+// Certain faults are `broken`; things that are *often* wrong are only
+// `suspicious`, because a genuinely short chapter exists.
+check('a single page is suspicious, not broken', judgePages(1, [img(120_000)]).state === 'suspicious');
+check('a tiny page is suspicious', judgePages(11, [img(90_000), img(800)]).state === 'suspicious');
+check('and says why', (judgePages(11, [img(800)]).problem ?? '').includes('placeholder'));
+
+/* ------------------------------------------------------------------ */
+console.log('\njudging sources against each other\n');
+
+const src = (sourceName: string, latest: number | null, extra: Partial<SourceRow> = {}): SourceRow => ({
+  key: sourceName,
+  sourceName,
+  lang: 'en',
+  latest,
+  distinct: latest === null ? 0 : latest,
+  missing: 0,
+  missingSample: [],
+  newestUpload: null,
+  counted: true,
+  ...extra,
+});
+const tones = (v: ReturnType<typeof judgeSources>, key: string) => (v.flags[key] ?? []).map((f) => f.tone);
+const says = (v: ReturnType<typeof judgeSources>, key: string, text: string) =>
+  (v.flags[key] ?? []).some((f) => f.text.includes(text));
+
+// The real numbers from Eleceed on MangaFire's languages.
+const eleceed = judgeSources([
+  src('MangaFire (EN)', 418, { lang: 'en' }),
+  src('MangaFire (ES-419)', 408, { lang: 'es-419' }),
+  src('MangaFire (ES)', null, { lang: 'es' }),
+  src('MangaFire (FR)', 375, { lang: 'fr' }),
+  src('MangaFire (PT-BR)', 401, { lang: 'pt-BR' }),
+]);
+/*
+ * The case that broke the first version. Compared across languages, English was
+ * a lone leader ten clear of Spanish and was flagged as possibly padding — the
+ * very source already verified to reach 418. Translations trail the English they
+ * are made from; that is not evidence about English.
+ */
+check('a translation trailing English does not make English suspect', !says(eleceed, 'MangaFire (EN)', 'Check'));
+check('the furthest source is named', tones(eleceed, 'MangaFire (EN)').includes('good'));
+check('the others say how far behind', says(eleceed, 'MangaFire (ES-419)', '10 behind'));
+check('an empty source is ruled out', tones(eleceed, 'MangaFire (ES)').includes('bad'));
+check('the summary leads with the answer', (eleceed.summary ?? '').startsWith('Furthest: MangaFire (EN), up to 418'), eleceed.summary ?? '');
+
+/*
+ * The case the old reader's view was really for. A source "on 425" while every
+ * other one stops at 418 looks like the best source by its number alone — and
+ * is either genuinely faster or padding its list. Only its pages can say which,
+ * so it is flagged for checking rather than crowned.
+ */
+const padded = judgeSources([src('Sketchy', 425), src('MangaFire (EN)', 418), src('Asura', 417)]);
+check('a lone source far ahead is not called the best', !tones(padded, 'Sketchy').includes('good'));
+check('it is flagged for checking', says(padded, 'Sketchy', 'Check its newest pages'));
+check('the others are measured from the runner-up, not the claim', !says(padded, 'MangaFire (EN)', 'behind'));
+check('and the runner-up is behind by 1, not 8', says(padded, 'Asura', '1 behind'));
+check('the summary names the claim separately', (padded.summary ?? '').includes('Sketchy claims 425'), padded.summary ?? '');
+
+// Two sources agreeing is a much stronger claim than one saying so.
+const agreed = judgeSources([src('A', 425), src('B', 425), src('C', 418)]);
+check('two sources ahead together are not an outlier', tones(agreed, 'A').includes('good') && tones(agreed, 'B').includes('good'));
+
+check('a small lead is ordinary release timing', !says(judgeSources([src('A', 420), src('B', 418)]), 'A', 'Check'));
+
+// Within a language the check still bites, whatever the other languages do.
+const mixed = judgeSources([
+  src('Sketchy', 430, { lang: 'en' }),
+  src('Honest', 418, { lang: 'en' }),
+  src('Spanish', 390, { lang: 'es' }),
+]);
+check('an English outlier is caught among English sources', says(mixed, 'Sketchy', 'ahead of every other EN source'));
+check('and the Spanish source is measured from the honest one', says(mixed, 'Spanish', '28 behind'));
+
+const alone = judgeSources([src('Only', 50), src('Empty', null)]);
+check('a single source with chapters says there is nothing to compare', says(alone, 'Only', 'only source'));
+
+const holes = judgeSources([src('A', 50, { missing: 3, missingSample: [12, 13, 14] }), src('B', 50)]);
+check('gaps are reported with their numbers', says(holes, 'A', 'missing 3 chapters (12, 13, 14)'));
+
+const DAY = 24 * 60 * 60_000;
+const stale = judgeSources([src('Fresh', 50, { newestUpload: 400 * DAY }), src('Quiet', 49, { newestUpload: 100 * DAY })]);
+check('a source gone quiet while others carry on is stale', says(stale, 'Quiet', 'before the freshest'));
+// Compared with each other, never with today — so a series on hiatus, with every
+// source quiet for a year, is not reported as stale everywhere.
+const hiatus = judgeSources([src('A', 50, { newestUpload: 10 * DAY }), src('B', 50, { newestUpload: 12 * DAY })]);
+check('everyone quiet together is not stale', !says(hiatus, 'A', 'freshest') && !says(hiatus, 'B', 'freshest'));
+
+check(
+  'rows still counting take no part',
+  judgeSources([src('A', 900), src('B', 50, { counted: false, latest: null })]).summary?.includes('up to 900') === true
+);
+check('nothing counted yet has no verdict', judgeSources([src('A', null, { counted: false })]).summary === null);
 
 /* ------------------------------------------------------------------ */
 console.log('\nfinding the port to stop\n');

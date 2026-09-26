@@ -44,6 +44,13 @@ export type SourceMatch = {
   title: string;
   /** The source that holds it, for when several are installed. */
   sourceName: string;
+  /**
+   * The source's language, as its extension declares it (`en`, `es-419`).
+   *
+   * Carried because comparing sources across languages is comparing a
+   * translation with the thing it is translated from. See `judgeSources`.
+   */
+  lang: string | null;
   /** Where a person would read it, if the adapter knows. */
   url: string | null;
   thumbnailUrl: string | null;
@@ -273,4 +280,174 @@ export function rankMatches<T extends { title: string; sourceName: string }>(
         a.index - b.index
     )
     .map(({ index: _index, ...rest }) => rest as T & { score: number });
+}
+
+/**
+ * What a source's chapter list says about the source, beyond its newest number.
+ *
+ * ### Why the newest number is not enough
+ *
+ * The old reader this replaces had a "related" view — the same title across
+ * every source — and it was used to find three different things: a source that
+ * is further ahead, one whose pages are broken, and one that **lists chapters it
+ * does not have**. The newest number answers the first and actively misleads on
+ * the third, because a source padding its list *looks* furthest ahead.
+ *
+ * So the list is read for shape as well:
+ *
+ *   - `distinct` against `entries` — MangaFire's English Eleceed lists 862 rows
+ *     for 418 chapters, which is duplicates across scanlation groups rather than
+ *     anything wrong, and is why neither raw number is shown as "how far";
+ *   - `missing` — whole chapters between the first and the newest that no row
+ *     covers, which is what a source that skipped ahead looks like;
+ *   - `newestUpload` — a source "ahead" that last uploaded a year ago is not
+ *     ahead, it is abandoned with a stale number on top.
+ *
+ * Computed from the list the count already fetched, so none of it costs a
+ * request.
+ */
+export type ChapterProfile = {
+  /** Rows the source lists. More than `distinct` when groups overlap. */
+  entries: number;
+  /** Different chapter numbers. */
+  distinct: number;
+  first: number | null;
+  latest: number | null;
+  /** The source's own id for the newest chapter, so its pages can be checked. */
+  latestChapterId: string | null;
+  /** Whole-number chapters between `first` and `latest` that nothing covers. */
+  missing: number;
+  /** A few of them, so the row can name some rather than only count them. */
+  missingSample: number[];
+  newestUpload: number | null;
+};
+
+/**
+ * The widest range walked for gaps.
+ *
+ * A source listing "chapter 99999" is exactly the kind this is for, and walking
+ * a hundred thousand integers to say so would be the one slow thing here. Past
+ * this the gap count is left at zero — the consensus check will already have
+ * flagged a number that absurd.
+ */
+const GAP_WALK_LIMIT = 5000;
+
+export function profileChapters(chapters: readonly SourceChapter[]): ChapterProfile {
+  const valid = chapters.filter((c) => Number.isFinite(c.number) && c.number >= 0);
+
+  const profile: ChapterProfile = {
+    entries: chapters.length,
+    distinct: 0,
+    first: null,
+    latest: null,
+    latestChapterId: null,
+    missing: 0,
+    missingSample: [],
+    newestUpload: null,
+  };
+  if (valid.length === 0) return profile;
+
+  const distinct = new Set<number>();
+  const floors = new Set<number>();
+  let newest = valid[0];
+  let lowest = Infinity;
+  for (const c of valid) {
+    distinct.add(c.number);
+    const floor = Math.floor(c.number);
+    floors.add(floor);
+    if (floor < lowest) lowest = floor;
+    if (c.number > newest.number) newest = c;
+    if (c.uploadedAt !== null && (profile.newestUpload === null || c.uploadedAt > profile.newestUpload)) {
+      profile.newestUpload = c.uploadedAt;
+    }
+  }
+
+  profile.distinct = distinct.size;
+  profile.first = lowest;
+  profile.latest = newest.number;
+  profile.latestChapterId = newest.id;
+
+  /*
+   * Gaps are counted from where the source *starts*, not from chapter 1.
+   *
+   * Plenty of sources only carry recent chapters — a site that picked a series
+   * up at 300 has nothing before it and is not broken for that. Counting from 1
+   * would call it three hundred chapters short, which is a fact about its
+   * catalogue rather than a hole in it.
+   */
+  const top = Math.floor(newest.number);
+  if (top - lowest <= GAP_WALK_LIMIT) {
+    for (let k = lowest; k <= top; k += 1) {
+      if (floors.has(k)) continue;
+      profile.missing += 1;
+      if (profile.missingSample.length < 5) profile.missingSample.push(k);
+    }
+  }
+
+  return profile;
+}
+
+/** One page fetched to see whether it is really a page. */
+export type PageSample = { ok: boolean; bytes: number; contentType: string | null };
+
+export type PageVerdict = {
+  pages: number;
+  state: 'fine' | 'suspicious' | 'broken';
+  problem: string | null;
+};
+
+/**
+ * Below this a "page" is almost certainly not one.
+ *
+ * A real manga page is tens to hundreds of kilobytes; the ones checked here ran
+ * 44–215KB. A few kilobytes is a spacer, a 1×1 tracking pixel, or an error
+ * image a CDN serves in place of the thing it could not find.
+ */
+const TINY_PAGE_BYTES = 3_000;
+
+/**
+ * Whether a chapter's pages are real, from a sample of them.
+ *
+ * Only ever a sample — the first, the middle and the last — because checking a
+ * whole chapter is the same cost as reading it. The ends are where it goes wrong
+ * in practice: a chapter listed before it exists is typically one "coming soon"
+ * image, and a corrupted one fails part-way or serves an error page where the
+ * image should be.
+ *
+ * `broken` and `suspicious` are kept apart because only one of them is certain.
+ * Pages that fail to load, or come back as HTML, are broken whatever the reason.
+ * A single page, or a very small one, is *often* a placeholder — and sometimes a
+ * genuinely short chapter — so it is reported as worth a look, not as a fault.
+ */
+export function judgePages(pages: number, samples: readonly PageSample[]): PageVerdict {
+  if (pages === 0) return { pages, state: 'broken', problem: 'the chapter has no pages' };
+
+  const failed = samples.filter((s) => !s.ok).length;
+  if (failed > 0) {
+    return { pages, state: 'broken', problem: `${failed} of ${samples.length} sampled pages would not load` };
+  }
+
+  const notImage = samples.find((s) => s.contentType !== null && !s.contentType.toLowerCase().startsWith('image/'));
+  if (notImage) {
+    return { pages, state: 'broken', problem: `a page came back as ${notImage.contentType}, not an image` };
+  }
+
+  if (pages === 1) {
+    return {
+      pages,
+      state: 'suspicious',
+      problem: 'only one page — sometimes a placeholder for a chapter that is not out yet',
+    };
+  }
+
+  const tiny = samples.find((s) => s.bytes < TINY_PAGE_BYTES);
+  if (tiny) {
+    return {
+      pages,
+      state: 'suspicious',
+      problem: `a page is only ${Math.max(1, Math.round(tiny.bytes / 1000))}KB — often a placeholder rather than art`,
+    };
+  }
+
+  return { pages, state: 'fine', problem: null };
 }

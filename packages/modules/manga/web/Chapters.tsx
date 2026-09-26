@@ -15,7 +15,16 @@ import { useAsync } from '@app/useAsync';
 import { manga, type SourceChapter } from './manga-api';
 import { Reader } from './Reader';
 
-export function Chapters({ seriesId, onClose }: { seriesId: string; onClose: () => void }) {
+export function Chapters({
+  seriesId,
+  onClose,
+  onCompare,
+}: {
+  seriesId: string;
+  onClose: () => void;
+  /** Open the same series across every source — where you go when a chapter here is broken. */
+  onCompare: () => void;
+}) {
   const list = useAsync(() => manga.reader.chapters(seriesId), [seriesId]);
   const [open, setOpen] = useState<SourceChapter | null>(null);
   const [busy, setBusy] = useState(false);
@@ -65,15 +74,32 @@ export function Chapters({ seriesId, onClose }: { seriesId: string; onClose: () 
         <span className="meta">
           {list.data ? `${list.data.seriesTitle} · ${list.data.sourceName}` : 'loading…'}
         </span>
-        <button className="btn subtle" disabled={busy} onClick={() => void refresh()}>
-          {busy ? 'Checking the site…' : 'Refresh'}
-        </button>
+        <span className="row">
+          {/*
+            * Here as well as on the series row, because this is where you are
+            * when a chapter turns out to be broken or missing. Switching keeps
+            * your place: what you have read is stored by chapter number, not by
+            * this source's ids.
+            */}
+          <button className="btn subtle" onClick={onCompare}>
+            Other sources
+          </button>
+          <button className="btn subtle" disabled={busy} onClick={() => void refresh()}>
+            {busy ? 'Checking the site…' : 'Refresh'}
+          </button>
+        </span>
       </div>
 
       {list.loading && <p className="empty">loading…</p>}
       {list.error && <p className="banner">Could not load: {list.error.message}</p>}
       {list.data?.chapters.length === 0 && (
-        <p className="empty">The source has no chapters for this one. Try Refresh, or link it to a different source.</p>
+        <p className="empty">
+          The source has no chapters for this one. Try Refresh, or{' '}
+          <button className="btn subtle" onClick={onCompare}>
+            see it on other sources
+          </button>
+          .
+        </p>
       )}
 
       <div className="manga-chapters">

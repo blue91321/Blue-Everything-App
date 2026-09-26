@@ -32,7 +32,15 @@ import { CREDIT, readSeries } from './mangaupdates.js';
 import { read, write, newSeries, findExisting, type Series, type Store } from './library.js';
 import { seriesSummary, recentReleases } from './present.js';
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
-import { SourceError, effectiveUrl, supportsExtensions, type ExtensionCatalogue } from './sources.js';
+import {
+  SourceError,
+  effectiveUrl,
+  supportsExtensions,
+  profileChapters,
+  judgePages,
+  type ExtensionCatalogue,
+  type PageSample,
+} from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL, KEIYOUSHI_REPO } from './suwayomi.js';
 import { suwayomiProcess, findJars } from './process.js';
 import { homedir } from 'node:os';
@@ -476,12 +484,17 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      const chapters = await new SuwayomiAdapter(url).chapters(mangaId, true);
-      const numbers = chapters.map((c) => c.number).filter((n) => Number.isFinite(n));
+      const profile = profileChapters(await new SuwayomiAdapter(url).chapters(mangaId, true));
       return {
-        chapters: chapters.length,
-        /** The newest number, which is what the row will show once it is linked. */
-        latest: numbers.length > 0 ? Math.max(...numbers) : null,
+        /*
+         * `chapters` and `latest` are kept beside the profile rather than
+         * replaced by it, because the PWA and the server update independently:
+         * a browser still holding the previous bundle reads exactly these two,
+         * and dropping them would blank its counts until it reloaded.
+         */
+        chapters: profile.entries,
+        latest: profile.latest,
+        profile,
       };
     } catch (error) {
       /*
@@ -491,14 +504,93 @@ export async function routes(app: FastifyInstance): Promise<void> {
        * row says "no chapters" instead of going blank.
        */
       const message = error instanceof SourceError ? error.message : 'the source failed';
-      if (/no chapters/i.test(message)) return { chapters: 0, latest: null };
+      if (/no chapters/i.test(message)) return { chapters: 0, latest: null, profile: profileChapters([]) };
       return reply.code(502).send({ error: message });
     }
   });
 
-  /** Point a series at one of those results. */
+  /**
+   * Are one chapter's pages real?
+   *
+   * The answer to "is this source corrupted, or listing chapters it does not
+   * have" — the two things the newest number cannot tell you, and the reason
+   * the old reader's side-by-side view was worth having.
+   *
+   * On demand, one source at a time, because it is not cheap: the source has to
+   * work out the page list, and then three images are fetched through Suwayomi,
+   * which fetches them from the site. Somebody comparing eight sources wants to
+   * check the one that looks too good, not all eight.
+   *
+   * Samples the first, the middle and the last page. See `judgePages` for why
+   * those three and what counts as wrong.
+   */
+  app.get('/api/manga/:id/source/check', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { chapterId } = request.query as { chapterId?: string };
+    if (!chapterId) return reply.code(400).send({ error: 'which chapter?' });
+
+    const store = read();
+    if (!store.series.some((s) => s.id === id)) return reply.code(404).send({ error: 'no such series' });
+
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return reply.code(400).send({ error: 'no source is configured' });
+
+    if (store.manageSuwayomi && store.suwayomiJar) {
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+      if (state.state !== 'running') {
+        return reply.code(502).send({ error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting' });
+      }
+    }
+
+    let paths: string[];
+    try {
+      paths = await new SuwayomiAdapter(url).pages(chapterId);
+    } catch (error) {
+      // A chapter the source cannot produce a page list for *is* the finding —
+      // reported as a verdict, not as an error the screen would show as "failed
+      // to check".
+      const message = error instanceof SourceError ? error.message : 'the source failed';
+      return { pages: 0, samples: [], state: 'broken' as const, problem: `the source could not list its pages: ${message}` };
+    }
+
+    const picks = [...new Set([0, Math.floor(paths.length / 2), paths.length - 1])].filter(
+      (i) => i >= 0 && i < paths.length
+    );
+
+    const samples: PageSample[] = [];
+    for (const index of picks) {
+      const path = paths[index];
+      // The same shape check the page proxy makes. These came from Suwayomi a
+      // moment ago rather than from a caller, but the rule is about what may be
+      // fetched, and it costs nothing to hold it everywhere.
+      if (!/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(path)) {
+        samples.push({ ok: false, bytes: 0, contentType: null });
+        continue;
+      }
+      try {
+        const response = await fetch(`${url}${path}`, { signal: AbortSignal.timeout(30_000) });
+        const bytes = response.ok ? (await response.arrayBuffer()).byteLength : 0;
+        samples.push({ ok: response.ok, bytes, contentType: response.headers.get('content-type') });
+      } catch {
+        samples.push({ ok: false, bytes: 0, contentType: null });
+      }
+    }
+
+    return { samples, ...judgePages(paths.length, samples) };
+  });
+
+  /**
+   * Point a series at one of those results.
+   *
+   * **Not local-only**, which it was until the phone needed it. The gate on the
+   * source exists because the *address* becomes something the server POSTs to
+   * on a timer — a request forgery waiting for a stolen token. Linking stores an
+   * opaque id inside a source that address already names; it reaches nothing
+   * new. Holding it to the PC meant you could see from the sofa that a source
+   * had broken pages and not do anything about it, which is the case the
+   * comparison view exists for.
+   */
   app.put('/api/manga/:id/source', async (request, reply) => {
-    localOnly(request as unknown as { isLocal: boolean });
     const { id } = request.params as { id: string };
     const body = request.body as { mangaId?: unknown; title?: unknown; sourceName?: unknown } | null;
     if (typeof body?.mangaId !== 'string' || !body.mangaId) {
@@ -553,8 +645,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return seriesSummary(series);
   });
 
+  // Not local-only either, for the same reason as linking.
   app.delete('/api/manga/:id/source', async (request, reply) => {
-    localOnly(request as unknown as { isLocal: boolean });
     const { id } = request.params as { id: string };
     const store = read();
     const series = store.series.find((s) => s.id === id);

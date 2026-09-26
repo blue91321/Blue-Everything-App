@@ -203,8 +203,8 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
    * time rather than eleven at once.
    */
   async search(query: string, limit = 20): Promise<SourceMatch[]> {
-    const data = await this.gql<{ sources: { nodes: Array<{ id: string; displayName: string }> } }>(
-      `query { sources { nodes { id displayName } } }`
+    const data = await this.gql<{ sources: { nodes: Array<{ id: string; displayName: string; lang: string }> } }>(
+      `query { sources { nodes { id displayName lang } } }`
     );
     const sources = data.sources?.nodes ?? [];
     if (sources.length === 0) {
@@ -235,6 +235,7 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
               id: String(m.id),
               title: m.title,
               sourceName: source.displayName,
+              lang: source.lang || null,
               url: m.realUrl ?? null,
               thumbnailUrl: m.thumbnailUrl ?? null,
             });
