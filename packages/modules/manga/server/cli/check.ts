@@ -451,6 +451,10 @@ check('every source is still listed', grouped[0].entries.length === 3);
 check('a row the chosen source is in comes first', grouped[0].preferred && grouped[1].preferred);
 const notChosen = groupMatches([m('Other', '1', 100), m('Mine', '2', 60)], '2');
 check('it outranks a better title match from elsewhere', notChosen[0].title === 'Mine');
+// The real case: "solo leveling" with MangaFire chosen put "Solo DPS!" above an
+// exact title from every other site. Preferring is a tie-break between answers.
+const nonAnswer = groupMatches([m('Solo DPS!', '2', 25), m('Solo Leveling', '1', 100)], '2');
+check('but not a title that does not answer the search', nonAnswer[0].title === 'Solo Leveling', nonAnswer.map((g) => g.title).join(' / '));
 const noneChosen = groupMatches([m('Weak', '1', 60), m('Strong', '1', 100), m('Strong', '3', 100)], null);
 check('with no choice, the best match leads', noneChosen[0].title === 'Strong');
 check('and more sources beat fewer on a tie', groupMatches([m('A', '1', 100), m('B', '1', 100), m('B', '3', 100)], null)[0].title === 'B');

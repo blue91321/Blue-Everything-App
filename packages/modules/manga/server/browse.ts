@@ -217,12 +217,24 @@ export type MatchGroup<T extends GroupEntry> = {
 };
 
 /**
+ * At or above this, a title answers the search — it is the words typed, starts
+ * with them, or contains them. See `titleScore`.
+ */
+export const GOOD_MATCH = 60;
+
+/**
  * Results grouped by series, the chosen source first.
  *
- * Ranked by: the chosen source has it; then how well the title matches; then
- * how many sources carry it, since a series on five sites is more likely the
- * one meant than a namesake on one. Ties keep the order results arrived in,
- * which is each source's own ranking.
+ * Ranked by: whether the title answers the search at all; then whether the
+ * chosen source has it; then how well; then how many sources carry it, since a
+ * series on five sites is more likely the one meant than a namesake on one.
+ * Ties keep the order results arrived in, which is each source's own ranking.
+ *
+ * **The first key is what stops "prefer" meaning "only".** It was the chosen
+ * source first outright, and searching "solo leveling" with MangaFire chosen
+ * put "Solo DPS!" — one shared word — above an exact title from every other
+ * site, because MangaFire had it. Preferring a source is a tie-break between
+ * answers, not a reason to rank a non-answer above one.
  */
 export function groupMatches<T extends GroupEntry>(
   matches: readonly T[],
@@ -261,6 +273,7 @@ export function groupMatches<T extends GroupEntry>(
     })
     .sort(
       (a, b) =>
+        Number(b.group.score >= GOOD_MATCH) - Number(a.group.score >= GOOD_MATCH) ||
         Number(b.group.preferred) - Number(a.group.preferred) ||
         b.group.score - a.group.score ||
         b.group.entries.length - a.group.entries.length ||

@@ -431,6 +431,10 @@ function Search({
       {groups.map((g) => {
         const lead = g.entries[0];
         const followingId = g.following ?? g.entries.map(following).find(Boolean) ?? null;
+        // One site often lists a series more than once — the original and an
+        // "(Official)" or colour edition — so sources are counted once each.
+        // The editions themselves are all under "a different source".
+        const sources = [...new Set(g.entries.map((e) => e.sourceName))];
         return (
           <div className="manga-row" key={g.key}>
             <Cover path={lead.coverPath} title={g.title} size={48} />
@@ -441,12 +445,13 @@ function Search({
               </span>
               <span className="meta">
                 {g.preferred ? '' : `not on ${chosen?.name ?? 'the chosen source'} · `}
-                on {g.entries.length} source{g.entries.length === 1 ? '' : 's'}:{' '}
-                {g.entries.map((e) => e.sourceName).join(', ')}
+                on {sources.length} source{sources.length === 1 ? '' : 's'}: {sources.join(', ')}
               </span>
               {g.entries.length > 1 && !followingId && (
                 <details className="manga-compare-other">
-                  <summary>Follow from a different source</summary>
+                  <summary>
+                    {sources.length > 1 ? 'Follow from a different source' : `Other editions on ${lead.sourceName}`}
+                  </summary>
                   {g.entries.slice(1).map((e) => (
                     <div className="row between" key={keyOf(e)}>
                       <span className="meta truncate">
