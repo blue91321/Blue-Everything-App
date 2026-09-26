@@ -41,6 +41,9 @@
   --bg: #14161c;
   --surface: #1c1f27;
   --surface-raised: #232734;
+  /* A chapter you have read or started: lighter than a row, and than a row's hover. */
+  --row-read: #2b303d;
+  --row-read-hover: #343a49;
   --border: #2b303c;
   --text: #e8e9ed;
   --muted: #8b90a0;
@@ -73,6 +76,8 @@
   --bg: #f6f7f9;
   --surface: #ffffff;
   --surface-raised: #eef0f4;
+  --row-read: #e9edf3;
+  --row-read-hover: #dde2ea;
   --border: #dcdfe6;
   --text: #1a1c22;
   --muted: #666c7a;
@@ -2663,6 +2668,28 @@ button {
    have read is still part of the list, it is just behind you. */
 .manga-chapter-row.read .title {
   opacity: 0.5;
+}
+
+/*
+ * Read or started, a shade lighter, so where you have been shows at a glance
+ * down a list of four hundred. Its own colour rather than --surface-raised,
+ * which is what hover already uses — a read row would otherwise look hovered.
+ * On the light theme the same token is a step darker than white: the point is
+ * the difference from an unread row, and white has nothing lighter to give.
+ */
+.manga-chapter-row.read,
+.manga-chapter-row.started {
+  background: var(--row-read);
+}
+
+.manga-chapter-row.read:hover,
+.manga-chapter-row.started:hover {
+  background: var(--row-read-hover);
+}
+
+/* The one you are partway through, told apart from the ones you finished. */
+.manga-chapter-row.started {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .manga-reader-bar {

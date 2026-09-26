@@ -199,7 +199,7 @@ export function Chapters({
           return (
             <button
               key={c.id}
-              className={c.read ? 'manga-chapter-row read' : 'manga-chapter-row'}
+              className={`manga-chapter-row${c.read ? ' read' : ''}${here ? ' started' : ''}`}
               onClick={() => read(c, here && place ? { page: place.page, offset: place.offset } : null)}
             >
               <span className="title truncate">{c.name}</span>
