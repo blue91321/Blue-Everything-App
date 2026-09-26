@@ -85,6 +85,15 @@ export type Series = SeriesIds & {
    */
   readChapters: number[];
   /**
+   * Where each read chapter was read — which source, and when.
+   *
+   * Beside `readChapters` rather than replacing it: that list is what every
+   * reader of "is this read" already asks, and a chapter marked before this
+   * existed has no source to report, which is an honest gap rather than one to
+   * fill with a guess. Written when a chapter is finished, like the list.
+   */
+  readLog: ReadRecord[];
+  /**
    * What you decided about a source that claimed to be ahead of the rest.
    *
    * The comparison can only suspect: a source well clear of every other one is
@@ -115,6 +124,37 @@ export type SourceReview = {
   key: string;
   upTo: number;
   verdict: 'real' | 'fake';
+  at: number;
+};
+
+/** One finished chapter: its number, where it was read, and when. */
+export type ReadRecord = {
+  chapter: number;
+  /** The source's name as the series was linked at the time, or null if it predates this. */
+  source: string | null;
+  mangaId: string | null;
+  at: number;
+};
+
+/**
+ * Where you are inside a chapter, to start again from.
+ *
+ * `page` and `offset` together: a page index alone is useless for a webtoon,
+ * where one "page" is a strip taller than a phone is long, so `offset` is how
+ * far down that page the top of the screen was, from 0 to 1. The chapter and
+ * source are stored with it because the numbers are only meaningful on the copy
+ * they were measured on — another source splits the same chapter into
+ * different pages.
+ */
+export type ReadingPosition = {
+  chapter: number;
+  chapterId: string;
+  chapterName: string;
+  source: string;
+  mangaId: string;
+  page: number;
+  offset: number;
+  pages: number;
   at: number;
 };
 
@@ -277,6 +317,7 @@ export function read(): Store {
         sourceChapter: s.sourceChapter ?? null,
         sourceCheckedAt: s.sourceCheckedAt ?? null,
         readChapters: Array.isArray(s.readChapters) ? s.readChapters : [],
+        readLog: Array.isArray(s.readLog) ? s.readLog : [],
         reviews: Array.isArray(s.reviews) ? s.reviews : [],
       })),
       links: Array.isArray(parsed.links) ? parsed.links : [],
@@ -304,6 +345,44 @@ export function write(next: Store): void {
   renameSync(tmp, STORE);
 }
 
+/* ---- reading positions, in a file of their own ---- */
+
+/**
+ * Where you are in each series, kept apart from the library.
+ *
+ * The library file is written when something is *decided* — a series added, a
+ * chapter finished — and this note at the top of `readChapters` has always said
+ * per-page position is the case that file is wrong for. So it is not in it: a
+ * position is saved every few seconds while you read, and rewriting the whole
+ * library that often would put every series you follow at risk each time for
+ * the sake of a scroll offset. This file holds one small record per series, is
+ * written the same atomic way, and losing it costs a place in a chapter.
+ */
+const POSITIONS = join(dataDir, 'manga-positions.json');
+
+export function readPositions(): Record<string, ReadingPosition> {
+  if (!existsSync(POSITIONS)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(POSITIONS, 'utf8').replace(/^\uFEFF/, '')) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, ReadingPosition>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Set one series' position, or clear it with null. Returns the one it replaced. */
+export function writePosition(seriesId: string, position: ReadingPosition | null): ReadingPosition | null {
+  const all = readPositions();
+  const before = all[seriesId] ?? null;
+  if (position) all[seriesId] = position;
+  else delete all[seriesId];
+  mkdirSync(dataDir, { recursive: true });
+  const tmp = `${POSITIONS}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(all)}\n`, 'utf8');
+  renameSync(tmp, POSITIONS);
+  return before;
+}
+
 export function newSeries(
   fields: Omit<
     Series,
@@ -317,6 +396,7 @@ export function newSeries(
     | 'sourceChapter'
     | 'sourceCheckedAt'
     | 'readChapters'
+    | 'readLog'
     | 'reviews'
   >
 ): Series {
@@ -329,6 +409,7 @@ export function newSeries(
     sourceChapter: null,
     sourceCheckedAt: null,
     readChapters: [],
+    readLog: [],
     reviews: [],
     checkedAt: null,
     error: null,

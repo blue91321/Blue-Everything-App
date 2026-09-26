@@ -26,6 +26,7 @@ import { Extensions } from './Extensions';
 import { SuwayomiUI } from './SuwayomiUI';
 import { Compare } from './Compare';
 import { Browse } from './Browse';
+import { chapterText } from './judge';
 import { SeriesDetail } from './SeriesDetail';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
@@ -50,6 +51,8 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   const [sweep, setSweep] = useState<string | null>(null);
   /** Which series' chapters are open, if any. The reader lives inside it. */
   const [reading, setReading] = useState<string | null>(null);
+  /** Opened with Continue, so the chapter list goes straight back into the reader. */
+  const [continuing, setContinuing] = useState(false);
   const [managingExtensions, setManagingExtensions] = useState(false);
   const [suwayomiOpen, setSuwayomiOpen] = useState(false);
   /**
@@ -176,10 +179,15 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
     overlay = (
       <Chapters
         seriesId={reading}
-        onClose={() => setReading(null)}
+        continueOnOpen={continuing}
+        onClose={() => {
+          setReading(null);
+          setContinuing(false);
+        }}
         onCompare={() => {
           setComparing({ id: reading, from: 'chapters' });
           setReading(null);
+          setContinuing(false);
         }}
       />
     );
@@ -348,11 +356,24 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
             />
             <div className="manga-row-actions">
               {/* Only when there is somewhere to read it from. */}
-              {series.source && (
-                <button className="btn primary" onClick={() => setReading(series.id)}>
-                  Read
-                </button>
-              )}
+              {series.source &&
+                (series.position ? (
+                  // Straight back to the page — the whole reason to keep it.
+                  <button
+                    className="btn primary"
+                    title={`${series.position.chapterName}, page ${series.position.page + 1} of ${series.position.pages}, on ${series.position.source}`}
+                    onClick={() => {
+                      setContinuing(true);
+                      setReading(series.id);
+                    }}
+                  >
+                    Continue ch {chapterText(series.position.chapter)} · p{series.position.page + 1}
+                  </button>
+                ) : (
+                  <button className="btn primary" onClick={() => setReading(series.id)}>
+                    Read
+                  </button>
+                ))}
               {/*
                 * The source's page for this series, the one Browse shows — or,
                 * with no source linked yet, a search of every source for it,

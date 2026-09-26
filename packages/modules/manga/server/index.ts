@@ -28,11 +28,21 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
-import { db, nudges } from '@everything/server/module-api';
+import { db, nudges, changes } from '@everything/server/module-api';
 import { chapterValue } from './identity.js';
 import { search, fetchCover, MangaDexError, type Candidate } from './mangadex.js';
 import { CREDIT, readSeries } from './mangaupdates.js';
-import { read, write, newSeries, findExisting, type Series, type Store } from './library.js';
+import {
+  read,
+  write,
+  newSeries,
+  findExisting,
+  readPositions,
+  writePosition,
+  type ReadingPosition,
+  type Series,
+  type Store,
+} from './library.js';
 import { seriesSummary, recentReleases, thumbPath, THUMB_PATH } from './present.js';
 import { groupKey, groupMatches, isIndexSource, toSuwayomiChanges, type FilterChange } from './browse.js';
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
@@ -58,8 +68,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
   /** The library, already shaped for the screen. */
   app.get('/api/manga', async () => {
     const store = read();
+    const positions = readPositions();
     return {
-      series: store.series.map(seriesSummary),
+      series: store.series.map((s) => ({ ...seriesSummary(s), position: positions[s.id] ?? null })),
       /** What landed lately, for the panel — see `recentReleases`. */
       recent: recentReleases(store),
       /** MangaUpdates asks to be credited for release data. The screen does it. */
@@ -169,6 +180,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
      */
     store.links = store.links.filter((l) => l.seriesId !== id);
     write(store);
+    writePosition(id, null);
     return { ok: true };
   });
 
@@ -1401,14 +1413,17 @@ export async function routes(app: FastifyInstance): Promise<void> {
     try {
       const chapters = await ctx.adapter.chapters(ctx.series.source!.mangaId, refresh === '1');
       const read_ = new Set(ctx.series.readChapters);
+      const readOn = new Map(ctx.series.readLog.map((r) => [r.chapter, r.source]));
       return {
         seriesTitle: ctx.series.title,
         sourceName: ctx.series.source!.sourceName,
+        mangaId: ctx.series.source!.mangaId,
+        position: readPositions()[id] ?? null,
         chapters: chapters
           // Newest first, which is how every reader in this space lists them and
           // how anybody following a running series wants to see it.
           .sort((a, b) => b.number - a.number)
-          .map((c) => ({ ...c, read: read_.has(c.number) })),
+          .map((c) => ({ ...c, read: read_.has(c.number), readOn: readOn.get(c.number) ?? null })),
       };
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
@@ -1498,7 +1513,28 @@ export async function routes(app: FastifyInstance): Promise<void> {
     if (body?.read === false) marked.delete(chapter);
     else marked.add(chapter);
     series.readChapters = [...marked].sort((a, b) => a - b);
+
+    /*
+     * Which source it was read on is the source the series reads from now — the
+     * reader only ever serves the linked one, so there is nothing to take from
+     * the caller. Re-reading replaces the record rather than adding a second.
+     */
+    series.readLog = series.readLog.filter((r) => r.chapter !== chapter);
+    if (body?.read !== false) {
+      series.readLog.push({
+        chapter,
+        source: series.source?.sourceName ?? null,
+        mangaId: series.source?.mangaId ?? null,
+        at: Date.now(),
+      });
+      series.readLog.sort((a, b) => a.chapter - b.chapter);
+    }
     write(store);
+
+    // Finishing the chapter you were partway through, or a later one, settles
+    // the place: "continue" would otherwise point back into something done.
+    const place = readPositions()[id];
+    if (body?.read !== false && place && place.chapter <= chapter) writePosition(id, null);
 
     /*
      * Reading a chapter answers the nudge about it. With a task, ticking the
@@ -1520,6 +1556,57 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
 
     return { readChapters: series.readChapters };
+  });
+
+  /**
+   * Where you are in a chapter, saved as you read.
+   *
+   * **Quiet**: `announce: false` keeps this out of the change stream, because
+   * the reader saves every few seconds while you scroll and each announcement
+   * reloads every open screen, the phone's included. It announces itself only
+   * when you have moved to a different chapter — the one change another device
+   * shows, in its "Continue" button — so a place saved on the PC is waiting on
+   * the phone without the phone reloading all the way through.
+   *
+   * The source is taken from the series, not the caller, for the reason read
+   * marks are: the reader only serves the linked source.
+   */
+  app.put('/api/manga/:id/position', { config: { announce: false } }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as Partial<Record<keyof ReadingPosition, unknown>> | null;
+    const pages = Number.isInteger(body?.pages) ? (body!.pages as number) : null;
+    const page = Number.isInteger(body?.page) ? (body!.page as number) : null;
+    const offset = typeof body?.offset === 'number' && Number.isFinite(body.offset) ? body.offset : null;
+    const chapter = typeof body?.chapter === 'number' && Number.isFinite(body.chapter) ? body.chapter : null;
+    if (
+      pages === null || pages < 1 || pages > 5000 ||
+      page === null || page < 0 || page >= pages ||
+      offset === null || chapter === null ||
+      typeof body?.chapterId !== 'string' || !/^\d{1,20}$/.test(body.chapterId)
+    ) {
+      return reply.code(400).send({ error: 'that is not a place in a chapter' });
+    }
+
+    const series = read().series.find((s) => s.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+    if (!series.source) return reply.code(400).send({ error: 'this series is not linked to a source' });
+
+    const position: ReadingPosition = {
+      chapter,
+      chapterId: body.chapterId,
+      chapterName: typeof body.chapterName === 'string' ? body.chapterName.slice(0, 200) : `Chapter ${chapter}`,
+      source: series.source.sourceName,
+      mangaId: series.source.mangaId,
+      page,
+      offset: Math.min(1, Math.max(0, offset)),
+      pages,
+      at: Date.now(),
+    };
+    const before = writePosition(id, position);
+    if (!before || before.chapter !== position.chapter || before.mangaId !== position.mangaId) {
+      changes.emitChange('all');
+    }
+    return { position };
   });
 
   /**

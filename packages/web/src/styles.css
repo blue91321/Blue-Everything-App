@@ -3128,3 +3128,35 @@ button {
 .manga-detail .manga-chapters {
   width: 100%;
 }
+
+/*
+ * "Returning to page 12…" floats over the reader rather than sitting above it:
+ * in the flow it would push the strip down by its own height, and the place
+ * being returned to would be off by exactly that once it went away.
+ */
+.manga-returning {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 20;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  white-space: nowrap;
+}
+
+/* Where you left off, at the top of a chapter list — the one thing you came for. */
+.manga-continue {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--accent);
+  background: var(--surface-raised);
+}

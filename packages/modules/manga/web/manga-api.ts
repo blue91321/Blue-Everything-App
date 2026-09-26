@@ -31,6 +31,22 @@ export interface SeriesSummary {
   source: { adapter: string; sourceName: string; title: string; mangaId: string } | null;
   /** Your verdicts on sources that claimed to be ahead. Optional: an older server does not send them. */
   reviews?: SourceReview[];
+  /** Where you are in it, on the library list. Optional for the same reason. */
+  position?: ReadingPosition | null;
+}
+
+/** Your place inside a chapter — see `ReadingPosition` on the server. */
+export interface ReadingPosition {
+  chapter: number;
+  chapterId: string;
+  chapterName: string;
+  source: string;
+  mangaId: string;
+  page: number;
+  /** How far down that page, 0 to 1. */
+  offset: number;
+  pages: number;
+  at: number;
 }
 
 /** One verdict about one source's claim to be ahead — see `SourceReview` on the server. */
@@ -127,11 +143,16 @@ export interface SourceChapter {
   uploadedAt: number | null;
   scanlator: string | null;
   read: boolean;
+  /** The source it was read on, when that was recorded. */
+  readOn?: string | null;
 }
 
 export interface ChapterList {
   seriesTitle: string;
   sourceName: string;
+  /** The linked copy's id, to tell whether a saved place was measured on it. */
+  mangaId?: string;
+  position?: ReadingPosition | null;
   chapters: SourceChapter[];
 }
 

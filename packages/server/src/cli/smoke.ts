@@ -2057,6 +2057,36 @@ console.log('packages (installing, switching, removing)');
   }
 }
 
+console.log('\n== a route can keep its writes out of the change stream ==');
+{
+  /*
+   * On a bare instance, not the app: the route that uses this (the manga
+   * reader's saved place) writes to the data folder of whichever checkout runs
+   * the suite, and a test has no business near somebody's reading list.
+   */
+  const { default: Fastify } = await import('fastify');
+  const { registerChangeAnnouncer, changes } = await import('../events.js');
+  const bare = Fastify();
+  registerChangeAnnouncer(bare);
+  bare.put('/api/quiet', { config: { announce: false } }, async () => ({ ok: true }));
+  bare.put('/api/loud', async () => ({ ok: true }));
+  await bare.ready();
+
+  let heard = 0;
+  const listen = () => {
+    heard += 1;
+  };
+  changes.on('change', listen);
+  await bare.inject({ method: 'PUT', url: '/api/quiet' });
+  const afterQuiet = heard;
+  await bare.inject({ method: 'PUT', url: '/api/loud' });
+  changes.off('change', listen);
+  await bare.close();
+
+  check('a route with announce: false is not announced', afterQuiet === 0, `${afterQuiet}`);
+  check('  ...and one without it still is', heard === 1, `${heard}`);
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

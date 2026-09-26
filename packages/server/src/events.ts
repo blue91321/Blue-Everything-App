@@ -110,6 +110,16 @@ export function registerChangeAnnouncer(app: FastifyInstance): void {
     // when the snapshot it was handed is actually different.
     if (request.url.startsWith('/api/integrations/presence')) return;
 
+    /*
+     * Any route can say the same about itself, with `config: { announce: false }`
+     * — the list above is core naming its own routes, and core must not name a
+     * package's. The manga reader saves your place in a chapter every few
+     * seconds while you scroll; announcing each save would reload every open
+     * screen, the phone's included, for as long as anybody reads. A route that
+     * opts out announces itself when something others should see has changed.
+     */
+    if ((request.routeOptions.config as { announce?: boolean } | undefined)?.announce === false) return;
+
     changes.emitChange(scopeForPath(request.url));
   });
 }

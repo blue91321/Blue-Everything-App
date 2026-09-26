@@ -56,12 +56,20 @@ import { manga } from './manga-api';
 
 const IN_FLIGHT = 3;
 
+/** The line across the screen that counts as "where you are" — just under the top. */
+const READ_LINE = 8;
+
+/** How often scrolling is turned into a place, at most. */
+const MEASURE_MS = 300;
+
 export function Reader({
   seriesId,
   preview,
   chapter,
   onClose,
   onFinished,
+  resume = null,
+  onPosition,
 }: {
   /** A followed series. */
   seriesId?: string;
@@ -74,11 +82,26 @@ export function Reader({
   chapter: { id: string; number: number; name: string };
   onClose: () => void;
   onFinished: (chapterNumber: number) => void;
+  /** Where to start, when continuing: a page and how far down it. */
+  resume?: { page: number; offset: number } | null;
+  /** Told where you are as you scroll — see `usePositionSaver`, which decides how often to save it. */
+  onPosition?: (place: { page: number; offset: number; pages: number }) => void;
 }) {
   const [urls, setUrls] = useState<(string | null)[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const top = useRef<HTMLDivElement>(null);
+  const strip = useRef<HTMLDivElement>(null);
+  /**
+   * A place still being returned to. Pages above it arrive one by one and each
+   * pushes it further down, so the scroll is re-applied as they land — until
+   * every page up to it has, or you touch the screen yourself, since a reader
+   * that yanks you back while you are scrolling is worse than one a line out.
+   * While it is set, nothing is saved: the top of an empty strip is not where
+   * you were.
+   */
+  const returning = useRef<{ page: number; offset: number } | null>(resume);
+  const [returned, setReturned] = useState(resume === null);
 
   useEffect(() => {
     let alive = true;
@@ -133,10 +156,91 @@ export function Reader({
   }, [seriesId, preview, chapter.id]);
 
   // Back to the top when the chapter changes, or reading the next one starts you
-  // at the bottom of it.
+  // at the bottom of it — unless this chapter is being continued.
   useEffect(() => {
-    top.current?.scrollIntoView({ block: 'start' });
+    returning.current = resume;
+    setReturned(resume === null);
+    if (!resume) top.current?.scrollIntoView({ block: 'start' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter.id]);
+
+  /** Scroll to the remembered place; true once every page up to it has loaded. */
+  const returnTo = (): boolean => {
+    const target = returning.current;
+    const kids = strip.current?.children;
+    if (!target || !kids || kids.length === 0) return false;
+    const page = Math.min(target.page, kids.length - 1);
+    const el = kids[page] as HTMLElement;
+    const y = window.scrollY + el.getBoundingClientRect().top + target.offset * el.offsetHeight - READ_LINE;
+    window.scrollTo(0, Math.max(0, y));
+    return [...kids]
+      .slice(0, page + 1)
+      .every((k) => k instanceof HTMLImageElement && k.complete && k.naturalHeight > 0);
+  };
+
+  // Each page landing moves everything below it, so keep returning until done.
+  useEffect(() => {
+    if (!returning.current || total === null) return;
+    if (returnTo()) {
+      returning.current = null;
+      setReturned(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urls, total]);
+
+  // Touching the screen ends the return: you have taken over.
+  useEffect(() => {
+    const stop = () => {
+      if (returning.current) {
+        returning.current = null;
+        setReturned(true);
+      }
+    };
+    const events = ['wheel', 'touchstart', 'keydown', 'mousedown'] as const;
+    for (const e of events) window.addEventListener(e, stop, { passive: true });
+    return () => {
+      for (const e of events) window.removeEventListener(e, stop);
+    };
+  }, []);
+
+  /*
+   * Where you are: the page crossing the read line, and how far down it that
+   * line is. Measured on scroll, at most every MEASURE_MS, with a timer rather
+   * than `requestAnimationFrame` — which does not run in a window nobody is
+   * looking at, the trap this app has fallen into three times.
+   */
+  // Held in a ref so a parent passing a fresh function each render does not
+  // tear down the listener — and a measurement waiting on its timer — every time.
+  const report = useRef(onPosition);
+  report.current = onPosition;
+  const reporting = onPosition !== undefined;
+
+  useEffect(() => {
+    if (!reporting) return;
+    let waiting: ReturnType<typeof setTimeout> | null = null;
+    const measure = () => {
+      waiting = null;
+      const kids = strip.current?.children;
+      if (!kids || kids.length === 0 || returning.current) return;
+      for (let i = 0; i < kids.length; i++) {
+        const box = (kids[i] as HTMLElement).getBoundingClientRect();
+        if (box.bottom > READ_LINE) {
+          const offset = box.height > 0 ? Math.min(1, Math.max(0, (READ_LINE - box.top) / box.height)) : 0;
+          report.current?.({ page: i, offset, pages: kids.length });
+          return;
+        }
+      }
+      report.current?.({ page: kids.length - 1, offset: 1, pages: kids.length });
+    };
+    const onScroll = () => {
+      if (!waiting) waiting = setTimeout(measure, MEASURE_MS);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      if (waiting) clearTimeout(waiting);
+    };
+  }, [reporting]);
 
   const arrived = urls.filter(Boolean).length;
 
@@ -155,10 +259,42 @@ export function Reader({
       {problem && <p className="banner">{problem}</p>}
       {total === null && !problem && <p className="empty">Asking the source for this chapter…</p>}
 
-      <div className="manga-strip">
+      {!returned && resume && (
+        // Fixed rather than in the flow: a notice above the strip would move every
+        // page down by its height, and then up again as it went.
+        <p className="meta manga-returning">
+          Returning to page {resume.page + 1}…{' '}
+          <button
+            className="btn subtle"
+            onClick={() => {
+              returning.current = null;
+              setReturned(true);
+              top.current?.scrollIntoView({ block: 'start' });
+            }}
+          >
+            Start from the top
+          </button>
+        </p>
+      )}
+
+      <div className="manga-strip" ref={strip}>
         {urls.map((url, index) =>
           url ? (
-            <img key={index} src={url} alt={`Page ${index + 1}`} loading="lazy" />
+            <img
+              key={index}
+              src={url}
+              alt={`Page ${index + 1}`}
+              // Lazy pages above the place being returned to would load only as
+              // they scroll into view, pushing it down afterwards — so up to
+              // there they load now, and the return can finish.
+              loading={resume && index <= resume.page + 1 ? 'eager' : 'lazy'}
+              onLoad={() => {
+                if (returning.current && returnTo()) {
+                  returning.current = null;
+                  setReturned(true);
+                }
+              }}
+            />
           ) : (
             <div key={index} className="manga-page-waiting">
               {index + 1}

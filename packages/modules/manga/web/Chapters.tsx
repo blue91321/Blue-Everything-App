@@ -9,25 +9,77 @@
  * The list is read from the source's **cache** by default. Refreshing scrapes
  * the site, takes seconds and is a button, because opening a list should not
  * make a request to somebody else's server every time.
+ *
+ * ### Where you left off
+ *
+ * The top of the list says where to pick up: the chapter you were partway
+ * through and the page, or failing that the next one after the furthest you
+ * have finished. A place is only returned to *exactly* on the copy it was
+ * measured on — another source splits the same chapter into different pages,
+ * so page 12 there is somewhere else here — and the card says so rather than
+ * dropping you in the wrong spot.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAsync } from '@app/useAsync';
+import { chapterText } from './judge';
 import { manga, type SourceChapter } from './manga-api';
 import { Reader } from './Reader';
+import { usePositionSaver } from './usePositionSaver';
 
 export function Chapters({
   seriesId,
   onClose,
   onCompare,
+  continueOnOpen = false,
 }: {
   seriesId: string;
   onClose: () => void;
   /** Open the same series across every source — where you go when a chapter here is broken. */
   onCompare: () => void;
+  /** Go straight back into the chapter you were reading — the library's Continue. */
+  continueOnOpen?: boolean;
 }) {
   const list = useAsync(() => manga.reader.chapters(seriesId), [seriesId]);
   const [open, setOpen] = useState<SourceChapter | null>(null);
+  const [resume, setResume] = useState<{ page: number; offset: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  const saver = usePositionSaver(seriesId);
+  const continued = useRef(false);
+
+  const data = list.data;
+  const place = data?.position ?? null;
+  const sameCopy = place !== null && data?.mangaId !== undefined && place.mangaId === data.mangaId;
+  const placeChapter =
+    place && data
+      ? sameCopy
+        ? data.chapters.find((c) => c.id === place.chapterId) ?? null
+        : data.chapters.find((c) => c.number === place.chapter) ?? null
+      : null;
+  const furthestRead = data ? Math.max(-Infinity, ...data.chapters.filter((c) => c.read).map((c) => c.number)) : -Infinity;
+  const nextUp =
+    data && furthestRead > -Infinity
+      ? [...data.chapters].filter((c) => c.number > furthestRead).sort((a, b) => a.number - b.number)[0] ?? null
+      : null;
+
+  function read(chapter: SourceChapter, at: { page: number; offset: number } | null = null) {
+    saver.flush();
+    setResume(at);
+    setOpen(chapter);
+  }
+
+  function carryOn() {
+    if (!placeChapter || !place) return;
+    read(placeChapter, sameCopy ? { page: place.page, offset: place.offset } : null);
+  }
+
+  // The library's Continue: straight into the chapter once the list is here.
+  useEffect(() => {
+    if (!continueOnOpen || continued.current || !data) return;
+    continued.current = true;
+    if (placeChapter) carryOn();
+    else if (nextUp) read(nextUp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [continueOnOpen, data]);
 
   async function refresh() {
     setBusy(true);
@@ -40,6 +92,7 @@ export function Chapters({
   }
 
   async function finished(chapterNumber: number) {
+    saver.flush();
     await manga.reader.markRead(seriesId, chapterNumber);
     const all = list.data?.chapters ?? [];
     /*
@@ -51,6 +104,7 @@ export function Chapters({
       .filter((c) => c.number > chapterNumber)
       .sort((a, b) => a.number - b.number)[0];
     list.reload();
+    setResume(null);
     setOpen(next ?? null);
   }
 
@@ -59,8 +113,18 @@ export function Chapters({
       <Reader
         seriesId={seriesId}
         chapter={open}
-        onClose={() => setOpen(null)}
+        resume={resume}
+        onClose={() => {
+          saver.flush();
+          setOpen(null);
+          setResume(null);
+          // So the card and the row say the page you just left, not the one before.
+          setTimeout(() => list.reload(), 400);
+        }}
         onFinished={(n) => void finished(n)}
+        onPosition={(p) =>
+          saver.note({ chapter: open.number, chapterId: open.id, chapterName: open.name, ...p })
+        }
       />
     );
   }
@@ -72,7 +136,7 @@ export function Chapters({
           ‹ Back
         </button>
         <span className="meta">
-          {list.data ? `${list.data.seriesTitle} · ${list.data.sourceName}` : 'loading…'}
+          {data ? `${data.seriesTitle} · ${data.sourceName}` : 'loading…'}
         </span>
         <span className="row">
           {/*
@@ -90,9 +154,36 @@ export function Chapters({
         </span>
       </div>
 
+      {place && placeChapter && (
+        <div className="manga-continue">
+          <div className="manga-row-text">
+            <span className="title">Continue {place.chapterName}</span>
+            <span className="meta">
+              {sameCopy
+                ? `page ${place.page + 1} of ${place.pages}`
+                : `You were on page ${place.page + 1} of ${place.pages} on ${place.source}. ${data?.sourceName} splits its pages differently, so this opens at the start of the chapter.`}
+            </span>
+          </div>
+          <button className="btn primary" onClick={carryOn}>
+            Continue
+          </button>
+        </div>
+      )}
+      {!placeChapter && nextUp && (
+        <div className="manga-continue">
+          <div className="manga-row-text">
+            <span className="title">Next: {nextUp.name}</span>
+            <span className="meta">the first after chapter {chapterText(furthestRead)}, the furthest you have finished</span>
+          </div>
+          <button className="btn primary" onClick={() => read(nextUp)}>
+            Read
+          </button>
+        </div>
+      )}
+
       {list.loading && <p className="empty">loading…</p>}
       {list.error && <p className="banner">Could not load: {list.error.message}</p>}
-      {list.data?.chapters.length === 0 && (
+      {data?.chapters.length === 0 && (
         <p className="empty">
           The source has no chapters for this one. Try Refresh, or{' '}
           <button className="btn subtle" onClick={onCompare}>
@@ -103,20 +194,24 @@ export function Chapters({
       )}
 
       <div className="manga-chapters">
-        {list.data?.chapters.map((c) => (
-          <button
-            key={c.id}
-            className={c.read ? 'manga-chapter-row read' : 'manga-chapter-row'}
-            onClick={() => setOpen(c)}
-          >
-            <span className="title truncate">{c.name}</span>
-            <span className="meta">
-              {c.scanlator ? `${c.scanlator} · ` : ''}
-              {c.uploadedAt ? new Date(c.uploadedAt).toLocaleDateString() : ''}
-              {c.read ? ' · read' : ''}
-            </span>
-          </button>
-        ))}
+        {data?.chapters.map((c) => {
+          const here = sameCopy && place?.chapterId === c.id;
+          return (
+            <button
+              key={c.id}
+              className={c.read ? 'manga-chapter-row read' : 'manga-chapter-row'}
+              onClick={() => read(c, here && place ? { page: place.page, offset: place.offset } : null)}
+            >
+              <span className="title truncate">{c.name}</span>
+              <span className="meta">
+                {c.scanlator ? `${c.scanlator} · ` : ''}
+                {c.uploadedAt ? new Date(c.uploadedAt).toLocaleDateString() : ''}
+                {here && place ? ` · page ${place.page + 1} of ${place.pages}` : ''}
+                {c.read ? (c.readOn ? ` · read on ${c.readOn}` : ' · read') : ''}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

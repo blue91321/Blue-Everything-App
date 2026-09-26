@@ -18,6 +18,7 @@ import { Cover } from './Cover';
 import { Reader } from './Reader';
 import { chapterText } from './judge';
 import { manga, type BrowseResult, type SeriesDetailPage } from './manga-api';
+import { usePositionSaver } from './usePositionSaver';
 
 const STATUS_LABEL: Record<SeriesDetailPage['status'], string> = {
   ongoing: 'Ongoing',
@@ -84,6 +85,8 @@ export function SeriesDetail({
   const [blurbOpen, setBlurbOpen] = useState(false);
   const [open, setOpen] = useState<Chapter | null>(null);
   const [following_, setFollowing] = useState(false);
+  // Only for your own series' linked copy: a preview has no series to keep a place in.
+  const saver = usePositionSaver(ownSeriesId ?? null);
 
   useEffect(() => {
     let alive = true;
@@ -107,8 +110,17 @@ export function SeriesDetail({
       <Reader
         {...(ownSeriesId ? { seriesId: ownSeriesId } : { preview: result.id })}
         chapter={open}
-        onClose={() => setOpen(null)}
+        onClose={() => {
+          saver.flush();
+          setOpen(null);
+        }}
+        onPosition={
+          ownSeriesId
+            ? (p) => saver.note({ chapter: open.number, chapterId: open.id, chapterName: open.name, ...p })
+            : undefined
+        }
         onFinished={async (n) => {
+          saver.flush();
           if (ownSeriesId) await manga.reader.markRead(ownSeriesId, n).catch(() => undefined);
           // Next *up* by number, as the followed reader does; the list is newest-first.
           const next = page.chapters.filter((c) => c.number > n).sort((a, b) => a.number - b.number)[0];
