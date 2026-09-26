@@ -409,7 +409,7 @@ function Search({
   }
 
   const groups = (result?.groups ?? []).filter(
-    (g) => !hideFollowed || !(g.following ?? g.entries.map(following).find(Boolean))
+    (g) => !hideFollowed || !g.entries.map(following).find(Boolean)
   );
   const hidden = (result?.groups.length ?? 0) - groups.length;
   const active = changeList.length + leftOut.size + (allLanguages ? 1 : 0) + (hideFollowed ? 1 : 0);
@@ -515,7 +515,9 @@ function Search({
 
       {groups.map((g) => {
         const lead = g.entries[0];
-        const followingId = g.following ?? g.entries.map(following).find(Boolean) ?? null;
+        // From the entries, not the group's own field: `following` here already
+        // knows that a followed series with no source is not followed *here*.
+        const followingId = g.entries.map(following).find(Boolean) ?? null;
         // One site often lists a series more than once — the original and an
         // "(Official)" or colour edition — so sources are counted once each.
         // The editions themselves are all under "a different source".
