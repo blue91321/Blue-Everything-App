@@ -60,6 +60,22 @@ const keyOf = (m: { sourceName: string; id: string }) => `${m.sourceName}:${m.id
 /** A server from before scoring sends none; every result is then treated as the same title. */
 const isSameTitle = (r: Row) => r.score === undefined || r.score >= SAME_TITLE;
 
+/** Counted, and has nothing — not merely still counting, and not a count that failed. */
+const isEmpty = (r: Row) => r.profile !== undefined && !r.counting && r.profile.latest === null;
+
+/**
+ * Sources with no chapters go to the bottom; everything else keeps its ranking.
+ *
+ * The ranking is by how well the title matched, so an exact title with nothing
+ * behind it sat at the top, above the sources you could actually read from.
+ * Sorting at render rather than when the count lands means a row moves once,
+ * when its answer arrives. `sort` is stable, so the rest stay in order.
+ *
+ * A failed count stays where it is. "We could not ask" is not "it has none",
+ * and sinking it would read as the second.
+ */
+const sinkEmpty = (list: Row[]) => [...list].sort((a, b) => Number(isEmpty(a)) - Number(isEmpty(b)));
+
 function toSourceRow(r: Row): SourceRow {
   return {
     key: keyOf(r),
@@ -229,8 +245,8 @@ export function Compare({
     }
   }
 
-  const same = (rows ?? []).filter(isSameTitle);
-  const other = (rows ?? []).filter((r) => !isSameTitle(r));
+  const same = sinkEmpty((rows ?? []).filter(isSameTitle));
+  const other = sinkEmpty((rows ?? []).filter((r) => !isSameTitle(r)));
   const verdict = judgeSources(same.map(toSourceRow));
   const isCurrent = (r: Row) => series.source?.mangaId === r.id && series.source?.sourceName === r.sourceName;
 
