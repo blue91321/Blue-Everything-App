@@ -50,13 +50,31 @@ export type SourceRow = {
   newestUpload: number | null;
   /** False while the count is still in flight — excluded from every verdict. */
   counted: boolean;
+  /** Your verdict on this source's claim to be ahead, if you have given one. */
+  review?: Review | null;
 };
+
+/**
+ * What you decided, having looked.
+ *
+ * The comparison can only suspect. A source well clear of the rest is either
+ * faster or listing chapters it does not have, and the numbers cannot say
+ * which — often it is simply faster, since an official release trails the
+ * scanlations as a matter of course. So a flag asks, and this is the answer.
+ * Declared here rather than imported, so this file still imports nothing.
+ */
+export type Review = { verdict: 'real' | 'fake'; upTo: number };
 
 export type Tone = 'good' | 'warn' | 'bad' | 'info';
 export type Flag = { tone: Tone; text: string };
 
 export type Verdict = {
   flags: Record<string, Flag[]>;
+  /**
+   * Claims waiting for you: the source's key, and the chapter it claims. The
+   * screen offers "real" and "not real" against exactly these.
+   */
+  awaiting: Record<string, number>;
   /** One line for the top of the screen, or null before anything is counted. */
   summary: string | null;
 };
@@ -110,7 +128,9 @@ function months(ms: number): string {
  * "Lone" matters too. Two sources on 425 while the rest are on 418 is two
  * sources agreeing, a much stronger claim than one source saying so.
  */
-function findOutliers(withChapters: readonly SourceRow[]): Map<SourceRow, number> {
+type Outlier = { lead: number; checkedUpTo: number | null };
+
+function findOutliers(withChapters: readonly SourceRow[]): Map<SourceRow, Outlier> {
   /*
    * A source serving *every* language is compared with the language it is
    * actually serving you in — the one most of these sources are in.
@@ -130,26 +150,49 @@ function findOutliers(withChapters: readonly SourceRow[]): Map<SourceRow, number
     byLang.set(lang, [...(byLang.get(lang) ?? []), r]);
   }
 
-  const outliers = new Map<SourceRow, number>();
+  const outliers = new Map<SourceRow, Outlier>();
   for (const group of byLang.values()) {
-    if (group.length < 2) continue;
     const sorted = [...group].sort((a, b) => b.latest! - a.latest!);
     const top = sorted[0].latest!;
     const leaders = sorted.filter((r) => r.latest === top);
+    if (leaders.length !== 1) continue;
+    const leader = leaders[0];
     const runnerUp = sorted.find((r) => r.latest !== top)?.latest ?? null;
-    if (leaders.length === 1 && runnerUp !== null && top - runnerUp > AHEAD_MARGIN) {
-      outliers.set(leaders[0], top - runnerUp);
+
+    /*
+     * A claim you confirmed is not a claim any more. Past it, the source is
+     * measured from the chapter you confirmed as well as from the others —
+     * whichever is further — so confirming 46 does not wave 60 through, and
+     * does not leave 47 flagged against a rival stuck on 25.
+     */
+    const confirmedUpTo = leader.review?.verdict === 'real' ? leader.review.upTo : null;
+    if (confirmedUpTo !== null && top <= confirmedUpTo) continue;
+
+    const baseline = Math.max(runnerUp ?? -Infinity, confirmedUpTo ?? -Infinity);
+    if (baseline === -Infinity) continue;
+    if (top - baseline > AHEAD_MARGIN) {
+      outliers.set(leader, {
+        lead: top - baseline,
+        checkedUpTo: confirmedUpTo !== null && confirmedUpTo >= (runnerUp ?? -Infinity) ? confirmedUpTo : null,
+      });
     }
   }
   return outliers;
 }
 
+/** A "not real" verdict holds while the source still claims at least what you rejected. */
+const rejected = (r: SourceRow) => r.review?.verdict === 'fake' && r.latest !== null && r.latest >= r.review.upTo;
+
+/** A "real" verdict covers the claim you looked at, and nothing past it. */
+const confirmed = (r: SourceRow) => r.review?.verdict === 'real' && r.latest !== null && r.latest <= r.review.upTo;
+
 export function judgeSources(rows: readonly SourceRow[]): Verdict {
   const flags: Record<string, Flag[]> = {};
+  const awaiting: Record<string, number> = {};
   const add = (key: string, flag: Flag) => (flags[key] ??= []).push(flag);
 
   const counted = rows.filter((r) => r.counted);
-  if (counted.length === 0) return { flags, summary: null };
+  if (counted.length === 0) return { flags, awaiting, summary: null };
 
   const withChapters = counted.filter((r) => r.latest !== null && r.distinct > 0);
   const empty = counted.filter((r) => !withChapters.includes(r));
@@ -157,17 +200,39 @@ export function judgeSources(rows: readonly SourceRow[]): Verdict {
   for (const r of empty) add(r.key, { tone: 'bad', text: 'no chapters' });
 
   if (withChapters.length === 0) {
-    return { flags, summary: `None of the ${counted.length} sources checked so far has any chapters of this.` };
+    return {
+      flags,
+      awaiting,
+      summary: `None of the ${counted.length} sources checked so far has any chapters of this.`,
+    };
   }
 
-  const outliers = findOutliers(withChapters);
-  for (const [r, lead] of outliers) {
+  /*
+   * Sources you have said are padding their list are out of everything: not
+   * compared, not a runner-up for anybody else, and never furthest.
+   */
+  const fakes = withChapters.filter(rejected);
+  for (const r of fakes) {
+    add(r.key, { tone: 'bad', text: `you checked — its chapters up to ${chapterText(r.review!.upTo)} are not real` });
+  }
+  const judged = withChapters.filter((r) => !fakes.includes(r));
+
+  const outliers = findOutliers(judged);
+  for (const [r, { lead, checkedUpTo }] of outliers) {
+    const against =
+      checkedUpTo !== null
+        ? `${chapterText(lead)} past the ${chapterText(checkedUpTo)} you confirmed`
+        : `${chapterText(lead)} ahead of every other ${r.lang ? r.lang.toUpperCase() + ' ' : ''}source`;
     add(r.key, {
       tone: 'warn',
-      text:
-        `${chapterText(lead)} ahead of every other ${r.lang ? r.lang.toUpperCase() + ' ' : ''}source — ` +
-        'either genuinely faster, or listing chapters it does not have. Check its newest pages.',
+      text: `${against} — either genuinely faster, or listing chapters it does not have. Check its newest pages.`,
     });
+    awaiting[r.key] = r.latest!;
+  }
+  for (const r of judged) {
+    if (confirmed(r)) {
+      add(r.key, { tone: 'good', text: `you checked — chapters up to ${chapterText(r.review!.upTo)} are real` });
+    }
   }
 
   /*
@@ -176,7 +241,7 @@ export function judgeSources(rows: readonly SourceRow[]): Verdict {
    * been flagged as possibly not real. Otherwise every other source would be
    * reported as far behind a claim nobody has checked.
    */
-  const vouched = withChapters.filter((r) => !outliers.has(r));
+  const vouched = judged.filter((r) => !outliers.has(r));
   const trusted = vouched.length > 0 ? Math.max(...vouched.map((r) => r.latest!)) : null;
   const best = vouched.filter((r) => r.latest === trusted);
 
@@ -221,9 +286,10 @@ export function judgeSources(rows: readonly SourceRow[]): Verdict {
     parts.push(`${lead}: ${best.map((r) => r.sourceName).join(', ')}, up to ${chapterText(trusted)}`);
   }
   for (const [r] of outliers) parts.push(`${r.sourceName} claims ${chapterText(r.latest!)}`);
+  for (const r of fakes) parts.push(`${r.sourceName} marked not real`);
   if (empty.length > 0) parts.push(`${empty.length} ${empty.length === 1 ? 'has' : 'have'} nothing`);
 
-  return { flags, summary: parts.join(' · ') };
+  return { flags, awaiting, summary: parts.join(' · ') };
 }
 
 /**

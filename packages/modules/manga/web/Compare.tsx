@@ -36,6 +36,7 @@ import {
   type PageCheck,
   type SeriesSummary,
   type SourceMatch,
+  type SourceReview,
   type SourceSearch,
 } from './manga-api';
 import { chapterText, judgeSources, languageName, type Flag, type SourceRow } from './judge';
@@ -76,8 +77,10 @@ const isEmpty = (r: Row) => r.profile !== undefined && !r.counting && r.profile.
  */
 const sinkEmpty = (list: Row[]) => [...list].sort((a, b) => Number(isEmpty(a)) - Number(isEmpty(b)));
 
-function toSourceRow(r: Row): SourceRow {
+function toSourceRow(r: Row, reviews: readonly SourceReview[]): SourceRow {
+  const review = reviews.find((v) => v.key === keyOf(r));
   return {
+    review: review ? { verdict: review.verdict, upTo: review.upTo } : null,
     key: keyOf(r),
     sourceName: r.sourceName,
     lang: r.lang ?? null,
@@ -137,6 +140,48 @@ function CheckResult({ check }: { check: PageCheck | undefined }) {
   );
 }
 
+/**
+ * The answer to a flag, given by somebody who looked.
+ *
+ * Offered only against a claim the comparison is asking about, and after that
+ * an Undo — a verdict given by mistake has to be as easy to take back as it was
+ * to give, or it quietly decides every comparison after it.
+ */
+function ReviewControls({
+  awaiting,
+  given,
+  busy,
+  onReview,
+}: {
+  awaiting: number | undefined;
+  given: SourceReview | undefined;
+  busy: boolean;
+  onReview: (upTo: number, verdict: 'real' | 'fake' | null) => void;
+}) {
+  if (awaiting !== undefined) {
+    return (
+      <span className="manga-flags">
+        <button className="btn subtle" disabled={busy} onClick={() => onReview(awaiting, 'real')}>
+          They're real
+        </button>
+        <button className="btn subtle" disabled={busy} onClick={() => onReview(awaiting, 'fake')}>
+          They're not
+        </button>
+      </span>
+    );
+  }
+  if (given) {
+    return (
+      <span className="manga-flags">
+        <button className="btn subtle" disabled={busy} onClick={() => onReview(given.upTo, null)}>
+          Undo my verdict
+        </button>
+      </span>
+    );
+  }
+  return null;
+}
+
 export function Compare({
   series,
   onClose,
@@ -156,6 +201,24 @@ export function Compare({
   /** What the last search asked, so the screen can say what it left out. */
   const [scope, setScope] = useState<Omit<SourceSearch, 'results'> | null>(null);
   const [savingLanguages, setSavingLanguages] = useState(false);
+  /**
+   * Your verdicts, held here once the screen is open so a click shows at once.
+   * Seeded from the series; every answer from the server replaces it whole.
+   */
+  const [reviews, setReviews] = useState<SourceReview[]>(series.reviews ?? []);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+
+  async function review(row: Row, upTo: number, verdict: 'real' | 'fake' | null) {
+    setReviewing(keyOf(row));
+    setProblem(null);
+    try {
+      setReviews((await manga.source.review(series.id, keyOf(row), upTo, verdict)).reviews);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'could not save that');
+    } finally {
+      setReviewing(null);
+    }
+  }
 
   const patch = (key: string, change: Partial<Row>) =>
     setRows((current) => (current ?? []).map((r) => (keyOf(r) === key ? { ...r, ...change } : r)));
@@ -247,7 +310,7 @@ export function Compare({
 
   const same = sinkEmpty((rows ?? []).filter(isSameTitle));
   const other = sinkEmpty((rows ?? []).filter((r) => !isSameTitle(r)));
-  const verdict = judgeSources(same.map(toSourceRow));
+  const verdict = judgeSources(same.map((r) => toSourceRow(r, reviews)));
   const isCurrent = (r: Row) => series.source?.mangaId === r.id && series.source?.sourceName === r.sourceName;
 
   const renderRow = (r: Row, flags: Flag[] | undefined) => (
@@ -260,6 +323,12 @@ export function Compare({
         <span className="meta">{r.sourceName}</span>
         <Stats row={r} />
         <Flags flags={flags} />
+        <ReviewControls
+          awaiting={verdict.awaiting[keyOf(r)]}
+          given={reviews.find((v) => v.key === keyOf(r))}
+          busy={reviewing === keyOf(r)}
+          onReview={(upTo, answer) => void review(r, upTo, answer)}
+        />
         <CheckResult check={r.check} />
       </div>
       <div className="manga-row-actions">

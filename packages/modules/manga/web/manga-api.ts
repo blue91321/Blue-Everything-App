@@ -29,6 +29,16 @@ export interface SeriesSummary {
   watching: boolean;
   notWatchingBecause: string | null;
   source: { adapter: string; sourceName: string; title: string; mangaId: string } | null;
+  /** Your verdicts on sources that claimed to be ahead. Optional: an older server does not send them. */
+  reviews?: SourceReview[];
+}
+
+/** One verdict about one source's claim to be ahead — see `SourceReview` on the server. */
+export interface SourceReview {
+  key: string;
+  upTo: number;
+  verdict: 'real' | 'fake';
+  at: number;
 }
 
 export interface SourceHealth {
@@ -248,6 +258,12 @@ export const manga = {
       call<SeriesSummary>(`/api/manga/${id}/source`, {
         method: 'PUT',
         body: JSON.stringify({ mangaId: match.id, title: match.title, sourceName: match.sourceName }),
+      }),
+    /** `verdict: null` takes a review back. */
+    review: (id: string, key: string, upTo: number, verdict: 'real' | 'fake' | null) =>
+      call<{ reviews: SourceReview[] }>(`/api/manga/${id}/review`, {
+        method: 'PUT',
+        body: JSON.stringify({ key, upTo, verdict }),
       }),
     unlink: (id: string) => call<SeriesSummary>(`/api/manga/${id}/source`, { method: 'DELETE' }),
   },

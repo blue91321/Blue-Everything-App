@@ -1035,6 +1035,36 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return { readChapters: series.readChapters };
   });
 
+  /**
+   * Your verdict on a source that claimed to be ahead, or `null` to take it back.
+   *
+   * Not local-only: it is a judgement about your reading, like marking a chapter
+   * read, and the phone is where you are when you notice a source is right.
+   * One verdict per source per series — a new one replaces the old.
+   */
+  app.put('/api/manga/:id/review', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { key?: unknown; upTo?: unknown; verdict?: unknown } | null;
+    const key = typeof body?.key === 'string' && body.key.length > 0 && body.key.length <= 300 ? body.key : null;
+    if (key === null) return reply.code(400).send({ error: 'which source?' });
+    const verdict = body?.verdict === 'real' || body?.verdict === 'fake' ? body.verdict : null;
+    if (verdict === null && body?.verdict !== null) {
+      return reply.code(400).send({ error: 'a verdict is real, fake, or null to clear it' });
+    }
+    const upTo = typeof body?.upTo === 'number' && Number.isFinite(body.upTo) ? body.upTo : null;
+    if (verdict !== null && upTo === null) return reply.code(400).send({ error: 'up to which chapter?' });
+
+    const store = read();
+    const series = store.series.find((s) => s.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+
+    series.reviews = series.reviews.filter((r) => r.key !== key);
+    if (verdict !== null && upTo !== null) series.reviews.push({ key, upTo, verdict, at: Date.now() });
+    write(store);
+
+    return { reviews: series.reviews };
+  });
+
   /* ---- the timer ---- */
 
   const sweep = async () => {

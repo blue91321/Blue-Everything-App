@@ -51,6 +51,8 @@ export type SeriesSummary = {
   notWatchingBecause: string | null;
   /** Where this can be read, when it has been pointed at a source. */
   source: { adapter: string; sourceName: string; title: string; mangaId: string } | null;
+  /** Your verdicts on sources that claimed to be ahead — see `SourceReview`. */
+  reviews: Series['reviews'];
 };
 
 /**
@@ -157,6 +159,7 @@ export function seriesSummary(series: Series): SeriesSummary {
     anilistId: series.anilistId,
     watching,
     source: series.source,
+    reviews: series.reviews,
     notWatchingBecause: watching
       ? null
       : !trackable

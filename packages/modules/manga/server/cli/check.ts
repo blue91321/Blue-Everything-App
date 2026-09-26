@@ -417,6 +417,48 @@ check(
 check('nothing counted yet has no verdict', judgeSources([src('A', null, { counted: false })]).summary === null);
 
 /* ------------------------------------------------------------------ */
+console.log('\nyour verdict on a flag\n');
+
+/*
+ * The case that made this necessary: Archmage Curriculum today. MangaFire has 46,
+ * which is right; Webtoons has the official release at 25, which trails the
+ * scanlations as a matter of course. Two sources cannot say which is wrong, so
+ * the flag asks — and until answered, it asks.
+ */
+const archmage = [src('MangaFire (EN)', 46), src('Webtoons.com (EN)', 25)];
+const asked = judgeSources(archmage);
+check('an unanswered lead is offered for review', 'MangaFire (EN)' in asked.awaiting);
+check('and the laggard is not', !('Webtoons.com (EN)' in asked.awaiting));
+check('at the chapter it claims', asked.awaiting['MangaFire (EN)'] === 46);
+
+const real = { verdict: 'real' as const, upTo: 46 };
+const answered = judgeSources([src('MangaFire (EN)', 46, { review: real }), src('Webtoons.com (EN)', 25)]);
+check('confirmed, it is no longer flagged', !says(answered, 'MangaFire (EN)', 'Check'));
+check('nor offered again', answered.awaiting['MangaFire (EN)'] === undefined);
+check('it is furthest along', tones(answered, 'MangaFire (EN)').includes('good') && says(answered, 'MangaFire (EN)', 'furthest'));
+check('and says you checked', says(answered, 'MangaFire (EN)', 'you checked'));
+check('the other is measured from it', says(answered, 'Webtoons.com (EN)', '21 behind'));
+check('the summary names it plainly', (answered.summary ?? '').startsWith('Furthest: MangaFire (EN), up to 46'), answered.summary ?? '');
+
+// A verdict covers the claim you looked at, and nothing past it.
+check('a chapter more is ordinary', !says(judgeSources([src('MangaFire (EN)', 47, { review: real }), src('Webtoons.com (EN)', 25)]), 'MangaFire (EN)', 'Check'));
+const jumped = judgeSources([src('MangaFire (EN)', 60, { review: real }), src('Webtoons.com (EN)', 25)]);
+check('a big jump past it is a new claim', jumped.awaiting['MangaFire (EN)'] === 60);
+check('measured from what you confirmed, not from the laggard', says(jumped, 'MangaFire (EN)', '14 past the 46 you confirmed'));
+// A source that later lists fewer is still covered — taking chapters down is not a new claim.
+check('fewer than confirmed is still confirmed', says(judgeSources([src('MangaFire (EN)', 44, { review: real }), src('W', 25)]), 'MangaFire (EN)', 'you checked'));
+
+const fake = { verdict: 'fake' as const, upTo: 46 };
+const rejectedClaim = judgeSources([src('Sketchy', 46, { review: fake }), src('Honest', 25), src('Other', 24)]);
+check('marked not real, it is ruled out', tones(rejectedClaim, 'Sketchy').includes('bad'));
+check('never furthest', !tones(rejectedClaim, 'Sketchy').includes('good'));
+check('the honest source leads instead', tones(rejectedClaim, 'Honest').includes('good'));
+check('and nobody is measured against the fake claim', !says(rejectedClaim, 'Other', '22 behind') && says(rejectedClaim, 'Other', '1 behind'));
+check('the summary says so', (rejectedClaim.summary ?? '').includes('Sketchy marked not real'), rejectedClaim.summary ?? '');
+// Taking the padding down ends the verdict: the list is judged afresh.
+check('a source that drops its fake chapters is judged again', !tones(judgeSources([src('Sketchy', 25, { review: fake }), src('Honest', 25)]), 'Sketchy').includes('bad'));
+
+/* ------------------------------------------------------------------ */
 console.log('\nwhich sources a search asks\n');
 
 /*
@@ -492,6 +534,7 @@ const row = (over: Partial<Store['series'][number]>): Store['series'][number] =>
   sourceChapter: null,
   sourceCheckedAt: null,
   readChapters: [],
+  reviews: [],
   checkedAt: null,
   error: null,
   addedAt: 0,

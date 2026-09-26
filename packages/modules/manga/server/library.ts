@@ -84,11 +84,38 @@ export type Series = SeriesIds & {
    * a write per swipe, and that is the case this file is wrong for.
    */
   readChapters: number[];
+  /**
+   * What you decided about a source that claimed to be ahead of the rest.
+   *
+   * The comparison can only suspect: a source well clear of every other one is
+   * either faster or listing chapters it does not have, and the numbers cannot
+   * say which. Often it is simply faster — an official release trails the
+   * scanlations as a matter of course. So the flag asks, and this is the answer.
+   *
+   * Kept on the series, so removing it takes the reviews with it; and on the
+   * server, so a verdict given on the phone holds on the PC.
+   */
+  reviews: SourceReview[];
   /** When MangaUpdates last answered about this series, successful or not. */
   checkedAt: number | null;
   /** Why the last check failed, if it did. Kept beside the data it could not replace. */
   error: string | null;
   addedAt: number;
+};
+
+/**
+ * One verdict about one source's claim.
+ *
+ * `upTo` is the chapter the source claimed when you looked, and the verdict
+ * covers that claim and nothing past it. A source that later claims more has
+ * made a new claim, and it is measured from the chapter you confirmed.
+ */
+export type SourceReview = {
+  /** `sourceName:mangaId` — the same key the comparison screen uses. */
+  key: string;
+  upTo: number;
+  verdict: 'real' | 'fake';
+  at: number;
 };
 
 /** A series as one source knows it. `mangaId` is opaque — Suwayomi's is numeric, another's may not be. */
@@ -223,6 +250,7 @@ export function read(): Store {
         sourceChapter: s.sourceChapter ?? null,
         sourceCheckedAt: s.sourceCheckedAt ?? null,
         readChapters: Array.isArray(s.readChapters) ? s.readChapters : [],
+        reviews: Array.isArray(s.reviews) ? s.reviews : [],
       })),
       links: Array.isArray(parsed.links) ? parsed.links : [],
     };
@@ -262,6 +290,7 @@ export function newSeries(
     | 'sourceChapter'
     | 'sourceCheckedAt'
     | 'readChapters'
+    | 'reviews'
   >
 ): Series {
   return {
@@ -273,6 +302,7 @@ export function newSeries(
     sourceChapter: null,
     sourceCheckedAt: null,
     readChapters: [],
+    reviews: [],
     checkedAt: null,
     error: null,
     addedAt: Date.now(),
