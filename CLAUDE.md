@@ -986,29 +986,35 @@ hand-tuned `padding-top` would be right once and quietly wrong the first time
 the button changed size. Measured: button, logo and wordmark all centre on
 **y=26**.
 
-**The title steps aside only where it would actually be sat on.** The first
-version padded it whenever the menu was undocked, which was one rule and too
-blunt: the button is fixed near the left edge of the *screen* while the title
-sits in a column that is usually centred, so on a wide screen the indent only
-pushed the heading out of line with the cards beneath it — the thing a heading
-most needs to line up with.
+**The title steps aside whenever the menu is not docked, and that is the second
+time this rule has been written.** The first version did exactly this and was
+replaced by a rule per column width: while the page was a centred 720px column,
+a wide screen put the button hundreds of pixels from the title, and the indent
+only pushed the heading out of line with the cards beneath it.
 
-The real question is "has this column centred clear of the button yet", and it
-has a different answer per column width, so there is a rule per width: the
-720px reading column has by 820px, the Dashboard's 1140px one has by 1240px, and
-Notes has no maximum so it never does. Docked needs no rule at all, since the
-content starts 260px in.
+Uncapping the page ended that. Every screen now starts at the left edge of the
+window, as Notes always did, so no width is wide enough to centre clear of the
+button — and the per-width media queries went on answering the old question.
+They took the indent away above 820px, which left the title sitting *under* the
+button on every screen except the Dashboard-with-panel and Notes they named.
+Found on the manga screen, where "Manga" was drawn through by the ☰.
 
-Verified across the matrix, undocked unless stated:
+A rule keyed to a layout fact is a claim about that fact, and it goes on
+compiling after the fact changes. The cap was removed in one place and the
+consequence surfaced in another.
 
-| width | screen | title vs cards |
-| --- | --- | --- |
-| 1440 | Dashboard + panel, docked | aligned, 285 / 285 |
-| 1440 | Dashboard + panel | aligned, 155 / 155 |
-| 1440 | Notes | indented to 52 — it is full-bleed |
-| 900 | Dashboard + panel | indented to 52 — still full-bleed |
-| 900 | Tasks | aligned, 95 / 95 |
-| 375 | Dashboard | indented to 52 |
+Measured after the fix, title / end of the button / first card:
+
+| width | menu | screens | title |
+| --- | --- | --- | --- |
+| 1440 | docked | Dashboard, Tasks, Manga, Settings | 272, aligned with the cards at 272 |
+| 1440 | collapsed | the same, and Notes | 52, clear of the button at 46 |
+| 1024 | overlaid | Dashboard, Tasks, Notes, Manga, Settings | 52 |
+| 375 | overlaid | Dashboard, Tasks, Notes, Manga | 52, no sideways scroll |
+
+The collapsed row needed the drawer's transition snapped first: in a pane that
+is not compositing, its computed transform stayed at the *start* of the slide,
+so `elementFromPoint` on the title hit the drawer and reported it covered.
 
 The button sits **above** the drawer rather than below it, so an open drawer
 does not cover the control that closes it. Asserted with `elementFromPoint`

@@ -1043,44 +1043,21 @@ button {
 }
 
 /*
- * The title steps aside only where it would actually be sat on.
+ * The title steps aside whenever the menu is not docked.
  *
- * The button is fixed near the left edge of the *screen*; the title is in a
- * column that is usually centred. Padding it whenever the menu is undocked was
- * one rule and too blunt — on a wide screen the button is hundreds of pixels
- * away and the indent only pushed the title out of line with the cards beneath
- * it, which is the thing a heading most needs to line up with.
+ * This was a rule per column width — "has this column centred clear of the
+ * button yet" — because the page was a centred 720px column and on a wide
+ * screen the button was hundreds of pixels from the title. That stopped being
+ * true when the page was uncapped: every screen now starts at the left edge of
+ * the window, as Notes always did, so no width is wide enough to centre clear
+ * and the answer is the same everywhere. The media queries were still answering
+ * the old question, and left the title sitting under the button on every screen
+ * except the two they named.
  *
- * So the question is "has this column centred clear of the button yet", and it
- * has a different answer per column width. Each rule below states one of those
- * widths; docked needs no rule at all, since the content starts 260px in.
+ * Docked needs no rule, since the content starts 260px in.
  */
 .shell:not(.desktop) header.top {
   padding-left: var(--menu-clear);
-}
-
-/* A reading-width column (720px) has centred clear by here. */
-@media (min-width: 820px) {
-  .shell:not(.desktop) header.top {
-    padding-left: 0;
-  }
-
-  /*
-   * The two that are still against the edge at this width: the Dashboard when
-   * it is carrying a side column, which is 1140px wide, and Notes, which has no
-   * maximum at all and so never centres.
-   */
-  .shell:not(.desktop):has(.notes) header.top,
-  .shell:not(.desktop):has(.dash.has-panel) header.top {
-    padding-left: var(--menu-clear);
-  }
-}
-
-/* ...and the 1140px one has centred clear by here. Notes still has not. */
-@media (min-width: 1240px) {
-  .shell:not(.desktop):has(.dash.has-panel) header.top {
-    padding-left: 0;
-  }
 }
 
 .logo-mark {
