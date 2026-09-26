@@ -190,6 +190,8 @@ export interface BrowseResult extends SourceMatch {
   coverPath: string | null;
   /** The id of a series you follow that this is — by this copy, or by name. */
   following: string | null;
+  /** That series has no source yet, so reading this copy would link it. */
+  unlinked?: boolean;
 }
 
 /** A filter as a source declares it. Redeclared by hand, as `api.ts` does, since the PWA imports nothing from the server. */
@@ -254,6 +256,7 @@ export interface SeriesDetailPage {
   stale: boolean;
   coverPath: string | null;
   following: string | null;
+  unlinked?: boolean;
   /** Newest first. Nothing is marked read, since nothing is followed yet. */
   chapters: Array<Omit<SourceChapter, 'read'>>;
   profile: ChapterProfile;
@@ -391,7 +394,13 @@ export const manga = {
     follow: (result: BrowseResult) =>
       call<{ series: SeriesSummary; matchedOn: 'mangadex' | 'existing' | null }>('/api/manga/follow-source', {
         method: 'POST',
-        body: JSON.stringify({ mangaId: result.id, title: result.title, sourceName: result.sourceName }),
+        body: JSON.stringify({
+          mangaId: result.id,
+          title: result.title,
+          sourceName: result.sourceName,
+          // A followed series with no source: link this copy to it.
+          ...(result.unlinked && result.following ? { seriesId: result.following } : {}),
+        }),
       }),
   },
 

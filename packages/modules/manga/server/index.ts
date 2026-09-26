@@ -936,14 +936,23 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * from anywhere.
    */
   function present<T extends SourceMatch>(store: Store, match: T) {
-    const following =
-      store.series.find(
-        (s) =>
-          (s.source?.mangaId === match.id && s.source?.sourceName === match.sourceName) ||
-          groupKey(s.title) === groupKey(match.title) ||
-          (s.source !== null && groupKey(s.source.title) === groupKey(match.title))
-      )?.id ?? null;
-    return { ...match, coverPath: thumbPath(match.thumbnailUrl), following };
+    const series = store.series.find(
+      (s) =>
+        (s.source?.mangaId === match.id && s.source?.sourceName === match.sourceName) ||
+        groupKey(s.title) === groupKey(match.title) ||
+        (s.source !== null && groupKey(s.source.title) === groupKey(match.title))
+    );
+    return {
+      ...match,
+      coverPath: thumbPath(match.thumbnailUrl),
+      following: series?.id ?? null,
+      /*
+       * Followed, but with nowhere to read it yet. The screen then offers to
+       * read it *from here* — which links this source to the series you have —
+       * rather than a Read button onto a chapter list that cannot exist.
+       */
+      unlinked: series !== undefined && series.source === null,
+    };
   }
 
   /**
@@ -1159,6 +1168,29 @@ export async function routes(app: FastifyInstance): Promise<void> {
     if (!title || !sourceName) return reply.code(400).send({ error: 'that is not a source result' });
 
     const store = read();
+    const link = { adapter: 'suwayomi', mangaId: body.mangaId, title, sourceName };
+
+    /*
+     * A series you already follow, named by id: this is "read it from here" on
+     * one with no source yet. Linked directly rather than through the MangaDex
+     * lookup below, because a lookup that missed would add a second row for a
+     * series already in the list.
+     */
+    if (typeof (body as { seriesId?: unknown }).seriesId === 'string') {
+      const target = store.series.find((s) => s.id === (body as { seriesId: string }).seriesId);
+      if (!target) return reply.code(404).send({ error: 'no such series' });
+      if (target.source) {
+        return reply.code(409).send({ error: `${target.title} already reads from ${target.source.sourceName}`, id: target.id });
+      }
+      target.source = link;
+      target.latestChapter = null;
+      target.sourceChapter = null;
+      target.sourceCheckedAt = null;
+      target.checkedAt = null;
+      write(store);
+      return { series: seriesSummary(target), matchedOn: 'existing' };
+    }
+
     const same = store.series.find((s) => s.source?.mangaId === body.mangaId && s.source?.sourceName === sourceName);
     if (same) return reply.code(409).send({ error: `already following ${same.title}`, id: same.id });
 
@@ -1178,7 +1210,6 @@ export async function routes(app: FastifyInstance): Promise<void> {
       // through its source either way; it just arrives without the extra ids.
     }
 
-    const link = { adapter: 'suwayomi', mangaId: body.mangaId, title, sourceName };
     const existing = best ? findExisting(store, best) : undefined;
     if (existing) {
       if (existing.source) {
@@ -1245,7 +1276,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       } catch (error) {
         chaptersProblem = error instanceof SourceError ? error.message : 'could not list its chapters';
       }
-      const { following } = present(ctx.store, {
+      const { following, unlinked } = present(ctx.store, {
         id: details.id,
         title: details.title,
         sourceName: details.sourceName,
@@ -1259,6 +1290,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
         url: details.url && /^https?:\/\//i.test(details.url) ? details.url : null,
         coverPath: thumbPath(details.thumbnailUrl),
         following,
+        unlinked,
         chapters: [...chapters].sort((a, b) => b.number - a.number),
         profile: profileChapters(chapters),
         chaptersProblem,

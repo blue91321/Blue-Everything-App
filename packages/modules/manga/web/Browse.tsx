@@ -115,7 +115,14 @@ export function Browse({
     }
   }
 
-  const followingOf = (r: BrowseResult) => followed[keyOf(r)] ?? r.following;
+  /** Linked on this screen — the server's "unlinked" is out of date once pressed. */
+  const needsSource = (r: BrowseResult) => r.unlinked === true && followed[keyOf(r)] === undefined;
+  /*
+   * A followed series with no source counts as not followed *here*: its only
+   * useful button is the one that links this copy to it, and a Read button
+   * would open a chapter list that cannot exist yet.
+   */
+  const followingOf = (r: BrowseResult) => followed[keyOf(r)] ?? (needsSource(r) ? null : r.following);
 
   useEffect(() => {
     if (!search) return;
@@ -300,7 +307,7 @@ function Tile({
             setBusy(false);
           }}
         >
-          {busy ? 'Following…' : 'Follow'}
+          {busy ? 'Following…' : result.unlinked ? 'Read from here' : 'Follow'}
         </button>
       )}
     </div>
@@ -522,6 +529,7 @@ function Search({
               <button className="manga-browse-open title truncate" onClick={() => onOpen(lead, g.entries.slice(1))}>
                 {g.title}
                 {followingId && <span className="manga-flag good"> · following</span>}
+                {!followingId && lead.unlinked && <span className="meta"> · in your list, with no source yet</span>}
               </button>
               <span className="meta">
                 {g.preferred ? '' : `not on ${chosen?.name ?? 'the chosen source'} · `}
@@ -530,7 +538,7 @@ function Search({
               {g.entries.length > 1 && !followingId && (
                 <details className="manga-compare-other">
                   <summary>
-                    {sources.length > 1 ? 'Follow from a different source' : `Other editions on ${lead.sourceName}`}
+                    {sources.length > 1 ? `${lead.unlinked ? 'Read' : 'Follow'} from a different source` : `Other editions on ${lead.sourceName}`}
                   </summary>
                   {g.entries.slice(1).map((e) => (
                     <div className="row between" key={keyOf(e)}>
@@ -538,7 +546,7 @@ function Search({
                         {e.sourceName} — {e.title}
                       </span>
                       <button className="btn subtle" onClick={() => void onFollow(e)}>
-                        Follow from here
+                        {e.unlinked ? 'Read' : 'Follow'} from here
                       </button>
                     </div>
                   ))}
@@ -552,7 +560,7 @@ function Search({
                 </button>
               ) : (
                 <button className="btn" onClick={() => void onFollow(lead)}>
-                  Follow from {lead.sourceName}
+                  {lead.unlinked ? 'Read' : 'Follow'} from {lead.sourceName}
                 </button>
               )}
             </div>

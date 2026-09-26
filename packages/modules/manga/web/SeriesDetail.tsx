@@ -99,7 +99,8 @@ export function SeriesDetail({
     };
   }, [result.id]);
 
-  const followingId = following ?? page?.following ?? null;
+  // Followed with no source yet reads as not followed here: see `needsSource` in Browse.
+  const followingId = following ?? (page?.unlinked || result.unlinked ? null : page?.following ?? null);
 
   if (open && page) {
     return (
@@ -173,7 +174,7 @@ export function SeriesDetail({
                   setFollowing(false);
                 }}
               >
-                {following_ ? 'Following…' : `Follow from ${result.sourceName}`}
+                {following_ ? 'Following…' : `${result.unlinked ? 'Read' : 'Follow'} from ${result.sourceName}`}
               </button>
             )}
             {first && (
