@@ -111,9 +111,22 @@ function months(ms: number): string {
  * sources agreeing, a much stronger claim than one source saying so.
  */
 function findOutliers(withChapters: readonly SourceRow[]): Map<SourceRow, number> {
+  /*
+   * A source serving *every* language is compared with the language it is
+   * actually serving you in — the one most of these sources are in.
+   *
+   * Left in a group of its own it could never be compared with anything, so an
+   * `all` source padding its list would be the one kind this check was blind to,
+   * and would be crowned furthest along. Found on real data: Manhwa18.cc
+   * registers an `all` source beside its English one.
+   */
+  const sizes = new Map<string, number>();
+  for (const r of withChapters) if (r.lang && r.lang !== 'all') sizes.set(r.lang, (sizes.get(r.lang) ?? 0) + 1);
+  const primary = [...sizes].sort((a, b) => b[1] - a[1] || (a[0] === 'en' ? -1 : 1))[0]?.[0] ?? 'all';
+
   const byLang = new Map<string, SourceRow[]>();
   for (const r of withChapters) {
-    const lang = r.lang ?? '?';
+    const lang = r.lang === 'all' ? primary : r.lang ?? '?';
     byLang.set(lang, [...(byLang.get(lang) ?? []), r]);
   }
 

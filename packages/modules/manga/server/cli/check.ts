@@ -365,6 +365,37 @@ const mixed = judgeSources([
 check('an English outlier is caught among English sources', says(mixed, 'Sketchy', 'ahead of every other EN source'));
 check('and the Spanish source is measured from the honest one', says(mixed, 'Spanish', '28 behind'));
 
+/*
+ * A source serving every language must not escape the check by being in a
+ * language group of its own — Manhwa18.cc registers one beside its English
+ * source. It is compared with the language it is actually serving you in.
+ */
+const everyLanguage = judgeSources([
+  src('Aggregator (ALL)', 430, { lang: 'all' }),
+  src('MangaFire (EN)', 419, { lang: 'en' }),
+  src('Webtoons (EN)', 418, { lang: 'en' }),
+]);
+check('an every-language source padding its list is still caught', says(everyLanguage, 'Aggregator (ALL)', 'Check'));
+// …and does not get flagged just for leading a trailing translation.
+const allVsSpanish = judgeSources([
+  src('Aggregator (ALL)', 419, { lang: 'all' }),
+  src('MangaFire (EN)', 419, { lang: 'en' }),
+  src('MangaFire (ES)', 408, { lang: 'es' }),
+]);
+check('nor is it measured against a translation', !says(allVsSpanish, 'Aggregator (ALL)', 'Check'));
+
+// The real English Eleceed numbers, as counted today.
+const realEleceed = judgeSources([
+  src('MangaDex (EN)', 390, { missing: 287, missingSample: [23, 24, 25, 26, 27], distinct: 103 }),
+  src('MangaFire (EN)', 419, { distinct: 460 }),
+  src('Manhwa18.cc (ALL)', 419, { lang: 'all' }),
+  src('Manhwa18.cc (EN)', 419),
+  src('Webtoons.com (EN)', 404),
+]);
+check('three sources agreeing on 419 are all furthest', ['MangaFire (EN)', 'Manhwa18.cc (ALL)', 'Manhwa18.cc (EN)'].every((k) => tones(realEleceed, k).includes('good')));
+check('the incomplete one is named as incomplete', says(realEleceed, 'MangaDex (EN)', 'missing 287 chapters'));
+check('the official one is simply behind', says(realEleceed, 'Webtoons.com (EN)', '15 behind'));
+
 const alone = judgeSources([src('Only', 50), src('Empty', null)]);
 check('a single source with chapters says there is nothing to compare', says(alone, 'Only', 'only source'));
 
