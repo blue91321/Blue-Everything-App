@@ -62,9 +62,13 @@ export function Live() {
         </button>
       </div>
 
-      {streams.map((stream) => (
-        <LiveCard key={stream.id} stream={stream} onChanged={state.reload} />
-      ))}
+      {/* Named so the section holding the tab strip stays in ordinary flow —
+          see `.card-grid` in styles.css. */}
+      <div className="card-grid">
+        {streams.map((stream) => (
+          <LiveCard key={stream.id} stream={stream} onChanged={state.reload} />
+        ))}
+      </div>
 
       {streams.length === 0 && (
         <div className="empty">

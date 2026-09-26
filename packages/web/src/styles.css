@@ -2793,11 +2793,58 @@ button {
  * not flow. One card alone in a column beside empty space reads as a mistake.
  */
 .app section:has(> .card + .card),
-.app section:has(> div > .card) {
+.app section:has(> div:not(.card-grid) > .card) {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
   gap: var(--gap);
   align-items: start;
+}
+
+/*
+ * ### A screen is not a list, and Connections is the case that proves it
+ *
+ * The rule above keys on a section whose *children* are cards, which is true of
+ * the Dashboard and of Tasks: there the section holds a list and very little
+ * else. The Connections tabs put a whole screen in one section — a tab strip, a
+ * search box, two rows of filter chips, a counts line, a Refresh button, and
+ * then the friends. Every one of those became a 420px grid cell. The search box
+ * ended up beside the tabs, the status chips wrapped mid-row with "discord 91"
+ * alone on the next line, and the *"Away — signed in, but not answering"*
+ * heading sat in a column of its own with friends flowing past it.
+ *
+ * So a list that shares its section with controls says which part is the list,
+ * and the section itself stays in ordinary flow. That also fixes the heading
+ * problem by construction rather than by adding a third selector: a group
+ * heading is outside its `.card-grid`, so there is nothing for it to be a cell
+ * of.
+ *
+ * **`:not(.card-grid)` on the wrapped selector above is what keeps the two
+ * apart.** `> div > .card` exists for the Tasks shape, where each row is an
+ * unclassed `div` holding a card and its actions — and it would match straight
+ * through a `.card-grid` as well, making the section a grid of grids.
+ */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+  gap: var(--gap);
+  /*
+   * `stretch`, where the rule above uses `start`, and the difference is what is
+   * being lined up. A task row's height is its own content and there is nothing
+   * beside it to agree with. These are cards of two to four lines standing in a
+   * row, and letting each keep its natural height leaves the row with ragged
+   * bottoms — which reads as the layout having gone wrong rather than as people
+   * having different amounts to say.
+   */
+  align-items: stretch;
+}
+
+/*
+ * The gap does the spacing now. `.card` carries `margin-bottom: 8px` for the
+ * stacked case, which inside a grid adds to the gap on one axis only — 20px
+ * down and 12px across, for rows that are meant to sit on a square lattice.
+ */
+.card-grid > .card {
+  margin-bottom: 0;
 }
 
 /*
@@ -2809,17 +2856,30 @@ button {
  * Named rather than `:not(.card)`, because in the wrapped shape the rows
  * themselves are unclassed divs — excluding by what they are not would span the
  * rows and flow the headings, which is precisely backwards.
+ *
+ * **`.tabs`, `.meta` and `.row` joined the list from the Connections screens**,
+ * where each is a control rather than a row: a tab strip, a group heading, and a
+ * line of filter chips. The tab strip was the one that gave it away — on Music
+ * and Services it measured 444px inside a 1356px section, a row of five links
+ * squeezed into one column of a grid it has no business being in. A tab strip is
+ * never a list item, on any screen, so it spans wherever it appears.
  */
 .app section:has(> .card + .card) > h2,
 .app section:has(> .card + .card) > p,
 .app section:has(> .card + .card) > form,
 .app section:has(> .card + .card) > .empty,
 .app section:has(> .card + .card) > .banner,
-.app section:has(> div > .card) > h2,
-.app section:has(> div > .card) > p,
-.app section:has(> div > .card) > form,
-.app section:has(> div > .card) > .empty,
-.app section:has(> div > .card) > .banner {
+.app section:has(> .card + .card) > .tabs,
+.app section:has(> .card + .card) > .meta,
+.app section:has(> .card + .card) > .row,
+.app section:has(> div:not(.card-grid) > .card) > h2,
+.app section:has(> div:not(.card-grid) > .card) > p,
+.app section:has(> div:not(.card-grid) > .card) > form,
+.app section:has(> div:not(.card-grid) > .card) > .empty,
+.app section:has(> div:not(.card-grid) > .card) > .banner,
+.app section:has(> div:not(.card-grid) > .card) > .tabs,
+.app section:has(> div:not(.card-grid) > .card) > .meta,
+.app section:has(> div:not(.card-grid) > .card) > .row {
   grid-column: 1 / -1;
 }
 

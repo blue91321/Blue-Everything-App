@@ -9,7 +9,7 @@
  * fixes, so the sources panel sits under the list and names the one that
  * applies.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNow } from '@app/clock';
 import { api, type FriendRow, type FriendSource } from '@app/api';
 import { useAsync } from '@app/useAsync';
@@ -247,9 +247,21 @@ export function Friends({ seed }: { seed?: string | null } = {}) {
         </div>
       )}
 
-      {around.map((friend) => (
-        <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
-      ))}
+      {/*
+        The list says it is a list, and the controls above are left out of it.
+
+        Everything on this screen shares one `section` with the tab strip, and
+        the page-wide rule that flows a list into columns keys on a section whose
+        children are cards — so the search box, the filter chips and the counts
+        line were all being laid out as 420px cells beside the friends. Naming
+        the list is what separates "this screen" from "this list"; the headings
+        below sit outside their grid for the same reason.
+      */}
+      <div className="card-grid">
+        {around.map((friend) => (
+          <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
+        ))}
+      </div>
 
       {/*
         Between online and offline, where it belongs — these are people who are
@@ -270,9 +282,11 @@ export function Friends({ seed }: { seed?: string | null } = {}) {
             */}
             Away — signed in, but not answering
           </div>
-          {away.map((friend) => (
-            <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
-          ))}
+          <div className="card-grid">
+            {away.map((friend) => (
+              <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
+            ))}
+          </div>
         </>
       )}
 
@@ -285,7 +299,7 @@ export function Friends({ seed }: { seed?: string | null } = {}) {
       {offline.length > 0 && (
         <>
           <div className="meta" style={{ margin: '1rem 0 .5rem' }}>Offline</div>
-          <div className="done-area">
+          <div className="done-area card-grid">
             {offline.map((friend) => (
               <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
             ))}
@@ -305,7 +319,7 @@ export function Friends({ seed }: { seed?: string | null } = {}) {
             Discord — its API carries no presence, so link one to a Steam account to see whether they are
             about
           </div>
-          <div className="done-area">
+          <div className="done-area card-grid">
             {unknown.map((friend) => (
               <FriendCard key={friend.id} friend={friend} onChanged={view.reload} />
             ))}

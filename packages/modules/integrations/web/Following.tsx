@@ -165,7 +165,13 @@ export function Following() {
       {shown.length === 0 ? (
         <div className="empty">Nothing matches "{search}".</div>
       ) : (
-        shown.map((row) => <FollowCard key={row.id} row={row} all={all} onChanged={view.reload} />)
+        /* Named so the section holding the tab strip stays in ordinary flow —
+           see `.card-grid` in styles.css. */
+        <div className="card-grid">
+          {shown.map((row) => (
+            <FollowCard key={row.id} row={row} all={all} onChanged={view.reload} />
+          ))}
+        </div>
       )}
 
       <Sources sources={view.data.sources} />
