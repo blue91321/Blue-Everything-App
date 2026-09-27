@@ -294,7 +294,7 @@ class SuwayomiProcess {
    * thing Windows has in the POSIX sense — so this is platform-specific on
    * purpose, with a plain `kill` everywhere else.
    */
-  stop(): void {
+  stop(port?: number): void {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
@@ -312,7 +312,10 @@ class SuwayomiProcess {
      * and stop Suwayomi, so killing what is on that port is inside the
      * permission already given.
      */
-    const pid = this.child?.pid ?? (this.lastPort !== null ? pidListeningOn(this.lastPort) : null);
+    // `port` is the caller's knowledge when this process has none: a server
+    // that adopted a JVM after a restart but has not yet asked it anything.
+    const knownPort = this.lastPort ?? port ?? null;
+    const pid = this.child?.pid ?? (knownPort !== null ? pidListeningOn(knownPort) : null);
     this.child = null;
     if (pid === null || pid === undefined) return;
 

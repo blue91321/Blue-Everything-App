@@ -61,7 +61,7 @@ import {
   type SourceMatch,
 } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL, KEIYOUSHI_REPO } from './suwayomi.js';
-import { suwayomiProcess, findJars } from './process.js';
+import { suwayomiProcess, findJars, portOf } from './process.js';
 import { homedir } from 'node:os';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
@@ -1808,7 +1808,13 @@ export async function routes(app: FastifyInstance): Promise<void> {
      * nobody owning it, and the next start would fail against a server that
      * cannot be stopped from inside the app — the opposite requirement to the
      * tray's, whose children must outlive the process that spawned them.
+     *
+     * The port is passed for the one case the process cannot know it: a JVM
+     * adopted after a restart that nothing has asked anything of yet. Only
+     * while the app manages Suwayomi — one you run yourself is not ours to stop.
      */
-    suwayomiProcess.stop();
+    const store = read();
+    const url = store.manageSuwayomi ? effectiveUrl(store, DEFAULT_BASE_URL) : null;
+    suwayomiProcess.stop(url ? portOf(url) : undefined);
   });
 }

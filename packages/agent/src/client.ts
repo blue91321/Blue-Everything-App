@@ -224,6 +224,11 @@ export class ServerClient {
     });
   }
 
+  /** Still here, with the tray icon — see `agent-watch.ts` on the server. */
+  alive(): Promise<unknown> {
+    return this.request('/api/agent/alive', { method: 'POST' });
+  }
+
   acknowledge(nudgeId: string): Promise<unknown> {
     return this.request(`/api/nudges/${nudgeId}/ack`, { method: 'POST' });
   }

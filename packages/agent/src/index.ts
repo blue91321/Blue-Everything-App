@@ -354,6 +354,18 @@ try {
 console.log(`Blue Everything agent -> ${agentConfig.serverUrl}`);
 monitor.start();
 
+/*
+ * Checking in, for as long as this process — and its tray icon — is here. A
+ * server started by `start.ps1` closes itself after 90s without one, so the app
+ * is never running with no icon. Every 20s whatever the attention loop is
+ * doing, because that loop deliberately goes quiet for five minutes after a
+ * server error, which the server would read as the icon being gone. Failures
+ * are ignored: the server being down is the attention loop's to report.
+ */
+const checkIn = () => void client.alive().catch(() => {});
+checkIn();
+setInterval(checkIn, 20_000).unref();
+
 /** Cheap visibility that the leanness claims still hold in a long-running process. */
 setInterval(() => {
   const { ticks, snapshots, snapshotMsTotal } = monitor.stats;

@@ -171,6 +171,11 @@ if ($AgentOnly) {
   exit 0
 }
 
+# The server closes itself when the agent stops checking in: the tray icon is
+# the app, and a server left running without it has nothing on screen admitting
+# it is there. Set here, for the server this script starts, and nowhere else.
+$env:EXIT_WITHOUT_AGENT = 'true'
+
 Write-Host 'Starting server...' -NoNewline
 $server = Start-Process node `
   -ArgumentList '--import', 'tsx', "`"$serverEntry`"" `
@@ -200,7 +205,7 @@ Write-Host " ok (pid $($server.Id))" -ForegroundColor Green
 if ($Foreground) {
   if ($Open) { Open-AppWindow }
   Write-Host "App:  $url" -ForegroundColor Cyan
-  Write-Host 'Running the agent here. Ctrl+C stops the agent; the server keeps running.' -ForegroundColor Cyan
+  Write-Host 'Running the agent here. Ctrl+C stops the agent, and the server follows within 90s.' -ForegroundColor Cyan
   Push-Location $agentDir
   try { & node --import tsx $agentEntry } finally { Pop-Location }
   exit 0

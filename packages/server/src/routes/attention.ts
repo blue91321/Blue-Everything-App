@@ -7,6 +7,7 @@ import { attentionReportSchema, isAwayFromPc,
 import { db } from '../db/client.js';
 import { attentionSamples } from '../db/schema.js';
 import { changes } from '../events.js';
+import { agentCheckedIn } from '../agent-watch.js';
 import { gamesVersion, recordSeen } from './games.js';
 import { looksLikeGameInstall, looksLikeSystemApp } from '@everything/shared/games';
 import {
@@ -71,6 +72,9 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
    * interrupt. The agent stays dumb; all the judgement lives server-side.
    */
   app.post('/api/attention', async (request) => {
+    // Counts as the agent being here, before anything can fail — so an agent
+    // from before `/api/agent/alive` existed still keeps a newer server up.
+    agentCheckedIn();
     const report = attentionReportSchema.parse(request.body);
     const at = report.at ?? Date.now();
 

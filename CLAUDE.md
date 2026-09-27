@@ -1780,6 +1780,29 @@ back in seconds and the server adopts the JVM on its port rather than paying
 most of a minute to start another. Suwayomi's own tray icon and its
 open-a-browser-on-launch are both switched off at launch, so the one icon is the
 only one.
+
+**And when the icon goes, the app goes.** The icon belongs to the agent, so an
+agent that has stopped, crashed or been killed means the server is running with
+nothing on screen admitting it. A server started by `start.ps1`
+(`EXIT_WITHOUT_AGENT`, set there and nowhere else) closes itself after 90s
+without a word from the agent, and its `onClose` hooks stop Suwayomi — passing
+the port, so a JVM adopted after a restart and not yet asked anything still
+goes. `npm run dev`, `smoke` and a server on a VPS leave the switch off and run
+as they always have. `agent-watch.ts` has the rest; two things there matter:
+
+- **The signal is `POST /api/agent/alive` every 20s, not the attention
+  heartbeat.** After an ordinary server error the agent goes quiet for five
+  minutes by design (`BACKOFF_MAX_MS`), which would have read as the icon being
+  gone. The check-in writes nothing and is not announced. The heartbeat still
+  counts, so an agent from before the check-in keeps a newer server up.
+- **Sleep is not absence.** Nothing runs while the PC sleeps, so on waking the
+  last check-in is hours old. A watch tick arriving far later than due means the
+  machine was suspended, and the agent gets a fresh window instead of the app
+  shutting itself down the moment the PC wakes.
+
+This changes what the Voice screen's **Start it** is for on this PC: it now
+brings the agent back within the ninety seconds before the server follows it,
+rather than into a server that would have waited indefinitely.
 `npm run tray-try -w @everything/agent` shows it without starting the agent.
 
 It exists because both services run hidden, so the app had nowhere to be

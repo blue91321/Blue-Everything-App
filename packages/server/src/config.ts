@@ -168,6 +168,19 @@ const envSchema = z.object({
 
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
+  /**
+   * Close the server when the agent stops checking in — its tray icon has gone,
+   * so the app should too. See `agent-watch.ts`.
+   *
+   * Set by `start.ps1` and nothing else. Everything that runs a server without
+   * an agent on purpose — `npm run dev`, `smoke`, a container on a VPS — leaves
+   * it off and keeps running.
+   */
+  EXIT_WITHOUT_AGENT: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
   /** Set when running behind a reverse proxy so client IPs log correctly. */
   TRUST_PROXY: z
     .enum(['true', 'false'])

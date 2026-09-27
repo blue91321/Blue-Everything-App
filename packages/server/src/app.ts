@@ -22,6 +22,7 @@ import { moduleRoutes } from './routes/modules.js';
 import { gameRoutes } from './routes/games.js';
 import { restartRoutes } from './routes/restart.js';
 import { agentStartRoutes } from './routes/agent-start.js';
+import { agentAliveRoutes } from './routes/agent-alive.js';
 import { habitRoutes } from './routes/habits.js';
 import { noteRoutes } from './routes/notes.js';
 import { nudgeRoutes } from './routes/nudges.js';
@@ -86,6 +87,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * reason it cannot.
    */
   await app.register(agentStartRoutes);
+  await app.register(agentAliveRoutes);
   // Core: the one screen that can tell you a feature is off has to work when it is.
   await app.register(featureRoutes);
   /*
