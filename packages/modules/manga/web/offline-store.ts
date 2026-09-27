@@ -68,11 +68,14 @@ export type Manifest = { version: 1; series: Record<string, SavedSeries> };
 export type Job = {
   key: string;
   seriesId: string;
+  seriesTitle: string;
   chapterId: string;
   name: string;
   done: number;
   total: number | null;
   problem: string | null;
+  /** Asked to stop; the pages it had already saved are removed again. */
+  cancelled?: boolean;
 };
 
 export const offlineSupported = typeof window !== 'undefined' && 'caches' in window;
@@ -157,7 +160,10 @@ export type SeriesInfo = {
   position: SavedPlace | null;
 };
 
-const queue: Array<{ series: SeriesInfo; chapter: { id: string; number: number; name: string }; pages: () => Promise<string[]> }> = [];
+type Queued = { series: SeriesInfo; chapter: { id: string; number: number; name: string }; pages: () => Promise<string[]> };
+const queue: Queued[] = [];
+/** What a failed download needs to be tried again, by job key. */
+const failed = new Map<string, Queued>();
 let running = false;
 let asked = false;
 
@@ -173,8 +179,18 @@ export function queueDownload(
   if (!offlineSupported) return;
   const key = `${series.seriesId}:${chapter.id}`;
   if (jobs.has(key) || manifest?.series[series.seriesId]?.chapters[chapter.id]) return;
-  jobs.set(key, { key, seriesId: series.seriesId, chapterId: chapter.id, name: chapter.name, done: 0, total: null, problem: null });
+  jobs.set(key, {
+    key,
+    seriesId: series.seriesId,
+    seriesTitle: series.title,
+    chapterId: chapter.id,
+    name: chapter.name,
+    done: 0,
+    total: null,
+    problem: null,
+  });
   queue.push({ series, chapter, pages });
+  failed.delete(key);
   notify();
   firstTime();
   void run();
@@ -210,10 +226,10 @@ async function run(): Promise<void> {
         notify();
 
         let bytes = 0;
-        let failed = 0;
+        let missing = 0;
         let next = 0;
         const worker = async () => {
-          while (next < list.length) {
+          while (next < list.length && !job.cancelled) {
             const url = list[next++]!;
             try {
               const have = await cache.match(url);
@@ -230,7 +246,7 @@ async function run(): Promise<void> {
                 );
               }
             } catch {
-              failed += 1;
+              missing += 1;
             }
             job.done += 1;
             notify();
@@ -247,13 +263,24 @@ async function run(): Promise<void> {
           }
         }
 
+        if (job.cancelled) {
+          // Stopped: take back what it had saved, rather than leave pages that
+          // no list mentions using space nobody can see.
+          await Promise.all(list.map((url) => cache.delete(url)));
+          jobs.delete(key);
+          queue.shift();
+          notify();
+          continue;
+        }
+
         /*
          * Recorded as saved only when every page is here. A chapter with holes
          * saved as "downloaded" would be discovered on the train, which is the
          * one place it cannot be fixed.
          */
-        if (failed > 0) {
-          job.problem = `${failed} of ${list.length} pages would not download — try again while online`;
+        if (missing > 0) {
+          job.problem = `${missing} of ${list.length} pages would not download — try again while online`;
+          failed.set(key, queue[0]!);
         } else {
           const m = await loadManifest();
           const current = m.series[series.seriesId];
@@ -279,6 +306,7 @@ async function run(): Promise<void> {
         }
       } catch (error) {
         job.problem = error instanceof Error ? error.message : 'the download failed';
+        failed.set(key, queue[0]!);
       }
       queue.shift();
       notify();
@@ -293,8 +321,39 @@ export function clearProblem(key: string): void {
   const job = jobs.get(key);
   if (job?.problem) {
     jobs.delete(key);
+    failed.delete(key);
     notify();
   }
+}
+
+/** Try a failed download again, from the Downloads tab. */
+export function retryDownload(key: string): void {
+  const item = failed.get(key);
+  if (!item) return;
+  jobs.delete(key);
+  failed.delete(key);
+  queueDownload(item.series, item.chapter, item.pages);
+}
+
+/**
+ * Stop a download. One still waiting is simply taken off the list; the one in
+ * progress stops after the pages already in flight, and what it saved is
+ * removed again.
+ */
+export function cancelDownload(key: string): void {
+  const job = jobs.get(key);
+  if (!job) return;
+  const at = queue.findIndex((q) => `${q.series.seriesId}:${q.chapter.id}` === key);
+  if (at > 0) {
+    queue.splice(at, 1);
+    jobs.delete(key);
+  } else if (at === 0) {
+    job.cancelled = true;
+  } else {
+    jobs.delete(key);
+    failed.delete(key);
+  }
+  notify();
 }
 
 /* ---- removing ---- */

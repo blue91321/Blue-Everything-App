@@ -3283,3 +3283,77 @@ div.manga-chapter-row {
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
 }
+
+/*
+ * "Offline — showing what this device saved (as of 8:14)". Quiet enough to read
+ * past, never absent: data from this morning shown as if current is the one
+ * thing offline mode must not do.
+ */
+.offline-banner {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--muted);
+  background: var(--surface-raised);
+  font-size: 0.9rem;
+}
+
+.offline-banner.syncing {
+  border-left-color: var(--accent);
+}
+
+/* ---- Manga: the Downloads tab ------------------------------------------ */
+
+.manga-downloads {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+/* Space used against what the browser allows, and a download's pages so far. */
+.manga-space {
+  height: 6px;
+  margin: 8px 0 4px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.manga-space > div {
+  height: 100%;
+  min-width: 2px;
+  background: var(--accent);
+}
+
+.manga-download-job {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.manga-download-series {
+  border-bottom: 1px solid var(--border);
+}
+
+.manga-download-series > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.manga-download-series > summary::-webkit-details-marker {
+  display: none;
+}
+
+.manga-download-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+}

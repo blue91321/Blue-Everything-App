@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { startTimeEntrySchema } from '@everything/shared';
 import { db } from '../db/client.js';
 import { timeEntries } from '../db/schema.js';
+import { happenedAt } from '../happened-at.js';
 
 export async function timeRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/time/current', async () => {
@@ -21,7 +22,7 @@ export async function timeRoutes(app: FastifyInstance): Promise<void> {
 
   app.post('/api/time/start', async (request, reply) => {
     const body = startTimeEntrySchema.parse(request.body);
-    const now = body.startedAt ?? Date.now();
+    const now = body.startedAt ?? happenedAt(request);
 
     // One clock at a time. Starting a new entry closes whatever was running,
     // which is what "switch to this now" means in practice.
@@ -34,8 +35,8 @@ export async function timeRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(201).send(created);
   });
 
-  app.post('/api/time/stop', async () => {
-    const now = Date.now();
+  app.post('/api/time/stop', async (request) => {
+    const now = happenedAt(request);
     const stopped = await db
       .update(timeEntries)
       .set({ endedAt: now })

@@ -4,10 +4,10 @@
  * Its own thin client rather than entries on `api` in core, because core must
  * not know a package exists — the same rule that keeps `hidden_providers` an
  * opaque slug and `tasks.source` an unvalidated string. What it borrows from
- * core is `getToken`, since every `/api/` call needs the bearer token and there
- * is no sense keeping a second copy of where it is stored.
+ * core is the request itself — the token, the error handling and the offline
+ * behaviour — since a second copy of any of those would drift.
  */
-import { getToken } from '@app/api';
+import { apiRequest } from '@app/api';
 
 export type RefreshMode = 'hourly' | 'daily' | 'manual';
 export type Units = 'c' | 'f';
@@ -72,32 +72,14 @@ export interface WeatherState {
   due: boolean;
 }
 
+/**
+ * Through core's request rather than a fetch of its own, which is what makes
+ * this package work offline like the rest of the app: the last reading shows
+ * offline, with its age, and refreshing says it needs the PC. Same token, the
+ * server's own words in errors, and the same "unreachable" as everywhere.
+ */
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
-      authorization: `Bearer ${getToken()}`,
-      ...init.headers,
-    },
-  });
-
-  if (!response.ok) {
-    /*
-     * The server's own words when it sent any — core's `errorMessage` makes the
-     * same choice, and for the same reason: "the weather service answered 503"
-     * is the difference between knowing what happened and seeing a status code.
-     */
-    let message = `that failed (${response.status})`;
-    try {
-      const body = (await response.json()) as { error?: unknown };
-      if (typeof body.error === 'string' && body.error.trim() !== '') message = body.error;
-    } catch {
-      // Not JSON. The status stands.
-    }
-    throw new Error(message);
-  }
-  return (await response.json()) as T;
+  return apiRequest<T>(path, init);
 }
 
 export const weather = {

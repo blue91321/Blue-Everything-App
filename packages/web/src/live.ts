@@ -1,4 +1,5 @@
 import { getToken } from './api';
+import { markOnline, onSynced } from './offline-sync';
 
 /**
  * Keeps every open copy of the app in step.
@@ -84,6 +85,9 @@ async function readStream(signal: AbortSignal): Promise<void> {
 
   // Connected — reset the backoff so the next genuine drop retries quickly.
   retryDelay = RECONNECT_MIN_MS;
+  // And the server is back: anything done offline is sent now, and every
+  // screen refetches once it has landed (see `onSynced` below).
+  markOnline();
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -141,6 +145,10 @@ function start(): void {
   if (running) return;
   running = true;
   void connectLoop();
+
+  // Changes made offline have reached the server: every screen shows its
+  // answer rather than this device's guess at it.
+  onSynced(() => notify('all'));
 
   // iOS suspends a backgrounded PWA and kills the stream with it. Coming back
   // to the app must therefore refetch immediately rather than waiting for a

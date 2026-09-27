@@ -8,10 +8,11 @@
  * never win.
  *
  * In `localStorage`, which this app keeps for per-device conveniences — and a
- * queue of things this device did is exactly that. It is sent the next time the
- * Manga screen opens with the server reachable.
+ * queue of things this device did is exactly that. It is sent as soon as the
+ * server answers again, and whenever the Manga screen opens.
  */
 import { getToken } from '@app/api';
+import { onBackOnline } from '@app/offline-sync';
 
 const KEY = 'manga-sync-queue';
 
@@ -55,6 +56,15 @@ export function enqueue(item: Queued): void {
   items.push(item);
   save(items);
 }
+
+/*
+ * Sent the moment the server answers again — core notices, from its live
+ * stream or any request succeeding — rather than waiting for this screen to be
+ * opened, so the PC's Continue is right before you sit down at it.
+ */
+onBackOnline(() => {
+  void flushQueue();
+});
 
 export function pendingCount(): number {
   return load().length;

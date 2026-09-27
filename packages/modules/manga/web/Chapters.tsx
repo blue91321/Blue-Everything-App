@@ -35,6 +35,7 @@ import {
   useOffline,
 } from './offline-store';
 import { enqueue } from './sync-queue';
+import { useConnectivity } from '@app/offline-sync';
 
 /** How many "Next" saves ahead of where you are. */
 const SAVE_AHEAD = [5, 10] as const;
@@ -62,6 +63,7 @@ export function Chapters({
   const saver = usePositionSaver(seriesId);
   const continued = useRef(false);
   const offline = useOffline();
+  const net = useConnectivity();
   const saved = offline.manifest?.series[seriesId]?.chapters ?? {};
   const jobs = new Map(offline.jobs.filter((j) => j.seriesId === seriesId).map((j) => [j.chapterId, j]));
 
@@ -259,7 +261,11 @@ export function Chapters({
 
       {data && data.chapters.length > 0 && (
         <div className="manga-save-bar">
-          {offlineSupported ? (
+          {offlineSupported && net.offline ? (
+            <span className="meta">
+              Offline — ✓ marks what is saved on this device and opens now. Saving more needs the PC.
+            </span>
+          ) : offlineSupported ? (
             <>
               <span className="meta">Save for offline:</span>
               {SAVE_AHEAD.map((n) => (

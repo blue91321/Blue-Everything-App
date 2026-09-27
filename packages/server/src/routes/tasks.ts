@@ -9,6 +9,7 @@ import {
 } from '@everything/shared';
 import { db } from '../db/client.js';
 import { projects, tasks } from '../db/schema.js';
+import { happenedAt } from '../happened-at.js';
 
 /**
  * Pin an all-day due date to the end of that day.
@@ -91,7 +92,8 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
      * typechecked. `body.status` alone says the same thing: a status was sent,
      * and it was not 'done', so the task is being reopened.
      */
-    const completedAt = body.status === 'done' ? Date.now() : body.status ? null : undefined;
+    // When it was finished — which, replayed from an offline phone, was then.
+    const completedAt = body.status === 'done' ? happenedAt(request) : body.status ? null : undefined;
 
     const { dueIsAllDay, pushToPhone, ...rest } = body;
     const [updated] = await db

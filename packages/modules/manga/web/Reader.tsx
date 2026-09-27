@@ -52,6 +52,7 @@
  * pane nobody is looking at.
  */
 import { useEffect, useRef, useState } from 'react';
+import { ServerUnreachable } from '@app/api';
 import { manga } from './manga-api';
 
 const IN_FLIGHT = 3;
@@ -145,7 +146,16 @@ export function Reader({
         };
         await Promise.all(Array.from({ length: Math.min(IN_FLIGHT, pages.length) }, worker));
       } catch (error) {
-        if (alive) setProblem(error instanceof Error ? error.message : 'could not load this chapter');
+        if (!alive) return;
+        setProblem(
+          // Offline, a chapter not saved on this device is the ordinary case,
+          // and "Failed to fetch" says nothing about what to do.
+          error instanceof ServerUnreachable
+            ? "This chapter isn't saved on this device, so it needs the PC. Save chapters with ⬇ while connected."
+            : error instanceof Error
+              ? error.message
+              : 'could not load this chapter'
+        );
       }
     })();
 

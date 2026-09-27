@@ -23,6 +23,7 @@ import {
 } from '@everything/shared';
 import { db } from '../db/client.js';
 import { habitEntries, habits } from '../db/schema.js';
+import { happenedAt } from '../happened-at.js';
 
 /**
  * The bucket a moment belongs to: `2026-08-05` for daily habits, `2026-W32`
@@ -162,7 +163,8 @@ export async function recordHabitDone(
     doneThisPeriod: already.reduce((sum, e) => sum + e.count, 0),
   }, now);
 
-  await db.insert(habitEntries).values({ habitId, periodKey, count });
+  // `doneAt` explicitly: a tick replayed from an offline phone happened then, not now.
+  await db.insert(habitEntries).values({ habitId, periodKey, count, doneAt: now });
 
   /*
    * The gauge additionally moves its anchor, because the level is not derivable
@@ -520,7 +522,7 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     // Everything is in `recordHabitDone`, which the voice feature calls too —
     // the two used to have their own copies and only one of them grew a gauge.
-    const progress = await recordHabitDone(id);
+    const progress = await recordHabitDone(id, 1, happenedAt(request));
     if (!progress) return reply.code(404).send({ error: 'no such habit' });
 
     return reply.code(201).send({
@@ -548,7 +550,7 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post('/api/habits/:id/uncheck', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const progress = await undoHabitDone(id);
+    const progress = await undoHabitDone(id, happenedAt(request));
     if (!progress) return reply.code(404).send({ error: 'no such habit' });
 
     return {

@@ -10,6 +10,24 @@
  * Tailscale with no configuration.
  */
 
+import {
+  configureOffline,
+  connectivity,
+  hasPending,
+  keepable,
+  keptBlob,
+  markOffline,
+  markOnline,
+  noteShown,
+  queueable,
+  queueChange,
+  recall,
+  remember,
+  resolveIds,
+  flushOutbox,
+} from './offline-sync';
+import './offline-effects';
+
 const TOKEN_KEY = 'everything.token';
 
 export const getToken = (): string => localStorage.getItem(TOKEN_KEY) ?? '';
@@ -32,6 +50,8 @@ export class Unauthorized extends Error {}
  * this state is genuinely reachable and worth telling apart.
  */
 export class ServerUnreachable extends Error {}
+
+configureOffline({ token: () => getToken() });
 
 /**
  * A habit's picture, as something an `<img>` can point at.
@@ -56,13 +76,8 @@ export function habitImageUrl(id: string, version: number): Promise<string> {
   const known = habitImages.get(key);
   if (known) return known;
 
-  const loading = (async () => {
-    const response = await fetch(`/api/habits/${id}/image`, {
-      headers: { authorization: `Bearer ${getToken()}` },
-    });
-    if (!response.ok) throw new Error(`no picture (${response.status})`);
-    return URL.createObjectURL(await response.blob());
-  })();
+  // Kept on the device like the reads, so a gauge still has its picture offline.
+  const loading = keptBlob(`/api/habits/${id}/image`, getToken()).then((blob) => URL.createObjectURL(blob));
 
   habitImages.set(key, loading);
   // A failed load must not be remembered, or a picture uploaded a moment later
@@ -105,14 +120,73 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return send<T>(path, init, method);
 }
 
-async function send<T>(path: string, init: RequestInit, method: string): Promise<T> {
-  const body = init.body ?? (method === 'GET' ? undefined : '{}');
+/**
+ * How long a read waits before the saved copy is shown instead — only for reads
+ * that *have* a saved copy to fall back on. The phone reaches the PC over
+ * Tailscale, and with the PC asleep a request does not fail, it hangs; waiting a
+ * minute to show what is already on the device helps nobody. The session is
+ * asked for first and shortest, since the whole app waits on it.
+ */
+const KEPT_READ_TIMEOUT_MS = 15_000;
+const SESSION_TIMEOUT_MS = 6_000;
+const CHANGE_TIMEOUT_MS = 15_000;
+
+async function send<T>(rawPath: string, init: RequestInit, method: string): Promise<T> {
+  // Something created offline and since synced has a real id now; a screen may
+  // still hold the temporary one.
+  const path = resolveIds(rawPath);
+  const rawBody = init.body ?? (method === 'GET' ? undefined : '{}');
+  const body = typeof rawBody === 'string' ? resolveIds(rawBody) : rawBody;
+  const isRead = method === 'GET';
+  const kept = isRead && keepable(path);
+
+  // Known to be offline: what this device saw, at once, rather than a wait on
+  // a connection that is not there. Coming back is noticed by the live stream
+  // and by a quiet probe, and everything refetches then.
+  if (kept && connectivity().offline) {
+    const saved = await recall(path);
+    if (saved) {
+      noteShown(saved.savedAt);
+      return saved.data as T;
+    }
+  }
+
+  // Changes take their turn behind anything already queued, or a note created
+  // offline could be edited on the server before it exists there.
+  if (!isRead && (connectivity().offline || hasPending()) && queueable(method, path)) {
+    const answer = await queueChange(method, path, typeof body === 'string' ? body : undefined);
+    if (!connectivity().offline) void flushOutbox();
+    return answer as T;
+  }
+
+  // The cause is not shown — see the message below — but is kept for a debugger.
+  const unreachable = async (_cause: string): Promise<T> => {
+    markOffline();
+    if (kept) {
+      const saved = await recall(path);
+      if (saved) {
+        noteShown(saved.savedAt);
+        return saved.data as T;
+      }
+    }
+    if (!isRead && queueable(method, path)) {
+      return (await queueChange(method, path, typeof body === 'string' ? body : undefined)) as T;
+    }
+    // Said as what to do rather than what failed: "Failed to fetch" on a
+    // screen that simply is not kept offline explains nothing.
+    throw new ServerUnreachable(
+      isRead ? `Needs the PC — this isn't kept for offline use` : `Needs the PC — this can't be done offline`
+    );
+  };
+
+  const timeout = path === '/api/session' ? SESSION_TIMEOUT_MS : kept ? KEPT_READ_TIMEOUT_MS : !isRead ? CHANGE_TIMEOUT_MS : null;
 
   let response: Response;
   try {
     response = await fetch(path, {
       ...init,
       body,
+      ...(timeout !== null && !init.signal ? { signal: AbortSignal.timeout(timeout) } : {}),
       headers: {
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         authorization: `Bearer ${getToken()}`,
@@ -123,13 +197,38 @@ async function send<T>(path: string, init: RequestInit, method: string): Promise
     // `fetch` rejects only when the request never got a reply — the process is
     // down, the machine is asleep, the network is gone. Anything the server
     // answered, however badly, comes back as a response.
-    throw new ServerUnreachable(cause instanceof Error ? cause.message : 'could not reach the server');
+    return unreachable(cause instanceof Error ? cause.message : 'could not reach the server');
   }
 
+  /*
+   * A gateway error that is not this app's own JSON is `tailscale serve`
+   * answering for a PC whose app is not running — unreachable, not an error to
+   * show. This server's own 502s (a manga source failing) carry JSON and are
+   * left alone.
+   */
+  if (
+    (response.status === 502 || response.status === 503 || response.status === 504) &&
+    !(response.headers.get('content-type') ?? '').includes('application/json')
+  ) {
+    return unreachable(`the server did not answer (${response.status})`);
+  }
+
+  markOnline();
   if (response.status === 401) throw new Unauthorized('this device is not paired');
   if (!response.ok) throw new Error(await errorMessage(response, method, path));
   if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  if (kept) void remember(path, data);
+  return data;
+}
+
+/**
+ * The same request everything in core makes, for packages with their own
+ * clients — so their screens are kept for offline use, and refused or queued
+ * the same way, without each writing its own copy of the rules.
+ */
+export function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return request<T>(path, init);
 }
 
 /**
@@ -1585,11 +1684,8 @@ export const api = {
      * `<img src="/api/…">` sends no bearer token, so the picture has to be
      * fetched like any other API call — the same move the habit pictures make.
      */
-    fetchFile: async (path: string): Promise<Blob> => {
-      const response = await fetch(path, { headers: { authorization: `Bearer ${getToken()}` } });
-      if (!response.ok) throw new Error(`could not load ${path}`);
-      return response.blob();
-    },
+    // Kept like the reads, so a note's pictures open on the train with the note.
+    fetchFile: (path: string): Promise<Blob> => keptBlob(path, getToken()),
 
     uploadFile: (payload: { name: string; data: string; noteId?: string | null }) =>
       post<NoteFile & { markdown: string }>('/api/notes/files', payload),

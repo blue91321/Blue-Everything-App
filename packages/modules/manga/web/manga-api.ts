@@ -7,8 +7,9 @@
  * core is `getToken`, since every `/api/` call needs the bearer token and there
  * is no sense keeping a second copy of where it is stored.
  */
-import { getToken } from '@app/api';
+import { apiRequest, getToken } from '@app/api';
 import { cachedResponse, savedPages } from './offline-store';
+import { keptBlob } from '@app/offline-sync';
 
 export type SeriesStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
 
@@ -328,19 +329,14 @@ export interface SweepResult {
   series: SeriesSummary[];
 }
 
+/**
+ * Through core's request rather than a fetch of its own, which is what makes
+ * this package work offline like the rest of the app: your library and chapter
+ * lists open offline, and changes that cannot be queued say they need the PC.
+ * Same token, the server's own words in errors, and the same "unreachable".
+ */
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      ...(init.body === undefined ? {} : { 'content-type': 'application/json' }),
-      authorization: `Bearer ${getToken()}`,
-    },
-  });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `${response.status}`);
-  }
-  return response.json() as Promise<T>;
+  return apiRequest<T>(path, init);
 }
 
 export const manga = {
@@ -504,6 +500,21 @@ export function coverFor(path: string): Promise<string> {
   if (known) return known;
 
   const loading = (async () => {
+    /*
+     * Library covers are kept for offline like every other read, so the list
+     * still has its pictures on the train. Browse's thumbnails are not — they
+     * are hundreds of pictures of things you do not follow, and keeping them
+     * would fill the phone for nothing.
+     */
+    if (/^\/api\/manga\/[^/]+\/cover$/.test(path)) {
+      try {
+        return URL.createObjectURL(await keptBlob(path, getToken()));
+      } catch (error) {
+        const saved = await cachedResponse(path);
+        if (saved) return URL.createObjectURL(await saved.blob());
+        throw error;
+      }
+    }
     let response: Response;
     try {
       response = await fetch(path, {

@@ -2057,6 +2057,43 @@ console.log('packages (installing, switching, removing)');
   }
 }
 
+console.log('\n== a change made offline keeps the time it happened ==');
+{
+  /*
+   * The phone replays what you did offline with `x-happened-at`. A habit ticked
+   * a day and a half ago must count for that day, not for the moment it synced
+   * — and a phone clock from the future must not be believed.
+   */
+  const { db } = await import('../db/client.js');
+  const { habitEntries } = await import('../db/schema.js');
+  const { eq: whereEq } = await import('drizzle-orm');
+  const then = Date.now() - 36 * 60 * 60_000;
+
+  const habit = (await app.inject({ method: 'POST', url: '/api/habits', payload: { name: 'offline probe', targetPerPeriod: 3 } })).json();
+  await app.inject({ method: 'POST', url: `/api/habits/${habit.id}/check`, headers: { 'x-happened-at': String(then) } });
+  const [entry] = await db.select().from(habitEntries).where(whereEq(habitEntries.habitId, habit.id));
+  check('a habit ticked offline is recorded when it was ticked', entry?.doneAt === then, `${entry?.doneAt} vs ${then}`);
+  const day = new Date(then);
+  const thatDay = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  check('  ...and counts for that day, not today', entry?.periodKey === thatDay, `${entry?.periodKey} vs ${thatDay}`);
+
+  const task = (await app.inject({ method: 'POST', url: '/api/tasks', payload: { title: 'offline probe' } })).json();
+  const done = (
+    await app.inject({ method: 'PATCH', url: `/api/tasks/${task.id}`, payload: { status: 'done' }, headers: { 'x-happened-at': String(then) } })
+  ).json();
+  check('a task finished offline is finished when it was', done.completedAt === then, `${done.completedAt}`);
+
+  const future = Date.now() + 24 * 60 * 60_000;
+  const reopened = await app.inject({ method: 'PATCH', url: `/api/tasks/${task.id}`, payload: { status: 'todo' } });
+  const ahead = (
+    await app.inject({ method: 'PATCH', url: `/api/tasks/${task.id}`, payload: { status: 'done' }, headers: { 'x-happened-at': String(future) } })
+  ).json();
+  check('a clock from the future is not believed', reopened.statusCode === 200 && ahead.completedAt <= Date.now(), `${ahead.completedAt}`);
+
+  await app.inject({ method: 'DELETE', url: `/api/tasks/${task.id}` });
+  await app.inject({ method: 'DELETE', url: `/api/habits/${habit.id}` });
+}
+
 console.log('\n== a route can keep its writes out of the change stream ==');
 {
   /*

@@ -14,6 +14,7 @@ import {
 } from './theme';
 import { Logo, type LogoShape } from './Logo';
 import { Offline } from './Offline';
+import { ConnectivityBanner } from './ConnectivityBanner';
 import { onDataChange } from './live';
 import { onNavigate } from './nav';
 import { Dashboard } from './views/Dashboard';
@@ -480,6 +481,8 @@ export function App() {
         <header className="top">
           <h1>{current.label}</h1>
         </header>
+
+        <ConnectivityBanner />
 
         {current.id === 'dashboard' && <Dashboard />}
         {current.id === 'tasks' && <Tasks focus={focus} onFocused={clearFocus} />}

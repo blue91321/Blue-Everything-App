@@ -64,7 +64,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
    */
   const [comparing, setComparing] = useState<{ id: string; from: 'list' | 'chapters' } | null>(null);
   /** Your list, or browsing your sources. `useState`, like every other bit of navigation here. */
-  const [tab, setTab] = useState<'library' | 'browse'>('library');
+  const [tab, setTab] = useState<'library' | 'browse' | 'downloads'>('library');
   /** A library series whose source page is open — Details on a linked row. */
   const [details, setDetails] = useState<string | null>(null);
   /** A search handed to Browse — Details on a row with no source yet. */
@@ -249,9 +249,9 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
     {overlay}
     <div className="manga" hidden={overlay !== null}>
       <div className="tabs" role="tablist">
-        {(['library', 'browse'] as const).map((t) => (
+        {(['library', 'browse', 'downloads'] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} className={`tab${tab === t ? ' on' : ''}`} onClick={() => setTab(t)}>
-            {t === 'library' ? 'Library' : 'Browse'}
+            {t === 'library' ? 'Library' : t === 'browse' ? 'Browse' : 'Downloads'}
           </button>
         ))}
       </div>
@@ -266,6 +266,9 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
           <Browse onFollowed={() => library.reload()} onRead={(id) => setReading(id)} search={browseSearch} />
         </div>
       )}
+
+      {/* Everything saved on this device, and what is being saved. */}
+      {tab === 'downloads' && <Downloads onRead={(id) => setReading(id)} />}
 
       <div hidden={tab !== 'library'}>
       <form className="card manga-search" onSubmit={runSearch}>
@@ -288,8 +291,6 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
       </form>
 
       <SourceCard local={local} onExtensions={() => setManagingExtensions(true)} onOpenUi={() => setSuwayomiOpen(true)} />
-
-      <Downloads />
 
       {problem && <p className="banner">{problem}</p>}
 
