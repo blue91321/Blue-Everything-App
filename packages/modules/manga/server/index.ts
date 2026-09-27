@@ -55,6 +55,7 @@ import {
   type ExtensionCatalogue,
   type PageSample,
   sourcesToSearch,
+  readableChapter,
   rankMatches,
   titleScore,
   type SourceMatch,
@@ -87,7 +88,24 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const store = read();
     const positions = readPositions();
     return {
-      series: store.series.map((s) => ({ ...seriesSummary(s), position: positions[s.id] ?? null })),
+      series: store.series.map((s) => {
+        const place = positions[s.id] ?? null;
+        const shown = readableChapter(s.sourceChapter, s.latestChapter).chapter;
+        return {
+          ...seriesSummary(s),
+          position: place,
+          /*
+           * What the library grid draws and sorts by: the newest chapter as a
+           * number (the red bar), the furthest you have finished (the NEW badge
+           * is a chapter past it), when a chapter last landed and when you last
+           * read — "updated" and "recently read" orders.
+           */
+          latestNumber: chapterValue(shown),
+          readUpTo: s.readChapters.length > 0 ? Math.max(...s.readChapters) : null,
+          lastReleaseAt: Math.max(0, ...store.links.filter((l) => l.seriesId === s.id).map((l) => l.raisedAt)) || null,
+          lastReadAt: Math.max(0, place?.at ?? 0, ...s.readLog.map((r) => r.at)) || null,
+        };
+      }),
       /** What landed lately, for the panel — see `recentReleases`. */
       recent: recentReleases(store),
       /** MangaUpdates asks to be credited for release data. The screen does it. */
@@ -97,6 +115,65 @@ export async function routes(app: FastifyInstance): Promise<void> {
       /** Whether a new chapter also becomes a task — see `Store.releaseTasks`. */
       releaseTasks: store.releaseTasks,
     };
+  });
+
+  /**
+   * What you have read, newest first: every chapter finished, where and when,
+   * with the chapter you are partway through at the top of its series.
+   *
+   * The History tab. Built from what is already stored — the read log beside
+   * each series and the saved places — so nothing new is written to have it,
+   * and a chapter finished before sources were recorded is listed without one
+   * rather than with a guess.
+   */
+  app.get('/api/manga/history', async () => {
+    const store = read();
+    const positions = readPositions();
+    const entries: Array<{
+      seriesId: string;
+      title: string;
+      coverPath: string | null;
+      chapter: number;
+      chapterName: string | null;
+      source: string | null;
+      at: number;
+      kind: 'read' | 'reading';
+      page: number | null;
+      pages: number | null;
+    }> = [];
+    for (const s of store.series) {
+      const summary = seriesSummary(s);
+      for (const r of s.readLog) {
+        entries.push({
+          seriesId: s.id,
+          title: s.title,
+          coverPath: summary.coverPath,
+          chapter: r.chapter,
+          chapterName: null,
+          source: r.source,
+          at: r.at,
+          kind: 'read',
+          page: null,
+          pages: null,
+        });
+      }
+      const place = positions[s.id];
+      if (place) {
+        entries.push({
+          seriesId: s.id,
+          title: s.title,
+          coverPath: summary.coverPath,
+          chapter: place.chapter,
+          chapterName: place.chapterName,
+          source: place.source,
+          at: place.at,
+          kind: 'reading',
+          page: place.page,
+          pages: place.pages,
+        });
+      }
+    }
+    return { entries: entries.sort((a, b) => b.at - a.at).slice(0, 300) };
   });
 
   /**

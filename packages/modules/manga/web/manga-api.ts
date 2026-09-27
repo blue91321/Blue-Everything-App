@@ -35,6 +35,28 @@ export interface SeriesSummary {
   reviews?: SourceReview[];
   /** Where you are in it, on the library list. Optional for the same reason. */
   position?: ReadingPosition | null;
+  /** The newest chapter as a number — the bar under each cover. The rest are for the grid's badge and sorting. */
+  latestNumber?: number | null;
+  /** The furthest chapter finished. */
+  readUpTo?: number | null;
+  /** When a chapter last landed, as far as this app has noticed. */
+  lastReleaseAt?: number | null;
+  /** When you last read any of it. */
+  lastReadAt?: number | null;
+}
+
+/** One line of the History tab — a chapter finished, or the one you are partway through. */
+export interface HistoryEntry {
+  seriesId: string;
+  title: string;
+  coverPath: string | null;
+  chapter: number;
+  chapterName: string | null;
+  source: string | null;
+  at: number;
+  kind: 'read' | 'reading';
+  page: number | null;
+  pages: number | null;
 }
 
 /** Your place inside a chapter — see `ReadingPosition` on the server. */
@@ -341,6 +363,7 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const manga = {
   list: () => call<Library>('/api/manga'),
+  history: () => call<{ entries: HistoryEntry[] }>('/api/manga/history'),
   search: (q: string) => call<{ results: Candidate[] }>(`/api/manga/search?q=${encodeURIComponent(q)}`),
   add: (candidate: Candidate) =>
     call<SeriesSummary>('/api/manga', { method: 'POST', body: JSON.stringify(candidate) }),

@@ -14,7 +14,18 @@
 import { useEffect, useState } from 'react';
 import { coverFor } from './manga-api';
 
-export function Cover({ path, title, size = 48 }: { path: string | null; title: string; size?: number }) {
+export function Cover({
+  path,
+  title,
+  size = 48,
+  fill = false,
+}: {
+  path: string | null;
+  title: string;
+  size?: number;
+  /** As wide as its box, at a cover's proportions — the library grid, whose columns come from the width. */
+  fill?: boolean;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -34,18 +45,19 @@ export function Cover({ path, title, size = 48 }: { path: string | null; title: 
     };
   }, [path]);
 
-  const style = { width: size, height: Math.round(size * 1.4) } as const;
+  const style = fill ? undefined : ({ width: size, height: Math.round(size * 1.4) } as const);
+  const kind = fill ? 'manga-cover fill' : 'manga-cover';
 
   // A placeholder rather than nothing, so a row is the same height whether or
   // not the picture arrived — a list that reflows as covers land is worse than
   // one that never had them.
   if (!url) {
     return (
-      <div className="manga-cover manga-cover-empty" style={style} aria-hidden="true">
+      <div className={`${kind} manga-cover-empty`} style={style} aria-hidden="true">
         {failed || !path ? '' : '…'}
       </div>
     );
   }
 
-  return <img className="manga-cover" style={style} src={url} alt={`Cover of ${title}`} />;
+  return <img className={kind} style={style} src={url} alt={`Cover of ${title}`} />;
 }

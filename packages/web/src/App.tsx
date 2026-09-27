@@ -15,6 +15,7 @@ import {
 import { Logo, type LogoShape } from './Logo';
 import { Offline } from './Offline';
 import { ConnectivityBanner } from './ConnectivityBanner';
+import { Home } from './Home';
 import { onDataChange } from './live';
 import { onNavigate } from './nav';
 import { Dashboard } from './views/Dashboard';
@@ -58,6 +59,8 @@ interface NavItem {
 }
 
 const CORE_NAV: NavItem[] = [
+  // The launcher — every other item as a tile. See `Home.tsx`.
+  { id: 'home', label: 'Home', glyph: '⌂', order: 5, always: true },
   { id: 'dashboard', label: 'Dashboard', glyph: '◒', order: 10, always: true },
   { id: 'tasks', label: 'Tasks', glyph: '☑', order: 20, always: true },
   { id: 'habits', label: 'Habits', glyph: '↻', order: 30, always: false },
@@ -96,7 +99,14 @@ export function App() {
    * would re-check itself in a loop.
    */
   const sessionRef = useRef<Session | null>(null);
-  const [view, setView] = useState<NavId>('dashboard');
+  /*
+   * A phone opens on the launcher; anything wider on the Dashboard, as it
+   * always has. Decided once, at load — rotating the phone or widening the
+   * window later is not a reason to throw you back to a different screen.
+   */
+  const [view, setView] = useState<NavId>(() =>
+    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches ? 'home' : 'dashboard'
+  );
   /**
    * The row a screen should open for editing when it arrives, from the
    * right-click menu.
@@ -484,6 +494,9 @@ export function App() {
 
         <ConnectivityBanner />
 
+        {current.id === 'home' && (
+          <Home items={nav.filter((n) => n.id !== 'home')} onOpen={(id) => go(id)} logo={logo} />
+        )}
         {current.id === 'dashboard' && <Dashboard />}
         {current.id === 'tasks' && <Tasks focus={focus} onFocused={clearFocus} />}
         {current.id === 'habits' && <Habits focus={focus} onFocused={clearFocus} />}

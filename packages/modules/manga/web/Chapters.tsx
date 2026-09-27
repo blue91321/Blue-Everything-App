@@ -21,8 +21,12 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useAsync } from '@app/useAsync';
+import { useButtonMenu } from '@app/ContextMenu';
+import { Cover } from './Cover';
+import { Icon } from './Icons';
 import { chapterText } from './judge';
-import { manga, type SourceChapter } from './manga-api';
+import { sourceLabel } from './Library';
+import { ageOf, manga, type SeriesSummary, type SourceChapter } from './manga-api';
 import { Reader } from './Reader';
 import { usePositionSaver } from './usePositionSaver';
 import {
@@ -40,14 +44,31 @@ import { useConnectivity } from '@app/offline-sync';
 /** How many "Next" saves ahead of where you are. */
 const SAVE_AHEAD = [5, 10] as const;
 
+const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
+  ongoing: 'ongoing',
+  completed: 'finished',
+  hiatus: 'on hiatus',
+  cancelled: 'cancelled',
+  unknown: 'status unknown',
+};
+
 export function Chapters({
   seriesId,
+  series,
   onClose,
   onCompare,
+  onDetails,
+  onChanged,
   continueOnOpen = false,
   coverPath = null,
 }: {
   seriesId: string;
+  /** The library's summary of it: status, when it was checked, and whether that failed. */
+  series?: SeriesSummary;
+  /** The source's page for it — Series details. */
+  onDetails?: () => void;
+  /** Unlinked or unfollowed from the ⋯, so the library behind this reloads. */
+  onChanged?: () => void;
   /** Saved with any downloaded chapter, so the offline list has a picture. */
   coverPath?: string | null;
   onClose: () => void;
@@ -163,6 +184,46 @@ export function Chapters({
     }
   }
 
+  const [problem, setProblem] = useState<string | null>(null);
+
+  /** Both leave nothing to show here, so both close it. */
+  async function unlink() {
+    if (!confirm(`Stop reading ${series?.title ?? 'this'} on ${data?.sourceName ?? 'this source'}? What you have read is kept.`)) return;
+    try {
+      await manga.source.unlink(seriesId);
+      onChanged?.();
+      onClose();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'could not unlink it');
+    }
+  }
+
+  async function unfollow() {
+    if (!confirm(`Stop following ${series?.title ?? data?.seriesTitle ?? 'this'}?`)) return;
+    try {
+      await manga.remove(seriesId);
+      onChanged?.();
+      onClose();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'could not remove it');
+    }
+  }
+
+  /*
+   * What the library's row buttons used to do, behind one ⋯ — the library is a
+   * shelf of covers now, and this is the screen a cover opens. Other sources is
+   * here as well as in the menu's old home because this is where you are when
+   * a chapter turns out to be broken or missing; switching keeps your place,
+   * since what you have read is stored by chapter number, not by source ids.
+   */
+  const menu = useButtonMenu(() => [
+    ...(onDetails ? [{ label: 'Series details', onSelect: onDetails }] : []),
+    { label: 'Other sources', onSelect: onCompare },
+    { label: busy ? 'Checking the site…' : 'Check the site for chapters', onSelect: () => void refresh(), disabled: busy },
+    { label: 'Unlink this source', onSelect: () => void unlink() },
+    { label: 'Stop following', onSelect: () => void unfollow(), danger: true },
+  ]);
+
   async function finished(chapterNumber: number) {
     saver.flush();
     try {
@@ -208,29 +269,36 @@ export function Chapters({
   }
 
   return (
-    <div className="card">
+    <div className="card manga-chapters-screen">
       <div className="row between">
         <button className="btn subtle" onClick={onClose}>
           ‹ Back
         </button>
-        <span className="meta">
-          {data ? `${data.seriesTitle} · ${data.sourceName}` : 'loading…'}
-        </span>
-        <span className="row">
-          {/*
-            * Here as well as on the series row, because this is where you are
-            * when a chapter turns out to be broken or missing. Switching keeps
-            * your place: what you have read is stored by chapter number, not by
-            * this source's ids.
-            */}
-          <button className="btn subtle" onClick={onCompare}>
-            Other sources
-          </button>
-          <button className="btn subtle" disabled={busy} onClick={() => void refresh()}>
-            {busy ? 'Checking the site…' : 'Refresh'}
-          </button>
-        </span>
+        <button className="manga-icon-btn" aria-label="More for this series" aria-haspopup="menu" onClick={menu.open}>
+          <Icon.more />
+        </button>
       </div>
+      {menu.menu}
+
+      <div className="manga-chapters-head">
+        <Cover path={coverPath} title={series?.title ?? data?.seriesTitle ?? ''} size={64} />
+        <div className="manga-row-text">
+          <span className="manga-chapters-title">{series?.title ?? data?.seriesTitle ?? 'loading…'}</span>
+          <span className="meta">
+            {data ? sourceLabel(data.sourceName) : ''}
+            {series ? ` · ${STATUS_LABEL[series.status]}` : ''}
+            {data ? ` · ${data.chapters.length} chapter${data.chapters.length === 1 ? '' : 's'}` : ''}
+            {series?.checkedAt ? ` · checked ${ageOf(series.checkedAt, Date.now())}` : ''}
+          </span>
+          {/*
+            * Beside the numbers it could not refresh, never instead of them —
+            * the grid's ! points here.
+            */}
+          {series?.error && <span className="meta urgent">Last check failed: {series.error}</span>}
+          {series?.notWatchingBecause && <span className="meta">Not watched — {series.notWatchingBecause}</span>}
+        </div>
+      </div>
+      {problem && <p className="banner">{problem}</p>}
 
       {place && placeChapter && (
         <div className="manga-continue">
@@ -292,7 +360,7 @@ export function Chapters({
       {list.error && <p className="banner">Could not load: {list.error.message}</p>}
       {data?.chapters.length === 0 && (
         <p className="empty">
-          The source has no chapters for this one. Try Refresh, or{' '}
+          The source has no chapters for this one. Try ⋯ → Check the site, or{' '}
           <button className="btn subtle" onClick={onCompare}>
             see it on other sources
           </button>

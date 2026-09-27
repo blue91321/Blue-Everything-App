@@ -3357,3 +3357,435 @@ div.manga-chapter-row {
   gap: 8px;
   margin: 0 0 8px;
 }
+
+/* ---------- screens that draw their own top bar ---------- */
+
+/*
+ * Home and the manga screen carry their own heading, so the page's is hidden
+ * while they show — two titles stacked is the one thing worse than none.
+ * `:has()` rather than a class passed down, for the reason the Dashboard's
+ * second column gives: `App` does not know which screen wants what, and the
+ * child does. Where `:has()` is unsupported both titles show, which is untidy
+ * and nothing worse.
+ */
+.app:has(> .home-screen) > header.top,
+.app:has(.manga-screen:not([hidden])) > header.top {
+  display: none;
+}
+
+/*
+ * With the heading gone, a banner would be the first thing on the page — and
+ * sit under the fixed ☰. So it keeps the row the heading was holding, but only
+ * while the menu is not docked, since docked the content starts 260px clear.
+ */
+.shell:not(.desktop) .app:has(> .home-screen) > header.top + :is(.offline-banner, .banner),
+.shell:not(.desktop) .app:has(.manga-screen:not([hidden])) > header.top + :is(.offline-banner, .banner) {
+  margin-top: calc(var(--menu-top) + var(--menu-size) + 8px);
+}
+
+/* ---------- home ---------- */
+
+.home-screen {
+  max-width: 640px;
+  padding-bottom: 24px;
+}
+
+/* On the ☰'s line, like the drawer's wordmark — see `.drawer-head`. */
+.home-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: var(--menu-top) 0 24px;
+}
+
+.shell:not(.desktop) .home-head {
+  padding-left: var(--menu-clear);
+}
+
+.home-title {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+/*
+ * Four across on a phone, like the home screen it sits beside. Columns from the
+ * width rather than a number, so the PC gets more of them rather than four
+ * enormous ones.
+ */
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 20px 8px;
+}
+
+.home-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.home-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 26px;
+  line-height: 1;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.home-tile:hover .home-glyph,
+.home-tile:focus-visible .home-glyph {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.home-tile:active .home-glyph {
+  transform: scale(0.94);
+}
+
+.home-label {
+  max-width: 100%;
+  font-size: 12.5px;
+  line-height: 1.25;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- the manga screen ---------- */
+
+:root {
+  /*
+   * The NEW badge, the same red on both themes. It is white on red whatever is
+   * behind it — it sits on a cover, not on the page — and red is what a badge
+   * saying "something here you have not seen" is everywhere else on a phone.
+   */
+  --manga-new: #e5383b;
+}
+
+/*
+ * The screen is at least as tall as the window, so the tab bar sits at the
+ * bottom of it even when the tab is nearly empty. Sticky does the rest — see
+ * the note at the top of `view.tsx`.
+ */
+.manga-screen:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - env(safe-area-inset-top));
+  min-height: calc(100dvh - env(safe-area-inset-top));
+}
+
+.app:has(.manga-screen:not([hidden])) {
+  padding-bottom: 0;
+}
+
+/*
+ * Three cells: the ☰'s room, the title, the search. Equal outer cells keep the
+ * title on the centre line of the screen rather than of what is left, and the
+ * bar takes the button's own band so everything on it centres on the ☰.
+ */
+.manga-topbar {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  padding-top: var(--menu-top);
+  min-height: calc(var(--menu-top) + var(--menu-size));
+  margin-bottom: 10px;
+}
+
+.manga-topbar h1 {
+  margin: 0;
+  font-size: 18px;
+  text-align: center;
+  letter-spacing: -0.01em;
+}
+
+.manga-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  width: 40px;
+  height: var(--menu-size);
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.manga-icon-btn:hover {
+  background: var(--surface-raised);
+}
+
+.manga-body {
+  flex: 1 0 auto;
+  padding-bottom: 16px;
+}
+
+/*
+ * Across the whole column, out to the page's own padding. Below the drawer's
+ * backdrop, so an open menu covers it like everything else.
+ */
+.manga-tabbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 15;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0 calc(-1 * var(--gap));
+  padding: 2px 0 calc(2px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.manga-tabbar button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 0 5px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.manga-tabbar button:hover {
+  color: var(--text);
+}
+
+.manga-tabbar button.on {
+  color: var(--accent);
+}
+
+.manga-tabbar button span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- library ---- */
+
+.manga-library {
+  container: manga-library / inline-size;
+}
+
+.manga-lib-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manga-lib-controls input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.manga-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.manga-lib-count {
+  margin: 6px 0 12px;
+}
+
+/*
+ * Three across on a phone, as in the app this replaced — the width of the
+ * library's own column decides, so opening the drawer beside it takes columns
+ * away rather than squeezing covers.
+ */
+.manga-lib-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 10px;
+}
+
+@container manga-library (min-width: 560px) {
+  .manga-lib-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 20px 14px;
+  }
+}
+
+.manga-lib-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manga-lib-cover {
+  position: relative;
+  display: block;
+}
+
+.manga-cover.fill {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 5 / 7;
+  border-radius: 6px;
+}
+
+.manga-lib-tile:hover .manga-cover,
+.manga-lib-tile:focus-visible .manga-cover {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.manga-lib-new {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--manga-new);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 16px;
+}
+
+/* On a cover of any colour, so it brings its own dark ground. */
+.manga-lib-warn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.72);
+  color: #ffb454;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 20px;
+  text-align: center;
+}
+
+.manga-lib-title {
+  margin-top: 2px;
+  font-size: 0.85rem;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The newest chapter's number, in the accent — the app's colour, where the old app used its own. */
+.manga-lib-bar {
+  display: block;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+.manga-lib-bar.unknown {
+  background: var(--surface-raised);
+  color: var(--muted);
+}
+
+.manga-lib-source {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  text-transform: lowercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manga-lib-source.none {
+  font-style: italic;
+}
+
+/* ---- the chapter list's head ---- */
+
+.manga-chapters-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 10px 0 12px;
+}
+
+.manga-chapters-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+/* ---- history ---- */
+
+.manga-history .card {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.manga-history-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manga-history-row:last-child {
+  border-bottom: 0;
+}
+
+.manga-history-row:hover .title {
+  color: var(--accent);
+}
+
+/* The one you are partway through, marked the way a started chapter is. */
+.manga-history-row.reading .manga-row-text .meta {
+  color: var(--accent);
+}
+
+.manga-history-time {
+  flex: none;
+}

@@ -335,6 +335,7 @@ function Search({
   asked: { query: string; at: number } | null;
 }) {
   const [query, setQuery] = useState('');
+  const box = useRef<HTMLInputElement>(null);
   const [result, setResult] = useState<GroupedSearch | null>(null);
   const [searching, setSearching] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -380,6 +381,15 @@ function Search({
   // the answers rather than an empty box.
   useEffect(() => {
     if (!asked) return;
+    /*
+     * The top bar's 🔍 asks with nothing: a search you are about to type, so the
+     * box is focused rather than anything run — and what was there is kept,
+     * since tapping it again should not throw away the last search's words.
+     */
+    if (!asked.query) {
+      box.current?.focus();
+      return;
+    }
     setQuery(asked.query);
     void run(undefined, asked.query);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -418,6 +428,7 @@ function Search({
     <>
       <form className="row" onSubmit={run}>
         <input
+          ref={box}
           value={query}
           placeholder="Title…"
           aria-label="Title to search every source for"
