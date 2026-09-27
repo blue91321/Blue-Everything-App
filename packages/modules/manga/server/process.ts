@@ -161,6 +161,13 @@ class SuwayomiProcess {
           // Its own folder under ours, so it never writes into the app's data
           // root beside the database.
           `-Dsuwayomi.tachidesk.config.server.rootDir=${join(dataDir, 'suwayomi')}`,
+          // Suwayomi opens its web UI in the default browser every time it
+          // starts, which here means a tab appearing on the PC whenever the
+          // app wakes it for a chapter list — often mid-game, the one moment
+          // this app exists to leave alone. Its UI is reachable from Manga →
+          // More when it is actually wanted. A property rather than an edit
+          // to its server.conf, so it holds on a fresh data folder too.
+          '-Dsuwayomi.tachidesk.config.server.initialOpenInBrowserEnabled=false',
           '-jar',
           jarPath,
         ],
