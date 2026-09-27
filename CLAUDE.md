@@ -105,6 +105,29 @@ dependencies, which is 66KB gzipped and nearly all of it framework.
 - **Notes** — a linked notebook: folders, `[[wiki-links]]`, backlinks, tags, a
   graph, and a way in from fourteen other apps. See **Notes** below.
 - **Settings**.
+- **Home** — every other screen as a tile. See below.
+
+### The phone opens on a home screen
+
+`Home.tsx`: every part of the app as a tile, four across, and the first screen
+on anything under 768px wide. On a phone the drawer is off-screen, so opening
+the app went straight to the Dashboard and everything else was a slide and a tap
+away; a launcher is one tap to anywhere, and it is how the phone around it
+already works.
+
+**The tiles are the drawer's own list**, the same items in the same order with
+whatever is switched off already gone and any package's tab included, so the
+two cannot disagree about what the app has. The PC still opens on the
+Dashboard, and Home is in the drawer on both.
+
+**It draws its own heading, so the page's is hidden** while it shows, through
+`.app:has(> .home-screen)` for the reason the Dashboard's second column uses
+`:has()`. With the heading gone a banner would be the first thing on the page,
+under the fixed ☰, so it keeps the row the heading held.
+
+**Hover is only applied where there is one** (`@media (hover: hover)`). A phone
+applies `:hover` to whatever was last tapped and leaves it there, so the tile
+you just came back from would stay lit.
 
 ### The Dashboard's side column
 
@@ -411,6 +434,75 @@ against.
   else". The candidates are listed rather than the first hit taken, because there
   are a great many places called Springfield — and the live check confirms it:
   Philadelphia returns five, in two different states.
+
+### Manga is laid out like a reader
+
+`packages/modules/manga/web/view.tsx`. The screen takes the shape of the
+reading app it replaced on the phone: a bar across the top with the screen's
+name and a search, the library as covers three across, and five tabs along the
+bottom: **Browse, Library, History, Downloads, More**. A layout your thumb
+already knows is worth more here than one argued from first principles.
+
+**The top bar's left corner is the app's ☰**, not a button of its own. That
+button is fixed to the top-left of the screen on every page, so the bar leaves
+it a cell and the page's own title is hidden while this screen shows (this bar
+is the title). The 🔍 goes to Browse → Search with the box focused; the Title
+box on Library only filters what you already follow.
+
+**The tab bar is sticky, not fixed.** Fixed pins it to the *window*, which with
+the menu docked is 260px too far left; sticky pins it to the bottom of the
+screen's own column, so it is one bar at every width without knowing the drawer
+exists. The screen is at least the window's height, so the bar sits at the
+bottom of a nearly empty tab too. Verified at 375px (0–375 across the bottom)
+and at 1440px docked (260–1440). On a wide window the five items stay together
+in the middle rather than spreading 240px apart.
+
+**Each cover says four things**, and the order is how the old app drew them:
+
+- **NEW** when the source has a chapter past the furthest you have read *or are
+  partway through*, and only once you have read something. Before that every
+  chapter is unread, and a badge on every cover says nothing.
+- **The bar**, the newest chapter's number, in the accent. The old app's bar
+  was its own brand colour; this app's is the accent. NEW stays red whatever
+  the accent, because red is what "something you have not seen" is on a phone.
+- **Where you read it**, with the language suffix stripped: it is the same on
+  every tile and cost a third of the width.
+- **!** on the cover when the last check failed, with the reason on hover and to
+  a screen reader. The number beside it is then older than it looks, and
+  saying nothing about that is the failure this app is built against.
+
+The server resolves what the grid needs onto each series in `/api/manga`:
+`latestNumber`, `readUpTo`, `lastReleaseAt` and `lastReadAt`. Only the badge's
+comparison is done in the browser, since it is a comparison of two numbers the
+server already decided.
+
+**Sort** is five orders (new chapters first, last updated, recently read, title,
+recently added), remembered in `localStorage` like the folded note folders,
+because sorting the phone's shelf should not reorder the PC's.
+
+**Tapping a cover opens its chapter list**, which now carries the series' head
+(cover, source, status, when it was checked and whether that failed) and a ⋯
+holding what the library row's four buttons did: details, other sources, check
+the site, unlink, stop following. Nothing was lost; it moved one tap in. A
+series with no source yet has no chapter list, so its cover opens the
+comparison that finds one. Right-click on a cover offers the same on the PC.
+
+The head counts **distinct chapter numbers**, not entries. MangaFire lists two
+editions of most chapters, and the first version read "864 chapters" for a
+series at 419.
+
+**History** lists every chapter finished and the one in progress, by day, from
+what the server already keeps: the read log on each series and the saved
+places. `GET /api/manga/history` writes nothing to exist. It is mounted only
+while shown, so it is fetched fresh each time, because the place is saved
+without announcing a change and a copy held from earlier would be missing the
+page you just left.
+
+**More** holds what is set once and visited rarely: following by name through
+MangaDex, the release settings, where chapters come from, and **series that
+need a look**. The last is new. Those reasons were printed on each row of the
+old list, a grid of covers has no room for a sentence, and a series that
+silently never nudges looks exactly like a broken feature.
 
 ### Installing a package, the way you would a texture pack
 

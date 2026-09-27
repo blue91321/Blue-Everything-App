@@ -3449,7 +3449,17 @@ div.manga-chapter-row {
   transition: transform 0.12s ease, background 0.12s ease;
 }
 
-.home-tile:hover .home-glyph,
+/*
+ * Hover only where there is one. A phone applies :hover to whatever was last
+ * tapped and keeps it there, so the tile you just left would stay lit.
+ */
+@media (hover: hover) {
+  .home-tile:hover .home-glyph {
+    background: var(--surface);
+    border-color: var(--accent);
+  }
+}
+
 .home-tile:focus-visible .home-glyph {
   background: var(--surface);
   border-color: var(--accent);
@@ -3550,7 +3560,9 @@ div.manga-chapter-row {
   bottom: 0;
   z-index: 15;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  /* A fifth of a phone; on a wide window, five together in the middle rather than 240px apart. */
+  grid-template-columns: repeat(5, minmax(0, 140px));
+  justify-content: center;
   margin: 0 calc(-1 * var(--gap));
   padding: 2px 0 calc(2px + env(safe-area-inset-bottom));
   background: var(--surface);
@@ -3660,7 +3672,14 @@ div.manga-chapter-row {
   border-radius: 6px;
 }
 
-.manga-lib-tile:hover .manga-cover,
+/* Hover only where there is one — see `.home-tile`. */
+@media (hover: hover) {
+  .manga-lib-tile:hover .manga-cover {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
 .manga-lib-tile:focus-visible .manga-cover {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

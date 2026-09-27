@@ -216,6 +216,8 @@ export function Chapters({
    * a chapter turns out to be broken or missing; switching keeps your place,
    * since what you have read is stored by chapter number, not by source ids.
    */
+  const count = data ? new Set(data.chapters.map((c) => c.number)).size : null;
+
   const menu = useButtonMenu(() => [
     ...(onDetails ? [{ label: 'Series details', onSelect: onDetails }] : []),
     { label: 'Other sources', onSelect: onCompare },
@@ -287,7 +289,11 @@ export function Chapters({
           <span className="meta">
             {data ? sourceLabel(data.sourceName) : ''}
             {series ? ` · ${STATUS_LABEL[series.status]}` : ''}
-            {data ? ` · ${data.chapters.length} chapter${data.chapters.length === 1 ? '' : 's'}` : ''}
+            {/*
+              * Chapters, not entries: a site listing two editions of a chapter
+              * would otherwise claim twice what it has.
+              */}
+            {count !== null ? ` · ${count} chapter${count === 1 ? '' : 's'}` : ''}
             {series?.checkedAt ? ` · checked ${ageOf(series.checkedAt, Date.now())}` : ''}
           </span>
           {/*
