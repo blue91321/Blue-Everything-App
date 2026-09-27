@@ -244,6 +244,13 @@ function Matching({ state, onAgain }: { state: MatchingState; onAgain: () => voi
         </>
       )}
 
+      {(state.broken ?? []).map((b) => (
+        <p key={b.source} className="meta urgent">
+          {b.source} refused searches and was skipped: {b.reason}. Its series were looked for on your other
+          sources instead.
+        </p>
+      ))}
+
       {state.noSource.length > 0 && (
         <p className="meta">
           No source installed for{' '}

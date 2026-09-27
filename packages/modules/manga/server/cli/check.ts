@@ -49,7 +49,7 @@ import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiCh
 import { thumbPath } from '../present.js';
 import { PlistError, readBinaryPlist, unarchive } from '../bplist.js';
 import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup } from '../mangareader.js';
-import { pickMatch, siteKey, sourceForSite } from '../matching.js';
+import { failureReason, fallbackSources, pickMatch, siteKey, sourceForSite } from '../matching.js';
 import { BACKUP, PLAIN } from './mangareader-fixture.js';
 
 let failures = 0;
@@ -957,6 +957,17 @@ console.log('\nfinding an import on your sources\n');
   check('the same title, however it is written, is a match', pickMatch('The Player Hides His Past', found)?.id === 'THE PLAYER HIDES HIS PAST!');
   // The sequel is not the series. A wrong link reports another series' chapters.
   check('a title that merely contains it is not', pickMatch('The Player Hides His Past', [found[0], found[2]]) === null);
+
+  // The fallbacks when the site it was read on cannot help.
+  const withLocal = [...installed, src('0', 'Local source', 'en')];
+  const others = fallbackSources(withLocal, ['en']).map((s) => s.id);
+  check('fallbacks are the languages you read', others.includes('3') && !others.includes('2'), others.join(', '));
+  check('but never your own files', !others.includes('0'));
+  // Real text from Suwayomi, first line; the stack trace underneath is noise on a screen.
+  const cloudflare = new Error(
+    'Exception while fetching data (/fetchSourceManga) : Cloudflare bypass currently disabled\n\njava.io.IOException: Cloudflare bypass currently disabled\n\tat keiyoushi.a.b.a(Unknown Source)'
+  );
+  check('a failure is reduced to what the extension said', failureReason(cloudflare) === 'Cloudflare bypass currently disabled', failureReason(cloudflare));
 }
 
 /* ------------------------------------------------------------------ */

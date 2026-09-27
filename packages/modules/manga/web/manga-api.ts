@@ -79,6 +79,8 @@ export interface MatchingState {
   notFound: number;
   failed: number;
   noSource: Array<{ site: string; count: number }>;
+  /** Sources set aside because they kept failing, with what they said. Optional: older servers. */
+  broken?: Array<{ source: string; reason: string }>;
   finishedAt: number | null;
   problem: string | null;
   /** Imported series still without a source. Only on the status read. */

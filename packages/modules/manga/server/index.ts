@@ -183,8 +183,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
            * is a chapter past it), when a chapter last landed and when you last
            * read — "updated" and "recently read" orders.
            */
-          // An import's own newest chapter stands in until a source has been asked.
-          latestNumber: chapterValue(shown) ?? chapterValue(s.origin?.latest ?? null),
+          /*
+           * An import's own newest chapter stands in only while there is no
+           * source at all. Once linked, it is another site's numbering: Colorist
+           * read to 61 on topmanhua showed 63 and NEW over a source that has 49.
+           */
+          latestNumber: chapterValue(shown) ?? (s.source ? null : chapterValue(s.origin?.latest ?? null)),
           readUpTo: s.readChapters.length > 0 ? Math.max(...s.readChapters) : null,
           lastReleaseAt: Math.max(0, ...store.links.filter((l) => l.seriesId === s.id).map((l) => l.raisedAt)) || null,
           lastReadAt: Math.max(0, place?.at ?? 0, ...s.readLog.map((r) => r.at)) || null,
@@ -1604,6 +1608,28 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
     try {
       const chapters = await ctx.adapter.chapters(ctx.series.source!.mangaId, refresh === '1');
+      /*
+       * A series never checked on its source takes its baseline from the list
+       * you just opened, rather than showing nothing (or another site's number)
+       * until the next sweep. Only when nothing is recorded: a baseline is the
+       * sweep's silent first reading, and doing it here raises nothing either.
+       */
+      if (ctx.series.latestChapter === null && ctx.series.sourceChapter === null) {
+        const numbers = chapters.map((c) => c.number).filter((n) => Number.isFinite(n));
+        if (numbers.length > 0) {
+          const store = read();
+          const row = store.series.find((s) => s.id === id);
+          if (row && row.latestChapter === null && row.sourceChapter === null) {
+            const newest = Math.max(...numbers);
+            const now = Date.now();
+            row.sourceChapter = newest;
+            row.latestChapter = String(newest);
+            row.sourceCheckedAt = now;
+            row.checkedAt = now;
+            write(store);
+          }
+        }
+      }
       const read_ = new Set(ctx.series.readChapters);
       const readOn = new Map(ctx.series.readLog.map((r) => [r.chapter, r.source]));
       return {

@@ -15,14 +15,25 @@
  * reports another series' chapters, where an unlinked one says plainly that it
  * has no source and offers to find one.
  *
- * ### Only the sites it was read on
+ * ### The sites it was read on first, then the others
  *
- * Asking every installed source about several hundred titles would be several
- * thousand searches against other people's sites. The ones it was read on are
- * the most likely to have it under that exact name, and they are tried newest
- * first. A site with no installed
- * source is counted and named, so the screen can say which extension would
- * bring the most in.
+ * The sites it was read on are the most likely to have it under that exact
+ * name, so they are tried first, newest first. Then up to `FALLBACKS` of your
+ * other sources in the languages you read — because the site it was read on
+ * may have no extension, or one that has stopped working. The first real run
+ * found Mangakakalot, where 633 of 886 had been read, refusing every search
+ * with "Cloudflare bypass currently disabled", and linked 9.
+ *
+ * The fallbacks are ordered by what has worked this run: a source that keeps
+ * finding things is asked sooner, so the order settles on the big catalogues
+ * without a list of names in this file to go stale.
+ *
+ * ### A broken source is noticed once, not 633 times
+ *
+ * `BROKEN_AFTER` failures in a row and a source is set aside for the rest of
+ * the run, with the reason it gave, which the screen shows. A failure used to
+ * be counted and its reason thrown away, so "748 could not be asked" said
+ * nothing about why or what to do.
  *
  * ### Gently, and in the background
  *
@@ -50,6 +61,8 @@ export type MatchingState = {
   failed: number;
   /** Sites with no installed source, most series first. */
   noSource: Array<{ site: string; count: number }>;
+  /** Sources set aside this run because they kept failing, with what they said. */
+  broken: Array<{ source: string; reason: string }>;
   finishedAt: number | null;
   problem: string | null;
 };
@@ -62,12 +75,19 @@ const IDLE: MatchingState = {
   notFound: 0,
   failed: 0,
   noSource: [],
+  broken: [],
   finishedAt: null,
   problem: null,
 };
 
 /** Between searches. A site being asked hundreds of questions in a row deserves the gap. */
-const PAUSE_MS = 750;
+const PAUSE_MS = 500;
+
+/** Other sources tried once the sites it was read on have not found it. */
+const FALLBACKS = 4;
+
+/** Failures in a row before a source is set aside for the rest of a run. */
+const BROKEN_AFTER = 3;
 
 /** Announce progress this often, so the screen moves without reloading on every link. */
 const ANNOUNCE_EVERY = 20;
@@ -105,6 +125,19 @@ export function sourceForSite(site: string, sources: BrowseSource[], languages: 
 export function pickMatch(title: string, matches: SourceMatch[]): SourceMatch | null {
   const want = groupKey(title);
   return matches.find((m) => groupKey(m.title) === want) ?? null;
+}
+
+/** Sources worth asking about something not found where it was read: your languages, not your own files. */
+export function fallbackSources(sources: BrowseSource[], languages: readonly string[]): BrowseSource[] {
+  return sources.filter((s) => s.id !== '0' && languages.includes(s.lang));
+}
+
+/** The first line of what a source said, which is the part a person can act on. */
+export function failureReason(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  const line = text.split('\n').find((l) => l.trim()) ?? 'no answer';
+  // Suwayomi wraps the extension's own message: keep what the extension said.
+  return line.replace(/^Exception while fetching data \([^)]*\)\s*:\s*/, '').trim().slice(0, 160);
 }
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -147,62 +180,84 @@ async function run(todo: Series[]): Promise<void> {
   }
   const adapter = new SuwayomiAdapter(url);
   const sources = await adapter.listSources();
+  const others = fallbackSources(sources, store.readLanguages);
 
   // Most recently read first: an import sets `addedAt` to when it was last read.
   todo.sort((a, b) => b.addedAt - a.addedAt);
   const noSource = new Map<string, number>();
+  const wins = new Map<string, number>();
+  const streak = new Map<string, number>();
+  const broken = new Map<string, string>();
   let sinceAnnounce = 0;
 
   for (const series of todo) {
     const origin = series.origin!;
-    // Each site it was read on that has an installed source, most recent first.
-    const candidates = (origin.sites ?? [origin.site])
+    const own = (origin.sites ?? [origin.site])
       .map((site) => sourceForSite(site, sources, store.readLanguages))
-      .filter((s): s is BrowseSource => s !== null)
-      .filter((s, i, all) => all.findIndex((o) => o.id === s.id) === i);
-    if (candidates.length === 0) {
-      noSource.set(origin.site, (noSource.get(origin.site) ?? 0) + 1);
-    } else {
+      .filter((s): s is BrowseSource => s !== null);
+    if (own.length === 0) noSource.set(origin.site, (noSource.get(origin.site) ?? 0) + 1);
+    // Whatever has been finding things this run goes first.
+    const ranked = [...others].sort((a, b) => (wins.get(b.id) ?? 0) - (wins.get(a.id) ?? 0));
+    const usable = (list: BrowseSource[]) => list.filter((s) => !broken.has(s.id));
+    const mine = usable(own).filter((s, i, all) => all.findIndex((o) => o.id === s.id) === i);
+    const candidates = [...mine, ...usable(ranked).filter((s) => !mine.some((o) => o.id === s.id)).slice(0, FALLBACKS)];
+
+    let hit: SourceMatch | null = null;
+    let answered = false;
+    for (const source of candidates) {
+      if (broken.has(source.id)) continue;
+      // A run outlasts the idle timer many times over, and each search is
+      // use: without this an on-demand Suwayomi stops fifteen minutes in
+      // and every series after that is counted as failed.
+      if (store.manageSuwayomi) suwayomiProcess.touch(store.suwayomiMode);
       try {
-        let hit: SourceMatch | null = null;
-        for (const source of candidates) {
-          // A run outlasts the idle timer many times over, and each search is
-          // use: without this an on-demand Suwayomi stops fifteen minutes in
-          // and every series after that is counted as failed.
-          if (store.manageSuwayomi) suwayomiProcess.touch(store.suwayomiMode);
-          const { matches } = await adapter.browse(
-            { id: source.id, displayName: source.name, lang: source.lang },
-            'SEARCH',
-            1,
-            origin.title
-          );
-          hit = pickMatch(origin.title, matches);
-          if (hit) break;
-          await sleep(PAUSE_MS);
+        const { matches } = await adapter.browse(
+          { id: source.id, displayName: source.name, lang: source.lang },
+          'SEARCH',
+          1,
+          origin.title
+        );
+        answered = true;
+        streak.delete(source.id);
+        hit = pickMatch(origin.title, matches);
+      } catch (error) {
+        const n = (streak.get(source.id) ?? 0) + 1;
+        streak.set(source.id, n);
+        if (n >= BROKEN_AFTER) {
+          broken.set(source.id, failureReason(error));
+          state.broken = [...broken].map(([id, reason]) => ({
+            source: sources.find((s) => s.id === id)?.name ?? id,
+            reason,
+          }));
         }
-        if (hit) {
-          // Read fresh and written at once: you may be reading while this runs.
-          const now = read();
-          const row = now.series.find((s) => s.id === series.id);
-          if (row && row.source === null) {
-            row.source = { adapter: 'suwayomi', mangaId: hit.id, title: hit.title, sourceName: hit.sourceName };
-            // The first check sets the baseline and says nothing — see `sweepReleases`.
-            // The old app's number stays on `origin` for the badge until then.
-            row.latestChapter = null;
-            row.sourceChapter = null;
-            row.sourceCheckedAt = null;
-            row.checkedAt = null;
-            write(now);
-            state.linked += 1;
-          }
-        } else {
-          state.notFound += 1;
-        }
-      } catch {
-        state.failed += 1;
       }
       await sleep(PAUSE_MS);
+      if (hit) {
+        wins.set(source.id, (wins.get(source.id) ?? 0) + 1);
+        break;
+      }
     }
+
+    if (hit) {
+      // Read fresh and written at once: you may be reading while this runs.
+      const now = read();
+      const row = now.series.find((s) => s.id === series.id);
+      if (row && row.source === null) {
+        row.source = { adapter: 'suwayomi', mangaId: hit.id, title: hit.title, sourceName: hit.sourceName };
+        // The first check sets the baseline and says nothing — see `sweepReleases`.
+        row.latestChapter = null;
+        row.sourceChapter = null;
+        row.sourceCheckedAt = null;
+        row.checkedAt = null;
+        write(now);
+        state.linked += 1;
+      }
+    } else if (answered) {
+      state.notFound += 1;
+    } else {
+      state.failed += 1;
+    }
+
     state.done += 1;
     state.noSource = [...noSource].map(([site, count]) => ({ site, count })).sort((a, b) => b.count - a.count);
     if (++sinceAnnounce >= ANNOUNCE_EVERY) {

@@ -640,6 +640,23 @@ each site it was read on:
   first. What you are reading now is linked in the first minute.
 - It says what it could not do. Sites with no installed source are counted
   and named, so the screen can say which extension would bring the most in.
+- It falls back. The first real run linked **9 of 886**: Mangakakalot, where
+  633 of them had been read, answered every search with "Cloudflare bypass
+  currently disabled", and the reason was thrown away, so the screen said "748
+  could not be asked" and nothing else. Now three failures in a row set a
+  source aside for the rest of the run, with its first line of explanation on
+  the card. Each series then tries up to four of your other sources in the
+  languages you read, ordered by which have been finding things this run, so
+  the order settles on the big catalogues without a list of names to go stale.
+  The match is still exact by title wherever it comes from.
+
+**Once linked, the old app's number is gone.** Until a source has been asked,
+the bar showed Manga Reader's newest chapter, which is *another site's
+numbering*: Colorist, read to 61 on topmanhua, showed 63 and NEW over an
+Atsumaru copy with 49. It now shows the old number only while there is no
+source at all, and opening the chapter list records the source's newest
+chapter as a silent baseline if nothing has been recorded yet, rather than
+waiting up to half an hour for the sweep.
 
 **Each search pushes Suwayomi's idle timer out.** A run over hundreds of series
 lasts far longer than the 15 minutes an on-demand Suwayomi waits before
