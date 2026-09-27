@@ -90,6 +90,23 @@ export async function fillTags(siteLimit = Number.POSITIVE_INFINITY): Promise<nu
       if (genres && genres.length > 0) found.set(s.id, normaliseTags(genres));
     }
 
+    // Saved as it goes: several hundred site requests take a while, and a
+    // picker that stays empty until the last one lands reads as broken.
+    let saved = 0;
+    const flush = () => {
+      if (found.size === saved) return;
+      saved = found.size;
+      // Read fresh: a long run overlaps reading, linking and the sweep.
+      const now = read();
+      for (const row of now.series) {
+        const tags = found.get(row.id);
+        if (tags && row.tags === undefined) row.tags = tags;
+      }
+      write(now);
+      changes.emitChange('all');
+    };
+    flush();
+
     let asked = 0;
     for (const s of todo) {
       if (found.has(s.id)) continue;
@@ -103,18 +120,10 @@ export async function fillTags(siteLimit = Number.POSITIVE_INFINITY): Promise<nu
         // Left unasked, for next time.
       }
       await new Promise((done) => setTimeout(done, PAUSE_MS));
+      if (asked % 25 === 0) flush();
     }
 
-    if (found.size > 0) {
-      // Read fresh: a long run overlaps reading, linking and the sweep.
-      const now = read();
-      for (const row of now.series) {
-        const tags = found.get(row.id);
-        if (tags && row.tags === undefined) row.tags = tags;
-      }
-      write(now);
-      changes.emitChange('all');
-    }
+    flush();
     return found.size;
   } finally {
     running = false;
