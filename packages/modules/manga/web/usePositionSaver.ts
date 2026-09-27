@@ -14,6 +14,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { getToken } from '@app/api';
+import { enqueue } from './sync-queue';
 
 const EVERY_MS = 4_000;
 
@@ -27,7 +28,8 @@ export type Place = {
 };
 
 export function usePositionSaver(seriesId: string | null) {
-  const pending = useRef<Place | null>(null);
+  /** The place, and when you were there — which is what the server keeps the newest of. */
+  const pending = useRef<(Place & { at: number }) | null>(null);
   const lastSent = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -44,8 +46,13 @@ export function usePositionSaver(seriesId: string | null) {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${getToken()}` },
       body: JSON.stringify(place),
     }).catch(() => {
-      // A place not saved is a place a few seconds older next time — not worth
-      // an error on a screen you are reading.
+      /*
+       * No connection — reading a downloaded chapter on the train. Queued with
+       * the time you were there, and sent when the server is back; the server
+       * keeps it only if nothing newer arrived meanwhile.
+       */
+      const { at, ...where } = place;
+      enqueue({ kind: 'position', seriesId, place: where, at });
     });
   };
 
@@ -67,7 +74,7 @@ export function usePositionSaver(seriesId: string | null) {
   return {
     /** Note where you are; sent when the interval allows. */
     note(place: Place) {
-      pending.current = place;
+      pending.current = { ...place, at: Date.now() };
       const wait = lastSent.current + EVERY_MS - Date.now();
       if (wait <= 0) send();
       else if (!timer.current) timer.current = setTimeout(() => send(), wait);

@@ -5,7 +5,8 @@
  * opens when the PC is asleep; API calls are never cached, because stale tasks
  * are worse than an honest error.
  */
-const CACHE = 'everything-shell-v1';
+const PREFIX = 'everything-shell-';
+const CACHE = `${PREFIX}v1`;
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
@@ -18,7 +19,16 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      /*
+       * Only this worker's own old shells. It used to delete every cache but the
+       * current one, which was harmless while nothing else stored anything —
+       * and would now silently empty the chapters you downloaded to read on a
+       * train, the first time the app updated. Other caches belong to whoever
+       * made them.
+       */
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k.startsWith(PREFIX) && k !== CACHE).map((k) => caches.delete(k)))
+      )
       .then(() => self.clients.claim())
   );
 });

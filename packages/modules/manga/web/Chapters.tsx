@@ -25,14 +25,30 @@ import { chapterText } from './judge';
 import { manga, type SourceChapter } from './manga-api';
 import { Reader } from './Reader';
 import { usePositionSaver } from './usePositionSaver';
+import {
+  clearProblem,
+  offlineSupported,
+  queueDownload,
+  removeChapter,
+  sizeText,
+  updateSnapshot,
+  useOffline,
+} from './offline-store';
+import { enqueue } from './sync-queue';
+
+/** How many "Next" saves ahead of where you are. */
+const SAVE_AHEAD = [5, 10] as const;
 
 export function Chapters({
   seriesId,
   onClose,
   onCompare,
   continueOnOpen = false,
+  coverPath = null,
 }: {
   seriesId: string;
+  /** Saved with any downloaded chapter, so the offline list has a picture. */
+  coverPath?: string | null;
   onClose: () => void;
   /** Open the same series across every source — where you go when a chapter here is broken. */
   onCompare: () => void;
@@ -45,6 +61,9 @@ export function Chapters({
   const [busy, setBusy] = useState(false);
   const saver = usePositionSaver(seriesId);
   const continued = useRef(false);
+  const offline = useOffline();
+  const saved = offline.manifest?.series[seriesId]?.chapters ?? {};
+  const jobs = new Map(offline.jobs.filter((j) => j.seriesId === seriesId).map((j) => [j.chapterId, j]));
 
   const data = list.data;
   const place = data?.position ?? null;
@@ -60,6 +79,57 @@ export function Chapters({
     data && furthestRead > -Infinity
       ? [...data.chapters].filter((c) => c.number > furthestRead).sort((a, b) => a.number - b.number)[0] ?? null
       : null;
+
+  /*
+   * This device's copy of your reading, for the offline screen: refreshed from
+   * the server every time the list loads, so what the train shows is what the
+   * PC last said. Nothing happens for a series with nothing saved.
+   */
+  useEffect(() => {
+    if (!data) return;
+    void updateSnapshot(seriesId, {
+      readChapters: data.chapters.filter((c) => c.read).map((c) => c.number),
+      position: sameCopy && place ? { ...place } : null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  function save(chapter: SourceChapter) {
+    if (!data) return;
+    queueDownload(
+      {
+        seriesId,
+        title: data.seriesTitle,
+        sourceName: data.sourceName,
+        coverPath,
+        readChapters: data.chapters.filter((c) => c.read).map((c) => c.number),
+        position: sameCopy && place ? { ...place } : null,
+      },
+      { id: chapter.id, number: chapter.number, name: chapter.name },
+      async () => (await manga.reader.pages(seriesId, chapter.id)).pages
+    );
+  }
+
+  /**
+   * The next few to read, not the newest few: from the chapter you are in (or
+   * the one after the furthest you finished) upwards, skipping any already
+   * saved. One per chapter number — a site listing two editions of a chapter
+   * would otherwise spend half the download on duplicates.
+   */
+  function saveAhead(count: number) {
+    if (!data) return;
+    const from = placeChapter?.number ?? (nextUp?.number ?? -Infinity);
+    const picked = new Map<number, SourceChapter>();
+    for (const c of [...data.chapters].sort((a, b) => a.number - b.number)) {
+      if (c.number < from || picked.has(c.number) || (c.read && c.number !== from)) continue;
+      picked.set(c.number, c);
+      if (picked.size >= count) break;
+    }
+    for (const c of picked.values()) if (!saved[c.id]) save(c);
+  }
+
+  const savedHere = Object.values(saved);
+  const savedBytes = savedHere.reduce((sum, c) => sum + c.bytes, 0);
 
   function read(chapter: SourceChapter, at: { page: number; offset: number } | null = null) {
     saver.flush();
@@ -93,7 +163,13 @@ export function Chapters({
 
   async function finished(chapterNumber: number) {
     saver.flush();
-    await manga.reader.markRead(seriesId, chapterNumber);
+    try {
+      await manga.reader.markRead(seriesId, chapterNumber);
+    } catch {
+      // The connection dropped mid-chapter: queued, and sent when it is back.
+      enqueue({ kind: 'read', seriesId, chapter: chapterNumber, at: Date.now() });
+    }
+    void updateSnapshot(seriesId, { read: chapterNumber });
     const all = list.data?.chapters ?? [];
     /*
      * The next one *up*, not the next in the array. The list is newest-first, so
@@ -181,6 +257,31 @@ export function Chapters({
         </div>
       )}
 
+      {data && data.chapters.length > 0 && (
+        <div className="manga-save-bar">
+          {offlineSupported ? (
+            <>
+              <span className="meta">Save for offline:</span>
+              {SAVE_AHEAD.map((n) => (
+                <button key={n} className="btn subtle" onClick={() => saveAhead(n)}>
+                  Next {n}
+                </button>
+              ))}
+              <span className="meta">
+                {jobs.size > 0
+                  ? `saving ${[...jobs.values()].filter((j) => !j.problem).length}…`
+                  : savedHere.length > 0
+                    ? `${savedHere.length} saved on this device · ${sizeText(savedBytes)}`
+                    : 'or ⬇ on any chapter'}
+              </span>
+            </>
+          ) : (
+            // Cache Storage needs a secure page; the phone's https address is one.
+            <span className="meta">Saving for offline works on the https address, which is the one your phone uses.</span>
+          )}
+        </div>
+      )}
+
       {list.loading && <p className="empty">loading…</p>}
       {list.error && <p className="banner">Could not load: {list.error.message}</p>}
       {data?.chapters.length === 0 && (
@@ -196,20 +297,45 @@ export function Chapters({
       <div className="manga-chapters">
         {data?.chapters.map((c) => {
           const here = sameCopy && place?.chapterId === c.id;
+          const job = jobs.get(c.id);
+          const isSaved = saved[c.id] !== undefined;
           return (
-            <button
-              key={c.id}
-              className={`manga-chapter-row${c.read ? ' read' : ''}${here ? ' started' : ''}`}
-              onClick={() => read(c, here && place ? { page: place.page, offset: place.offset } : null)}
-            >
-              <span className="title truncate">{c.name}</span>
-              <span className="meta">
-                {c.scanlator ? `${c.scanlator} · ` : ''}
-                {c.uploadedAt ? new Date(c.uploadedAt).toLocaleDateString() : ''}
-                {here && place ? ` · page ${place.page + 1} of ${place.pages}` : ''}
-                {c.read ? (c.readOn ? ` · read on ${c.readOn}` : ' · read') : ''}
-              </span>
-            </button>
+            // Two buttons in a row rather than one inside another, which no
+            // browser will render: the chapter, and saving it.
+            <div key={c.id} className={`manga-chapter-row${c.read ? ' read' : ''}${here ? ' started' : ''}`}>
+              <button
+                className="manga-chapter-open"
+                onClick={() => read(c, here && place ? { page: place.page, offset: place.offset } : null)}
+              >
+                <span className="title truncate">{c.name}</span>
+                <span className="meta">
+                  {c.scanlator ? `${c.scanlator} · ` : ''}
+                  {c.uploadedAt ? new Date(c.uploadedAt).toLocaleDateString() : ''}
+                  {here && place ? ` · page ${place.page + 1} of ${place.pages}` : ''}
+                  {c.read ? (c.readOn ? ` · read on ${c.readOn}` : ' · read') : ''}
+                  {job?.problem ? ` · ${job.problem}` : ''}
+                </span>
+              </button>
+              {offlineSupported && (
+                <button
+                  className={`manga-chapter-save${isSaved ? ' saved' : ''}${job?.problem ? ' failed' : ''}`}
+                  aria-label={
+                    isSaved ? `${c.name} is saved on this device — remove it` : job ? `Saving ${c.name}` : `Save ${c.name} for offline`
+                  }
+                  title={isSaved ? `Saved (${sizeText(saved[c.id]!.bytes)}) — tap to remove` : job?.problem ?? undefined}
+                  disabled={job !== undefined && !job.problem}
+                  onClick={() => {
+                    if (isSaved) void removeChapter(seriesId, c.id);
+                    else {
+                      if (job?.problem) clearProblem(job.key);
+                      save(c);
+                    }
+                  }}
+                >
+                  {isSaved ? '✓' : job && !job.problem ? (job.total ? `${job.done}/${job.total}` : '…') : job?.problem ? '↻' : '⬇'}
+                </button>
+              )}
+            </div>
           );
         })}
       </div>

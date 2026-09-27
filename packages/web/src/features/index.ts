@@ -92,6 +92,36 @@ const panelModules = import.meta.glob<{ default: ComponentType<PanelProps> }>([
 ]);
 
 /**
+ * What a feature can show when the server cannot be reached — the manga
+ * package's downloaded chapters, today.
+ *
+ * Lazy like the panels, and found the same way, because the screen that lists
+ * them (`Offline.tsx`) is core and must not name a package. A feature with no
+ * `offline.tsx` has nothing to offer offline, which is the ordinary case: nearly
+ * everything here is a view of data on the server.
+ *
+ * The chunk is only there offline if it was fetched while online, since the
+ * service worker caches what it has seen — so a feature offering this should
+ * load it once when it stores anything for offline use.
+ */
+const offlineModules = import.meta.glob<{ default: ComponentType<OfflineViewProps> }>([
+  './*/offline.tsx',
+  '../../../modules/*/web/offline.tsx',
+]);
+
+export interface OfflineViewProps {
+  /** Back to the offline screen. */
+  onClose: () => void;
+}
+
+export interface OfflineFeature {
+  id: string;
+  label: string;
+  glyph: string;
+  View: LazyExoticComponent<ComponentType<OfflineViewProps>>;
+}
+
+/**
  * The module id a globbed path belongs to, and the sibling files beside it.
  *
  * Two shapes now: `./notes/meta.ts` for anything still inside this package, and
@@ -133,6 +163,22 @@ export const webFeatures: WebFeature[] = Object.entries(metaModules)
   })
   .filter((f): f is WebFeature => f !== null)
   .sort((a, b) => a.order - b.order);
+
+/**
+ * Every offline screen this build has.
+ *
+ * Not filtered by `featureEnabled`: offline there is no session to say what is
+ * on, and something you downloaded while a feature was on is still yours to
+ * read. A feature with nothing stored says so on its own screen.
+ */
+export function offlineFeatures(): OfflineFeature[] {
+  return Object.entries(metaModules)
+    .map(([path, mod]) => {
+      const load: (typeof offlineModules)[string] | undefined = offlineModules[`${locate(path).prefix}offline.tsx`];
+      return load === undefined ? null : { id: mod.meta.id, label: mod.meta.label, glyph: mod.meta.glyph, View: lazy(load) };
+    })
+    .filter((f): f is OfflineFeature => f !== null);
+}
 
 /** Present in this build. Being *enabled* is the server's call, not ours. */
 export const installedFeatureIds: string[] = webFeatures.map((f) => f.id);

@@ -8,6 +8,7 @@
  * is no sense keeping a second copy of where it is stored.
  */
 import { getToken } from '@app/api';
+import { cachedResponse, savedPages } from './offline-store';
 
 export type SeriesStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
 
@@ -446,8 +447,15 @@ export const manga = {
   reader: {
     chapters: (id: string, refresh = false) =>
       call<ChapterList>(`/api/manga/${id}/chapters${refresh ? '?refresh=1' : ''}`),
-    pages: (id: string, chapterId: string) =>
-      call<{ pages: string[] }>(`/api/manga/${id}/chapters/${chapterId}/pages`),
+    /**
+     * A saved chapter's pages come from this device — no request, no Suwayomi,
+     * no PC needed. Otherwise the server is asked.
+     */
+    pages: async (id: string, chapterId: string) => {
+      const saved = await savedPages(id, chapterId);
+      if (saved) return { pages: saved };
+      return call<{ pages: string[] }>(`/api/manga/${id}/chapters/${chapterId}/pages`);
+    },
     markRead: (id: string, chapter: number, read = true) =>
       call<{ readChapters: number[] }>(`/api/manga/${id}/read`, {
         method: 'PUT',
@@ -463,6 +471,10 @@ export const manga = {
      * chapters.
      */
     page: async (path: string): Promise<string> => {
+      // Saved on this device first: that is what makes a downloaded chapter
+      // read on the train, and read faster at home.
+      const saved = await cachedResponse(path);
+      if (saved) return URL.createObjectURL(await saved.blob());
       const response = await fetch(path, { headers: { authorization: `Bearer ${getToken()}` } });
       if (!response.ok) throw new Error(`page failed (${response.status})`);
       return URL.createObjectURL(await response.blob());
@@ -492,9 +504,17 @@ export function coverFor(path: string): Promise<string> {
   if (known) return known;
 
   const loading = (async () => {
-    const response = await fetch(path, {
-      headers: { authorization: `Bearer ${getToken()}` },
-    });
+    let response: Response;
+    try {
+      response = await fetch(path, {
+        headers: { authorization: `Bearer ${getToken()}` },
+      });
+    } catch (error) {
+      // Offline: the cover saved with a downloaded chapter, if there is one.
+      const saved = await cachedResponse(path);
+      if (saved) return URL.createObjectURL(await saved.blob());
+      throw error;
+    }
     if (!response.ok) throw new Error(`no cover (${response.status})`);
     return URL.createObjectURL(await response.blob());
   })();

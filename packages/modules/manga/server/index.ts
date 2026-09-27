@@ -64,6 +64,23 @@ import { suwayomiProcess, findJars } from './process.js';
 import { homedir } from 'node:os';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
+/**
+ * When something happened, as a device that was offline says it did.
+ *
+ * A read or a place queued on the phone with no connection arrives later, and
+ * stamping it with the arrival time would let an old place from the train
+ * overwrite the newer one you left on the PC. So the device's time is taken —
+ * but only within reason: nothing from the future (a phone clock running fast
+ * would win every merge forever) and nothing older than a month, beyond which
+ * the queue is not a queue.
+ */
+function happenedAt(value: unknown): number {
+  const now = Date.now();
+  if (typeof value !== 'number' || !Number.isFinite(value)) return now;
+  if (value > now + 60_000 || value < now - 30 * 24 * 60 * 60_000) return now;
+  return Math.min(value, now);
+}
+
 export async function routes(app: FastifyInstance): Promise<void> {
   /** The library, already shaped for the screen. */
   app.get('/api/manga', async () => {
@@ -1515,9 +1532,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
    */
   app.put('/api/manga/:id/read', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = request.body as { chapter?: unknown; read?: unknown } | null;
+    const body = request.body as { chapter?: unknown; read?: unknown; at?: unknown } | null;
     const chapter = typeof body?.chapter === 'number' && Number.isFinite(body.chapter) ? body.chapter : null;
     if (chapter === null) return reply.code(400).send({ error: 'which chapter?' });
+    const at = happenedAt(body?.at);
 
     const store = read();
     const series = store.series.find((s) => s.id === id);
@@ -1539,7 +1557,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
         chapter,
         source: series.source?.sourceName ?? null,
         mangaId: series.source?.mangaId ?? null,
-        at: Date.now(),
+        at,
       });
       series.readLog.sort((a, b) => a.chapter - b.chapter);
     }
@@ -1547,8 +1565,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
     // Finishing the chapter you were partway through, or a later one, settles
     // the place: "continue" would otherwise point back into something done.
+    // Unless that place is newer than the read — a chapter finished offline on
+    // Tuesday does not clear a place you left in the next one on Wednesday.
     const place = readPositions()[id];
-    if (body?.read !== false && place && place.chapter <= chapter) writePosition(id, null);
+    if (body?.read !== false && place && place.chapter <= chapter && place.at <= at) writePosition(id, null);
 
     /*
      * Reading a chapter answers the nudge about it. With a task, ticking the
@@ -1614,8 +1634,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
       page,
       offset: Math.min(1, Math.max(0, offset)),
       pages,
-      at: Date.now(),
+      at: happenedAt(body.at),
     };
+    // Newest wins: a place queued offline and sent later must not undo one
+    // made since, on this device or another.
+    const current = readPositions()[id];
+    if (current && current.at > position.at) return { position: current, kept: 'newer' };
     const before = writePosition(id, position);
     if (!before || before.chapter !== position.chapter || before.mangaId !== position.mangaId) {
       changes.emitChange('all');

@@ -16,8 +16,9 @@
  * to open it, which is a dead end you cannot see. So the fallback is always on
  * screen rather than behind the failure: the file to double-click, named.
  */
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { offlineFeatures, type OfflineFeature } from './features/index';
 
 /**
  * Whether starting the server from here could possibly work.
@@ -32,6 +33,12 @@ function onTheServersMachine(): boolean {
 
 export function Offline({ onBack }: { onBack: () => void }) {
   const [starting, setStarting] = useState(false);
+  /**
+   * What features offer without the server — downloaded chapters, today. Found
+   * through the features index, never named here: this screen is core.
+   */
+  const offline = offlineFeatures();
+  const [using, setUsing] = useState<OfflineFeature | null>(null);
   const [waited, setWaited] = useState(0);
   const local = onTheServersMachine();
 
@@ -74,8 +81,35 @@ export function Offline({ onBack }: { onBack: () => void }) {
     setWaited(0);
   };
 
+  if (using) {
+    const View = using.View;
+    return (
+      <div className="app offline-app">
+        <Suspense fallback={<p className="empty">Opening {using.label}…</p>}>
+          <View onClose={() => setUsing(null)} />
+        </Suspense>
+      </div>
+    );
+  }
+
   return (
     <div className="pair">
+      {/*
+        * First, because on the phone this is the screen you get on a train, and
+        * reading what you saved is what you came for — not a paragraph about a
+        * server you cannot reach from there anyway.
+        */}
+      {offline.length > 0 && (
+        <div className="offline-shelf">
+          <p className="meta">Saved on this device</p>
+          {offline.map((f) => (
+            <button key={f.id} className="btn primary" onClick={() => setUsing(f)}>
+              {f.glyph} Read offline — {f.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       <h1>Blue Everything isn't running</h1>
       <p>
         The app is still on screen because it was saved for offline use, but nothing can load until the

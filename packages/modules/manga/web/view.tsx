@@ -28,6 +28,8 @@ import { Compare } from './Compare';
 import { Browse } from './Browse';
 import { chapterText } from './judge';
 import { SeriesDetail } from './SeriesDetail';
+import { Downloads } from './Downloads';
+import { flushQueue } from './sync-queue';
 import { ageOf, manga, type Candidate, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -77,6 +79,18 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
    * with a title. Cleared through `onFocused` at the *end*, since clearing it
    * changes the prop and re-runs this effect.
    */
+  /*
+   * Reading done offline reaches the PC here: the first time this screen opens
+   * with the server answering. The list is reloaded if anything was sent, so
+   * Continue and the read marks show it.
+   */
+  useEffect(() => {
+    void flushQueue().then((sent) => {
+      if (sent > 0) library.reload();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!search) return;
     setQuery(search);
@@ -179,6 +193,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
     overlay = (
       <Chapters
         seriesId={reading}
+        coverPath={data?.series.find((x) => x.id === reading)?.coverPath ?? null}
         continueOnOpen={continuing}
         onClose={() => {
           setReading(null);
@@ -273,6 +288,8 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
       </form>
 
       <SourceCard local={local} onExtensions={() => setManagingExtensions(true)} onOpenUi={() => setSuwayomiOpen(true)} />
+
+      <Downloads />
 
       {problem && <p className="banner">{problem}</p>}
 

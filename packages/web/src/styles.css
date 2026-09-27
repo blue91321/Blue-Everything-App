@@ -3187,3 +3187,99 @@ button {
   border-left: 3px solid var(--accent);
   background: var(--surface-raised);
 }
+
+/* ---- Offline -------------------------------------------------------- */
+
+.offline-shelf {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The shell's drawer is not there offline, so there is no button to clear. */
+.offline-app {
+  padding-top: calc(env(safe-area-inset-top) + 12px);
+}
+
+/* ---- Manga: saving chapters for offline ------------------------------ */
+
+/*
+ * A chapter row holds two buttons now — opening it, and saving it — so the row
+ * is a box and the chapter part is the button inside, dressed as the whole row
+ * used to be. The read and started bands still colour the row.
+ */
+div.manga-chapter-row {
+  cursor: default;
+}
+
+.manga-chapter-open {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manga-chapter-save {
+  flex: 0 0 auto;
+  min-width: 44px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.manga-chapter-save.saved {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.manga-chapter-save.failed {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.manga-chapter-save:disabled {
+  cursor: progress;
+}
+
+.manga-save-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 8px 0;
+}
+
+.manga-offline-series {
+  width: 100%;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manga-download-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
