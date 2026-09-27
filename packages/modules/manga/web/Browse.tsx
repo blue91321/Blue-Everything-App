@@ -290,7 +290,8 @@ function Tile({
     <div className="manga-browse-tile">
       {/* The cover and title are one button: a real one, so it takes Enter and is announced as something to press. */}
       <button className="manga-browse-open" onClick={() => onOpen(result)} title={result.title}>
-        <Cover path={result.coverPath} title={result.title} size={110} />
+        {/* As wide as its column, so the columns set the spacing rather than a fixed-size cover inside them. */}
+        <Cover path={result.coverPath} title={result.title} fill />
         <span className="title manga-browse-title">{result.title}</span>
       </button>
       {following ? (

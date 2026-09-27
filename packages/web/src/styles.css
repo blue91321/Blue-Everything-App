@@ -3005,13 +3005,19 @@ button {
 
 /*
  * Covers in a grid, because a popular list is chosen by looking — the same
- * reason every site you would browse this on shows covers first. Columns come
- * from the width: about seven across a wide window, two on a phone.
+ * reason every site you would browse this on shows covers first.
+ *
+ * At least three across, however narrow. A column is 130px or a third of the
+ * row, whichever is smaller: on a wide window that is 130px and as many as fit,
+ * each growing to share what is left; on a phone the third wins and the covers
+ * shrink rather than the row dropping to two. The covers fill their columns, so
+ * the only space between them is the gap — it was a 110px cover centred in a
+ * wider cell, which on a phone meant two covers and a lot of nothing.
  */
 .manga-browse-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 14px var(--gap);
+  grid-template-columns: repeat(auto-fill, minmax(min(130px, calc((100% - 2 * 8px) / 3)), 1fr));
+  gap: 14px 8px;
   margin: 8px 0 12px;
 }
 
@@ -3019,9 +3025,22 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   text-align: center;
+}
+
+/*
+ * The tile's button is as narrow as its cover, which on a phone is about a
+ * hundred pixels — so it may take two lines rather than pushing the column
+ * wider than a third of the screen.
+ */
+.manga-browse-tile > .btn {
+  width: 100%;
+  padding: 6px 4px;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  white-space: normal;
 }
 
 /* Two lines, then an ellipsis: titles run long, and a ragged grid is hard to scan. */
@@ -3031,7 +3050,7 @@ button {
   -webkit-box-orient: vertical;
   overflow: hidden;
   width: 100%;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   line-height: 1.25;
   min-height: 2.5em;
 }

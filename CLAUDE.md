@@ -476,6 +476,13 @@ The server resolves what the grid needs onto each series in `/api/manga`:
 comparison is done in the browser, since it is a comparison of two numbers the
 server already decided.
 
+**Browse is at least three across too.** A column is 130px or a third of the
+row, whichever is smaller (`minmax(min(130px, calc((100% - 16px) / 3)), 1fr)`),
+and the covers fill their columns. It had been `minmax(130px, 1fr)` with a
+fixed 110px cover centred in each cell, which on a phone was two covers and a
+lot of nothing. Measured: three at 320px (85px covers) and 375px (103px), five
+at 768px, ten at 1440px, with 8px between covers at every width.
+
 **Sort** is five orders (new chapters first, last updated, recently read, title,
 recently added), remembered in `localStorage` like the folded note folders,
 because sorting the phone's shelf should not reorder the PC's.
