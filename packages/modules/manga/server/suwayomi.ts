@@ -113,7 +113,15 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
   readonly id = 'suwayomi';
   readonly label = 'Suwayomi';
 
-  constructor(private readonly baseUrl: string = DEFAULT_BASE_URL) {}
+  /**
+   * `ignored` is source ids to leave out of listing and searching — the ones
+   * set aside on the More tab. Asking by id still works, so a series already
+   * linked to one keeps opening.
+   */
+  constructor(
+    private readonly baseUrl: string = DEFAULT_BASE_URL,
+    private readonly ignored: readonly string[] = []
+  ) {}
 
   /**
    * One GraphQL round trip.
@@ -260,12 +268,35 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     const data = await this.gql<{
       sources: { nodes: Array<SourceNode & { supportsLatest: boolean }> };
     }>(`query { sources { nodes { id displayName lang supportsLatest } } }`);
-    return (data.sources?.nodes ?? []).map((s) => ({
-      id: String(s.id),
-      name: s.displayName,
-      lang: s.lang,
-      supportsLatest: s.supportsLatest === true,
-    }));
+    return (data.sources?.nodes ?? [])
+      .filter((s) => !this.ignored.includes(String(s.id)))
+      .map((s) => ({
+        id: String(s.id),
+        name: s.displayName,
+        lang: s.lang,
+        supportsLatest: s.supportsLatest === true,
+      }));
+  }
+
+  /**
+   * Genres Suwayomi already holds for these series, from its own database — no
+   * request to any site. A series only browsed has them when the listing
+   * carried them, and an empty list otherwise; `details` is what fetches them.
+   */
+  async storedGenres(mangaIds: readonly string[]): Promise<Map<string, string[]>> {
+    const ids = mangaIds.map((n) => Number.parseInt(n, 10)).filter((n) => Number.isSafeInteger(n));
+    const out = new Map<string, string[]>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const data = await this.gql<{ mangas: { nodes: Array<{ id: number; genre: unknown }> } }>(
+        `query Genres($ids: [Int!]!) { mangas(filter: { id: { in: $ids } }) { nodes { id genre } } }`,
+        { ids: ids.slice(i, i + 200) }
+      );
+      for (const node of data.mangas?.nodes ?? []) {
+        const genre = Array.isArray(node.genre) ? node.genre.filter((g): g is string => typeof g === 'string') : [];
+        out.set(String(node.id), genre);
+      }
+    }
+    return out;
   }
 
   /**
@@ -361,7 +392,7 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     const data = await this.gql<{ sources: { nodes: Array<{ id: string; displayName: string; lang: string }> } }>(
       `query { sources { nodes { id displayName lang } } }`
     );
-    const installed = data.sources?.nodes ?? [];
+    const installed = (data.sources?.nodes ?? []).filter((s) => !this.ignored.includes(String(s.id)));
     if (installed.length === 0) {
       throw new SourceError('Suwayomi is running but has no sources installed — add an extension repository first');
     }

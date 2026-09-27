@@ -73,6 +73,7 @@ import {
   type OldLibrary,
 } from './mangareader.js';
 import { matchingState, startMatching, unmatchedCount } from './matching.js';
+import { fillTags } from './tags.js';
 import { homedir } from 'node:os';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
@@ -165,6 +166,26 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
   /** Try again: after installing an extension, or once a site stops failing. */
   app.post('/api/manga/import/matching', { config: { announce: false } }, async () => startMatching());
+
+  /**
+   * Sources left out of searching and finding imports. Not local-only: it is
+   * about what you read, like the language setting.
+   */
+  app.put('/api/manga/ignored-sources', async (request, reply) => {
+    const body = request.body as { id?: unknown; name?: unknown; ignored?: unknown } | null;
+    if (typeof body?.id !== 'string' || typeof body.ignored !== 'boolean') {
+      return reply.code(400).send({ error: 'send id and ignored' });
+    }
+    const store = read();
+    store.ignoredSources = store.ignoredSources.filter((s) => s.id !== body.id);
+    if (body.ignored) {
+      store.ignoredSources.push({ id: body.id, name: typeof body.name === 'string' ? body.name.slice(0, 80) : body.id });
+    }
+    write(store);
+    return { ignoredSources: store.ignoredSources };
+  });
+
+  app.get('/api/manga/ignored-sources', async () => ({ ignoredSources: read().ignoredSources }));
 
   /** The library, already shaped for the screen. */
   app.get('/api/manga', async () => {
@@ -662,7 +683,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      const outcome = await new SuwayomiAdapter(sourceUrl).search(query, {
+      const outcome = await new SuwayomiAdapter(sourceUrl, store.ignoredSources.map((s) => s.id)).search(query, {
         // `?all=1` is the comparison screen's "include other languages" — a
         // one-off, deliberately not a change to the setting.
         languages: all === '1' ? null : store.readLanguages,
@@ -1119,7 +1140,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
     } else {
       suwayomiProcess.touch(store.suwayomiMode);
     }
-    return { store, adapter: new SuwayomiAdapter(url), url };
+    return { store, adapter: new SuwayomiAdapter(url, store.ignoredSources.map((s) => s.id)), url };
   }
 
   const SOURCE_ID = /^\d{1,25}$/;
@@ -1607,7 +1628,34 @@ export async function routes(app: FastifyInstance): Promise<void> {
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
 
     try {
-      const chapters = await ctx.adapter.chapters(ctx.series.source!.mangaId, refresh === '1');
+      let chapters: Awaited<ReturnType<typeof ctx.adapter.chapters>>;
+      try {
+        chapters = await ctx.adapter.chapters(ctx.series.source!.mangaId, refresh === '1');
+      } catch (error) {
+        /*
+         * Recorded on the series, so the library can show it and the "source
+         * not answering" filter can find it. Only the sweep wrote this before,
+         * which it does half-hourly and only for a dozen series at a time — a
+         * source that had died read as fine until then.
+         */
+        if (error instanceof SourceError) {
+          const store = read();
+          const row = store.series.find((s) => s.id === id);
+          if (row) {
+            row.error = error.message;
+            write(store);
+          }
+        }
+        throw error;
+      }
+      if (ctx.series.error !== null) {
+        const store = read();
+        const row = store.series.find((s) => s.id === id);
+        if (row && row.error !== null) {
+          row.error = null;
+          write(store);
+        }
+      }
       /*
        * A series never checked on its source takes its baseline from the list
        * you just opened, rather than showing nothing (or another site's number)
@@ -1866,9 +1914,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
   /* ---- the timer ---- */
 
+  /** Sites asked for genres per sweep; Suwayomi's own copy answers the rest for free. */
+  const TAGS_PER_SWEEP = 20;
+
   const sweep = async () => {
     try {
       await sweepReleases();
+      // A few series' genres each sweep, only while Suwayomi is up — see `tags.ts`.
+      await fillTags(TAGS_PER_SWEEP);
     } catch (error) {
       // Never allowed to escape. This runs with nobody waiting on it, and an
       // unhandled rejection would take the server down over somebody else's

@@ -34,6 +34,17 @@ export function ImportCard({ local, onChanged }: { local: boolean; onChanged: ()
   // Refetched on every change, which is how the progress below moves: the
   // search announces itself every twenty series.
   const matching = useAsync(() => manga.import.matching(), []);
+  const ignored = useAsync(() => manga.ignored.list(), []);
+
+  async function setIgnored(id: string, name: string, on: boolean) {
+    setProblem(null);
+    try {
+      await manga.ignored.set(id, name, on);
+      ignored.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'could not change that');
+    }
+  }
 
   async function inspect(file: File) {
     setProblem(null);
@@ -202,12 +213,43 @@ export function ImportCard({ local, onChanged }: { local: boolean; onChanged: ()
         </div>
       )}
 
-      {showMatching && <Matching state={state} onAgain={() => void matchAgain()} />}
+      {showMatching && (
+        <Matching
+          state={state}
+          ignoredIds={(ignored.data?.ignoredSources ?? []).map((s) => s.id)}
+          onAgain={() => void matchAgain()}
+          onIgnore={(id, name) => void setIgnored(id, name, true)}
+        />
+      )}
+
+      {(ignored.data?.ignoredSources.length ?? 0) > 0 && (
+        <div className="manga-import-matching">
+          <p className="meta">Left out of searching, browsing and finding imports:</p>
+          {ignored.data!.ignoredSources.map((s) => (
+            <div className="row between" key={s.id}>
+              <span>{s.name}</span>
+              <button className="btn subtle" onClick={() => void setIgnored(s.id, s.name, false)}>
+                Stop ignoring
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function Matching({ state, onAgain }: { state: MatchingState; onAgain: () => void }) {
+function Matching({
+  state,
+  ignoredIds,
+  onAgain,
+  onIgnore,
+}: {
+  state: MatchingState;
+  ignoredIds: string[];
+  onAgain: () => void;
+  onIgnore: (id: string, name: string) => void;
+}) {
   const unmatched = state.unmatched ?? 0;
   return (
     <div className="manga-import-matching">
@@ -244,12 +286,21 @@ function Matching({ state, onAgain }: { state: MatchingState; onAgain: () => voi
         </>
       )}
 
-      {(state.broken ?? []).map((b) => (
-        <p key={b.source} className="meta urgent">
-          {b.source} refused searches and was skipped: {b.reason}. Its series were looked for on your other
-          sources instead.
-        </p>
-      ))}
+      {(state.broken ?? [])
+        .filter((b) => !b.id || !ignoredIds.includes(b.id))
+        .map((b) => (
+          <div key={b.source} className="row between">
+            <p className="meta urgent">
+              {b.source} refused searches and was skipped: {b.reason}. Its series were looked for on your other
+              sources instead.
+            </p>
+            {b.id && (
+              <button className="btn subtle" onClick={() => onIgnore(b.id!, b.source)}>
+                Ignore it
+              </button>
+            )}
+          </div>
+        ))}
 
       {state.noSource.length > 0 && (
         <p className="meta">

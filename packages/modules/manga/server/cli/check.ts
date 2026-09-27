@@ -51,6 +51,7 @@ import { PlistError, readBinaryPlist, unarchive } from '../bplist.js';
 import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup } from '../mangareader.js';
 import { failureReason, fallbackSources, pickMatch, siteKey, sourceForSite } from '../matching.js';
 import { BACKUP, PLAIN } from './mangareader-fixture.js';
+import { normaliseTags } from '../tags.js';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -707,6 +708,7 @@ const store: Store = {
   readLanguages: ['en'],
   releaseTasks: false,
   browseSource: null,
+  ignoredSources: [],
   series: [
     row({ id: 'recent', checkedAt: 1_000 }),
     row({ id: 'stale', checkedAt: 10 }),
@@ -968,6 +970,18 @@ console.log('\nfinding an import on your sources\n');
     'Exception while fetching data (/fetchSourceManga) : Cloudflare bypass currently disabled\n\njava.io.IOException: Cloudflare bypass currently disabled\n\tat keiyoushi.a.b.a(Unknown Source)'
   );
   check('a failure is reduced to what the extension said', failureReason(cloudflare) === 'Cloudflare bypass currently disabled', failureReason(cloudflare));
+}
+
+/* ------------------------------------------------------------------ */
+console.log('\ntags\n');
+
+{
+  // As sources really write them: Colorist's own list had "Manwha" in it.
+  const tags = normaliseTags(['Manwha', 'action', 'Action', ' Drama ', 'sci fi', 'SLICE OF LIFE', 42, '', 'Martial Art']);
+  check('one spelling per tag, whatever case it came in', tags.filter((t) => t === 'Action').length === 1, tags.join(', '));
+  check('the spellings sources get wrong are put right', tags.includes('Manhwa') && tags.includes('Sci-Fi') && tags.includes('Martial Arts'));
+  check('shouting and whispering are capitalised', tags.includes('Slice of Life') && tags.includes('Drama'));
+  check('and anything that is not a tag is dropped', tags.every((t) => typeof t === 'string' && t.length > 0), String(tags.length));
 }
 
 /* ------------------------------------------------------------------ */

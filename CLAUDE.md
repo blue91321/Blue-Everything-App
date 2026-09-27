@@ -492,9 +492,33 @@ fixed 110px cover centred in each cell, which on a phone was two covers and a
 lot of nothing. Measured: three at 320px (85px covers) and 375px (103px), five
 at 768px, ten at 1440px, with 8px between covers at every width.
 
-**Sort** is five orders (new chapters first, last updated, recently read, title,
-recently added), remembered in `localStorage` like the folded note folders,
-because sorting the phone's shelf should not reorder the PC's.
+**Sort** is five orders (last read, most to catch up on, last updated, title,
+recently added) plus a ticked **New chapters on top**, all remembered in
+`localStorage` like the folded note folders, because sorting the phone's shelf
+should not reorder the PC's. "New chapters first" used to be its own order; it
+is last read with the box ticked now, so "what was I reading" is available
+without "what has moved" pinned over it. *Most to catch up on* counts whole
+chapters between where you are and the newest, which is also what the badge
+says (`12 NEW`) — an estimate, since sources skip and split numbers.
+
+**Filters** across the top: new chapters, **source not answering**, no source
+yet, and a tag. Not answering means the last check or the last opening of its
+chapter list failed — the chapter list now records a failure on the series and
+clears it when the source answers, because the sweep alone reaches a dozen
+series every half hour. In that view a cover opens the search for another
+source instead of a chapter list that will only fail again.
+
+**Tags come from the linked source** (`tags.ts`): Suwayomi's own stored copy
+first, in one local query, then the site for the rest, a few per sweep and all
+of them after an import's search finishes. Never by starting Suwayomi. They are
+tidied to one spelling each, because sources disagree about case and one writes
+"Manwha". The tag is not remembered: coming back to a shelf silently narrowed
+to one genre would read as series gone missing.
+
+**Ignored sources** (More, under the import card) are left out of searching,
+browsing and finding imports, by id. Mangakakalot went there first: every
+search answered "Cloudflare bypass currently disabled". A series already linked
+to an ignored source still opens, since asking by id is untouched.
 
 **Tapping a cover opens its chapter list**, which now carries the series' head
 (cover, source, status, when it was checked and whether that failed) and a ⋯

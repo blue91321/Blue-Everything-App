@@ -3716,6 +3716,62 @@ div.manga-chapter-row {
   overflow-wrap: anywhere;
 }
 
+/* What the shelf shows: a row that wraps rather than scrolls sideways, so every
+   filter is visible at once on a phone. */
+.manga-lib-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.manga-lib-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.manga-lib-filter .count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.manga-lib-filter.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.manga-lib-filter.on .count {
+  color: inherit;
+  opacity: 0.8;
+}
+
+/* In the amber the warning ! uses, so the chip and the covers it finds match. */
+.manga-lib-filter.warn:not(.on) .count {
+  color: #ffb454;
+}
+
+.manga-lib-tag {
+  width: auto;
+  max-width: 12rem;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+}
+
+.manga-lib-tag.on {
+  border-color: var(--accent);
+}
+
 .manga-lib-more {
   display: block;
   margin: 18px auto 0;

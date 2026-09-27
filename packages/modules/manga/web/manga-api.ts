@@ -45,6 +45,8 @@ export interface SeriesSummary {
   lastReadAt?: number | null;
   /** Brought in from another app: which, and the site it was last read on there. */
   origin?: { app: string; site: string };
+  /** Genres from its source. Absent until they have been asked for. */
+  tags?: string[];
 }
 
 /** What a Manga Reader backup holds, and — once committed — what was done with it. */
@@ -70,6 +72,12 @@ export interface MangaReaderImport {
 
 export type ImportScope = 'all' | 'year' | 'quarter';
 
+/** A source left out of searching, browsing and finding imports. */
+export interface IgnoredSource {
+  id: string;
+  name: string;
+}
+
 /** Finding imported series on your sources — see `matching.ts` on the server. */
 export interface MatchingState {
   running: boolean;
@@ -80,7 +88,7 @@ export interface MatchingState {
   failed: number;
   noSource: Array<{ site: string; count: number }>;
   /** Sources set aside because they kept failing, with what they said. Optional: older servers. */
-  broken?: Array<{ source: string; reason: string }>;
+  broken?: Array<{ id?: string; source: string; reason: string }>;
   finishedAt: number | null;
   problem: string | null;
   /** Imported series still without a source. Only on the status read. */
@@ -423,6 +431,15 @@ export const manga = {
       }),
     matching: () => call<MatchingState>('/api/manga/import/matching'),
     matchAgain: () => call<MatchingState>('/api/manga/import/matching', { method: 'POST' }),
+  },
+
+  ignored: {
+    list: () => call<{ ignoredSources: IgnoredSource[] }>('/api/manga/ignored-sources'),
+    set: (id: string, name: string, ignored: boolean) =>
+      call<{ ignoredSources: IgnoredSource[] }>('/api/manga/ignored-sources', {
+        method: 'PUT',
+        body: JSON.stringify({ id, name, ignored }),
+      }),
   },
 
   source: {

@@ -48,6 +48,7 @@ import { read, write, type Series } from './library.js';
 import { suwayomiProcess } from './process.js';
 import { effectiveUrl, type SourceMatch } from './sources.js';
 import { DEFAULT_BASE_URL, SuwayomiAdapter, type BrowseSource } from './suwayomi.js';
+import { fillTags } from './tags.js';
 
 export type MatchingState = {
   running: boolean;
@@ -62,7 +63,7 @@ export type MatchingState = {
   /** Sites with no installed source, most series first. */
   noSource: Array<{ site: string; count: number }>;
   /** Sources set aside this run because they kept failing, with what they said. */
-  broken: Array<{ source: string; reason: string }>;
+  broken: Array<{ id: string; source: string; reason: string }>;
   finishedAt: number | null;
   problem: string | null;
 };
@@ -179,7 +180,11 @@ async function run(todo: Series[]): Promise<void> {
     if (started.state === 'failed') throw new Error(`Suwayomi would not start — ${started.problem}`);
   }
   const adapter = new SuwayomiAdapter(url);
-  const sources = await adapter.listSources();
+  // Every installed source, ignored ones included, so a site whose only source
+  // you have set aside is not reported as having none installed.
+  const installed = await adapter.listSources();
+  const ignored = new Set(store.ignoredSources.map((s) => s.id));
+  const sources = installed.filter((s) => !ignored.has(s.id));
   const others = fallbackSources(sources, store.readLanguages);
 
   // Most recently read first: an import sets `addedAt` to when it was last read.
@@ -192,10 +197,11 @@ async function run(todo: Series[]): Promise<void> {
 
   for (const series of todo) {
     const origin = series.origin!;
-    const own = (origin.sites ?? [origin.site])
-      .map((site) => sourceForSite(site, sources, store.readLanguages))
+    const siteSources = (origin.sites ?? [origin.site])
+      .map((site) => sourceForSite(site, installed, store.readLanguages))
       .filter((s): s is BrowseSource => s !== null);
-    if (own.length === 0) noSource.set(origin.site, (noSource.get(origin.site) ?? 0) + 1);
+    if (siteSources.length === 0) noSource.set(origin.site, (noSource.get(origin.site) ?? 0) + 1);
+    const own = siteSources.filter((s) => !ignored.has(s.id));
     // Whatever has been finding things this run goes first.
     const ranked = [...others].sort((a, b) => (wins.get(b.id) ?? 0) - (wins.get(a.id) ?? 0));
     const usable = (list: BrowseSource[]) => list.filter((s) => !broken.has(s.id));
@@ -226,6 +232,7 @@ async function run(todo: Series[]): Promise<void> {
         if (n >= BROKEN_AFTER) {
           broken.set(source.id, failureReason(error));
           state.broken = [...broken].map(([id, reason]) => ({
+            id,
             source: sources.find((s) => s.id === id)?.name ?? id,
             reason,
           }));
@@ -268,4 +275,6 @@ async function run(todo: Series[]): Promise<void> {
 
   state = { ...state, running: false, finishedAt: Date.now() };
   changes.emitChange('all');
+  // Everything just linked wants its genres, and Suwayomi is up now.
+  void fillTags().catch(() => {});
 }

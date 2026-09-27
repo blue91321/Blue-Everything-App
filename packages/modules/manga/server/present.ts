@@ -55,6 +55,8 @@ export type SeriesSummary = {
   reviews: Series['reviews'];
   /** Brought in from another app, and read on which site there. Absent otherwise. */
   origin?: { app: string; site: string };
+  /** Genres from the source. Absent until asked. */
+  tags?: string[];
 };
 
 /**
@@ -195,6 +197,7 @@ export function seriesSummary(series: Series): SeriesSummary {
     source: series.source,
     reviews: series.reviews,
     ...(series.origin ? { origin: { app: series.origin.app, site: series.origin.site } } : {}),
+    ...(series.tags ? { tags: series.tags } : {}),
     notWatchingBecause: watching
       ? null
       : !trackable && series.origin

@@ -25,6 +25,25 @@
  *   to a screen reader — the number beside it is then older than it looks, and
  *   saying nothing about that is the failure this app is built against.
  *
+ * ### Sorting, and what stays on top
+ *
+ * **Last read is the default**, with series that have new chapters held at the
+ * top by a ticked "New chapters on top" in the same menu. That was one fixed
+ * order ("new chapters first"); it is two choices now, because "what was I
+ * reading" and "what has moved" are both reasons to open the shelf, and
+ * unticking the box is how you get the first without the second.
+ *
+ * **Most to catch up on** sorts by how far the newest chapter is past where you
+ * are — whole chapters between the two numbers. An estimate, since a source can
+ * skip numbers or split them, and the badge says `12 NEW` from the same sum.
+ *
+ * ### Filters
+ *
+ * New chapters, **source not answering** (its last check or the last time its
+ * chapters were opened failed), no source yet, and a tag. In the not-answering
+ * view a cover opens the search for another source rather than a chapter list
+ * that will only fail again, which is the reason to open that view.
+ *
  * ### Sixty at a time
  *
  * A library brought in from another app is several hundred series, and every
@@ -40,15 +59,24 @@ import { Icon } from './Icons';
 import { chapterText } from './judge';
 import type { SeriesSummary } from './manga-api';
 
-export type SortKey = 'unread' | 'updated' | 'read' | 'title' | 'added';
+export type SortKey = 'read' | 'catchup' | 'updated' | 'title' | 'added';
+
+export type Show = 'all' | 'new' | 'broken' | 'unlinked';
+
+const SHOW_LABEL: Record<Show, string> = {
+  all: 'All',
+  new: 'New chapters',
+  broken: 'Source not answering',
+  unlinked: 'No source yet',
+};
 
 /** Divides by three, four, five, six and ten, so a page ends on a full row at every width. */
 const PAGE = 60;
 
 const SORT_LABEL: Record<SortKey, string> = {
-  unread: 'New chapters first',
+  read: 'Last read',
+  catchup: 'Most to catch up on',
   updated: 'Last updated',
-  read: 'Recently read',
   title: 'Title',
   added: 'Recently added',
 };
@@ -58,15 +86,36 @@ const SORT_LABEL: Record<SortKey, string> = {
  * screen, and sorting the phone's shelf should not reorder the PC's.
  */
 const SORT_KEY = 'manga.library-sort';
+const NEW_FIRST_KEY = 'manga.library-new-first';
+const SHOW_KEY = 'manga.library-show';
 
-function storedSort(): SortKey {
+function stored(key: string): string | null {
   try {
-    const v = localStorage.getItem(SORT_KEY);
-    if (v && v in SORT_LABEL) return v as SortKey;
+    return localStorage.getItem(key);
   } catch {
     // Private mode, or storage blocked: the default is a fine answer.
+    return null;
   }
-  return 'unread';
+}
+
+function keep(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Kept for this visit only.
+  }
+}
+
+function storedSort(): SortKey {
+  const v = stored(SORT_KEY);
+  // "New chapters first" was its own order; it is last read with the box ticked now.
+  if (v === 'unread') return 'read';
+  return v && v in SORT_LABEL ? (v as SortKey) : 'read';
+}
+
+function storedShow(): Show {
+  const v = stored(SHOW_KEY);
+  return v && v in SHOW_LABEL ? (v as Show) : 'all';
 }
 
 /** Somewhere past where you are — see the note at the top. */
@@ -77,29 +126,48 @@ export function hasNew(s: SeriesSummary): boolean {
   return reached > -Infinity && latest > reached;
 }
 
+/**
+ * Whole chapters between where you are and the newest — see the note at the
+ * top. Zero when either is unknown, like `hasNew`.
+ */
+export function toCatchUp(s: SeriesSummary): number {
+  if (!hasNew(s)) return 0;
+  const reached = Math.max(s.readUpTo ?? -Infinity, s.position?.chapter ?? -Infinity);
+  return Math.max(1, Math.floor(s.latestNumber!) - Math.floor(reached));
+}
+
+/** Its source failed when last asked — by the sweep, or by opening its chapters. */
+export const notAnswering = (s: SeriesSummary) => s.source !== null && s.error !== null;
+
 /** "Asura Scans (EN)" → "Asura Scans": the language is the same on every tile and costs a third of its width. */
 export function sourceLabel(name: string): string {
   return name.replace(/\s*\((?:[A-Za-z]{2,3}(?:-[A-Za-z]+)?|ALL|all)\)\s*$/, '');
 }
 
-function sorted(list: SeriesSummary[], key: SortKey): SeriesSummary[] {
+function sorted(list: SeriesSummary[], key: SortKey, newFirst: boolean): SeriesSummary[] {
   const byTitle = (a: SeriesSummary, b: SeriesSummary) => a.title.localeCompare(b.title);
   const desc = (f: (s: SeriesSummary) => number | null | undefined) => (a: SeriesSummary, b: SeriesSummary) =>
     (f(b) ?? 0) - (f(a) ?? 0) || byTitle(a, b);
   const copy = [...list];
   switch (key) {
     case 'title':
-      return copy.sort(byTitle);
+      copy.sort(byTitle);
+      break;
     case 'added':
-      return copy.sort(desc((s) => s.addedAt));
+      copy.sort(desc((s) => s.addedAt));
+      break;
     case 'read':
-      return copy.sort(desc((s) => s.lastReadAt));
+      copy.sort(desc((s) => s.lastReadAt));
+      break;
+    case 'catchup':
+      copy.sort(desc(toCatchUp));
+      break;
     case 'updated':
-      return copy.sort(desc((s) => s.lastReleaseAt));
-    case 'unread':
-      // New first; within each half, the one you were reading most recently.
-      return copy.sort((a, b) => Number(hasNew(b)) - Number(hasNew(a)) || desc((s) => s.lastReadAt)(a, b));
+      copy.sort(desc((s) => s.lastReleaseAt));
+      break;
   }
+  // Stable, so within each half the order chosen above holds.
+  return newFirst ? copy.sort((a, b) => Number(hasNew(b)) - Number(hasNew(a))) : copy;
 }
 
 export function Library({
@@ -121,36 +189,68 @@ export function Library({
   onFilter: (text: string) => void;
 }) {
   const [sort, setSort] = useState<SortKey>(storedSort);
+  const [newFirst, setNewFirst] = useState(() => stored(NEW_FIRST_KEY) !== '0');
+  const [show, setShow] = useState<Show>(storedShow);
+  // Not remembered: a tag is a question you are asking now, and coming back to
+  // a shelf silently narrowed to "Isekai" would read as series gone missing.
+  const [tag, setTag] = useState<string | null>(null);
 
-  const sortMenu = useButtonMenu(() =>
-    (Object.keys(SORT_LABEL) as SortKey[]).map((key) => ({
+  const sortMenu = useButtonMenu(() => [
+    ...(Object.keys(SORT_LABEL) as SortKey[]).map((key) => ({
       label: `${key === sort ? '✓ ' : ' '}${SORT_LABEL[key]}`,
       onSelect: () => {
         setSort(key);
-        try {
-          localStorage.setItem(SORT_KEY, key);
-        } catch {
-          // Kept for this visit only.
-        }
+        keep(SORT_KEY, key);
       },
-    }))
+    })),
+    {
+      label: `${newFirst ? '☑' : '☐'} New chapters on top`,
+      onSelect: () => {
+        setNewFirst(!newFirst);
+        keep(NEW_FIRST_KEY, newFirst ? '0' : '1');
+      },
+    },
+  ]);
+
+  const counts = useMemo(
+    () => ({
+      all: series.length,
+      new: series.filter(hasNew).length,
+      broken: series.filter(notAnswering).length,
+      unlinked: series.filter((s) => !s.source).length,
+    }),
+    [series]
   );
+
+  // Most common first, so the tags worth filtering by are at the top.
+  const tags = useMemo(() => {
+    const n = new Map<string, number>();
+    for (const s of series) for (const t of s.tags ?? []) n.set(t, (n.get(t) ?? 0) + 1);
+    return [...n].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [series]);
 
   const shown = useMemo(() => {
     const words = filter.trim().toLowerCase();
-    const matching = words
-      ? series.filter(
-          (s) => s.title.toLowerCase().includes(words) || (s.source?.title.toLowerCase().includes(words) ?? false)
-        )
-      : series;
-    return sorted(matching, sort);
-  }, [series, filter, sort]);
+    const matching = series.filter(
+      (s) =>
+        (!words ||
+          s.title.toLowerCase().includes(words) ||
+          (s.source?.title.toLowerCase().includes(words) ?? false)) &&
+        (show === 'all' ||
+          (show === 'new' && hasNew(s)) ||
+          (show === 'broken' && notAnswering(s)) ||
+          (show === 'unlinked' && !s.source)) &&
+        (tag === null || (s.tags ?? []).includes(tag))
+    );
+    return sorted(matching, sort, newFirst);
+  }, [series, filter, sort, newFirst, show, tag]);
 
-  const fresh = series.filter(hasNew).length;
+  const fresh = counts.new;
+  const narrowed = Boolean(filter.trim()) || show !== 'all' || tag !== null;
 
   // A new filter or order starts from the top again.
   const [limit, setLimit] = useState(PAGE);
-  useEffect(() => setLimit(PAGE), [filter, sort]);
+  useEffect(() => setLimit(PAGE), [filter, sort, newFirst, show, tag]);
 
   return (
     <div className="manga-library">
@@ -168,19 +268,65 @@ export function Library({
       </div>
       {sortMenu.menu}
 
-      <p className="meta manga-lib-count">
-        {filter.trim() ? `${shown.length} of ${series.length}` : `${series.length} series`}
-        {fresh > 0 ? ` · ${fresh} with new chapters` : ''} · {SORT_LABEL[sort].toLowerCase()}
-      </p>
+      <div className="manga-lib-filters" role="group" aria-label="Show">
+        {(Object.keys(SHOW_LABEL) as Show[])
+          // A filter with nothing in it is left off, except the one you are on.
+          .filter((key) => key === 'all' || key === show || counts[key] > 0)
+          .map((key) => (
+            <button
+              key={key}
+              className={`manga-lib-filter${show === key ? ' on' : ''}${key === 'broken' ? ' warn' : ''}`}
+              aria-pressed={show === key}
+              onClick={() => {
+                setShow(key);
+                keep(SHOW_KEY, key);
+              }}
+            >
+              {SHOW_LABEL[key]}
+              {key !== 'all' && <span className="count">{counts[key]}</span>}
+            </button>
+          ))}
+        {tags.length > 0 && (
+          <select
+            className={`manga-lib-tag${tag ? ' on' : ''}`}
+            value={tag ?? ''}
+            aria-label="Filter by tag"
+            onChange={(e) => setTag(e.target.value || null)}
+          >
+            <option value="">Any tag</option>
+            {tags.map(([name, n]) => (
+              <option key={name} value={name}>
+                {name} ({n})
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
 
-      {shown.length === 0 && filter.trim() && <p className="empty">Nothing in your library matches “{filter.trim()}”.</p>}
+      <p className="meta manga-lib-count">
+        {narrowed ? `${shown.length} of ${series.length}` : `${series.length} series`}
+        {fresh > 0 ? ` · ${fresh} with new chapters` : ''} · {SORT_LABEL[sort].toLowerCase()}
+        {newFirst ? ', new on top' : ''}
+      </p>
+      {show === 'broken' && shown.length > 0 && (
+        <p className="meta">Tap one to find it on another source.</p>
+      )}
+
+      {shown.length === 0 && narrowed && (
+        <p className="empty">
+          Nothing in your library matches
+          {filter.trim() ? ` “${filter.trim()}”` : ''}
+          {show !== 'all' ? ` in ${SHOW_LABEL[show].toLowerCase()}` : ''}
+          {tag ? ` tagged ${tag}` : ''}.
+        </p>
+      )}
 
       <div className="manga-lib-grid">
         {shown.slice(0, limit).map((s) => (
           <Tile
             key={s.id}
             series={s}
-            onOpen={() => onOpen(s)}
+            onOpen={() => (show === 'broken' ? onCompare(s) : onOpen(s))}
             onDetails={() => onDetails(s)}
             onCompare={() => onCompare(s)}
             onRemove={() => onRemove(s)}
@@ -246,6 +392,7 @@ function Tile({
   ]);
 
   const fresh = hasNew(s);
+  const catchUp = toCatchUp(s);
   const latest = s.latestNumber;
   const where = s.source ? sourceLabel(s.source.sourceName) : null;
   // Brought in and not found yet: where it was, rather than a bare "no source".
@@ -259,7 +406,8 @@ function Tile({
         onContextMenu={menu.onContextMenu}
         aria-label={[
           s.title,
-          fresh ? 'new chapters' : null,
+          fresh ? `${catchUp} new chapter${catchUp === 1 ? '' : 's'}` : null,
+          notAnswering(s) ? 'source not answering' : null,
           latest !== null && latest !== undefined ? `newest chapter ${chapterText(latest)}` : null,
           where ? `read on ${where}` : s.origin ? `no source yet, read on ${s.origin.site} in ${s.origin.app}` : 'no source yet',
           s.error ? `last check failed: ${s.error}` : null,
@@ -269,7 +417,7 @@ function Tile({
       >
         <span className="manga-lib-cover">
           <Cover path={s.coverPath} title={s.title} fill />
-          {fresh && <span className="manga-lib-new">NEW</span>}
+          {fresh && <span className="manga-lib-new">{catchUp > 1 ? `${catchUp} NEW` : 'NEW'}</span>}
           {s.error && (
             <span className="manga-lib-warn" title={`Last check failed: ${s.error}`}>
               !

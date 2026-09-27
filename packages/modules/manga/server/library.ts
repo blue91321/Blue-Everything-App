@@ -71,6 +71,11 @@ export type Series = SeriesIds & {
   source: SeriesSource | null;
   /** The newest chapter the source has, as of `sourceCheckedAt`. */
   sourceChapter: number | null;
+  /**
+   * Genres, as the linked source lists them — see `tags.ts`. Absent means not
+   * asked yet; an empty list means asked, and the source has none.
+   */
+  tags?: string[];
   sourceCheckedAt: number | null;
   /**
    * Chapter numbers you have read.
@@ -234,6 +239,12 @@ export type Store = {
    * and the tab falls back to the first source it has.
    */
   browseSource: string | null;
+  /**
+   * Sources left out of searching, browsing and finding imports: one that has
+   * stopped working, or one you would rather not read from. By id, with the
+   * name kept so the screen can say which without asking Suwayomi.
+   */
+  ignoredSources: Array<{ id: string; name: string }>;
   series: Series[];
   /** Raised-and-linked releases, so a task you deleted is never recreated. */
   links: ReleaseLink[];
@@ -284,6 +295,7 @@ function emptyStore(): Store {
     readLanguages: [...DEFAULT_LANGUAGES],
     releaseTasks: false,
     browseSource: null,
+    ignoredSources: [],
     series: [],
     links: [],
   };
@@ -304,6 +316,12 @@ export function read(): Store {
           : [...DEFAULT_LANGUAGES],
       releaseTasks: parsed.releaseTasks === true,
       browseSource: typeof parsed.browseSource === 'string' && parsed.browseSource ? parsed.browseSource : null,
+      ignoredSources: Array.isArray(parsed.ignoredSources)
+        ? parsed.ignoredSources.filter(
+            (x): x is { id: string; name: string } =>
+              typeof x === 'object' && x !== null && typeof x.id === 'string' && typeof x.name === 'string'
+          )
+        : [],
       /*
        * Every optional field is filled in, not merely trusted.
        *
