@@ -17,7 +17,9 @@
  * - **NEW** when the source has a chapter past the furthest you have read or are
  *   reading. Only once you have read *something*: before that every chapter is
  *   unread, and a badge on every cover says nothing.
- * - **The bar** is the newest chapter's number.
+ * - **The bar** is the newest chapter's number — red when there is one you
+ *   have not read, in the accent otherwise, so the colour says the same thing
+ *   as NEW from across the room.
  * - **Under it**, where you read it.
  * - **!** on the cover when the last check failed, with the reason on hover and
  *   to a screen reader — the number beside it is then older than it looks, and
@@ -229,7 +231,9 @@ function Tile({
           )}
         </span>
         <span className="manga-lib-title">{s.title}</span>
-        <span className={`manga-lib-bar${latest === null || latest === undefined ? ' unknown' : ''}`}>
+        <span
+          className={`manga-lib-bar${latest === null || latest === undefined ? ' unknown' : ''}${fresh ? ' new' : ''}`}
+        >
           {latest !== null && latest !== undefined ? chapterText(latest) : '–'}
         </span>
         <span className={`manga-lib-source${where ? '' : ' none'}`}>{where ?? 'no source yet'}</span>

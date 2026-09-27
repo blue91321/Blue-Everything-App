@@ -462,9 +462,18 @@ in the middle rather than spreading 240px apart.
 - **NEW** when the source has a chapter past the furthest you have read *or are
   partway through*, and only once you have read something. Before that every
   chapter is unread, and a badge on every cover says nothing.
-- **The bar**, the newest chapter's number, in the accent. The old app's bar
-  was its own brand colour; this app's is the accent. NEW stays red whatever
-  the accent, because red is what "something you have not seen" is on a phone.
+- **The bar**, the newest chapter's number, across the tile: in the accent,
+  or red when there is a chapter you have not read, so it says the same thing
+  as NEW from across the room. Red whatever the accent, because red is what
+  "something you have not seen" is on a phone.
+
+  **WebKit gives every `<button>` `align-items: flex-start`; Chrome does not.**
+  A tile is a button, so on the PC each line under the cover stretched to the
+  cover's width and on the iPhone each shrank to its text: the bar became a
+  small box around the number, and a long title ran into the next one instead
+  of ending in "…". Found from a screenshot of the phone, since nothing on the
+  PC could show it. `.manga-lib-tile` states `align-items: stretch`; a button
+  used as a flex container anywhere else needs the same.
 - **Where you read it**, with the language suffix stripped: it is the same on
   every tile and cost a third of the width.
 - **!** on the cover when the last check failed, with the reason on hover and to
