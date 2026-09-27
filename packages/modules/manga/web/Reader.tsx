@@ -12,12 +12,22 @@
  *
  * ### The controls get out of the way
  *
- * A bar across the top (back, the chapter's number) and one across the bottom
- * (previous and next page, where you are, and a strip of every page to jump
- * to) — laid out like the reading app this replaced on the phone. They show
- * when a chapter opens and go after a few seconds; a tap anywhere on the pages
- * brings them back, and another sends them away. Touching the controls
+ * A bar across the top (back, the chapter's number, the gear) and one across
+ * the bottom (previous and next page, where you are, and a strip of every page
+ * to jump to) — laid out like the reading app this replaced on the phone. They
+ * show when a chapter opens and go after a few seconds; a tap anywhere on the
+ * pages brings them back, and another sends them away. Touching the controls
  * themselves restarts the countdown, so they never vanish under your finger.
+ *
+ * **Both countdowns are settings**, behind the gear's More: one for when a
+ * chapter opens, one for after a tap, each with Never. They are two because
+ * they answer different moments — arriving, when a glance at the chapter
+ * number is all you want, and reaching for a control, when you may want it to
+ * stay — and a single number would make one of them wrong.
+ *
+ * **The gear's panel holds them up while it is open**, since it is part of the
+ * controls; a tap on the page closes it rather than hiding everything, which is
+ * what a tap outside a popover means everywhere else.
  *
  * **Hidden is `opacity` and `pointer-events`, not `visibility`.** A hidden
  * control must not catch a tap meant for the page — that is the pointer half —
@@ -108,7 +118,7 @@
  * and CSS transitions on this project's list of things that measure nothing in a
  * pane nobody is looking at.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ServerUnreachable } from '@app/api';
 import { useNow } from '@app/clock';
@@ -116,6 +126,8 @@ import { manga } from './manga-api';
 import { NEEDS } from './device-text';
 import { Icon } from './Icons';
 import { chapterText } from './judge';
+import { ReaderSettings } from './ReaderSettings';
+import { useReaderPrefs } from './reader-prefs';
 
 const IN_FLIGHT = 3;
 
@@ -124,9 +136,6 @@ const READ_LINE = 8;
 
 /** How often scrolling is turned into a place, at most. */
 const MEASURE_MS = 300;
-
-/** How long the controls stay up after you last touched them. */
-const HIDE_AFTER_MS = 3500;
 
 /** A thumbnail's box, drawn at twice this for a sharp screen. */
 const THUMB_W = 30;
@@ -328,23 +337,37 @@ export function Reader({
   const report = useRef(onPosition);
   report.current = onPosition;
 
+  /**
+   * The page crossing the read line, and how far down it the line is.
+   *
+   * A page counts only once more than a pixel of it is below the line. Putting
+   * a page's top exactly on the line — which a jump and a zoom both do — lands
+   * a fraction off after scaling, and without the pixel the page above, with a
+   * sliver of itself still showing, was the one counted: page 4 at the top of
+   * the screen and the counter saying 3.
+   */
+  const where = (): { page: number; offset: number; pages: number } | null => {
+    const kids = strip.current?.children;
+    if (!kids || kids.length === 0) return null;
+    for (let i = 0; i < kids.length; i++) {
+      const box = (kids[i] as HTMLElement).getBoundingClientRect();
+      if (box.bottom > READ_LINE + 1) {
+        const offset = box.height > 0 ? Math.min(1, Math.max(0, (READ_LINE - box.top) / box.height)) : 0;
+        return { page: i, offset, pages: kids.length };
+      }
+    }
+    return { page: kids.length - 1, offset: 1, pages: kids.length };
+  };
+
   useEffect(() => {
     let waiting: ReturnType<typeof setTimeout> | null = null;
     const measure = () => {
       waiting = null;
-      const kids = strip.current?.children;
-      if (!kids || kids.length === 0 || returning.current) return;
-      for (let i = 0; i < kids.length; i++) {
-        const box = (kids[i] as HTMLElement).getBoundingClientRect();
-        if (box.bottom > READ_LINE) {
-          const offset = box.height > 0 ? Math.min(1, Math.max(0, (READ_LINE - box.top) / box.height)) : 0;
-          setPage(i);
-          report.current?.({ page: i, offset, pages: kids.length });
-          return;
-        }
-      }
-      setPage(kids.length - 1);
-      report.current?.({ page: kids.length - 1, offset: 1, pages: kids.length });
+      if (returning.current) return;
+      const place = where();
+      if (!place) return;
+      setPage(place.page);
+      report.current?.(place);
     };
     const onScroll = () => {
       if (!waiting) waiting = setTimeout(measure, MEASURE_MS);
@@ -357,30 +380,83 @@ export function Reader({
   }, []);
 
   /*
-   * The controls: up when the chapter opens, away after HIDE_AFTER_MS, back on
-   * a tap. Held up while there is nothing to read, when Back is all there is.
+   * The controls: up when the chapter opens, away after the countdown for that
+   * moment, back on a tap. Held up while there is nothing to read, when Back is
+   * all there is, and while the gear's panel is open.
    */
+  const [prefs, setPrefs] = useReaderPrefs();
   const [shown, setShown] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const held = problem !== null || total === null;
+  // Read by the timer rather than closed over, so the callbacks below stay the
+  // same function and a changed setting applies to the next countdown.
+  const settings = useRef({ prefs, open: settingsOpen });
+  settings.current = { prefs, open: settingsOpen };
+  /** Which countdown is running: the one for arriving, or the one after a tap. */
+  const phase = useRef<'open' | 'tap'>('open');
 
-  /** Show them, and start the countdown again. */
-  const wake = useCallback(() => {
+  /** Show them, and start this moment's countdown again — or none, when it is Never. */
+  const wake = useCallback((next?: 'open' | 'tap') => {
+    if (next) phase.current = next;
     setShown(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setShown(false), HIDE_AFTER_MS);
+    hideTimer.current = null;
+    const { prefs: p, open } = settings.current;
+    const ms = phase.current === 'open' ? p.hideOnOpenMs : p.hideAfterTapMs;
+    if (ms !== null && !open) hideTimer.current = setTimeout(() => setShown(false), ms);
   }, []);
+
+  /** A touch on the controls: the same countdown, from the start. */
+  const touched = useCallback(() => wake(), [wake]);
 
   const sleep = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
     setShown(false);
   };
 
+  /** Open or close the gear's panel; the countdown waits while it is open. */
+  const showSettings = (open: boolean) => {
+    settings.current = { ...settings.current, open };
+    setSettingsOpen(open);
+    wake();
+  };
+
   // A new chapter shows its number, and the countdown starts once there is
   // something to read under them.
   useEffect(() => {
-    if (!held) wake();
+    if (!held) wake('open');
   }, [held, chapter.id, wake]);
+
+  // Escape closes the panel, as it does every other popover here.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') showSettings(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen]);
+
+  /*
+   * Changing the page width moves everything below the top of the screen, so
+   * the place is taken before the change and put back after it — in a layout
+   * effect, so the jump is never painted.
+   */
+  const anchor = useRef<{ page: number; offset: number } | null>(null);
+  const changePrefs = (change: Partial<typeof prefs>) => {
+    if (change.width !== undefined && change.width !== prefs.width) anchor.current = where();
+    setPrefs(change);
+  };
+  useLayoutEffect(() => {
+    const place = anchor.current;
+    anchor.current = null;
+    const el = place ? (strip.current?.children[place.page] as HTMLElement | undefined) : undefined;
+    if (!place || !el) return;
+    const y = window.scrollY + el.getBoundingClientRect().top + place.offset * el.offsetHeight - READ_LINE;
+    window.scrollTo(0, Math.max(0, y));
+  }, [prefs.width]);
 
   useEffect(
     () => () => {
@@ -389,12 +465,16 @@ export function Reader({
     []
   );
 
-  /** A tap on the pages. Anything that is a control of its own is left alone. */
+  /**
+   * A tap on the pages. Anything that is a control of its own is left alone,
+   * and with the panel open a tap closes it rather than hiding everything.
+   */
   function onTap(event: React.MouseEvent) {
     const target = event.target as HTMLElement;
-    if (target.closest('button, a, .manga-reader-chrome, .manga-returning')) return;
-    if (shown) sleep();
-    else wake();
+    if (target.closest('button, a, input, .manga-reader-chrome, .manga-returning, .manga-reader-settings')) return;
+    if (settingsOpen) showSettings(false);
+    else if (shown) sleep();
+    else wake('tap');
   }
 
   const visible = shown || held;
@@ -414,9 +494,9 @@ export function Reader({
     <div className={`manga-reader${visible ? '' : ' chrome-off'}`} ref={top} onClick={onTap}>
       <div
         className="manga-reader-chrome top"
-        onPointerDown={wake}
-        onKeyDown={wake}
-        onFocusCapture={wake}
+        onPointerDown={touched}
+        onKeyDown={touched}
+        onFocusCapture={touched}
       >
         <button className="btn subtle manga-reader-back" onClick={onClose}>
           ‹ {backLabel}
@@ -429,9 +509,25 @@ export function Reader({
             </span>
           )}
         </span>
-        {/* Room for reader settings, which are next. */}
-        <span />
+        <button
+          className="manga-icon-btn manga-reader-gear"
+          aria-label="Reader settings"
+          aria-expanded={settingsOpen}
+          onClick={() => showSettings(!settingsOpen)}
+        >
+          <Icon.gear />
+        </button>
       </div>
+
+      {settingsOpen && visible && <ReaderSettings prefs={prefs} onChange={changePrefs} />}
+
+      {/*
+        * Dimming is a veil over the pages, below the controls — the screen's
+        * own brightness is not something a web app can reach.
+        */}
+      {prefs.brightness < 1 && (
+        <div className="manga-reader-dim" style={{ opacity: 1 - prefs.brightness }} aria-hidden="true" />
+      )}
 
       {problem && <p className="banner">{problem}</p>}
       {total === null && !problem && <p className="empty">Asking the source for this chapter…</p>}
@@ -455,7 +551,11 @@ export function Reader({
         </p>
       )}
 
-      <div className="manga-strip" ref={strip}>
+      <div
+        className="manga-strip"
+        ref={strip}
+        style={{ '--page-width': `${prefs.width}%` } as React.CSSProperties}
+      >
         {urls.map((url, index) =>
           url ? (
             <img
@@ -498,9 +598,9 @@ export function Reader({
       {total !== null && total > 0 && (
         <div
           className="manga-reader-chrome bottom"
-          onPointerDown={wake}
-          onKeyDown={wake}
-          onFocusCapture={wake}
+          onPointerDown={touched}
+          onKeyDown={touched}
+          onFocusCapture={touched}
         >
           <div className="manga-reader-nav">
             <button
@@ -528,7 +628,7 @@ export function Reader({
             * the current page centred, and a scroll handler would take that for
             * you touching it and hold the controls up for as long as you read.
             */}
-          <div className="manga-reader-thumbs" ref={thumbBox} onWheel={wake}>
+          <div className="manga-reader-thumbs" ref={thumbBox} onWheel={touched}>
             {urls.map((_, index) => (
               <button
                 key={index}

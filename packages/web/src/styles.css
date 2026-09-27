@@ -2711,12 +2711,15 @@ button {
   align-items: center;
 }
 
+/*
+ * The screen's width, not a reading column: the app around the pages is gone
+ * while you read, and margins either side of a webtoon are the app showing
+ * through. The gear's width setting narrows it for a monitor where full width
+ * is a metre tall — `--page-width`, set on the strip.
+ */
 .manga-strip img {
   display: block;
-  width: 100%;
-  /* Capped so a page-per-image series is readable on a wide monitor rather than
-     a metre tall, while a webtoon strip still fills a phone. */
-  max-width: 900px;
+  width: var(--page-width, 100%);
   height: auto;
 }
 
@@ -2724,8 +2727,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
-  max-width: 900px;
+  width: var(--page-width, 100%);
   /* Something rather than nothing, so the strip has a shape while it fills in. */
   min-height: 240px;
   color: var(--muted);
@@ -3821,6 +3823,19 @@ body:has(> .manga-reader) > #root {
   display: none;
 }
 
+/*
+ * And the scrollbar goes too, on a PC: a 15px strip down one side of the page
+ * is the one piece of the browser left showing, and the page counter already
+ * says where you are. Scrolling itself is untouched.
+ */
+html:has(body > .manga-reader) {
+  scrollbar-width: none;
+}
+
+html:has(body > .manga-reader)::-webkit-scrollbar {
+  display: none;
+}
+
 .manga-reader {
   min-height: 100vh;
   min-height: 100dvh;
@@ -4009,6 +4024,107 @@ body:has(> .manga-reader) > #root {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   white-space: pre;
+  pointer-events: none;
+}
+
+/* ---- the gear ---- */
+
+.manga-reader-gear {
+  justify-self: end;
+}
+
+.manga-reader-gear[aria-expanded='true'] {
+  color: var(--accent);
+}
+
+/*
+ * Hangs from the gear, with a point towards it, as in the app it replaced. The
+ * gear sits 32px in from the right of the bar (12px padding, half of 40), so
+ * the point is placed there rather than guessed.
+ */
+.manga-reader-settings {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + var(--menu-top) * 2 + var(--menu-size) + 10px);
+  right: 8px;
+  z-index: 16;
+  width: min(340px, calc(100vw - 16px));
+  padding: 14px 16px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.manga-reader-settings::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  right: 18px;
+  width: 12px;
+  height: 12px;
+  background: var(--surface-raised);
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+.manga-reader-slider {
+  display: grid;
+  grid-template-columns: 24px 1fr 40px;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 10px;
+}
+
+.manga-reader-slider input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.manga-reader-slider .meta {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.manga-reader-settings-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.manga-reader-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.manga-reader-hide {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.manga-reader-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.manga-reader-choices .btn[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* A veil over the pages and under the controls, so dimming never dims the way out. */
+.manga-reader-dim {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  background: #000;
   pointer-events: none;
 }
 

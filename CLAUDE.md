@@ -506,12 +506,12 @@ silently never nudges looks exactly like a broken feature.
 
 #### Reading: the controls get out of the way
 
-`Reader.tsx`. A bar across the top (Back, the chapter's number) and one across
-the bottom (previous and next page, the page counter, a strip of every page to
-jump to), laid out like the reading app it replaced. They show when a chapter
-opens, go after 3.5 seconds, and a tap on the pages toggles them; touching the
-controls restarts the countdown. With them away, the chapter, page and time sit
-small in a corner.
+`Reader.tsx`. A bar across the top (Back, the chapter's number, a gear) and
+one across the bottom (previous and next page, the page counter, a strip of
+every page to jump to), laid out like the reading app it replaced. They show
+when a chapter opens and go after a countdown; a tap on the pages toggles them;
+touching the controls restarts the countdown. With them away, the chapter, page
+and time sit small in a corner.
 
 **The reader takes the whole screen by leaving the app.** It is drawn into
 `body` through a portal and `body:has(> .manga-reader) > #root` hides the app,
@@ -537,6 +537,41 @@ position taken during the reader's first render, before the page shrank.
 - **The thumbnail strip listens for the wheel, not for scroll.** The code that
   keeps the current page centred scrolls it too, and a scroll handler took that
   for a touch and held the controls up for as long as you read.
+
+#### The gear, and what a web app cannot do from it
+
+`ReaderSettings.tsx`, shaped like the panel in the old app: sliders, then Reset
+and More, with the two countdowns behind More.
+
+- **Pages fit the screen's width**, with no cap. The 900px column they had was a
+  reading measure, and around a webtoon it is the app showing through. The page
+  width slider (40–100%) narrows it for a monitor where full width is a metre
+  tall, and the place is kept across the change: taken before, put back in a
+  layout effect after, so the jump is never painted. Verified: page 4 held at
+  the read line from 375px wide to 225px.
+- **Brightness dims the pages; it does not touch the screen.** A web app cannot
+  set an iPhone's brightness, so the slider is a black veil over the pages and
+  under the controls, and says what it is rather than posing as Control
+  Centre. The old app's rotation lock is left out for the same reason:
+  `screen.orientation.lock` does not exist on iOS.
+- **Two countdowns, each with Never**: one for when a chapter opens, one for
+  after a tap brings the controls back. They are different moments — arriving,
+  when a glance at the number is all you want, and reaching for a control, when
+  you may want it to stay — so one number would make one of them wrong. Which
+  one is running is a ref (`phase`); touching the controls restarts that one.
+  The panel holds everything up while open, and a tap on the page closes it
+  rather than hiding everything, which is what a tap outside a popover means.
+- **All of it is per device** (`reader-prefs.ts`, `localStorage`), unlike the
+  theme. Every value is a fact about the screen in your hand: a width for a
+  3440px monitor is a stamp on a phone, and dimming for bed is wrong at a desk.
+  Read back defensively, and a stored countdown is only taken if it is one on
+  offer, so a stray number cannot leave the controls up for an hour.
+- **The counter needed a pixel of tolerance.** A zoom or a jump puts a page's
+  top on the read line and scaling lands it a fraction off, so the page above,
+  with a sliver still showing, was counted: page 4 at the top and "3 / 10".
+- **The gear's teeth need square ends.** Every other icon uses round caps, and
+  on a dashed ring those grow each dash by half its width at both ends until the
+  gaps close and the cog is a ring.
 
 ### Installing a package, the way you would a texture pack
 

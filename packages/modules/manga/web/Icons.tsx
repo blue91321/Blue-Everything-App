@@ -63,6 +63,30 @@ export const Icon = {
       <path d="M4 7h16M7 12h10M10 17h4" />
     </svg>
   ),
+  /**
+   * A cog: a thick dashed ring is the teeth, a thin one the wheel. The teeth
+   * need square ends — with the round caps every other icon here uses, each
+   * dash grows by half its width at both ends and the gaps close into a ring.
+   */
+  gear: () => (
+    <svg {...base} width={24} height={24}>
+      <circle cx="12" cy="12" r="8.5" strokeWidth={3.2} strokeDasharray="3.6 3.07" strokeLinecap="butt" />
+      <circle cx="12" cy="12" r="6.5" />
+      <circle cx="12" cy="12" r="2.4" />
+    </svg>
+  ),
+  sun: () => (
+    <svg {...base}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" />
+    </svg>
+  ),
+  zoom: () => (
+    <svg {...base}>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="M20 20l-4.8-4.8M7.5 10.5h6" />
+    </svg>
+  ),
   previous: () => (
     <svg {...base} width={28} height={28} strokeWidth={1.8}>
       <path d="M15 4l-8 8 8 8" />
