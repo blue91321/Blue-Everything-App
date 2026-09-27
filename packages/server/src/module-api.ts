@@ -64,6 +64,16 @@ export * as schema from './db/schema.js';
 export { dataDir } from './paths.js';
 
 /**
+ * Reading a zip somebody hands a package — an export from another app.
+ *
+ * The reader the package installer uses, with its guards: zip slip, sizes
+ * checked before inflating, the CRC. The manga package reads an iMazing app
+ * backup with it; a copy of its own would be a second hand-rolled parser in
+ * the path of untrusted input, which is the thing `zip.ts` exists to be once.
+ */
+export { readZip, ZipError, type ZipEntry, type ZipLimits } from './zip.js';
+
+/**
  * Environment, already parsed and validated.
  *
  * `config.ts` is the only file allowed to read `process.env`, and that rule

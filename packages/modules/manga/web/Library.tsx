@@ -24,8 +24,16 @@
  * - **!** on the cover when the last check failed, with the reason on hover and
  *   to a screen reader — the number beside it is then older than it looks, and
  *   saying nothing about that is the failure this app is built against.
+ *
+ * ### Sixty at a time
+ *
+ * A library brought in from another app is several hundred series, and every
+ * tile fetches its cover the moment it mounts — nine hundred requests at once,
+ * most of them through a Suwayomi that may still be starting. So the grid draws
+ * sixty and adds sixty more as the end comes into view. The count above says
+ * how many there are in all, and the filter searches all of them.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useButtonMenu, useContextMenu } from '@app/ContextMenu';
 import { Cover } from './Cover';
 import { Icon } from './Icons';
@@ -33,6 +41,9 @@ import { chapterText } from './judge';
 import type { SeriesSummary } from './manga-api';
 
 export type SortKey = 'unread' | 'updated' | 'read' | 'title' | 'added';
+
+/** Divides by three, four, five, six and ten, so a page ends on a full row at every width. */
+const PAGE = 60;
 
 const SORT_LABEL: Record<SortKey, string> = {
   unread: 'New chapters first',
@@ -137,6 +148,10 @@ export function Library({
 
   const fresh = series.filter(hasNew).length;
 
+  // A new filter or order starts from the top again.
+  const [limit, setLimit] = useState(PAGE);
+  useEffect(() => setLimit(PAGE), [filter, sort]);
+
   return (
     <div className="manga-library">
       <div className="manga-lib-controls">
@@ -161,7 +176,7 @@ export function Library({
       {shown.length === 0 && filter.trim() && <p className="empty">Nothing in your library matches “{filter.trim()}”.</p>}
 
       <div className="manga-lib-grid">
-        {shown.map((s) => (
+        {shown.slice(0, limit).map((s) => (
           <Tile
             key={s.id}
             series={s}
@@ -172,7 +187,36 @@ export function Library({
           />
         ))}
       </div>
+      {shown.length > limit && (
+        // Keyed on the limit so it is observed afresh each time: an observer
+        // reports crossings, and one still in view after a page lands would
+        // otherwise never say so again.
+        <ShowMore key={limit} left={shown.length - limit} onMore={() => setLimit((n) => n + PAGE)} />
+      )}
     </div>
+  );
+}
+
+/**
+ * The end of the grid, which asks for more when it comes near the screen and
+ * is a button for when it does not — an observer measures nothing in a window
+ * that is not being drawn, the same list `requestAnimationFrame` is on.
+ */
+function ShowMore({ left, onMore }: { left: number; onMore: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const seen = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && onMore(), {
+      rootMargin: '600px 0px',
+    });
+    seen.observe(el);
+    return () => seen.disconnect();
+  }, [onMore]);
+  return (
+    <button ref={ref} className="btn subtle manga-lib-more" onClick={onMore}>
+      Show more ({left.toLocaleString()})
+    </button>
   );
 }
 
@@ -204,6 +248,8 @@ function Tile({
   const fresh = hasNew(s);
   const latest = s.latestNumber;
   const where = s.source ? sourceLabel(s.source.sourceName) : null;
+  // Brought in and not found yet: where it was, rather than a bare "no source".
+  const whereText = where ?? (s.origin ? `was on ${s.origin.site}` : 'no source yet');
 
   return (
     <>
@@ -215,7 +261,7 @@ function Tile({
           s.title,
           fresh ? 'new chapters' : null,
           latest !== null && latest !== undefined ? `newest chapter ${chapterText(latest)}` : null,
-          where ? `read on ${where}` : 'no source yet',
+          where ? `read on ${where}` : s.origin ? `no source yet, read on ${s.origin.site} in ${s.origin.app}` : 'no source yet',
           s.error ? `last check failed: ${s.error}` : null,
         ]
           .filter(Boolean)
@@ -236,7 +282,7 @@ function Tile({
         >
           {latest !== null && latest !== undefined ? chapterText(latest) : '–'}
         </span>
-        <span className={`manga-lib-source${where ? '' : ' none'}`}>{where ?? 'no source yet'}</span>
+        <span className={`manga-lib-source${where ? '' : ' none'}`}>{whereText}</span>
       </button>
       {menu.menu}
     </>

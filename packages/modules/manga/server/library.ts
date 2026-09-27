@@ -110,6 +110,14 @@ export type Series = SeriesIds & {
   /** Why the last check failed, if it did. Kept beside the data it could not replace. */
   error: string | null;
   addedAt: number;
+  /**
+   * Where a series brought in from another app came from: the app, the site it
+   * was last read on there (and every site it was read on, newest first), the
+   * title it had, and the newest chapter that app knew of. `matching.ts` finds it on an installed source by the site and title;
+   * the chapter stands in for the NEW badge until that source has been asked.
+   * Absent on everything followed from here.
+   */
+  origin?: { app: string; site: string; sites?: string[]; title: string; latest: string | null };
 };
 
 /**

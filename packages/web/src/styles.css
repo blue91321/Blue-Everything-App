@@ -3702,6 +3702,53 @@ div.manga-chapter-row {
   border-radius: 6px;
 }
 
+/* A cover that is not coming: the title, in full, where the picture would be. */
+.manga-cover-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+  padding: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.3;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.manga-lib-more {
+  display: block;
+  margin: 18px auto 0;
+}
+
+.manga-import-preview {
+  margin-top: 10px;
+}
+
+.manga-import-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.manga-import-scopes .count {
+  opacity: 0.75;
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.manga-import-matching {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.manga-import-matching progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 /* Hover only where there is one — see `.home-tile`. */
 @media (hover: hover) {
   .manga-lib-tile:hover .manga-cover {

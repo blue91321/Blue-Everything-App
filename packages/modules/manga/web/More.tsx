@@ -10,9 +10,15 @@
  * were printed on each row of the old list, and a grid of covers has no room
  * for a sentence — so they are gathered here rather than dropped, because a
  * series that silently never nudges looks exactly like a broken feature.
+ *
+ * Series brought in from another app and not yet found on a source are the
+ * exception: there can be hundreds, and a row each would bury the handful that
+ * genuinely need a look. The import card counts them instead, says which sites
+ * they came from, and offers to search again.
  */
 import { useState } from 'react';
 import { Cover } from './Cover';
+import { ImportCard } from './Import';
 import { SourceCard } from './SourceCard';
 import { manga, type Candidate, type Library, type SeriesSummary } from './manga-api';
 
@@ -97,7 +103,9 @@ export function More({
     }
   }
 
-  const troubled = (data?.series ?? []).filter((s) => s.error || s.notWatchingBecause || !s.source);
+  const troubled = (data?.series ?? []).filter(
+    (s) => s.error || ((s.notWatchingBecause || !s.source) && !(s.origin && !s.source))
+  );
 
   return (
     <div className="manga-more">
@@ -163,7 +171,7 @@ export function More({
               * series linked to a source, those numbers come from the site
               * itself and the sentence would be false.
               */}
-            {data.series.some((s) => !s.source) && (
+            {data.series.some((s) => !s.source && !s.origin) && (
               <>
                 {data.credit} Numbers without a source are the newest release it has logged, and sites carrying
                 unofficial translations are often further ahead.
@@ -220,6 +228,8 @@ export function More({
           ))}
         </div>
       )}
+
+      <ImportCard local={local} onChanged={onChanged} />
 
       <SourceCard local={local} onExtensions={onExtensions} onOpenUi={onOpenUi} />
     </div>

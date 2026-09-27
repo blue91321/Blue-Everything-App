@@ -52,9 +52,16 @@ export function Cover({
   // not the picture arrived — a list that reflows as covers land is worse than
   // one that never had them.
   if (!url) {
+    const none = failed || !path;
     return (
       <div className={`${kind} manga-cover-empty`} style={style} aria-hidden="true">
-        {failed || !path ? '' : '…'}
+        {/*
+          * On the library grid, a cover that is not coming shows the title in
+          * full. A shelf of a few hundred series brought in from another app,
+          * not yet linked to anything with pictures, is otherwise a wall of
+          * identical grey — and the line underneath cuts a long title short.
+          */}
+        {none ? fill ? <span className="manga-cover-title">{title}</span> : '' : '…'}
       </div>
     );
   }

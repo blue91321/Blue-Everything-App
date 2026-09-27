@@ -39,7 +39,7 @@
 import { db, tasks, nudges, changes, getSettings } from '@everything/server/module-api';
 import { resolvePush } from '@everything/shared';
 import { isNewerChapter, worthPolling } from './identity.js';
-import { read, write, alreadyRaised, type Series, type Store } from './library.js';
+import { read, readPositions, write, alreadyRaised, type ReadingPosition, type Series, type Store } from './library.js';
 import { readSeries, MangaUpdatesError, SPACING_MS } from './mangaupdates.js';
 import { SourceError, effectiveUrl } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL } from './suwayomi.js';
@@ -83,11 +83,61 @@ export function pollable(store: Store): Series[] {
     .sort((a, b) => (a.checkedAt ?? 0) - (b.checkedAt ?? 0));
 }
 
+/*
+ * How often a series is asked about, by how recently you have been in it.
+ *
+ * The rotation above is fair, and fairness is wrong once a library is large:
+ * a sweep asks about twelve, so bringing in nine hundred series from another
+ * app would have left the three you are reading waiting a day and a half for
+ * their turn. So a series you read this month may be asked every sweep, one you
+ * read this year every six hours, and one you have not opened in a year once a
+ * day — and eight of the twelve slots are kept for this month's, so a backlog
+ * of hundreds of never-checked series cannot crowd them out.
+ */
+const DAY = 24 * 60 * 60_000;
+const RECENT_MS = 30 * DAY;
+const YEAR_MS = 365 * DAY;
+export const RECENT_SLOTS = 8;
+
+/** When you last did anything with it: read a chapter, left a place, or followed it. */
+export function lastActive(series: Series, positions: Record<string, ReadingPosition>): number {
+  return Math.max(series.addedAt, positions[series.id]?.at ?? 0, ...series.readLog.map((r) => r.at));
+}
+
+/** How long a series may go unasked, from how recently it was active. */
+export function checkEvery(active: number, now: number): number {
+  const age = now - active;
+  if (age <= RECENT_MS) return 0;
+  if (age <= YEAR_MS) return 6 * 60 * 60_000;
+  return DAY;
+}
+
+/** What this sweep asks about: this month's first, then whatever else is due. */
+export function dueForCheck(
+  store: Store,
+  now: number,
+  positions: Record<string, ReadingPosition>,
+  batch = BATCH
+): Series[] {
+  const recent: Series[] = [];
+  const rest: Series[] = [];
+  for (const s of pollable(store)) {
+    const active = lastActive(s, positions);
+    if (now - active <= RECENT_MS) recent.push(s);
+    else if (s.checkedAt === null || now - s.checkedAt >= checkEvery(active, now)) rest.push(s);
+  }
+  // Both already oldest-answer-first, from `pollable`.
+  const first = recent.slice(0, RECENT_SLOTS);
+  const others = rest.slice(0, batch - first.length);
+  // Unused slots on either side go to the other.
+  return [...first, ...others, ...recent.slice(RECENT_SLOTS)].slice(0, batch);
+}
+
 export type SweepResult = { checked: number; raised: number; failed: number };
 
 export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
   const store = read();
-  const due = pollable(store).slice(0, BATCH);
+  const due = dueForCheck(store, now, readPositions());
   const result: SweepResult = { checked: 0, raised: 0, failed: 0 };
   if (due.length === 0) return result;
 

@@ -43,6 +43,46 @@ export interface SeriesSummary {
   lastReleaseAt?: number | null;
   /** When you last read any of it. */
   lastReadAt?: number | null;
+  /** Brought in from another app: which, and the site it was last read on there. */
+  origin?: { app: string; site: string };
+}
+
+/** What a Manga Reader backup holds, and — once committed — what was done with it. */
+export interface MangaReaderImport {
+  /** Favourites, with one favourited on two sites counted once. */
+  favourites: number;
+  /** Opened at some point and never favourited — counted, not brought in. */
+  historyOnly: number;
+  /** How many each choice would bring in. */
+  scopes: Record<ImportScope, number>;
+  scope: ImportScope;
+  /** New to the library. */
+  add: number;
+  /** Titles already followed, which gain the old app's progress. */
+  merge: string[];
+  bySite: Array<{ site: string; count: number }>;
+  readChapters: number;
+  committed: boolean;
+  added?: number;
+  merged?: number;
+  matching?: MatchingState;
+}
+
+export type ImportScope = 'all' | 'year' | 'quarter';
+
+/** Finding imported series on your sources — see `matching.ts` on the server. */
+export interface MatchingState {
+  running: boolean;
+  total: number;
+  done: number;
+  linked: number;
+  notFound: number;
+  failed: number;
+  noSource: Array<{ site: string; count: number }>;
+  finishedAt: number | null;
+  problem: string | null;
+  /** Imported series still without a source. Only on the status read. */
+  unmatched?: number;
 }
 
 /** One line of the History tab — a chapter finished, or the one you are partway through. */
@@ -371,6 +411,17 @@ export const manga = {
   checkNow: () => call<SweepResult>('/api/manga/check', { method: 'POST' }),
   setReleaseTasks: (on: boolean) =>
     call<{ releaseTasks: boolean }>('/api/manga/release-tasks', { method: 'PUT', body: JSON.stringify({ on }) }),
+
+  import: {
+    /** Without `commit` this only reads the file and says what it found. */
+    mangaReader: (data: string, scope: ImportScope, commit = false) =>
+      call<MangaReaderImport>('/api/manga/import/mangareader', {
+        method: 'POST',
+        body: JSON.stringify({ data, scope, commit }),
+      }),
+    matching: () => call<MatchingState>('/api/manga/import/matching'),
+    matchAgain: () => call<MatchingState>('/api/manga/import/matching', { method: 'POST' }),
+  },
 
   source: {
     get: () => call<SourceState>('/api/manga/source'),

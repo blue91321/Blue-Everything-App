@@ -62,6 +62,17 @@ import {
 } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL, KEIYOUSHI_REPO } from './suwayomi.js';
 import { suwayomiProcess, findJars, portOf } from './process.js';
+import {
+  applyImport,
+  ImportRefused,
+  inScope,
+  mergeDuplicates,
+  planImport,
+  readMangaReaderBackup,
+  type ImportScope,
+  type OldLibrary,
+} from './mangareader.js';
+import { matchingState, startMatching, unmatchedCount } from './matching.js';
 import { homedir } from 'node:os';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
@@ -83,6 +94,78 @@ function happenedAt(value: unknown): number {
 }
 
 export async function routes(app: FastifyInstance): Promise<void> {
+  /**
+   * Bringing a library in from Manga Reader, by its iMazing app backup — see
+   * `mangareader.ts` for what is taken from where.
+   *
+   * Two-phase, like the notes and vault imports: the first call reports what
+   * the file holds and writes nothing, and only `commit` writes — a file that
+   * turns out to be some other app's backup should cost a click, not a library.
+   * Local-only for the reason the notes import is: it reads a file from this
+   * machine and writes hundreds of rows.
+   *
+   * Base64 in JSON rather than multipart, like every other upload here, with a
+   * `bodyLimit` of its own. Not announced by the generic hook: the preview
+   * changes nothing, and the commit announces itself.
+   */
+  const IMPORT_MAX_BYTES = 150 * 1024 * 1024;
+  app.post(
+    '/api/manga/import/mangareader',
+    { bodyLimit: Math.ceil(IMPORT_MAX_BYTES * 1.37) + 1_000_000, config: { announce: false } },
+    async (request, reply) => {
+      if (!request.isLocal) return reply.code(403).send({ error: 'bring a library in from the PC running the app' });
+      const body = request.body as { data?: unknown; commit?: unknown; scope?: unknown } | null;
+      if (typeof body?.data !== 'string') return reply.code(400).send({ error: 'no file' });
+      const bytes = Buffer.from(body.data, 'base64');
+      if (bytes.length === 0) return reply.code(400).send({ error: 'that file is empty' });
+      if (bytes.length > IMPORT_MAX_BYTES) return reply.code(413).send({ error: 'that file is larger than 150MB' });
+
+      let old: OldLibrary;
+      try {
+        old = readMangaReaderBackup(bytes);
+      } catch (error) {
+        if (error instanceof ImportRefused) return reply.code(400).send({ error: error.message });
+        throw error;
+      }
+
+      const scope: ImportScope = body.scope === 'year' || body.scope === 'quarter' ? body.scope : 'all';
+      const now = Date.now();
+      const store = read();
+      // Counted after joining duplicates, so every number here is series that would arrive.
+      const series = mergeDuplicates(old.favourites);
+      const plan = planImport(store, series.filter((s) => inScope(s, scope, now)));
+      const bySite = new Map<string, number>();
+      for (const s of plan.add) bySite.set(s.site, (bySite.get(s.site) ?? 0) + 1);
+      const summary = {
+        favourites: series.length,
+        historyOnly: old.historyOnly,
+        // How many each choice would bring in, so the screen can say before you pick.
+        scopes: {
+          all: series.length,
+          year: series.filter((s) => inScope(s, 'year', now)).length,
+          quarter: series.filter((s) => inScope(s, 'quarter', now)).length,
+        },
+        scope,
+        add: plan.add.length,
+        merge: plan.merge.map((m) => m.title),
+        bySite: [...bySite].map(([site, count]) => ({ site, count })).sort((a, b) => b.count - a.count),
+        readChapters: [...plan.add, ...plan.merge.map((m) => m.old)].reduce((n, s) => n + s.readChapters.length, 0),
+      };
+      if (body.commit !== true) return { ...summary, committed: false };
+
+      const result = applyImport(store, plan);
+      write(store);
+      changes.emitChange('all');
+      return { ...summary, committed: true, ...result, matching: startMatching() };
+    }
+  );
+
+  /** How finding imported series on your sources is going — see `matching.ts`. */
+  app.get('/api/manga/import/matching', async () => ({ ...matchingState(), unmatched: unmatchedCount() }));
+
+  /** Try again: after installing an extension, or once a site stops failing. */
+  app.post('/api/manga/import/matching', { config: { announce: false } }, async () => startMatching());
+
   /** The library, already shaped for the screen. */
   app.get('/api/manga', async () => {
     const store = read();
@@ -100,7 +183,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
            * is a chapter past it), when a chapter last landed and when you last
            * read — "updated" and "recently read" orders.
            */
-          latestNumber: chapterValue(shown),
+          // An import's own newest chapter stands in until a source has been asked.
+          latestNumber: chapterValue(shown) ?? chapterValue(s.origin?.latest ?? null),
           readUpTo: s.readChapters.length > 0 ? Math.max(...s.readChapters) : null,
           lastReleaseAt: Math.max(0, ...store.links.filter((l) => l.seriesId === s.id).map((l) => l.raisedAt)) || null,
           lastReadAt: Math.max(0, place?.at ?? 0, ...s.readLog.map((r) => r.at)) || null,

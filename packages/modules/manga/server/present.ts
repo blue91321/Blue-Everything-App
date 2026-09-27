@@ -53,6 +53,8 @@ export type SeriesSummary = {
   source: { adapter: string; sourceName: string; title: string; mangaId: string } | null;
   /** Your verdicts on sources that claimed to be ahead — see `SourceReview`. */
   reviews: Series['reviews'];
+  /** Brought in from another app, and read on which site there. Absent otherwise. */
+  origin?: { app: string; site: string };
 };
 
 /**
@@ -192,9 +194,12 @@ export function seriesSummary(series: Series): SeriesSummary {
     watching,
     source: series.source,
     reviews: series.reviews,
+    ...(series.origin ? { origin: { app: series.origin.app, site: series.origin.site } } : {}),
     notWatchingBecause: watching
       ? null
-      : !trackable
+      : !trackable && series.origin
+        ? `no source yet — it was read on ${series.origin.site} in ${series.origin.app}`
+        : !trackable
         ? 'MangaUpdates has no entry for it — link it to a source and it can be watched anyway'
         : series.status === 'completed'
           ? 'there will be no more chapters'
