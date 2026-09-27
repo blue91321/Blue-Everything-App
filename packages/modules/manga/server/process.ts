@@ -315,21 +315,39 @@ class SuwayomiProcess {
     // `port` is the caller's knowledge when this process has none: a server
     // that adopted a JVM after a restart but has not yet asked it anything.
     const knownPort = this.lastPort ?? port ?? null;
-    const pid = this.child?.pid ?? (knownPort !== null ? pidListeningOn(knownPort) : null);
+    const spawned = this.child?.pid ?? null;
+    const holder = knownPort !== null ? pidListeningOn(knownPort) : null;
     this.child = null;
-    if (pid === null || pid === undefined) return;
 
     if (process.platform === 'win32') {
-      try {
-        // Fire and forget: nothing waits on a stop, and a failure here is
-        // logged by the caller noticing the port is still answering.
-        spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' }).unref();
-      } catch {
-        // Nothing left to try. The next `ensureRunning` will adopt whatever is
-        // still on the port rather than spawning a second one that cannot bind.
+      /*
+       * Both, and waited for — and each of those was learned the hard way.
+       *
+       * **Both**: what holds the port is the server JVM itself, while what we
+       * spawned is the launcher above it. Killing the launcher's tree reaches
+       * the server only while the launcher is alive to be its parent.
+       *
+       * **Waited for**: this was fire-and-forget, which was fine until it ran on
+       * the way out. When the app closed for a missing tray icon it spawned
+       * `taskkill` and exited on the next line; the launcher died with our pipes
+       * before `taskkill` had walked its tree, and a dead pid has no tree — so
+       * the real server carried on, with no icon, which is what the whole
+       * change was for. A second of blocking on a stop is nothing.
+       */
+      for (const pid of new Set([holder, spawned])) {
+        if (pid === null) continue;
+        try {
+          spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', timeout: 10_000 });
+        } catch {
+          // Nothing left to try. The next `ensureRunning` will adopt whatever is
+          // still on the port rather than spawning a second one that cannot bind.
+        }
       }
       return;
     }
+
+    const pid = spawned ?? holder;
+    if (pid === null) return;
 
     try {
       process.kill(-pid, 'SIGTERM');
