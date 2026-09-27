@@ -13,7 +13,7 @@
  * each opens its own copy of this page. From Popular and Recently released there
  * is only the one source, and the comparison view is a Follow away.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Cover } from './Cover';
 import { Reader } from './Reader';
 import { chapterText } from './judge';
@@ -87,6 +87,14 @@ export function SeriesDetail({
   const [following_, setFollowing] = useState(false);
   // Only for your own series' linked copy: a preview has no series to keep a place in.
   const saver = usePositionSaver(ownSeriesId ?? null);
+  const [resume, setResume] = useState<{ page: number; offset: number } | null>(null);
+  /**
+   * Where the reader last said you were. Held in a ref while reading — it
+   * changes several times a second — and written into the page once you close
+   * the chapter, so the row you came back to is lit without asking the site for
+   * the whole page again.
+   */
+  const lastPlace = useRef<{ chapter: number; chapterId: string; chapterName: string; page: number; offset: number; pages: number } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -110,18 +118,45 @@ export function SeriesDetail({
       <Reader
         {...(ownSeriesId ? { seriesId: ownSeriesId } : { preview: result.id })}
         chapter={open}
+        resume={resume}
         onClose={() => {
           saver.flush();
+          const place = lastPlace.current;
+          if (ownSeriesId && place) {
+            setPage((p) =>
+              p ? { ...p, position: { ...place, source: result.sourceName, mangaId: result.id, at: Date.now() } } : p
+            );
+          }
+          lastPlace.current = null;
+          setResume(null);
           setOpen(null);
         }}
         onPosition={
           ownSeriesId
-            ? (p) => saver.note({ chapter: open.number, chapterId: open.id, chapterName: open.name, ...p })
+            ? (p) => {
+                const place = { chapter: open.number, chapterId: open.id, chapterName: open.name, ...p };
+                lastPlace.current = place;
+                saver.note(place);
+              }
             : undefined
         }
         onFinished={async (n) => {
           saver.flush();
-          if (ownSeriesId) await manga.reader.markRead(ownSeriesId, n).catch(() => undefined);
+          lastPlace.current = null;
+          setResume(null);
+          if (ownSeriesId) {
+            await manga.reader.markRead(ownSeriesId, n).catch(() => undefined);
+            // As the server did: read here, and your place moves past it.
+            setPage((p) =>
+              p
+                ? {
+                    ...p,
+                    position: p.position && p.position.chapter <= n ? null : p.position,
+                    chapters: p.chapters.map((c) => (c.number === n ? { ...c, read: true, readOn: result.sourceName } : c)),
+                  }
+                : p
+            );
+          }
           // Next *up* by number, as the followed reader does; the list is newest-first.
           const next = page.chapters.filter((c) => c.number > n).sort((a, b) => a.number - b.number)[0];
           setOpen(next ?? null);
@@ -268,15 +303,28 @@ export function SeriesDetail({
         <p className="empty">{result.sourceName} lists no chapters for this.</p>
       )}
       <div className="manga-chapters">
-        {page?.chapters.map((c) => (
-          <button key={c.id} className="manga-chapter-row" onClick={() => setOpen(c)}>
-            <span className="title truncate">{c.name}</span>
-            <span className="meta">
-              {c.scanlator ? `${c.scanlator} · ` : ''}
-              {c.uploadedAt ? new Date(c.uploadedAt).toLocaleDateString() : ''}
-            </span>
-          </button>
-        ))}
+        {page?.chapters.map((c) => {
+          // The same marks as the library's chapter list — see its styles.
+          const here = page.position?.chapterId === c.id ? page.position : null;
+          return (
+            <button
+              key={c.id}
+              className={`manga-chapter-row${c.read ? ' read' : ''}${here ? ' started' : ''}`}
+              onClick={() => {
+                setResume(here ? { page: here.page, offset: here.offset } : null);
+                setOpen(c);
+              }}
+            >
+              <span className="title truncate">{c.name}</span>
+              <span className="meta">
+                {c.scanlator ? `${c.scanlator} · ` : ''}
+                {c.uploadedAt ? new Date(c.uploadedAt).toLocaleDateString() : ''}
+                {here ? ` · page ${here.page + 1} of ${here.pages}` : ''}
+                {c.read ? (c.readOn ? ` · read on ${c.readOn}` : ' · read') : ''}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

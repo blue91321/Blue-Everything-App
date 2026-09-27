@@ -1296,6 +1296,17 @@ export async function routes(app: FastifyInstance): Promise<void> {
         url: details.url,
         thumbnailUrl: details.thumbnailUrl,
       });
+      /*
+       * Your reading of it, when you follow it: read marks by chapter *number*,
+       * so they hold on any source's copy — a chapter read on MangaFire is read
+       * whichever site you are looking at — and your place only on the copy it
+       * was measured on, since another source's page 12 is somewhere else.
+       */
+      const own = following ? ctx.store.series.find((s) => s.id === following) : undefined;
+      const readSet = new Set(own?.readChapters ?? []);
+      const readOn = new Map((own?.readLog ?? []).map((r) => [r.chapter, r.source]));
+      const place = following ? readPositions()[following] ?? null : null;
+
       return {
         ...details,
         // Only a link a person can follow: the site's own http(s) page.
@@ -1303,7 +1314,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
         coverPath: thumbPath(details.thumbnailUrl),
         following,
         unlinked,
-        chapters: [...chapters].sort((a, b) => b.number - a.number),
+        position: place && place.mangaId === mangaId ? place : null,
+        chapters: [...chapters]
+          .sort((a, b) => b.number - a.number)
+          .map((c) => ({ ...c, read: readSet.has(c.number), readOn: readOn.get(c.number) ?? null })),
         profile: profileChapters(chapters),
         chaptersProblem,
       };

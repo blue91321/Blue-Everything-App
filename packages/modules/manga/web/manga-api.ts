@@ -278,8 +278,10 @@ export interface SeriesDetailPage {
   coverPath: string | null;
   following: string | null;
   unlinked?: boolean;
-  /** Newest first. Nothing is marked read, since nothing is followed yet. */
-  chapters: Array<Omit<SourceChapter, 'read'>>;
+  /** Newest first, with your read marks when you follow the series. */
+  chapters: Array<Omit<SourceChapter, 'read'> & { read?: boolean }>;
+  /** Your place, when you follow it and it was measured on this copy. */
+  position?: ReadingPosition | null;
   profile: ChapterProfile;
   chaptersProblem: string | null;
 }
