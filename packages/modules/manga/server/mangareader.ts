@@ -103,7 +103,50 @@ function items(entries: ZipEntry[], file: string): Array<Record<string, unknown>
 }
 
 const text = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value.trim() : null);
+
+/** Windows-1252's characters for bytes 0x80–0x9F; the rest of 0x00–0xFF is Latin-1. */
+const CP1252: Record<string, number> = {
+  '\u20ac': 0x80, '\u201a': 0x82, '\u0192': 0x83, '\u201e': 0x84, '\u2026': 0x85, '\u2020': 0x86,
+  '\u2021': 0x87, '\u02c6': 0x88, '\u2030': 0x89, '\u0160': 0x8a, '\u2039': 0x8b, '\u0152': 0x8c,
+  '\u017d': 0x8e, '\u2018': 0x91, '\u2019': 0x92, '\u201c': 0x93, '\u201d': 0x94, '\u2022': 0x95,
+  '\u2013': 0x96, '\u2014': 0x97, '\u02dc': 0x98, '\u2122': 0x99, '\u0161': 0x9a, '\u203a': 0x9b,
+  '\u0153': 0x9c, '\u017e': 0x9e, '\u0178': 0x9f,
+};
+
+const RUN = new RegExp(`[\\u0080-\\u00ff${Object.keys(CP1252).join('')}]+`, 'gu');
+const utf8 = new TextDecoder('utf-8', { fatal: true });
+
+/**
+ * Undo UTF-8 read as Windows-1252: "Assassinâ€™s" back to "Assassin’s".
+ *
+ * Manga Reader stored 60 of the real backup's titles this way — the damage is in
+ * its own file, not in this reader — and a garbled title is not only ugly: it
+ * is what gets searched for, so none of them could ever be found on a source.
+ *
+ * Repaired a run at a time, and only where the bytes are valid UTF-8, so a
+ * title correctly containing "é" is left alone, and a title damaged past
+ * recovery keeps what it has rather than losing more.
+ */
+export function repairMojibake(value: string): string {
+  return value.replace(RUN, (run) => {
+    const bytes: number[] = [];
+    for (const ch of run) {
+      const code = ch.codePointAt(0)!;
+      const b = CP1252[ch] ?? (code <= 0xff ? code : -1);
+      if (b < 0) return run;
+      bytes.push(b);
+    }
+    try {
+      return utf8.decode(Uint8Array.from(bytes));
+    } catch {
+      return run;
+    }
+  });
+}
 const when = (value: unknown): number | null => (value instanceof Date && Number.isFinite(value.getTime()) ? value.getTime() : null);
+
+const repaired = (record: Record<string, unknown>) =>
+  typeof record.comicName === 'string' ? { ...record, comicName: repairMojibake(record.comicName) } : record;
 
 /** Read a `.imazingapp` of Manga Reader into its favourites, with progress from history. */
 export function readMangaReaderBackup(buf: Buffer): OldLibrary {
@@ -113,7 +156,7 @@ export function readMangaReaderBackup(buf: Buffer): OldLibrary {
   } catch {
     throw new ImportRefused('that is not an iMazing app backup — it is not a zip file');
   }
-  const favourites = items(entries, 'comicBooks.dat');
+  const favourites = items(entries, 'comicBooks.dat').map(repaired);
   if (favourites.length === 0) {
     throw new ImportRefused(
       entries.some((e) => /\/Documents\//.test(e.name))
@@ -121,7 +164,7 @@ export function readMangaReaderBackup(buf: Buffer): OldLibrary {
         : 'this backup has no app data in it — back up the app in iMazing rather than exporting its files'
     );
   }
-  const history = items(entries, 'comicHistroy.dat').concat(items(entries, 'comicHistory.dat'));
+  const history = items(entries, 'comicHistroy.dat').concat(items(entries, 'comicHistory.dat')).map(repaired);
 
   // Every record of a title, on any site — see the note at the top.
   const byTitle = new Map<string, Array<Record<string, unknown>>>();

@@ -519,13 +519,23 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
          }`,
         { id }
       );
-      return (cached.chapters?.nodes ?? []).map((c) => ({
-        id: String(c.id),
-        number: c.chapterNumber,
-        name: c.name,
-        uploadedAt: uploadedAtMs(c.uploadDate),
-        scanlator: c.scanlator ?? null,
-      }));
+      const nodes = cached.chapters?.nodes ?? [];
+      /*
+       * Nothing stored is not "no chapters": it is a series Suwayomi has never
+       * fetched, which is every series just linked — by an import's search, or
+       * by picking another source. Returning the empty copy showed an empty
+       * list with nothing to read, on whichever source you chose. So an empty
+       * copy falls through to asking the site, once, which also stores it.
+       */
+      if (nodes.length > 0) {
+        return nodes.map((c) => ({
+          id: String(c.id),
+          number: c.chapterNumber,
+          name: c.name,
+          uploadedAt: uploadedAtMs(c.uploadDate),
+          scanlator: c.scanlator ?? null,
+        }));
+      }
     }
 
     /*

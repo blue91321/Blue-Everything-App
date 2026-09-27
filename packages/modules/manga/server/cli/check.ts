@@ -48,7 +48,7 @@ import { dueForCheck, pollable, RECENT_SLOTS, seriesUrl } from '../releases.js';
 import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiChanges } from '../browse.js';
 import { thumbPath } from '../present.js';
 import { PlistError, readBinaryPlist, unarchive } from '../bplist.js';
-import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup } from '../mangareader.js';
+import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup, repairMojibake } from '../mangareader.js';
 import { failureReason, fallbackSources, pickMatch, siteKey, sourceForSite } from '../matching.js';
 import { BACKUP, PLAIN } from './mangareader-fixture.js';
 import { normaliseTags } from '../tags.js';
@@ -930,6 +930,11 @@ console.log('\nbringing a library in from Manga Reader\n');
       check(what, error instanceof ImportRefused, error instanceof Error ? error.message : String(error));
     }
   };
+  // As Manga Reader stored them: UTF-8 read back as Windows-1252.
+  check('a garbled apostrophe is put back', repairMojibake('Assassin\u00e2\u20ac\u2122s') === 'Assassin\u2019s');
+  check('so are curly quotes', repairMojibake('\u00e2\u20ac\u0153Hi\u00e2\u20ac\u009d') === '\u201cHi\u201d', repairMojibake('\u00e2\u20ac\u0153Hi\u00e2\u20ac\u009d'));
+  check('a correct accent is left alone', repairMojibake('Pok\u00e9mon') === 'Pok\u00e9mon');
+  check('and plain text is untouched', repairMojibake('Second Life Ranker') === 'Second Life Ranker');
   refused('something that is not a zip is refused', Buffer.from('hello'));
   refused('so is half of one', Buffer.from(BACKUP, 'base64').subarray(0, 900));
 }

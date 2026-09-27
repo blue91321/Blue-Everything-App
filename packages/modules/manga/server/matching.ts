@@ -45,6 +45,7 @@
 import { changes } from '@everything/server/module-api';
 import { groupKey } from './browse.js';
 import { read, write, type Series } from './library.js';
+import { repairMojibake } from './mangareader.js';
 import { suwayomiProcess } from './process.js';
 import { effectiveUrl, type SourceMatch } from './sources.js';
 import { DEFAULT_BASE_URL, SuwayomiAdapter, type BrowseSource } from './suwayomi.js';
@@ -151,11 +152,32 @@ export function unmatchedCount(): number {
 }
 
 /**
+ * Titles imported before `repairMojibake` existed, put right before searching:
+ * a garbled title is what gets searched for, and can never be found.
+ */
+function repairImportedTitles(): void {
+  const store = read();
+  let changed = false;
+  for (const s of store.series) {
+    if (!s.origin) continue;
+    const title = repairMojibake(s.title);
+    const originTitle = repairMojibake(s.origin.title);
+    if (title !== s.title || originTitle !== s.origin.title) {
+      s.title = title;
+      s.origin.title = originTitle;
+      changed = true;
+    }
+  }
+  if (changed) write(store);
+}
+
+/**
  * Link every imported series with no source that can be found. Returns at once;
  * the work runs in the background and reports through `matchingState`.
  */
 export function startMatching(): MatchingState {
   if (state.running) return state;
+  repairImportedTitles();
   const store = read();
   const todo = pending(store.series);
   state = { ...IDLE, running: true, total: todo.length };
