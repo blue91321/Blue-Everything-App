@@ -1684,6 +1684,73 @@ lets `--import tsx` resolve the loader, but only the *command line* is visible t
 `Get-CimInstance`, and that's how `stop.ps1` distinguishes these from every
 other node process on the machine.
 
+### Offline: the app keeps working without the server
+
+`web/src/offline-sync.ts` and `offline-effects.ts`. Every screen opens with what
+this device last saw, under a banner saying it is offline and since when; what
+you do meanwhile is queued and sent when the server answers again.
+
+**Reads are kept by `send()`, not by the service worker.** Every successful
+read under `/api/` goes into the `everything-data-v1` cache, keyed by path, and
+answers when the server cannot — at once when already known to be offline,
+after a timeout when the PC is asleep (a request over Tailscale to a sleeping
+machine hangs rather than failing), and when `tailscale serve` answers with its
+own non-JSON gateway page. The service worker still never caches `/api/`; it
+keeps the shell, as before.
+
+**Never kept**: the vault, whose decrypted secrets have no place in a browser
+cache; the event stream; who is online and the voice agent's state, which are
+lies when stale; and browsing manga sources. The list is `NEVER_KEPT`.
+
+**The banner is not optional.** A list from this morning shown as the current
+one is the stale-data-as-fact this app is built against, so every screen says
+when its data is from and how many changes are waiting.
+
+**Writes queue only when they have a local effect.** `registerOfflineEffect`
+says how a change edits the kept reads — a tick bumps the saved habit's count —
+and answers as the route would, so it shows at once. A change with no effect
+registered is refused with "needs the PC" instead: an action queued invisibly
+reads as the app ignoring you. Registered: tasks (add, change, delete), habits
+(tick, untick, set, edit, reorder), notes (write, edit, delete), dismissing and
+snoozing reminders, and settings. Note folders and anything about devices or
+packages are deliberately not.
+
+- **Replayed in order, with the time it happened.** `x-happened-at` rides on
+  each replayed change, and `server/src/happened-at.ts` honours it for habit
+  ticks, finishing a task and time entries — within a month back, and never the
+  future. `smoke` asserts a tick from a day and a half ago lands on that day.
+- **Things created offline get a temporary id** (`offline-…`), swapped for the
+  real one on replay — in the queue and in any later request, since a screen may
+  still hold the temporary one. Changes wait behind anything already queued, or
+  a note created offline could be edited on the server before it exists.
+- **Consecutive edits to one thing merge.** A note typed offline saves every
+  second; forty replays of one paragraph would be forty requests to reach the
+  last of them.
+- **A change the PC refuses on replay is listed on the banner**, not dropped
+  quietly — it did not happen, and you should know.
+
+**Coming back is noticed twice**: the live stream reconnecting, and a probe
+every twenty seconds while offline *and on screen*. Either flushes the queue and
+refetches every screen. The probe does nothing in a hidden pane, which is why a
+test in the browser pane sees the stream find it first.
+
+Packages with their own clients (manga, weather) go through `apiRequest`, core's
+request exported, so they are kept and refused the same way rather than each
+writing a copy of the rules.
+
+**The service worker must never delete caches it does not own.** It deleted
+every cache but its own on update, which was harmless until anything else
+stored data — and would then have emptied downloads and kept reads on the first
+update. It deletes only `everything-shell-*` now.
+
+**Testing it** needs no stopped server: a small proxy on another port forwards
+to the app and, when switched, drops every `/api/` request mid-connection, as
+losing signal does. The in-app browser refuses service workers, so the shell's
+own offline behaviour is proven on the phone, not there.
+
+**What it costs**: about 4KB gzipped on the main bundle (94.8 → 98.8), for the
+cache, the outbox, the effects and the banner.
+
 ### When the server is not running, the window is still there
 
 The service worker caches the shell, so stopping the server leaves the app
@@ -1692,6 +1759,12 @@ indistinguishable from a 401 — it dropped you on the **pairing screen**, askin
 for a device token, which is the one thing that was not broken. `api.ts` now
 throws `ServerUnreachable` for a network failure specifically, and `App.tsx`
 renders `Offline.tsx` instead.
+
+**That screen is now the first-run case only.** A device that has used the app
+opens it offline with what it last saw — see **Offline** below — so this screen
+appears only when there is no saved session at all. On the PC itself, where
+"offline" means the server is stopped, the offline banner carries the same
+**Start it** link, so nothing that screen offered is lost.
 
 That screen offers to start it, through an `everything:` URL registered in HKCU
 by `scripts/register-protocol.ps1` (run by `Create Desktop Icon.cmd`, alongside
