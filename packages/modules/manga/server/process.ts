@@ -44,6 +44,16 @@
  *
  * So it is a plain `spawn` with this process as the parent, plus an `onClose`
  * hook and `stop()` on the way down.
+ *
+ * **`onClose` only covers a clean shutdown, and Stop is not one.** `stop.ps1`
+ * force-kills the server, so no hook runs and the JVM carried on with nothing
+ * on screen saying so — the tray icon gone, Suwayomi still live. `stop.ps1`
+ * therefore stops it too, by command line: a Java or CEF helper process naming
+ * this checkout and "suwayomi", which is the JVM (its `rootDir` is under our data folder) and its
+ * CEF helpers, and never a Suwayomi somebody runs themselves from elsewhere.
+ * `restart.ps1` passes `-KeepSuwayomi`, since the icon is back within seconds
+ * and the server adopts the JVM rather than paying most of a minute to start
+ * another.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, createWriteStream, readdirSync } from 'node:fs';
@@ -168,6 +178,11 @@ class SuwayomiProcess {
           // More when it is actually wanted. A property rather than an edit
           // to its server.conf, so it holds on a fresh data folder too.
           '-Dsuwayomi.tachidesk.config.server.initialOpenInBrowserEnabled=false',
+          // And no tray icon of its own. The app's icon is the one that says
+          // Blue Everything is running, and Suwayomi now lives and dies with it
+          // (see `stop.ps1`), so a second icon would only be a second thing
+          // claiming to be a running app.
+          '-Dsuwayomi.tachidesk.config.server.systemTrayEnabled=false',
           '-jar',
           jarPath,
         ],

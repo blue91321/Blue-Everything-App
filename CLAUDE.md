@@ -1768,6 +1768,18 @@ someone switch the whole app off instead.
 `packages/agent/src/tray.ts` puts Blue Everything in the notification area —
 under the `^` arrow, with the other background apps. Left-click opens the app;
 right-click offers **Open**, **Restart** and **Stop**.
+
+**The icon is the claim that the app is running, so Stop takes Suwayomi with
+it.** Suwayomi is started by the server and stopped by its `onClose` hook — but
+`stop.ps1` force-kills the server, so that hook never ran and the JVM carried on
+serving manga sources with no icon anywhere. `stop.ps1` now stops anything whose
+command line names this checkout and "suwayomi" and is a Java or CEF helper
+process (the JVM, rooted in our data folder, and its helpers), which leaves a
+Suwayomi you run yourself alone. Restart passes `-KeepSuwayomi`: the icon is
+back in seconds and the server adopts the JVM on its port rather than paying
+most of a minute to start another. Suwayomi's own tray icon and its
+open-a-browser-on-launch are both switched off at launch, so the one icon is the
+only one.
 `npm run tray-try -w @everything/agent` shows it without starting the agent.
 
 It exists because both services run hidden, so the app had nowhere to be

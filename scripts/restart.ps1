@@ -24,7 +24,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-& (Join-Path $PSScriptRoot 'stop.ps1')
+# Suwayomi is kept: the icon is back in seconds, and the server adopts the JVM
+# still on its port instead of spending most of a minute starting another.
+& (Join-Path $PSScriptRoot 'stop.ps1') -KeepSuwayomi
 
 # stop.ps1 already waits for the port and warns if it is still held, but a
 # freshly killed process can hold the listener a moment longer than it takes to
