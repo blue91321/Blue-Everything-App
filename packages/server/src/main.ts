@@ -31,7 +31,13 @@ try {
 if (config.EXIT_WITHOUT_AGENT) {
   watchForAgent(async () => {
     app.log.warn(`no word from the agent for ${AGENT_GONE_MS / 1000}s — its tray icon is gone, so the app is closing`);
-    await app.close();
+    // Exits either way. A close that hangs would leave exactly what this exists
+    // to prevent — a process running with no icon — so it is given a bound.
+    const closed = await Promise.race([
+      app.close().then(() => true),
+      new Promise<boolean>((done) => setTimeout(() => done(false), 15_000)),
+    ]);
+    if (!closed) app.log.error('closing took longer than 15s — exiting anyway');
     process.exit(0);
   });
 }

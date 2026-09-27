@@ -1799,6 +1799,13 @@ as they always have. `agent-watch.ts` has the rest; two things there matter:
   last check-in is hours old. A watch tick arriving far later than due means the
   machine was suspended, and the agent gets a fresh window instead of the app
   shutting itself down the moment the PC wakes.
+- **`forceCloseConnections: true`, or the close never finishes.** Fastify runs
+  `onClose` hooks only after in-flight requests end, and the event stream never
+  ends: every open app window holds one. The first live test stopped listening
+  and then sat there, process alive and Suwayomi still up, because the hook
+  that stops it was waiting on a browser tab. Connections are cut on close now,
+  and the shutdown is bounded at 15s on top, since a close that hangs leaves
+  exactly the iconless process this exists to prevent.
 
 This changes what the Voice screen's **Start it** is for on this PC: it now
 brings the agent back within the ninety seconds before the server follows it,

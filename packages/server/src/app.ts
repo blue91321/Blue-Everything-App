@@ -38,6 +38,18 @@ export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: config.LOG_LEVEL },
     trustProxy: config.TRUST_PROXY,
+    /*
+     * Closing cuts every open connection rather than waiting for them.
+     *
+     * Fastify runs `onClose` hooks only once in-flight requests have finished,
+     * and the event stream never finishes — every open app window holds one for
+     * as long as it is open. So `app.close()` waited forever, and the hook that
+     * stops Suwayomi never ran: found when the server shut itself down for a
+     * missing tray icon, stopped listening, and then sat there with Suwayomi
+     * still up. A request cut off on shutdown costs nothing here; the windows
+     * reconnect, or show the offline screen, which is the truth.
+     */
+    forceCloseConnections: true,
   });
 
   await app.register(cors, { origin: corsOrigins });
