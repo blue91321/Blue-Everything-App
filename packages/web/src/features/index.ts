@@ -16,7 +16,7 @@
  *   - **view** is lazy. This is the part that costs something, and a feature
  *     that is off or that you never opens is never downloaded at all.
  */
-import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
+import { createElement, lazy, type ComponentType, type LazyExoticComponent } from 'react';
 
 export interface FeatureViewProps {
   /** Whether this browser is on the PC running the server. */
@@ -175,9 +175,54 @@ export function offlineFeatures(): OfflineFeature[] {
   return Object.entries(metaModules)
     .map(([path, mod]) => {
       const load: (typeof offlineModules)[string] | undefined = offlineModules[`${locate(path).prefix}offline.tsx`];
-      return load === undefined ? null : { id: mod.meta.id, label: mod.meta.label, glyph: mod.meta.glyph, View: lazy(load) };
+      if (load === undefined) return null;
+      /*
+       * A load that fails becomes a screen saying so, not a thrown promise. This
+       * app has no error boundary, so a rejected `lazy` blanks the whole page —
+       * and the place that would happen is on a train, with the one screen that
+       * works offline. It fails when this version's code was never fetched while
+       * online; `prepareOffline` exists to make that rare.
+       */
+      const safe = () =>
+        load().catch(() => ({
+          default: ({ onClose }: OfflineViewProps) =>
+            createElement(
+              'div',
+              { className: 'card' },
+              createElement('p', null, `${mod.meta.label} could not open offline.`),
+              createElement(
+                'p',
+                { className: 'meta' },
+                'The app updated since this screen was last loaded, and the new version of it was not saved for offline use. Open the app once while the PC is reachable and it will be.'
+              ),
+              createElement('button', { className: 'btn', onClick: onClose }, 'Back')
+            ),
+        }));
+      return { id: mod.meta.id, label: mod.meta.label, glyph: mod.meta.glyph, View: lazy(safe) };
     })
     .filter((f): f is OfflineFeature => f !== null);
+}
+
+/**
+ * Fetch every offline screen's code while the server can serve it — but only on
+ * a device that has saved something for offline use.
+ *
+ * Each build gives those files new names, and the service worker only has what
+ * it has seen. So an update fetched while you only ever opened the Dashboard
+ * would leave the train with no offline screen for this version. Called once
+ * the session is confirmed; a device with nothing saved (no cache but the
+ * shell's) pays nothing, since "saved something" is exactly "has a cache that
+ * is not the shell's" — which is how core can ask without naming a package.
+ */
+export function prepareOffline(): void {
+  if (typeof caches === 'undefined') return;
+  void caches
+    .keys()
+    .then((keys) => {
+      if (!keys.some((k) => !k.startsWith('everything-shell-'))) return;
+      for (const load of Object.values(offlineModules)) void load().catch(() => undefined);
+    })
+    .catch(() => undefined);
 }
 
 /** Present in this build. Being *enabled* is the server's call, not ours. */

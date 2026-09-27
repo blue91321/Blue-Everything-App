@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { ServerUnreachable, api, clearToken, setToken, type Session } from './api';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
-import { setEnabledFeatures, webFeatures } from './features';
+import { prepareOffline, setEnabledFeatures, webFeatures } from './features';
 import { installedPackages, packageScreen, setInstalledPackages } from './packages';
 import {
   applyFavicon,
@@ -181,6 +181,8 @@ export function App() {
       sessionRef.current = next;
       setSession(next);
       setUnreachable(false);
+      // Reachable now: make sure the offline screens of this version are saved.
+      prepareOffline();
     } catch (error) {
       sessionRef.current = null;
       setSession(null);
