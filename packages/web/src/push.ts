@@ -1,4 +1,5 @@
 import { api } from './api';
+import { isInstalled, isIOS } from './device';
 
 /**
  * Turning on phone notifications.
@@ -26,9 +27,6 @@ export type PushSupport =
   | { supported: true }
   | { supported: false; reason: string; fix?: string };
 
-export const isInstalled = (): boolean =>
-  (navigator as { standalone?: boolean }).standalone === true ||
-  window.matchMedia('(display-mode: standalone)').matches;
 
 /**
  * Why this device can or can't receive push.
@@ -63,8 +61,7 @@ export function checkPushSupport(): PushSupport {
     };
   }
 
-  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent));
-  if (iOS && !isInstalled()) {
+  if (isIOS() && !isInstalled()) {
     return {
       supported: false,
       reason: 'Safari itself cannot receive these notifications.',

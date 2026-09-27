@@ -27,6 +27,7 @@ import {
   flushOutbox,
 } from './offline-sync';
 import './offline-effects';
+import { onServersMachine } from './device';
 
 const TOKEN_KEY = 'everything.token';
 
@@ -173,9 +174,12 @@ async function send<T>(rawPath: string, init: RequestInit, method: string): Prom
       return (await queueChange(method, path, typeof body === 'string' ? body : undefined)) as T;
     }
     // Said as what to do rather than what failed: "Failed to fetch" on a
-    // screen that simply is not kept offline explains nothing.
+    // screen that simply is not kept offline explains nothing. On the PC
+    // itself, offline means the app has stopped, and "needs the PC" would be
+    // said to the PC.
+    const needs = onServersMachine() ? 'Needs the app running' : 'Needs the PC';
     throw new ServerUnreachable(
-      isRead ? `Needs the PC — this isn't kept for offline use` : `Needs the PC — this can't be done offline`
+      isRead ? `${needs} — this isn't kept for offline use` : `${needs} — this can't be done offline`
     );
   };
 

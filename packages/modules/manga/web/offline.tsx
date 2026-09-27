@@ -20,6 +20,7 @@ import { manga } from './manga-api';
 import { sizeText, updateSnapshot, useOffline, type SavedChapter, type SavedSeries } from './offline-store';
 import { enqueue, pendingCount } from './sync-queue';
 import { usePositionSaver } from './usePositionSaver';
+import { NEEDS, NOT_YET_SENT, WHILE_REACHABLE } from './device-text';
 
 export default function MangaOffline({ onClose }: OfflineViewProps) {
   const { manifest } = useOffline();
@@ -41,15 +42,15 @@ export default function MangaOffline({ onClose }: OfflineViewProps) {
       </div>
       {waiting > 0 && (
         <p className="meta">
-          {waiting} change{waiting === 1 ? '' : 's'} to your reading will reach the PC the next time the Manga screen
-          opens with it reachable.
+          {waiting} change{waiting === 1 ? '' : 's'} to your reading, {NOT_YET_SENT} — sent the next time the Manga
+          screen opens {WHILE_REACHABLE}.
         </p>
       )}
       {!manifest && <p className="empty">Looking…</p>}
       {manifest && all.length === 0 && (
         <p className="empty">
-          Nothing saved yet. While the PC is reachable, open a series and press ⬇ on a chapter — or “Next 5” — to
-          keep it on this device.
+          Nothing saved yet. Open a series {WHILE_REACHABLE} and press ⬇ on a chapter — or “Next 5” — to keep it on
+          this device.
         </p>
       )}
       {all.map((s) => {
@@ -172,7 +173,7 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
       {chapters.length > 0 && (
         <p className="meta">
           {chapters.length} chapter{chapters.length === 1 ? '' : 's'} saved here, up to chapter{' '}
-          {chapterText(chapters[0]!.number)}. The rest need the PC.
+          {chapterText(chapters[0]!.number)}. Anything else {NEEDS}.
         </p>
       )}
     </div>

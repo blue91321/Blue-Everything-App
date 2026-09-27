@@ -54,6 +54,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ServerUnreachable } from '@app/api';
 import { manga } from './manga-api';
+import { NEEDS } from './device-text';
 
 const IN_FLIGHT = 3;
 
@@ -151,7 +152,7 @@ export function Reader({
           // Offline, a chapter not saved on this device is the ordinary case,
           // and "Failed to fetch" says nothing about what to do.
           error instanceof ServerUnreachable
-            ? "This chapter isn't saved on this device, so it needs the PC. Save chapters with ⬇ while connected."
+            ? `This chapter isn't saved on this device, so it ${NEEDS}. Save chapters with ⬇ first to read them offline.`
             : error instanceof Error
               ? error.message
               : 'could not load this chapter'

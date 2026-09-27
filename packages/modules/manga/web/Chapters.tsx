@@ -40,6 +40,7 @@ import {
 } from './offline-store';
 import { enqueue } from './sync-queue';
 import { useConnectivity } from '@app/offline-sync';
+import { NEEDS } from './device-text';
 
 /** How many "Next" saves ahead of where you are. */
 const SAVE_AHEAD = [5, 10] as const;
@@ -337,7 +338,7 @@ export function Chapters({
         <div className="manga-save-bar">
           {offlineSupported && net.offline ? (
             <span className="meta">
-              Offline — ✓ marks what is saved on this device and opens now. Saving more needs the PC.
+              Offline — ✓ marks what is saved on this device and opens now. Saving more {NEEDS}.
             </span>
           ) : offlineSupported ? (
             <>
@@ -356,8 +357,8 @@ export function Chapters({
               </span>
             </>
           ) : (
-            // Cache Storage needs a secure page; the phone's https address is one.
-            <span className="meta">Saving for offline works on the https address, which is the one your phone uses.</span>
+            // Cache Storage needs a secure page; the https address is one on every device.
+            <span className="meta">Saving for offline works on the app's https address — the one Settings → Add a device shows.</span>
           )}
         </div>
       )}

@@ -1798,6 +1798,18 @@ lies when stale; and browsing manga sources. The list is `NEVER_KEPT`.
 one is the stale-data-as-fact this app is built against, so every screen says
 when its data is from and how many changes are waiting.
 
+**What it says depends on the device.** Downloads and kept reads live in *this*
+browser, so what can happen to them is a fact about the device: iOS clears a
+web app's storage when the phone runs short of space (and, in a Safari tab
+rather than from the Home Screen, after about a week unvisited), a computer's
+browser only when its disk is nearly full, and on the PC that runs the server
+"offline" can only mean the app has stopped — so "needs the PC" is nonsense
+said to the PC. `web/src/device.ts` answers which device this is, once; it had
+been three copies, in the banner, the offline screen and push. The manga
+package's sentences are gathered in `device-text.ts` so its four screens word
+each fact one way. None of it is a security decision: what a device may *do*
+is still the server's call.
+
 **Writes queue only when they have a local effect.** `registerOfflineEffect`
 says how a change edits the kept reads — a tick bumps the saved habit's count —
 and answers as the route would, so it shows at once. A change with no effect

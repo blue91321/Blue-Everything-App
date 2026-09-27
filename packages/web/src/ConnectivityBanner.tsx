@@ -10,6 +10,7 @@
  * A change the PC refused on replay (a task since deleted there, say) is listed
  * rather than dropped quietly — it did not happen, and you should know that.
  */
+import { onServersMachine } from './device';
 import { dismissProblems, useConnectivity } from './offline-sync';
 
 function clock(at: number): string {
@@ -26,7 +27,6 @@ function clock(at: number): string {
  * offline screen uses, and the same reason it is an anchor rather than a
  * script: Chromium hands a URL to another program only for a real click.
  */
-const onServersMachine = () => ['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname);
 
 export function ConnectivityBanner() {
   const c = useConnectivity();
@@ -38,7 +38,8 @@ export function ConnectivityBanner() {
         <p className="offline-banner" role="status">
           <strong>Offline</strong> — showing what this device saved
           {c.shownFrom ? ` (as of ${clock(c.shownFrom)})` : ''}
-          {waiting}. Changes you make are kept and sent when the PC is reachable.
+          {waiting}. Changes you make are kept and{' '}
+          {onServersMachine() ? 'saved once the app is running again' : 'sent when the PC is reachable'}.
           {onServersMachine() && (
             <>
               {' '}

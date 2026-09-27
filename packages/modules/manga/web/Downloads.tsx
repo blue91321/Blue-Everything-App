@@ -29,6 +29,7 @@ import {
   type SavedSeries,
 } from './offline-store';
 import { flushQueue, pendingCount } from './sync-queue';
+import { COULD_NOT_SEND, keepingNote, keepOpenNote, NOT_YET_SENT, WHILE_REACHABLE } from './device-text';
 
 export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
   const { manifest, jobs } = useOffline();
@@ -51,8 +52,8 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
     return (
       <div className="card">
         <p className="empty">
-          Saving for offline needs the app's https address — the one your phone uses. This page isn't one, so there is
-          nothing to manage here.
+          Saving for offline needs the app's https address — the one Settings → Add a device shows. This page isn't
+          one, so there is nothing to manage here.
         </p>
       </div>
     );
@@ -70,7 +71,7 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
     setSyncNote('Sending…');
     const sent = await flushQueue();
     bump((n) => n + 1);
-    setSyncNote(pendingCount() === 0 ? `Sent ${sent}.` : 'The PC could not be reached — it will send on its own once it can.');
+    setSyncNote(pendingCount() === 0 ? `Sent ${sent}.` : COULD_NOT_SEND);
   }
 
   return (
@@ -90,14 +91,11 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
             <div style={{ width: `${Math.min(100, (space.saved / space.quota) * 100).toFixed(2)}%` }} />
           </div>
         ) : null}
-        <p className="meta">
-          {kept === true
-            ? 'The browser has agreed to keep these even when the phone is short of space.'
-            : 'iOS may clear these if the phone runs very low on space. Your reading progress lives on the PC either way.'}
-        </p>
+        {/* What can happen to these depends on the device — see `device-text.ts`. */}
+        <p className="meta">{keepingNote(kept)}</p>
         {waiting > 0 && (
           <p className="meta">
-            {waiting} change{waiting === 1 ? '' : 's'} to your reading made offline, not yet on the PC.{' '}
+            {waiting} change{waiting === 1 ? '' : 's'} to your reading made offline, {NOT_YET_SENT}.{' '}
             <button className="btn subtle" onClick={() => void syncNow()}>
               Sync now
             </button>{' '}
@@ -109,7 +107,7 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
       {(running.length > 0 || broken.length > 0) && (
         <div className="card">
           <h3>{running.length > 0 ? `Saving ${running.length}` : 'Not saved'}</h3>
-          {running.length > 0 && <p className="meta">Keep the app open until these finish — a web app gets no time in the background.</p>}
+          {running.length > 0 && <p className="meta">{keepOpenNote()}</p>}
           {[...running, ...broken].map((j) => (
             <div key={j.key} className="manga-download-job">
               <div className="manga-row-text">
@@ -146,7 +144,7 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
         <h3>Saved{all.length > 0 ? ` (${all.length})` : ''}</h3>
         {manifest && all.length === 0 && (
           <p className="empty">
-            Nothing saved yet. Open a series from Library and press ⬇ on a chapter, or Next 5 — with the PC reachable.
+            Nothing saved yet. Open a series from Library and press ⬇ on a chapter, or Next 5, {WHILE_REACHABLE}.
           </p>
         )}
         {all.map((s) => (

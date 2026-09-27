@@ -18,18 +18,8 @@
  */
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { onServersMachine } from './device';
 import { offlineFeatures, type OfflineFeature } from './features/index';
-
-/**
- * Whether starting the server from here could possibly work.
- *
- * The protocol handler runs on *this* machine, so it is only any use when this
- * machine is the one the server lives on. From the phone over Tailscale the
- * button would appear to do nothing, which is worse than not offering it.
- */
-function onTheServersMachine(): boolean {
-  return ['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname);
-}
 
 export function Offline({ onBack }: { onBack: () => void }) {
   const [starting, setStarting] = useState(false);
@@ -40,7 +30,13 @@ export function Offline({ onBack }: { onBack: () => void }) {
   const offline = offlineFeatures();
   const [using, setUsing] = useState<OfflineFeature | null>(null);
   const [waited, setWaited] = useState(0);
-  const local = onTheServersMachine();
+  /*
+   * Whether starting the server from here could possibly work. The protocol
+   * handler runs on *this* machine, so it is only any use when this machine is
+   * the one the server lives on. From the phone over Tailscale the button would
+   * appear to do nothing, which is worse than not offering it.
+   */
+  const local = onServersMachine();
 
   /**
    * Poll until it answers, then reload.
