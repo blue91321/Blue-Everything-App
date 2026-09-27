@@ -118,6 +118,7 @@ export function SeriesDetail({
       <Reader
         {...(ownSeriesId ? { seriesId: ownSeriesId } : { preview: result.id })}
         chapter={open}
+        backLabel="Details"
         resume={resume}
         onClose={() => {
           saver.flush();

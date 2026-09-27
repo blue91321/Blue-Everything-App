@@ -63,4 +63,14 @@ export const Icon = {
       <path d="M4 7h16M7 12h10M10 17h4" />
     </svg>
   ),
+  previous: () => (
+    <svg {...base} width={28} height={28} strokeWidth={1.8}>
+      <path d="M15 4l-8 8 8 8" />
+    </svg>
+  ),
+  next: () => (
+    <svg {...base} width={28} height={28} strokeWidth={1.8}>
+      <path d="M9 4l8 8-8 8" />
+    </svg>
+  ),
 };

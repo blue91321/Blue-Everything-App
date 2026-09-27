@@ -504,6 +504,40 @@ need a look**. The last is new. Those reasons were printed on each row of the
 old list, a grid of covers has no room for a sentence, and a series that
 silently never nudges looks exactly like a broken feature.
 
+#### Reading: the controls get out of the way
+
+`Reader.tsx`. A bar across the top (Back, the chapter's number) and one across
+the bottom (previous and next page, the page counter, a strip of every page to
+jump to), laid out like the reading app it replaced. They show when a chapter
+opens, go after 3.5 seconds, and a tap on the pages toggles them; touching the
+controls restarts the countdown. With them away, the chapter, page and time sit
+small in a corner.
+
+**The reader takes the whole screen by leaving the app.** It is drawn into
+`body` through a portal and `body:has(> .manga-reader) > #root` hides the app,
+the ☰ included. It opens from four places (a chapter list, a series' details, a
+details card inside Browse, the offline shelf) and inside each it wore that
+screen's surroundings: a card's margins, Browse's tabs, and Manga's tab bar
+drawn over the page strip. One rule beats a list of things to hide that grows
+with every screen that learns to open a chapter. The window still scrolls, so
+the read line and `scrollY` are unchanged, and closing restores the scroll
+position taken during the reader's first render, before the page shrank.
+
+- **Hidden is `opacity` plus `pointer-events: none`, not `visibility`**, so a
+  hidden control cannot catch a tap meant for the page but can still be reached
+  by keyboard, where focusing it brings the bars back.
+- **Jumping to a page is returning to one.** Pages above a target load now
+  rather than lazily and the scroll is re-applied as each lands, the same
+  machinery `resume` uses. Verified: a thumbnail put page 5's top on the read
+  line at 7.7px, and Next put page 6's at 8.2px.
+- **Thumbnails are drawn small, not shown small.** A tiny `<img>` of the page
+  decodes the whole page, and these strips run to 800×15000, about 48MB each.
+  Each page is decoded once into a 60×84 JPEG, one at a time, nearest the
+  current page first, and only while the controls are showing.
+- **The thumbnail strip listens for the wheel, not for scroll.** The code that
+  keeps the current page centred scrolls it too, and a scroll handler took that
+  for a touch and held the controls up for as long as you read.
+
 ### Installing a package, the way you would a texture pack
 
 `modules/` at the repo root, one folder per package, gitignored. **Settings →
