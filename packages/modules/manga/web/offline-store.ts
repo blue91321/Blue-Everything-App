@@ -422,6 +422,7 @@ export async function usage(): Promise<{ saved: number; quota: number | null }> 
 }
 
 export function sizeText(bytes: number): string {
+  if (bytes <= 0) return 'nothing';
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;

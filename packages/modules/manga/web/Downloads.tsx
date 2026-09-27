@@ -61,7 +61,10 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
   const all = Object.values(manifest?.series ?? {}).sort((a, b) => a.title.localeCompare(b.title));
   const running = jobs.filter((j) => !j.problem);
   const broken = jobs.filter((j) => j.problem);
-  const waiting = pendingCount() + net.pending;
+  // Manga reading only: tasks, habits and notes waiting to sync are on the
+  // banner at the top of every screen, and counting them here as "changes to
+  // your reading" said something untrue.
+  const waiting = pendingCount();
 
   async function syncNow() {
     setSyncNote('Sending…');
