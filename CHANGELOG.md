@@ -35,6 +35,11 @@ before it would start, and then manga would not run at all.
   jar, a port in use and running out of memory are each named with their fix;
   anything else has **See the log** on the card, and **Open in Notepad** on the
   PC. The same for the update log.
+- **Suwayomi's first start no longer times out.** It downloads its own web
+  interface and a 260MB component before answering; the launcher now waits for
+  90 seconds of silence rather than 90 seconds in all.
+- **Manage extensions opens on the full list** straight after setup, instead
+  of an empty page with a Refresh button to find.
 - **Only the app's own folders are searched for a Suwayomi jar.** Searching
   Downloads is what offered the `.msi` installer, which is not a jar; a path
   that is not a `.jar` is now refused with that reason.

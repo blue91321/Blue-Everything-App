@@ -56,8 +56,12 @@ function managedLine(state: SourceState): { text: string; urgent: boolean } {
 
 /** Nothing to run yet: no jar, and no Suwayomi of your own to point at. */
 export const needsSetup = (s: SourceState) => !s.jar && !s.configured;
-/** Set up, and failing to start. */
-export const failing = (s: SourceState) => s.manage && s.managed.state === 'failed';
+/**
+ * Set up, and failing to start — or pointed at an address where nothing answers,
+ * with no Suwayomi of the app's own to fall back on.
+ */
+export const failing = (s: SourceState) =>
+  (s.manage && s.managed.state === 'failed') || (!s.jar && s.configured && s.health !== null && !s.health.reachable);
 
 const mb = (bytes: number) => `${Math.round(bytes / 1048576)} MB`;
 
@@ -97,7 +101,8 @@ export function SourceCard({
     setOpen(true);
     // After the open has rendered. A timeout rather than a frame, which does
     // not fire in a window nobody is drawing.
-    const timer = setTimeout(() => card.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+    // Instant: a smooth scroll is an animation, and does not run in a window nobody is drawing.
+    const timer = setTimeout(() => card.current?.scrollIntoView({ block: 'start' }), 50);
     return () => clearTimeout(timer);
   }, [focus]);
 
@@ -233,7 +238,7 @@ export function SourceCard({
       )}
 
       {/* ---- the next step, once it runs ---- */}
-      {data?.health?.reachable && data.health.sources.length === 0 && (
+      {data?.health?.reachable && data.health.sources.filter((s) => s !== 'Local source').length === 0 && (
         <div className="manga-setup">
           <h3>Next: add sources</h3>
           <p className="meta">

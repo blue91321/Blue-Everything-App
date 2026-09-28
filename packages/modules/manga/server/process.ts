@@ -76,8 +76,16 @@ export const RUNTIME_DIR = join(dataDir, 'suwayomi-runtime');
 
 /** The Java runtime setup downloaded, if this install has one. */
 export function bundledJava(): string | null {
-  const exe = join(RUNTIME_DIR, 'jre', 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+  // `java`, never `jre`: a java.home ending in `jre` makes Suwayomi skip its own classes — see setup.ts.
+  const exe = join(RUNTIME_DIR, 'java', 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
   return existsSync(exe) ? exe : null;
+}
+
+/** Suwayomi's temporary files, inside the app's data rather than the system's. */
+function suwayomiTemp(): string {
+  const dir = join(dataDir, 'suwayomi', 'tmp');
+  mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 /** Everything Suwayomi printed, launch by launch. The card shows its end. */
@@ -209,6 +217,14 @@ class SuwayomiProcess {
 
     // What it printed this launch, so a failure can be put in words — see `explainFailure`.
     let said = '';
+    /*
+     * When it last printed anything. The first start of a fresh Suwayomi
+     * downloads its web interface and a 260MB browser component before it
+     * answers, and on an ordinary connection that is well past 90 seconds —
+     * the launcher killed it mid-download. So the limit is 90 seconds of
+     * *silence*: a start that is visibly busy is left to finish.
+     */
+    let lastOutputAt = begunAt;
 
     try {
       this.child = spawn(
@@ -221,6 +237,10 @@ class SuwayomiProcess {
           // Its own folder under ours, so it never writes into the app's data
           // root beside the database.
           `-Dsuwayomi.tachidesk.config.server.rootDir=${join(dataDir, 'suwayomi')}`,
+          // Its temporary files too: it unpacks its web interface into the
+          // system temp folder otherwise, and nothing here should live outside
+          // the app's own folder.
+          `-Djava.io.tmpdir=${suwayomiTemp()}`,
           // Suwayomi opens its web UI in the default browser every time it
           // starts, which here means a tab appearing on the PC whenever the
           // app wakes it for a chapter list — often mid-game, the one moment
@@ -254,6 +274,7 @@ class SuwayomiProcess {
     this.child.stderr?.pipe(log);
     const listen = (chunk: Buffer) => {
       said = (said + chunk.toString()).slice(-8000);
+      lastOutputAt = Date.now();
     };
     this.child.stdout?.on('data', listen);
     this.child.stderr?.on('data', listen);
@@ -282,7 +303,7 @@ class SuwayomiProcess {
     });
 
     const adapter = new SuwayomiAdapter(baseUrl);
-    while (Date.now() - begunAt < START_TIMEOUT_MS) {
+    while (Date.now() - lastOutputAt < START_TIMEOUT_MS) {
       const failed = this.failure();
       if (failed !== null) return { state: 'failed', problem: failed };
       const health = await adapter.describe();
@@ -295,7 +316,10 @@ class SuwayomiProcess {
     }
 
     this.stop();
-    this.status = { state: 'failed', problem: `Suwayomi did not answer within ${Math.round(START_TIMEOUT_MS / 1000)}s` };
+    this.status = {
+      state: 'failed',
+      problem: `Suwayomi went quiet for ${Math.round(START_TIMEOUT_MS / 1000)}s without answering. The log below says where it stopped.`,
+    };
     return this.status;
   }
 

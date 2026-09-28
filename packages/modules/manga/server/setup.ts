@@ -11,10 +11,20 @@
  *
  * So this downloads:
  *
- *   - **Java 21**, the Eclipse Temurin runtime from Adoptium's API — about 45MB,
- *     unpacked to `suwayomi-runtime/jre/`. The launcher uses this one whenever
+ *   - **Java 21**, Eclipse Temurin's runtime from Adoptium's API — about 47MB,
+ *     unpacked to `suwayomi-runtime/java/`. The launcher uses this one whenever
  *     it is there, so a PC with an older Java installed is never asked to run it,
  *     and a PC with none never needs one.
+ *
+ *     **The folder must not be called `jre`**, and that cost an evening. Named
+ *     `jre`, Suwayomi started, migrated its database and then died setting up
+ *     GraphQL — "The configured packages do not contain any valid classes:
+ *     [suwayomi.tachidesk.graphql]" — under Temurin's JRE and JDK alike, while
+ *     the same jar ran under a Java installed anywhere else. ClassGraph, which
+ *     finds those classes, reads a `java.home` ending in `jre` the Java 8 way —
+ *     as the inside of a JDK — and skips everything under the folder above it
+ *     as part of Java itself. The folder above it is where the jar is. Renamed
+ *     to `java`, both runtimes answered.
  *   - **Suwayomi's `.jar`**, the one asset of its latest release that runs
  *     everywhere — 166MB, beside the runtime.
  *
@@ -23,6 +33,10 @@
  * it. Then management is switched on, Suwayomi is started, and the extension
  * repository every install needs is added — a fresh Suwayomi lists nothing
  * until one is, which was the next place somebody would get stuck.
+ *
+ * About 210MB in all, and Suwayomi's first start then fetches its own web
+ * interface and a 260MB browser component — see `launch` for why that no longer
+ * times out.
  *
  * It reports progress through `setupState`, which the card polls while it runs.
  */
@@ -102,7 +116,7 @@ async function run(): Promise<void> {
     const zip = join(RUNTIME_DIR, 'jre.zip');
     await download(JAVA_URL, zip, 'Downloading Java 21');
     state = { ...state, step: 'Unpacking Java' };
-    const tmp = join(RUNTIME_DIR, 'jre-unpack');
+    const tmp = join(RUNTIME_DIR, 'java-unpack');
     rmSync(tmp, { recursive: true, force: true });
     mkdirSync(tmp);
     unzip(zip, tmp);
@@ -110,8 +124,9 @@ async function run(): Promise<void> {
     // launcher can find it without knowing which build it was.
     const inner = readdirSync(tmp).find((name) => existsSync(join(tmp, name, 'bin')));
     if (!inner) throw new Error('the Java download did not contain a runtime');
-    rmSync(join(RUNTIME_DIR, 'jre'), { recursive: true, force: true });
-    renameSync(join(tmp, inner), join(RUNTIME_DIR, 'jre'));
+    // `java`, never `jre` — see the note at the top.
+    rmSync(join(RUNTIME_DIR, 'java'), { recursive: true, force: true });
+    renameSync(join(tmp, inner), join(RUNTIME_DIR, 'java'));
     rmSync(tmp, { recursive: true, force: true });
     rmSync(zip, { force: true });
   }
@@ -156,6 +171,8 @@ async function run(): Promise<void> {
   const adapter = new SuwayomiAdapter(url);
   const repos = await adapter.repos();
   if (!repos.includes(KEIYOUSHI_REPO)) await adapter.setRepos([...repos, KEIYOUSHI_REPO]);
+  // And read it, so Manage extensions opens on a list rather than an empty page.
+  await adapter.extensions(true).catch(() => []);
 
   state = { running: false, step: null, received: 0, total: null, done: true, problem: null };
   changes.emitChange('all');

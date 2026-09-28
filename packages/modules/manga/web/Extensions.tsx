@@ -20,7 +20,7 @@
  * search for something that exists come back empty, which reads as the feature
  * being broken rather than as a decision somebody made on your behalf.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAsync } from '@app/useAsync';
 import { manga, type SourceExtension } from './manga-api';
 
@@ -36,6 +36,31 @@ export function Extensions({ local, onClose }: { local: boolean; onClose: () => 
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const autoRefreshed = useRef(false);
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      await manga.extensions.list(true);
+      state.reload();
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  /*
+   * A repository with nothing listed from it has simply never been read — which
+   * is every fresh install straight after "Set up manga". Showing that as an
+   * empty list, with a Refresh button to find, is the dead end this screen
+   * existed to avoid; so it reads the repository itself, once.
+   */
+  useEffect(() => {
+    const d = state.data;
+    if (!d || autoRefreshed.current || d.repos.length === 0 || d.extensions.length > 0) return;
+    autoRefreshed.current = true;
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.data]);
 
   async function act(key: string, fn: () => Promise<unknown>) {
     setBusy(key);
@@ -89,15 +114,7 @@ export function Extensions({ local, onClose }: { local: boolean; onClose: () => 
         <button
           className="btn subtle"
           disabled={refreshing}
-          onClick={async () => {
-            setRefreshing(true);
-            try {
-              await manga.extensions.list(true);
-              state.reload();
-            } finally {
-              setRefreshing(false);
-            }
-          }}
+          onClick={() => void refresh()}
         >
           {refreshing ? 'Reading repos…' : 'Refresh'}
         </button>

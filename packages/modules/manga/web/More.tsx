@@ -40,6 +40,7 @@ export function More({
   onOpenUi,
   onCompare,
   setupFocus = 0,
+  setupFirst = false,
 }: {
   data: Library | undefined;
   local: boolean;
@@ -52,7 +53,13 @@ export function More({
   onCompare: (s: SeriesSummary) => void;
   /** Bumped by the screen's setup banner: open the setup card and scroll to it. */
   setupFocus?: number;
+  /** Manga is not set up, or not starting: the card that fixes it goes first rather than under three others. */
+  setupFirst?: boolean;
 }) {
+  const sourceCard = (
+    <SourceCard local={local} onExtensions={onExtensions} onOpenUi={onOpenUi} focus={setupFocus} />
+  );
+
   const [results, setResults] = useState<Candidate[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -113,6 +120,7 @@ export function More({
 
   return (
     <div className="manga-more">
+      {setupFirst && sourceCard}
       <form className="card manga-search" onSubmit={runSearch}>
         <label htmlFor="manga-q">Follow a series by name</label>
         <div className="row">
@@ -254,7 +262,7 @@ export function More({
 
       <ImportCard local={local} onChanged={onChanged} />
 
-      <SourceCard local={local} onExtensions={onExtensions} onOpenUi={onOpenUi} focus={setupFocus} />
+      {!setupFirst && sourceCard}
     </div>
   );
 }

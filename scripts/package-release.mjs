@@ -89,14 +89,19 @@ if (process.argv.includes('--bundle')) {
 writeFileSync(join(stage, 'release-files.txt'), [...files, 'release-files.txt'].map((f) => f.replaceAll('/', '\\')).join('\r\n') + '\r\n');
 
 /*
- * Windows' own bsdtar, named by path: `-a` picks zip from the file name. A bare
- * `tar` finds Git's GNU tar first on a machine with Git Bash — which cannot
- * write a zip at all, and reads "C:" in a path as a remote host to connect to.
- * Relative names, run from the output folder, for the same reason.
+ * `zip-folder.ps1`, which writes each entry through .NET with forward slashes.
+ * Three things were tried first and all failed: Git's GNU tar (first on PATH
+ * with Git Bash) cannot write a zip and reads "C:" as a remote host; Windows'
+ * bsdtar crashed outright (0xC0000005) on the tens of thousands of files
+ * `--bundle` brings; and `ZipFile.CreateFromDirectory` in Windows PowerShell
+ * names every entry with backslashes, which only Windows reads as folders.
  */
-const tar = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'bsdtar';
 const zip = join(out, `${name}.zip`);
-execFileSync(tar, ['-a', '-c', '-f', `${name}.zip`, name], { cwd: out, stdio: 'inherit' });
+execFileSync(
+  'powershell.exe',
+  ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(root, 'scripts/zip-folder.ps1'), '-Folder', stage, '-Zip', zip],
+  { stdio: 'inherit' }
+);
 rmSync(stage, { recursive: true, force: true });
 
 const size = (statSync(zip).size / 1024 / 1024).toFixed(1);

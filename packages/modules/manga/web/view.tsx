@@ -365,6 +365,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               onOpenUi={() => setSuwayomiOpen(true)}
               onCompare={(s) => setComparing({ id: s.id, from: 'list' })}
               setupFocus={setupFocus}
+              setupFirst={Boolean(source.data && (needsSetup(source.data) || failing(source.data)))}
             />
           )}
         </div>

@@ -2211,13 +2211,26 @@ now impossible rather than explained.
   `package-release.mjs`), leaving out only npm's four links to the app's own
   packages — a zip cannot hold a link — which `start.ps1` makes with
   `npm install --offline`. `runtime/` is gitignored.
-- **Set up manga is one button** (`server/setup.ts`): Temurin Java 21 from
+- **Set up manga is one button** (`server/setup.ts`): Temurin's Java 21 JDK from
   Adoptium and Suwayomi's plain `.jar`, both into
   `packages/server/data/suwayomi-runtime/`, then management on, Suwayomi
   started, and the extension repository added — a fresh Suwayomi lists nothing
-  until one is. The launcher prefers that Java whenever it exists. About 210MB,
-  against 320MB for Suwayomi's own Windows bundle, which carries an interface
-  this app frames anyway.
+  until one is. The launcher prefers that Java whenever it exists. About 210MB.
+- **Java's folder must not be called `jre`.** Named that, Suwayomi started,
+  migrated and then died setting up GraphQL ("The configured packages do not
+  contain any valid classes: [suwayomi.tachidesk.graphql]") under Temurin's JRE
+  *and* JDK, while the same jar ran under a Java installed anywhere else. The
+  library that finds those classes, ClassGraph, reads a `java.home` ending in
+  `jre` the Java 8 way — as the inside of a JDK — and skips everything under the
+  folder above it as part of Java itself, which is where the jar sits. It is
+  `suwayomi-runtime/java/`. Found by running the jar by hand on throwaway data
+  folders, varying one thing at a time, after the JDK "fixed" it in one test
+  and not in the next.
+- **The start timeout counts silence, not time.** A fresh Suwayomi downloads its
+  web interface and a 260MB browser component before it answers, which on an
+  ordinary connection is past 90 seconds, and the launcher killed it mid-download.
+  Now it fails only after 90 seconds with no output. Its temp files go to
+  `data/suwayomi/tmp` (`-Djava.io.tmpdir`) rather than the system's.
 - **Only the app's folders are searched for a jar.** `findJars` looked in
   Downloads and the home folder, and that is how an `.msi` was offered; a path
   that is not a `.jar` is refused with the reason.
