@@ -5,6 +5,22 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.4.1
+
+### Releases, and updating without losing anything
+
+- **Every version tag builds a release.** `.github/workflows/release.yml` runs
+  the checks on Windows, builds the app and publishes
+  `Blue-Everything-<version>.zip` with this changelog's section as its notes.
+  Unzip it, install Node 24+, and double-click `Blue Everything.cmd`.
+- **`Update Blue Everything.cmd`**, and **Settings → Packages → Check for
+  updates → Update now**. Your database, settings, installed packages and the
+  agent's token are backed up to `backups\` first and never replaced. A git
+  clone pulls; an unzipped release downloads the new zip and replaces only the
+  files the app ships, removing any the new version dropped.
+- **The last ten chapters opened are kept on the PC**, so going back to one is
+  instant and works with Suwayomi stopped.
+
 ## 0.4.0
 
 ### Manga, as a package

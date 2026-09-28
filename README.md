@@ -68,6 +68,26 @@ npm run dev   -w @everything/server   # server on :8787, migrations applied on b
 npm run agent -w @everything/agent    # the Windows agent — needs the server up
 ```
 
+### Or from a release
+
+Every version is also a zip on the [releases page](https://github.com/blue91321/Blue-Everything-App/releases):
+unzip it anywhere, install [Node 24+](https://nodejs.org), and double-click
+`Blue Everything.cmd`. No git needed.
+
+### Updating
+
+Double-click **`Update Blue Everything.cmd`**, or use **Settings → Packages →
+Check for updates**. Either way:
+
+- your database, settings, installed packages and the agent's token are backed
+  up to `backups\` first (the last five are kept), and are never replaced;
+- a git clone is updated with `git pull`, and refuses rather than pulling over
+  files you have changed;
+- an unzipped release downloads the new zip and replaces only the files the app
+  ships, removing any the new version no longer includes.
+
+Updates only ever happen when you ask. The app never checks on its own.
+
 ### Manga, if you want it
 
 Chapters come from [Suwayomi](https://github.com/Suwayomi/Suwayomi-Server/releases/latest),

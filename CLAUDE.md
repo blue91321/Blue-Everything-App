@@ -2195,6 +2195,54 @@ file to double-click, named — because a protocol that was never registered doe
 nothing visible at all. The button is hidden entirely off loopback: from the
 phone over Tailscale it could only ever appear to do nothing.
 
+### Releases, and updating without losing anything
+
+**A version tag builds a release.** `.github/workflows/release.yml` runs on
+`windows-latest` — the app is a Windows app and the checks should run where it
+runs — typechecks, runs every suite with no hardware or network in it, builds
+the PWA, and `scripts/package-release.mjs` zips every tracked file plus the
+built `packages/web/dist`. The zip is published as a GitHub Release, with the
+version's own section of `CHANGELOG.md` as its notes, and kept as a workflow
+artifact too, so running the workflow by hand produces a download without
+publishing anything. **The tag must match `package.json`** and the packaging
+refuses otherwise: a release called 0.4.1 reporting 0.4.0 on its Settings
+screen is the failure **Versions** describes.
+
+`node_modules` is deliberately not in the zip: native modules are built per
+machine, and `Blue Everything.cmd` installs them on first run.
+
+**Windows' own `tar.exe`, by path.** A bare `tar` on a machine with Git Bash is
+GNU tar, which cannot write a zip and reads `C:` in a path as a remote host to
+connect to. Found running the packaging locally before trusting it to CI.
+
+**Every release carries `release-files.txt`**, the list of files it shipped, and
+that list is the whole of what makes updating safe. `scripts/update.ps1` —
+behind `Update Blue Everything.cmd` and Settings → Packages → Update now —
+copies the new release's files over and deletes a file the *old* list names
+that the new one does not, or a removed package would linger and still load.
+A file neither list names is never touched, which is how the database, your
+installed packages and the voice models survive: by construction, not by a list
+of exceptions somebody has to keep current.
+
+- **Backed up first**, to `backups\<when>-v<version>.zip`: the database and
+  JSON stores, `features.json`, `modules.json`, the agent's config and `.env`.
+  Not Suwayomi (hundreds of MB, and an update does not touch it), the chapter
+  cache or the old `.bak` copies. Migrations only go forward, so this is the way
+  back. The last five are kept; `backups/` is gitignored and publish-check
+  proves it.
+- **A git clone pulls instead**, with `--ff-only`, and refuses outright if
+  tracked files have been changed — somebody's edits are not this script's to
+  merge.
+- **Only when asked.** "Check for updates" asks GitHub's latest-release
+  endpoint (`UPDATE_URL`) when pressed, never on a timer; Update now is
+  local-only and launched like Restart, through `cmd /c start /b`, answering
+  before it acts because this server is one of the things it stops.
+- `-FromZip` installs a zip already on disk and `-NoStart` leaves the app
+  stopped, which is how it was tested: a copy unpacked from the zip, planted
+  with a database, settings, an installed package, the agent's token and one
+  file only an "older" release listed. After the update all of it was intact
+  and backed up, and only that file was gone.
+
 ## Running the parts individually
 
 ```bash
