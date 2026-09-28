@@ -18,7 +18,9 @@
  * this file changing.
  */
 import { useEffect, useRef, useState } from 'react';
+import { useButtonMenu } from '@app/ContextMenu';
 import { Cover } from './Cover';
+import { Icon } from './Icons';
 import { SeriesDetail } from './SeriesDetail';
 import { languageName } from './judge';
 import {
@@ -152,6 +154,15 @@ export function Browse({
 
   const subs: Sub[] = ['popular', ...(source?.supportsLatest ? (['latest'] as const) : []), 'search'];
 
+  // A small button at the end of the tab row rather than a sentence above the
+  // grid: set once and left, so it should not take a line of every visit.
+  const hideMenu = useButtonMenu(() =>
+    (Object.keys(HIDE_LABEL) as Hide[]).map((level) => ({
+      label: `${level === hideMature ? '✓ ' : '\u2003'}${HIDE_LABEL[level]}`,
+      onSelect: () => chooseHide(level),
+    }))
+  );
+
   function chooseHide(level: Hide) {
     setHideMature(level);
     try {
@@ -200,22 +211,20 @@ export function Browse({
             {SUB_LABEL[s]}
           </button>
         ))}
+        {sub !== 'search' && (
+          <button
+            className={`manga-browse-hide${hideMature !== 'none' ? ' on' : ''}`}
+            onClick={hideMenu.open}
+            aria-haspopup="menu"
+            aria-label={`Hiding: ${HIDE_LABEL[hideMature]}`}
+            // The surprising part, where somebody wondering about it will hover.
+            title={`${HIDE_LABEL[hideMature]}. Some sources tag violent series Mature too, such as Jujutsu Kaisen and Berserk.`}
+          >
+            <Icon.filter />
+          </button>
+        )}
       </div>
-
-      {source && sub !== 'search' && (
-        <label className="meta manga-browse-safe">
-          Hide{' '}
-          <select value={hideMature} onChange={(e) => chooseHide(e.target.value as Hide)}>
-            <option value="mature">mature, ecchi and adult titles</option>
-            <option value="adult">ecchi and adult titles only</option>
-            <option value="none">nothing</option>
-          </select>
-          {/* Said here, since it is the surprising part: sources tag violence "Mature" too. */}
-          {hideMature === 'mature' && (
-            <span> — some sources tag violent series Mature too, such as Jujutsu Kaisen and Berserk</span>
-          )}
-        </label>
-      )}
+      {hideMenu.menu}
 
       {source && sub !== 'search' && (
         <SourceList
@@ -242,6 +251,12 @@ const keyOf = (r: { sourceName: string; id: string }) => `${r.sourceName}:${r.id
 const HIDE_MATURE_KEY = 'manga.browse-hide';
 
 type Hide = 'mature' | 'adult' | 'none';
+
+const HIDE_LABEL: Record<Hide, string> = {
+  mature: 'Hide mature, ecchi and adult',
+  adult: 'Hide ecchi and adult only',
+  none: 'Show everything',
+};
 
 /* ---- Popular and Recently released ---- */
 

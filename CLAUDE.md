@@ -496,7 +496,9 @@ at 768px, ten at 1440px, with 8px between covers at every width.
 switched off (`mature.ts`). Two levels, because sources tag violence and seinen
 "Mature" as well as sex — MangaFire's popular page had it on Kingdom, Jujutsu
 Kaisen, Berserk and Tokyo Ghoul — so the lighter one hides only the sexual
-genres, and the default hides Mature too and says so beside the choice. Neither obvious signal works: Suwayomi marks nearly
+genres, and the default hides Mature too. The choice is a small button at the
+end of the tab row, in the accent while something is hidden, rather than a line
+above the grid: it is set once and left. Neither obvious signal works: Suwayomi marks nearly
 every source installed here NSFW because each *can* carry adult titles, and a
 listing rarely carries genres (3 of 50 on MangaFire's popular page). So each
 title's genres are looked up — Suwayomi's stored copy first, then the site, six

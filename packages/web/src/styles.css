@@ -3772,9 +3772,21 @@ div.manga-chapter-row {
   border-color: var(--accent);
 }
 
-.manga-browse-safe {
-  display: block;
-  margin: 8px 0;
+/* At the end of the tab row, out of the way: set once and left. */
+.manga-browse-hide {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.manga-browse-hide.on {
+  color: var(--accent);
 }
 
 .manga-lib-more {

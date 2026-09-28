@@ -63,6 +63,12 @@ export const Icon = {
       <path d="M4 7h16M7 12h10M10 17h4" />
     </svg>
   ),
+  /** A funnel: what Browse is leaving out. */
+  filter: () => (
+    <svg {...base} width={18} height={18}>
+      <path d="M4 5h16l-6 7.5V19l-4-2v-4.5z" />
+    </svg>
+  ),
   /**
    * A cog: a thick dashed ring is the teeth, a thin one the wheel. The teeth
    * need square ends — with the round caps every other icon here uses, each
