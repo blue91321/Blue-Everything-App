@@ -56,6 +56,7 @@ export function More({
   const [checking, setChecking] = useState(false);
   const [sweep, setSweep] = useState<string | null>(null);
   const [savingReleaseTasks, setSavingReleaseTasks] = useState(false);
+  const [savingNudges, setSavingNudges] = useState(false);
 
   async function runSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -180,6 +181,26 @@ export function More({
           </p>
         )}
         {/* Hidden against an older server, which would ignore it. */}
+        {data?.releaseNudges !== undefined && (
+          <label className="meta">
+            <input
+              type="checkbox"
+              checked={data.releaseNudges}
+              disabled={savingNudges}
+              onChange={async (e) => {
+                setSavingNudges(true);
+                try {
+                  await manga.setReleaseNudges(e.target.checked);
+                  onChanged();
+                } finally {
+                  setSavingNudges(false);
+                }
+              }}
+            />{' '}
+            Notify me when a new chapter is out. Off, new chapters still show on the library — the NEW badge and the
+            count — and nothing waits on the Dashboard; switching it off clears the ones waiting now.
+          </label>
+        )}
         {data?.releaseTasks !== undefined && (
           <label className="meta">
             <input
@@ -196,8 +217,7 @@ export function More({
                 }
               }}
             />{' '}
-            Also add each new chapter to Tasks. You are told when one lands either way; this puts it on the Dashboard
-            until you tick it off.
+            Also add each new chapter to Tasks, so it sits on the Dashboard until you tick it off.
           </label>
         )}
       </div>

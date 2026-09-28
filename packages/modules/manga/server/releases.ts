@@ -286,22 +286,30 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
           )[0]
         : null;
 
-      const [nudge] = await db.insert(nudges).values({
-        title: row.title,
-        body: `Chapter ${fresh} is out`,
-        taskId: task?.id ?? null,
-        earliestAt: now,
-        expiresAt: now + NUDGE_LIFE_MS,
-        // Never breaks a match, and carries no deadline to escalate through.
-        minQuality: 'any',
-        pushToPhone: resolvePush(null, pushDefault) ? 1 : 0,
-      }).returning();
+      // Switched off, the chapter is still recorded below — only the nudge is skipped.
+      const nudge = store.releaseNudges
+        ? (
+            await db
+              .insert(nudges)
+              .values({
+                title: row.title,
+                body: `Chapter ${fresh} is out`,
+                taskId: task?.id ?? null,
+                earliestAt: now,
+                expiresAt: now + NUDGE_LIFE_MS,
+                // Never breaks a match, and carries no deadline to escalate through.
+                minQuality: 'any',
+                pushToPhone: resolvePush(null, pushDefault) ? 1 : 0,
+              })
+              .returning()
+          )[0]
+        : null;
 
       store.links.push({
         seriesId: row.id,
         chapter: fresh,
         taskId: task?.id ?? null,
-        nudgeId: nudge.id,
+        nudgeId: nudge?.id ?? null,
         raisedAt: now,
       });
       row.latestChapter = fresh;

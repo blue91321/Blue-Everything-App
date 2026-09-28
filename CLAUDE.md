@@ -492,6 +492,12 @@ fixed 110px cover centred in each cell, which on a phone was two covers and a
 lot of nothing. Measured: three at 320px (85px covers) and 375px (103px), five
 at 768px, ten at 1440px, with 8px between covers at every width.
 
+**New-chapter notifications can be switched off** (More → New chapters),
+beside the task switch. Off, chapters are still noticed and recorded, so the
+NEW badge, the catch-up count and "last updated" carry on; only the nudge is
+skipped. Switching off also expires the ones already waiting, because "I don't
+want these" said while four sit on the Dashboard means those four as well.
+
 **Browse hides adult titles** in Popular and Latest, per device and on unless
 switched off (`mature.ts`). Two levels, because sources tag violence and seinen
 "Mature" as well as sex — MangaFire's popular page had it on Kingdom, Jujutsu

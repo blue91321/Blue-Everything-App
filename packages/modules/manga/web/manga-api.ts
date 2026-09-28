@@ -392,6 +392,8 @@ export interface Library {
   watching: number;
   /** Whether a new chapter also becomes a task. Optional: an older server does not send it. */
   releaseTasks?: boolean;
+  /** Whether a new chapter raises a notification at all. Optional for the same reason. */
+  releaseNudges?: boolean;
 }
 
 export interface SweepResult {
@@ -419,6 +421,8 @@ export const manga = {
     call<SeriesSummary>('/api/manga', { method: 'POST', body: JSON.stringify(candidate) }),
   remove: (id: string) => call<{ ok: true }>(`/api/manga/${id}`, { method: 'DELETE' }),
   checkNow: () => call<SweepResult>('/api/manga/check', { method: 'POST' }),
+  setReleaseNudges: (on: boolean) =>
+    call<{ releaseNudges: boolean }>('/api/manga/release-nudges', { method: 'PUT', body: JSON.stringify({ on }) }),
   setReleaseTasks: (on: boolean) =>
     call<{ releaseTasks: boolean }>('/api/manga/release-tasks', { method: 'PUT', body: JSON.stringify({ on }) }),
 

@@ -708,6 +708,7 @@ const store: Store = {
   suwayomiMode: 'on-demand',
   readLanguages: ['en'],
   releaseTasks: false,
+  releaseNudges: true,
   browseSource: null,
   ignoredSources: [],
   series: [

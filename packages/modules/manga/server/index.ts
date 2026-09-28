@@ -224,6 +224,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
       watching: pollable(store).length,
       /** Whether a new chapter also becomes a task — see `Store.releaseTasks`. */
       releaseTasks: store.releaseTasks,
+      /** Whether a new chapter raises a nudge — see `Store.releaseNudges`. */
+      releaseNudges: store.releaseNudges,
     };
   });
 
@@ -301,6 +303,29 @@ export async function routes(app: FastifyInstance): Promise<void> {
     store.releaseTasks = body.on;
     write(store);
     return { releaseTasks: store.releaseTasks };
+  });
+
+  /**
+   * New-chapter nudges on or off. Not local-only, like the task switch beside
+   * it. Switching off also clears the ones still waiting: "I don't want these"
+   * said while four sit on the Dashboard means those four as well.
+   */
+  app.put('/api/manga/release-nudges', async (request, reply) => {
+    const body = request.body as { on?: unknown } | null;
+    if (typeof body?.on !== 'boolean') return reply.code(400).send({ error: 'send on: true or false' });
+    const store = read();
+    store.releaseNudges = body.on;
+    write(store);
+    if (!body.on) {
+      const waiting = store.links.map((l) => l.nudgeId).filter((id): id is string => typeof id === 'string');
+      if (waiting.length > 0) {
+        await db
+          .update(nudges)
+          .set({ state: 'expired' })
+          .where(and(inArray(nudges.id, waiting), eq(nudges.state, 'pending')));
+      }
+    }
+    return { releaseNudges: store.releaseNudges };
   });
 
   /** Candidates from MangaDex for what was typed. Writes nothing. */

@@ -234,6 +234,13 @@ export type Store = {
    */
   releaseTasks: boolean;
   /**
+   * Whether a new chapter raises a nudge at all. On unless switched off, which
+   * is what it always did. Off, chapters are still noticed and recorded — the
+   * NEW badge, "last updated" and the release log all carry on — and nothing
+   * waits on the Dashboard or interrupts you about them.
+   */
+  releaseNudges: boolean;
+  /**
    * The source the Browse tab lists from, and whose results a search puts first.
    * An opaque source id; one that is no longer installed is simply not found,
    * and the tab falls back to the first source it has.
@@ -294,6 +301,7 @@ function emptyStore(): Store {
     suwayomiMode: 'on-demand',
     readLanguages: [...DEFAULT_LANGUAGES],
     releaseTasks: false,
+    releaseNudges: true,
     browseSource: null,
     ignoredSources: [],
     series: [],
@@ -315,6 +323,7 @@ export function read(): Store {
           ? parsed.readLanguages
           : [...DEFAULT_LANGUAGES],
       releaseTasks: parsed.releaseTasks === true,
+      releaseNudges: parsed.releaseNudges !== false,
       browseSource: typeof parsed.browseSource === 'string' && parsed.browseSource ? parsed.browseSource : null,
       ignoredSources: Array.isArray(parsed.ignoredSources)
         ? parsed.ignoredSources.filter(
