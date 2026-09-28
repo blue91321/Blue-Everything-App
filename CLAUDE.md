@@ -493,7 +493,10 @@ lot of nothing. Measured: three at 320px (85px covers) and 375px (103px), five
 at 768px, ten at 1440px, with 8px between covers at every width.
 
 **Browse hides adult titles** in Popular and Latest, per device and on unless
-switched off (`mature.ts`). Neither obvious signal works: Suwayomi marks nearly
+switched off (`mature.ts`). Two levels, because sources tag violence and seinen
+"Mature" as well as sex — MangaFire's popular page had it on Kingdom, Jujutsu
+Kaisen, Berserk and Tokyo Ghoul — so the lighter one hides only the sexual
+genres, and the default hides Mature too and says so beside the choice. Neither obvious signal works: Suwayomi marks nearly
 every source installed here NSFW because each *can* carry adult titles, and a
 listing rarely carries genres (3 of 50 on MangaFire's popular page). So each
 title's genres are looked up — Suwayomi's stored copy first, then the site, six

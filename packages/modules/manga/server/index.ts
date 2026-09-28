@@ -1226,8 +1226,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
         type === 'popular' ? 'POPULAR' : 'LATEST',
         n
       );
-      // `safe=1` leaves adult titles out — see `mature.ts` for how they are found.
-      const filtered = safe === '1' ? await withoutMature(ctx.adapter, got.matches) : null;
+      // `safe` leaves adult titles out — see `mature.ts` for the two levels and how they are found.
+      const level = safe === 'adult' ? 'adult' : safe === 'mature' || safe === '1' ? 'mature' : null;
+      const filtered = level ? await withoutMature(ctx.adapter, got.matches, level) : null;
       return {
         results: (filtered?.matches ?? got.matches).map((m) => present(ctx.store, m)),
         hasNextPage: got.hasNextPage,

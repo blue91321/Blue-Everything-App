@@ -51,12 +51,13 @@ export function Browse({
   const [state, setState] = useState<BrowseState | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [sub, setSub] = useState<Sub>('popular');
-  // On unless switched off, and per device: what is fine on the PC may not be on the phone.
-  const [hideMature, setHideMature] = useState(() => {
+  // Strict unless changed, and per device: what is fine on the PC may not be on the phone.
+  const [hideMature, setHideMature] = useState<Hide>(() => {
     try {
-      return localStorage.getItem(HIDE_MATURE_KEY) !== '0';
+      const v = localStorage.getItem(HIDE_MATURE_KEY);
+      return v === 'none' || v === 'adult' ? v : 'mature';
     } catch {
-      return true;
+      return 'mature';
     }
   });
   /** Series followed from this screen since it opened, by result key, so buttons change at once. */
@@ -151,10 +152,10 @@ export function Browse({
 
   const subs: Sub[] = ['popular', ...(source?.supportsLatest ? (['latest'] as const) : []), 'search'];
 
-  function toggleMature(on: boolean) {
-    setHideMature(on);
+  function chooseHide(level: Hide) {
+    setHideMature(level);
     try {
-      localStorage.setItem(HIDE_MATURE_KEY, on ? '1' : '0');
+      localStorage.setItem(HIDE_MATURE_KEY, level);
     } catch {
       // Kept for this visit only.
     }
@@ -203,14 +204,22 @@ export function Browse({
 
       {source && sub !== 'search' && (
         <label className="meta manga-browse-safe">
-          <input type="checkbox" checked={hideMature} onChange={(e) => toggleMature(e.target.checked)} /> Hide adult
-          titles (mature, ecchi, smut and the like)
+          Hide{' '}
+          <select value={hideMature} onChange={(e) => chooseHide(e.target.value as Hide)}>
+            <option value="mature">mature, ecchi and adult titles</option>
+            <option value="adult">ecchi and adult titles only</option>
+            <option value="none">nothing</option>
+          </select>
+          {/* Said here, since it is the surprising part: sources tag violence "Mature" too. */}
+          {hideMature === 'mature' && (
+            <span> — some sources tag violent series Mature too, such as Jujutsu Kaisen and Berserk</span>
+          )}
         </label>
       )}
 
       {source && sub !== 'search' && (
         <SourceList
-          key={`${source.id}:${sub}:${hideMature ? 'safe' : 'all'}`}
+          key={`${source.id}:${sub}:${hideMature}`}
           sourceId={source.id}
           type={sub}
           hideMature={hideMature}
@@ -230,7 +239,9 @@ export function Browse({
 
 const keyOf = (r: { sourceName: string; id: string }) => `${r.sourceName}:${r.id}`;
 
-const HIDE_MATURE_KEY = 'manga.browse-hide-mature';
+const HIDE_MATURE_KEY = 'manga.browse-hide';
+
+type Hide = 'mature' | 'adult' | 'none';
 
 /* ---- Popular and Recently released ---- */
 
@@ -245,7 +256,7 @@ function SourceList({
 }: {
   sourceId: string;
   type: 'popular' | 'latest';
-  hideMature: boolean;
+  hideMature: Hide;
   following: (r: BrowseResult) => string | null;
   onFollow: (r: BrowseResult) => Promise<void>;
   onRead: (id: string) => void;
@@ -263,7 +274,7 @@ function SourceList({
     setLoading(true);
     setProblem(null);
     try {
-      const got = await manga.browse.list(sourceId, type, next, hideMature);
+      const got = await manga.browse.list(sourceId, type, next, hideMature === 'none' ? null : hideMature);
       setHidden((n) => n + (got.hidden ?? 0));
       // Only the latest page's: an earlier page's unknowns are known by now.
       setUnchecked(got.unchecked ?? 0);
@@ -296,7 +307,7 @@ function SourceList({
           {hidden > 0 ? 'Everything on this page was an adult title.' : 'This source listed nothing.'}
         </p>
       )}
-      {hideMature && (hidden > 0 || unchecked > 0) && (
+      {hideMature !== 'none' && (hidden > 0 || unchecked > 0) && (
         <p className="meta">
           {hidden > 0 ? `${hidden} adult title${hidden === 1 ? '' : 's'} hidden.` : ''}
           {unchecked > 0

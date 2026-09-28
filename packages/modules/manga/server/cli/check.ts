@@ -989,6 +989,9 @@ console.log('\ntags\n');
   check('shouting and whispering are capitalised', tags.includes('Slice of Life') && tags.includes('Drama'));
   check('adult genres are caught however a source writes them', ['Ecchi', 'Adult (18+)', 'Smut', 'Mature', 'R-18', 'hentai'].every((g) => isMature([g])));
   check('and ordinary ones are not', !isMature(['Action', 'Drama', 'Romance', 'Martial Arts', 'Adventure', 'Manhwa']));
+  // MangaFire tags Jujutsu Kaisen "Mature" for its violence.
+  check('the lighter level keeps what is only tagged Mature', !isMature(['Action', 'Mature'], 'adult') && isMature(['Ecchi'], 'adult'));
+  check('the stricter one hides it', isMature(['Action', 'Mature'], 'mature'));
   check('and anything that is not a tag is dropped', tags.every((t) => typeof t === 'string' && t.length > 0), String(tags.length));
 }
 

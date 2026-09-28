@@ -12,6 +12,13 @@
  * and within a time budget, and Suwayomi keeps what it fetched — so a page is
  * slow the first time it is opened and immediate after that.
  *
+ * ### Two levels, because "Mature" means two things
+ *
+ * Sources use **Mature** for violence and seinen as well as for sex: on
+ * MangaFire's popular page it was on Kingdom, Jujutsu Kaisen, Nano Machine,
+ * Berserk and Tokyo Ghoul, beside Secret Class. So `adult` hides the sexual
+ * genres only, and `mature` hides those and anything tagged Mature too.
+ *
  * **A title still unknown when the budget runs out is shown**, and the response
  * says how many there were. Hiding every unknown would empty a first visit to a
  * slow source, which reads as the source being broken; showing them unchecked
@@ -20,11 +27,14 @@
 import type { SourceMatch } from './sources.js';
 import type { SuwayomiAdapter } from './suwayomi.js';
 
-/** Genre words sources use for adult content, matched whole-word and case-insensitively. */
-const MATURE = /(^|[^a-z])(adult|mature|ecchi|smut|hentai|erotic|erotica|porn|pornographic|nsfw|sexual violence|18\+|r-?18)([^a-z]|$)/i;
+/** Genre words sources use for sexual content, matched whole-word and case-insensitively. */
+const SEXUAL = /(^|[^a-z])(adult|ecchi|smut|hentai|erotic|erotica|porn|pornographic|nsfw|sexual violence|18\+|r-?18)([^a-z]|$)/i;
+const MATURE = /(^|[^a-z])mature([^a-z]|$)/i;
 
-export function isMature(genres: readonly string[]): boolean {
-  return genres.some((g) => MATURE.test(g));
+export type HideLevel = 'adult' | 'mature';
+
+export function isMature(genres: readonly string[], level: HideLevel = 'mature'): boolean {
+  return genres.some((g) => SEXUAL.test(g) || (level === 'mature' && MATURE.test(g)));
 }
 
 const CONCURRENCY = 6;
@@ -32,7 +42,8 @@ const BUDGET_MS = 8_000;
 
 export async function withoutMature(
   adapter: SuwayomiAdapter,
-  matches: SourceMatch[]
+  matches: SourceMatch[],
+  level: HideLevel
 ): Promise<{ matches: SourceMatch[]; hidden: number; unchecked: number }> {
   const genres = new Map<string, string[]>();
   try {
@@ -60,7 +71,7 @@ export async function withoutMature(
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, todo.length) }, worker));
 
-  const kept = matches.filter((m) => !isMature(genres.get(m.id) ?? []));
+  const kept = matches.filter((m) => !isMature(genres.get(m.id) ?? [], level));
   return {
     matches: kept,
     hidden: matches.length - kept.length,
