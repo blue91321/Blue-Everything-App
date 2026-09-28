@@ -192,6 +192,19 @@ export type Store = {
    */
   suwayomiUrl: string | null;
   /**
+   * Where a kept series is written, when it should not be the default.
+   *
+   * Null means the app's own data folder, which is the right answer until a
+   * library outgrows the drive the app is installed on — an archive is the one
+   * thing here that can reach hundreds of gigabytes, and the disk it belongs on
+   * is a fact about the machine rather than about the app.
+   *
+   * An absolute path, and validated as one: a relative path would resolve
+   * against the server's working directory, which Task Scheduler sets to
+   * `C:\Windows\System32` — the exact trap `paths.ts` exists to describe.
+   */
+  archiveFolder: string | null;
+  /**
    * The Suwayomi jar this app may start, when you have pointed it at one.
    *
    * Separate from `suwayomiUrl` because they are different claims: a URL says
@@ -296,6 +309,7 @@ export type ReleaseLink = {
 function emptyStore(): Store {
   return {
     suwayomiUrl: null,
+    archiveFolder: null,
     suwayomiJar: null,
     manageSuwayomi: false,
     suwayomiMode: 'on-demand',
@@ -323,6 +337,8 @@ export function read(): Store {
           ? parsed.readLanguages
           : [...DEFAULT_LANGUAGES],
       releaseTasks: parsed.releaseTasks === true,
+      archiveFolder:
+        typeof parsed.archiveFolder === 'string' && parsed.archiveFolder.trim() ? parsed.archiveFolder : null,
       releaseNudges: parsed.releaseNudges !== false,
       browseSource: typeof parsed.browseSource === 'string' && parsed.browseSource ? parsed.browseSource : null,
       ignoredSources: Array.isArray(parsed.ignoredSources)

@@ -62,7 +62,8 @@ import {
 } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL, KEIYOUSHI_REPO } from './suwayomi.js';
 import { suwayomiProcess, findJars, portOf, suwayomiLogPath } from './process.js';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   applyImport,
@@ -83,7 +84,10 @@ import {
   archivedPage,
   archivedPageList,
   diskUsage,
+  archiveRoot,
+  DEFAULT_ARCHIVE_ROOT,
   isArchived,
+  isRunning as archiveRunning,
   overview as archiveOverview,
   runQueue,
   seriesProgress,
@@ -1862,6 +1866,94 @@ export async function routes(app: FastifyInstance): Promise<void> {
       app.log.warn({ err: error }, 'manga archive worker stopped');
     });
   };
+
+  /**
+   * Where kept chapters are written.
+   *
+   * The one setting here that is a path on this machine, so it is local-only
+   * like minting a token or installing a package — and absolute, because a
+   * relative one resolves against the working directory, which Task Scheduler
+   * sets to `C:\\Windows\\System32`.
+   */
+  app.get('/api/manga/archive/folder', async () => ({
+    folder: read().archiveFolder,
+    resolved: archiveRoot(),
+    default: DEFAULT_ARCHIVE_ROOT,
+  }));
+
+  /**
+   * Point it somewhere else — another drive, a NAS, a disk with room on it.
+   *
+   * **What happens to what is already archived is the whole difficulty**, and
+   * there are three honest answers rather than one:
+   *
+   *   - the new place already holds an archive (it has an `index.json`), so it
+   *     is *adopted*. That is what makes "I moved the folder myself, now point
+   *     at it" work, and it is the only sane reading of pointing at a folder
+   *     that already has one;
+   *   - the old place has files and the new one is on the same volume, so they
+   *     are **moved** — a rename, which is instant whatever the size;
+   *   - they are on different drives, which is the case a rename cannot do.
+   *     That is **refused** rather than turned into a silent multi-gigabyte
+   *     copy inside one HTTP request, with the message saying to move the
+   *     folder by hand and point at it, which lands back on the first case.
+   *
+   * Copying it here was the obvious alternative and is the wrong shape: an
+   * archive is the one thing in this app that reaches hundreds of gigabytes,
+   * and a request that might run for an hour with no progress anywhere is not
+   * something to start by accident.
+   */
+  app.put('/api/manga/archive/folder', async (request, reply) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    const body = (request.body ?? {}) as { folder?: unknown };
+    const wanted =
+      typeof body.folder === 'string' && body.folder.trim() ? body.folder.trim() : null;
+
+    if (wanted !== null && !isAbsolute(wanted)) {
+      return reply.code(400).send({ error: 'that has to be a full path, like D:\\Manga' });
+    }
+    if (archiveRunning()) {
+      // Moving the folder out from under the worker would leave it writing
+      // pages into a tree the index no longer names.
+      return reply.code(409).send({ error: 'something is downloading right now — try again when it has finished' });
+    }
+
+    const from = archiveRoot();
+    const to = wanted ?? DEFAULT_ARCHIVE_ROOT;
+    if (from === to) return { folder: read().archiveFolder, resolved: from, moved: false, adopted: false };
+
+    try {
+      mkdirSync(to, { recursive: true });
+    } catch (error) {
+      return reply
+        .code(400)
+        .send({ error: `that folder could not be made: ${error instanceof Error ? error.message : 'unknown'}` });
+    }
+    if (!statSync(to).isDirectory()) return reply.code(400).send({ error: 'that is a file, not a folder' });
+
+    const adopting = existsSync(join(to, 'index.json'));
+    const hasOld = existsSync(join(from, 'index.json'));
+    let moved = false;
+
+    if (!adopting && hasOld) {
+      try {
+        // Everything at once, so a half-moved archive is not a state that can exist.
+        for (const name of readdirSync(from)) renameSync(join(from, name), join(to, name));
+        moved = true;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        return reply.code(400).send({
+          error:
+            code === 'EXDEV'
+              ? `That is on a different drive, so the files cannot simply be moved. Move "${from}" there yourself, then set this again — a folder that already holds an archive is picked up as it is.`
+              : `Could not move what is already saved: ${error instanceof Error ? error.message : 'unknown'}`,
+        });
+      }
+    }
+
+    write({ ...read(), archiveFolder: wanted });
+    return { folder: wanted, resolved: archiveRoot(), moved, adopted: adopting };
+  });
 
   /** Everything kept for good, what it occupies, and what is being fetched. */
   app.get('/api/manga/archive', async () => ({ ...archiveOverview(), disk: diskUsage() }));

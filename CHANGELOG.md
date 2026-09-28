@@ -5,6 +5,58 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.5.1
+
+All from a second person testing it, which is the only way most of this was
+findable.
+
+### Saving chapters
+
+- **An "All" button** beside Next 5 and Next 10. It asks first and names the
+  number, because it is the one control here that can commit a few gigabytes in
+  one press. One per chapter *number*, so a source listing two editions of most
+  chapters does not spend half the download on duplicates.
+- **A chapter kept on the PC says so.** Reading one while a series is archived
+  downloads it — onto the PC — and the row's ✓ went on saying nothing, because
+  that tick has only ever meant "in this browser's storage". Reported as the
+  tick being broken; it was answering a different question. Rows now read
+  `· on the PC`, and the save bar counts both places separately. Merging them
+  would make ✓ mean "a copy exists somewhere", which is the one thing it must
+  not mean on a phone that has left the house.
+- **The Downloads tab says where the files actually are** — this browser's own
+  storage, and the separate copy the PC keeps, which nothing in a browser can
+  clear. Asked in as many words, and the screen could not answer it.
+
+### Where a kept series is written
+
+- **The archive folder can be pointed anywhere** (`PUT /api/manga/archive/folder`,
+  local-only, absolute paths only). An archive is the one thing here that
+  reaches hundreds of gigabytes, and which disk it belongs on is a fact about
+  the machine.
+- Pointing it at a folder that already holds an archive **adopts** it; pointing
+  it somewhere on the same drive **moves** what is there, as a rename, instant
+  at any size; across drives it is **refused** with what to do instead, rather
+  than starting a multi-gigabyte copy inside one HTTP request.
+
+### Downloading into a folder of your own, on the device
+
+- **Offered on the Downloads tab** where the browser supports it: pages are
+  written as ordinary numbered images in `Series/Chapter 0001/001.jpg`, the same
+  shape the PC's archive uses, so any gallery app can read them and clearing the
+  browser cannot reach them.
+- Per chapter rather than per library, so switching only changes where the
+  *next* download goes and nothing already saved becomes unreadable.
+- **Not verified end to end, and that is stated rather than implied.** On an
+  Android 16 emulator the picker opens and the chosen folder is allowed, and the
+  promise never settles — after which Chrome refuses every later attempt with
+  `File picker already active`. Whether that is the emulator or Chrome on a real
+  phone is unknown. It fails safe: with no folder granted, downloads go to the
+  browser exactly as before.
+- Android refuses the storage root and `Download` itself, so a subfolder has to
+  be picked or created.
+- Safari has never shipped the picker, so an iPhone is told that plainly instead
+  of being shown a button that cannot work.
+
 ## 0.5.0
 
 ### Back and refresh behave on Android

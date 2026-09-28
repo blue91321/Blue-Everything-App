@@ -43,7 +43,7 @@ import { enqueue } from './sync-queue';
 import { useConnectivity } from '@app/offline-sync';
 import { NEEDS } from './device-text';
 
-/** How many "Next" saves ahead of where you are. */
+/** How many "Next" saves ahead of where you are. — and see `saveAll` for the rest. */
 const SAVE_AHEAD = [5, 10] as const;
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -161,6 +161,35 @@ export function Chapters({
     for (const c of picked.values()) if (!saved[c.id]) save(c);
   }
 
+  /**
+   * Every chapter, not the next few.
+   *
+   * Asked for: five and ten are the right sizes for "what I will read on the
+   * train", and useless for "put this whole series on my laptop before the
+   * site goes down" — which is the same wish the archive answers on the PC,
+   * arriving here for the device in your hand.
+   *
+   * One per chapter *number*, like `saveAhead`, because a source listing two
+   * editions of most chapters would otherwise spend half the download on
+   * duplicates — MangaFire reads "864 chapters" for a series at 419.
+   *
+   * It asks first, and the question names the number. This is the one control
+   * here that can commit a few gigabytes of somebody's disk in one press, and
+   * on a phone that storage is the first thing iOS reclaims when space runs
+   * short — which the offline copy already says in as many words.
+   */
+  function saveAll() {
+    if (!data) return;
+    const picked = new Map<number, SourceChapter>();
+    for (const c of [...data.chapters].sort((a, b) => a.number - b.number)) {
+      if (picked.has(c.number) || saved[c.id]) continue;
+      picked.set(c.number, c);
+    }
+    if (picked.size === 0) return;
+    if (!confirm(`Save all ${picked.size} remaining chapters to this device?`)) return;
+    for (const c of picked.values()) save(c);
+  }
+
   const savedHere = Object.values(saved);
   const savedBytes = savedHere.reduce((sum, c) => sum + c.bytes, 0);
 
@@ -237,6 +266,14 @@ export function Chapters({
    */
   const archive = useAsync(() => manga.archive.overview());
   const kept = archive.data?.series.find((a) => a.seriesId === seriesId) ?? null;
+  /**
+   * Chapter numbers this PC is keeping for good, if the series is archived.
+   *
+   * A Set because the row asks once per chapter and a series runs to hundreds
+   * — `includes` down a 182-long array on every render is the sort of thing
+   * that is free until it is not.
+   */
+  const onThePc = new Set(kept?.savedChapters ?? []);
 
   const keepEverything = async () => {
     try {
@@ -410,6 +447,9 @@ export function Chapters({
                   Next {n}
                 </button>
               ))}
+              <button className="btn subtle" onClick={saveAll} title="Every chapter not already on this device">
+                All
+              </button>
               <span className="meta">
                 {jobs.size > 0
                   ? `saving ${[...jobs.values()].filter((j) => !j.problem).length}…`
@@ -417,6 +457,24 @@ export function Chapters({
                     ? `${savedHere.length} saved on this device · ${sizeText(savedBytes)}`
                     : 'or ⬇ on any chapter'}
               </span>
+              {/*
+                * Said here because the ✓ was read as broken.
+                *
+                * Reading a chapter while the series is being kept downloads it
+                * — onto the PC — and the row's tick went on saying
+                * nothing, because that tick has only ever meant "in this
+                * browser's storage". Two true things, one mark, and the one it
+                * was not about is the one that had just happened.
+                *
+                * So the two places are named rather than merged. Merging them
+                * would make ✓ mean "a copy exists somewhere", which is the
+                * one thing it must not mean on a phone that has left the house.
+                */}
+              {kept && (
+                <span className="meta" title="Manga → More → Kept for good">
+                  · {onThePc.size} of {kept.chapters} kept on the PC, separately
+                </span>
+              )}
             </>
           ) : (
             // Cache Storage needs a secure page; the https address is one on every device.
@@ -456,6 +514,8 @@ export function Chapters({
                   {c.uploadedAt ? new Date(c.uploadedAt).toLocaleDateString() : ''}
                   {here && place ? ` · page ${place.page + 1} of ${place.pages}` : ''}
                   {c.read ? (c.readOn ? ` · read on ${c.readOn}` : ' · read') : ''}
+                  {/* Kept on the PC for good, which the ✓ beside it is not about. */}
+                  {onThePc.has(c.number) ? ' · on the PC' : ''}
                   {job?.problem ? ` · ${job.problem}` : ''}
                 </span>
               </button>
@@ -465,7 +525,14 @@ export function Chapters({
                   aria-label={
                     isSaved ? `${c.name} is saved on this device — remove it` : job ? `Saving ${c.name}` : `Save ${c.name} for offline`
                   }
-                  title={isSaved ? `Saved (${sizeText(saved[c.id]!.bytes)}) — tap to remove` : job?.problem ?? undefined}
+                  title={
+                    isSaved
+                      ? `Saved on this device (${sizeText(saved[c.id]!.bytes)}) — tap to remove`
+                      : (job?.problem ??
+                        (onThePc.has(c.number)
+                          ? 'Kept on the PC. This saves a copy into this device too, so it opens with nothing running.'
+                          : undefined))
+                  }
                   disabled={job !== undefined && !job.problem}
                   onClick={() => {
                     if (isSaved) void removeChapter(seriesId, c.id);

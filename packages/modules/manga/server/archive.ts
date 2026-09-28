@@ -75,13 +75,33 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { dataDir } from '@everything/server/module-api';
+import { read } from './library.js';
 
-/** Everything archived, under the app's own data folder. */
-export const ARCHIVE_ROOT = join(dataDir, 'manga-archive');
+/** Where an archive goes when nothing else has been chosen. */
+export const DEFAULT_ARCHIVE_ROOT = join(dataDir, 'manga-archive');
 
-const INDEX = join(ARCHIVE_ROOT, 'index.json');
+/**
+ * Where the archive is, asked each time rather than resolved once.
+ *
+ * A constant would be read at import and could never follow the setting, which
+ * is the same trap `features.ts` describes about resolving the feature set at
+ * module load — except this one has an obvious fix, because nothing here is
+ * structural. The cost is one small JSON read per call, on paths that are
+ * already doing disk work.
+ *
+ * The setting is only honoured when it is absolute. A relative path would
+ * resolve against the server's working directory, and Task Scheduler starts
+ * this process in `C:\Windows\System32` — so a plausible-looking `manga`
+ * would quietly build an archive somewhere nobody would ever look.
+ */
+export function archiveRoot(): string {
+  const chosen = read().archiveFolder;
+  return chosen && isAbsolute(chosen) ? chosen : DEFAULT_ARCHIVE_ROOT;
+}
+
+const indexPath = (): string => join(archiveRoot(), 'index.json');
 
 /**
  * How many times a chapter is retried before it is left alone.
@@ -220,7 +240,7 @@ function writeJson(path: string, value: unknown): void {
 
 export function readIndex(): ArchiveIndex {
   try {
-    const parsed = JSON.parse(readFileSync(INDEX, 'utf8').replace(/^﻿/, '')) as Partial<ArchiveIndex>;
+    const parsed = JSON.parse(readFileSync(indexPath(), 'utf8').replace(/^﻿/, '')) as Partial<ArchiveIndex>;
     return {
       series: Array.isArray(parsed.series) ? parsed.series : [],
       queue: Array.isArray(parsed.queue) ? parsed.queue : [],
@@ -231,11 +251,11 @@ export function readIndex(): ArchiveIndex {
 }
 
 export function writeIndex(index: ArchiveIndex): void {
-  writeJson(INDEX, index);
+  writeJson(indexPath(), index);
 }
 
 export function manifestPath(folder: string): string {
-  return join(ARCHIVE_ROOT, folder, 'series.json');
+  return join(archiveRoot(), folder, 'series.json');
 }
 
 export function readManifest(folder: string): ArchiveManifest | null {
@@ -287,7 +307,7 @@ export function archivedPage(seriesId: string, path: string): { body: Buffer; ty
   for (const chapter of manifest.chapters) {
     const page = chapter.pages.find((p) => p.path === path);
     if (!page) continue;
-    const file = join(ARCHIVE_ROOT, folder, chapter.folder, page.file);
+    const file = join(archiveRoot(), folder, chapter.folder, page.file);
     if (!existsSync(file)) return null;
     return { body: readFileSync(file), type: page.type };
   }
@@ -405,7 +425,7 @@ export function stopArchive(seriesId: string, options: { deleteFiles?: boolean }
 
   // Resolved from the index rather than rebuilt from the id, so this can only
   // ever remove a folder this file wrote down.
-  rmSync(join(ARCHIVE_ROOT, entry.folder), { recursive: true, force: true });
+  rmSync(join(archiveRoot(), entry.folder), { recursive: true, force: true });
   return { removed: true, deleted: true };
 }
 
@@ -426,6 +446,21 @@ export interface SeriesProgress {
   bytes: number;
   queued: number;
   updatedAt: number;
+  /**
+   * The chapter *numbers* that are complete on disk.
+   *
+   * Numbers rather than the source's chapter ids, for the reason `readChapters`
+   * already gives one level up: an id belongs to one source and a relink loses
+   * every mark, while a number means the same thing wherever you read it.
+   *
+   * It exists because the chapter list needs to say which copies of a chapter
+   * exist. The ✓ there means "saved on this device", and with a series being
+   * archived that read as broken — the chapter plainly *had* been downloaded,
+   * just onto the PC rather than into the browser. Reported that way, and the
+   * answer is for the screen to name both rather than for one mark to cover
+   * two different places.
+   */
+  savedChapters: number[];
 }
 
 export function seriesProgress(seriesId: string): SeriesProgress | null {
@@ -456,6 +491,7 @@ export function seriesProgress(seriesId: string): SeriesProgress | null {
     bytes,
     queued: index.queue.filter((q) => q.seriesId === seriesId).length,
     updatedAt: manifest?.updatedAt ?? entry.addedAt,
+    savedChapters: chapters.filter((c) => c.done).map((c) => c.number),
   };
 }
 
@@ -474,7 +510,7 @@ export function overview(): {
     queued: index.queue.length,
     working: working ? { seriesId: working.seriesId, number: working.number, name: working.name } : null,
     bytes: series.reduce((sum, s) => sum + s.bytes, 0),
-    root: ARCHIVE_ROOT,
+    root: archiveRoot(),
   };
 }
 
@@ -597,7 +633,7 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
   if (!manifest || !chapter) return;
 
   chapter.expected = paths.length;
-  const dir = join(ARCHIVE_ROOT, folder, chapter.folder);
+  const dir = join(archiveRoot(), folder, chapter.folder);
   mkdirSync(dir, { recursive: true });
 
   for (const path of paths) {
@@ -721,6 +757,6 @@ export function diskUsage(): { bytes: number; files: number } {
       }
     }
   };
-  walk(ARCHIVE_ROOT);
+  walk(archiveRoot());
   return { bytes, files };
 }

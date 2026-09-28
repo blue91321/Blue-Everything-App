@@ -74,6 +74,33 @@ export function keepingNote(persisted: boolean | null): string {
     : `These stay until you remove them here or clear this browser's data for the site — it only clears them itself if the disk is nearly full.${progress}`;
 }
 
+/**
+ * Where these actually are, which is the question people ask first.
+ *
+ * Asked in as many words — "where is the download stored, I want to make sure
+ * my browser isn't going to clear it" — and the screen could say what *might*
+ * happen to them without ever saying where they were. A place you cannot name
+ * is one you cannot check, back up, or reason about.
+ *
+ * It names the other copy too, because that is the real answer to the worry:
+ * a browser can only ever clear the browser's own. The one the PC keeps is
+ * ordinary files in a folder, and nothing in here can touch it.
+ */
+export function whereKeptNote(persisted: boolean | null): string {
+  const where = `These are in this ${onThePc ? 'browser' : 'browser on this device'}'s own storage for the app, not in a folder you can open.`;
+  /*
+   * Only said when it has *not* been promised, and only where it is the lever
+   * that earns it: a browser grants persistence to a site it can see you rely
+   * on, and installing the app is the most reliable way to say so. Repeating it
+   * once granted would be advice about a problem already solved.
+   */
+  const earn =
+    persisted === false
+      ? ` A browser keeps them more firmly once it can see you rely on the app — installing it${isIOS() ? ' from the Share menu' : ''} is what usually earns that.`
+      : '';
+  return `${where}${earn} The copy the PC keeps is separate: ordinary folders of images under the app's own data folder, which nothing in a browser can clear. Manga → More → Kept for good.`;
+}
+
 /** While downloads run: what stops them, which is a phone putting the app away. */
 export function keepOpenNote(): string {
   if (isIOS()) return 'Keep the app open and on screen until these finish — iOS pauses a web app the moment it leaves the screen.';

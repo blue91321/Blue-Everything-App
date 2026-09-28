@@ -719,6 +719,7 @@ const row = (over: Partial<Store['series'][number]>): Store['series'][number] =>
 
 const store: Store = {
   suwayomiUrl: null,
+  archiveFolder: null,
   suwayomiJar: null,
   manageSuwayomi: false,
   suwayomiMode: 'on-demand',

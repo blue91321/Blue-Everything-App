@@ -437,6 +437,8 @@ export interface ArchiveProgress {
   bytes: number;
   queued: number;
   updatedAt: number;
+  /** Chapter numbers complete on the PC — see the server's `archive.ts`. */
+  savedChapters: number[];
 }
 
 export interface ArchiveOverview {
