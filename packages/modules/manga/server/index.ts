@@ -75,6 +75,7 @@ import {
 import { matchingState, startMatching, unmatchedCount } from './matching.js';
 import { fillTags } from './tags.js';
 import { withoutMature } from './mature.js';
+import { cachedPage, cachedPageList, fillChapter, keepPage, rememberChapter } from './page-cache.js';
 import { homedir } from 'node:os';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
@@ -1742,14 +1743,27 @@ export async function routes(app: FastifyInstance): Promise<void> {
    */
   app.get('/api/manga/:id/chapters/:chapterId/pages', async (request, reply) => {
     const { id, chapterId } = request.params as { id: string; chapterId: string };
+    const asUrls = (pages: string[]) => ({
+      pages: pages.map((path) => `/api/manga/${id}/page?p=${encodeURIComponent(path)}`),
+    });
+
+    // One of the last ten opened: from disk, with no Suwayomi needed — see `page-cache.ts`.
+    const kept = cachedPageList(id, chapterId);
+    if (kept) {
+      const store = read();
+      const url = effectiveUrl(store, DEFAULT_BASE_URL);
+      // Moved to the front; any page still missing is fetched if Suwayomi happens to be up.
+      if (rememberChapter(id, chapterId, kept) && url) void fillChapter(url, id, chapterId);
+      return asUrls(kept);
+    }
+
     const ctx = await reader(id);
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
 
     try {
       const pages = await ctx.adapter.pages(chapterId);
-      return {
-        pages: pages.map((path) => `/api/manga/${id}/page?p=${encodeURIComponent(path)}`),
-      };
+      if (pages.length > 0 && rememberChapter(id, chapterId, pages)) void fillChapter(ctx.url, id, chapterId);
+      return asUrls(pages);
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
       throw error;
@@ -1776,18 +1790,27 @@ export async function routes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'not a page' });
     }
 
+    const kept = cachedPage(id, p);
+    if (kept) {
+      return reply.header('content-type', kept.type).header('cache-control', 'private, max-age=604800').send(kept.body);
+    }
+
     const ctx = await reader(id);
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
 
     try {
       const response = await fetch(`${ctx.url}${p}`, { signal: AbortSignal.timeout(30_000) });
       if (!response.ok) return reply.code(502).send({ error: `the source answered ${response.status}` });
+      const type = response.headers.get('content-type') ?? 'image/jpeg';
+      const body = Buffer.from(await response.arrayBuffer());
+      // Kept if its chapter is one of the last ten; ignored otherwise.
+      keepPage(id, p, body, type);
       return reply
-        .header('content-type', response.headers.get('content-type') ?? 'image/jpeg')
+        .header('content-type', type)
         // A page never changes once it exists, and a reader fetches it again on
         // every revisit — so this is the one image here worth caching hard.
         .header('cache-control', 'private, max-age=604800')
-        .send(Buffer.from(await response.arrayBuffer()));
+        .send(body);
     } catch {
       return reply.code(502).send({ error: 'could not fetch the page' });
     }

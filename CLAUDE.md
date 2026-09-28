@@ -492,6 +492,16 @@ fixed 110px cover centred in each cell, which on a phone was two covers and a
 lot of nothing. Measured: three at 320px (85px covers) and 375px (103px), five
 at 768px, ten at 1440px, with 8px between covers at every width.
 
+**The last ten chapters opened are kept on disk** (`page-cache.ts`,
+`data/manga-pages/`), page list and images, so going back to check something
+is served by this machine rather than a round trip to the site through a
+Suwayomi that may be asleep — a cached chapter opens with Suwayomi stopped.
+Images are fetched in the background, one at a time, once a chapter's page
+list is asked for, and a page the reader asks for first is kept as it passes
+through. Bounded by chapters, not bytes: a long webtoon chapter is tens of
+megabytes, so ten is a few hundred at most. `index.json` is the only record,
+and a folder it does not name is removed on the next write.
+
 **New-chapter notifications can be switched off** (More → New chapters),
 beside the task switch. Off, chapters are still noticed and recorded, so the
 NEW badge, the catch-up count and "last updated" carry on; only the nudge is
