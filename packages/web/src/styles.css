@@ -3773,6 +3773,15 @@ div.manga-chapter-row {
 }
 
 /* At the end of the tab row, out of the way: set once and left. */
+/* A release's notes, as written in CHANGELOG.md: kept as text, scrolled if long. */
+.update-notes {
+  max-height: 16rem;
+  overflow: auto;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+
 .manga-browse-hide {
   margin-left: auto;
   flex: none;

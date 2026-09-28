@@ -54,6 +54,9 @@ export const modulesStateFile = or(config.MODULES_STATE, resolve(repoRoot, 'modu
 /** What the tray's Restart runs, and what the in-app button runs too. */
 export const restartScript = resolve(repoRoot, 'scripts/restart.ps1');
 
+/** Updates to the newest release, backing your data up first. */
+export const updateScript = resolve(repoRoot, 'scripts/update.ps1');
+
 /**
  * The one script that knows how to launch the agent.
  *

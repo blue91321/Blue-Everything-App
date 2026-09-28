@@ -47,6 +47,7 @@ const MUST_BE_IGNORED = [
   '.claude/settings.local.json',
   'features.json',
   'logs/agent.log',
+  'backups/20260101-000000-v0.4.0.zip',
   'packages/agent/src/features/voice/models/libvosk.dll',
   'packages/agent/src/features/voice/models/vosk-model-small-en-us-0.15/README',
   'secrets/anything',

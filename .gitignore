@@ -76,6 +76,10 @@ logo.webp
 # — which is to say, a log of everything you have had open).
 logs/
 
+# Copies of your database and settings, made by scripts/update.ps1 before
+# every update. Personal exactly as the database is.
+/backups/
+
 # ---- Large third-party binaries -----------------------------------------
 # Voice models: ~150MB of third-party binaries, downloaded by voice-setup.
 # Not ours, not small, and not something a git history should carry.

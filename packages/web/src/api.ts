@@ -855,6 +855,22 @@ export interface FeatureState {
   features: FeatureInfo[];
 }
 
+/** The newest release, against the one running. */
+export interface UpdateCheck {
+  current: string;
+  latest: string | null;
+  newer: boolean;
+  name?: string | null;
+  notes?: string | null;
+  url?: string | null;
+  publishedAt?: string | null;
+  /** Whether this machine can install it from here: local, with the script present. */
+  canApply?: boolean;
+  kind?: 'git' | 'release';
+  /** Set when there is nothing published at all yet. */
+  note?: string;
+}
+
 /* ------------------------------------------------------------------ */
 /* Installed packages                                                  */
 /* ------------------------------------------------------------------ */
@@ -1372,6 +1388,13 @@ export const api = {
   },
 
   connectInfo: () => request<ConnectInfo>('/api/connect-info'),
+
+  /** What the newest release is, and installing it — see `routes/update.ts`. */
+  updates: {
+    check: () => request<UpdateCheck>('/api/updates/check'),
+    /** Local-only. Answers at once; the app stops, updates and starts itself. */
+    apply: () => request<{ ok: boolean; updating: boolean; log: string }>('/api/updates/apply', { method: 'POST' }),
+  },
 
   features: {
     get: () => request<FeatureState>('/api/features'),

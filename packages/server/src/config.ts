@@ -103,18 +103,13 @@ const envSchema = z.object({
   MODULES_STATE: z.string().default(''),
 
   /**
-   * Where to ask whether a newer version of anything exists.
-   *
-   * Empty by default and empty today: there is nowhere to ask yet. The Packages
-   * screen reads this to decide whether "Check for updates" can do anything,
-   * and says so plainly rather than offering a button that fails — the same
-   * reasoning as the feature switches being disabled with a reason when
-   * `EVERYTHING_FEATURES` overrides them.
-   *
-   * Nothing is fetched from it until there is a format to fetch. Declaring it
-   * now is what makes turning that on a small change rather than a new concept.
+   * Where to ask whether a newer version exists: GitHub's "latest release" for
+   * the repository, which `.github/workflows/release.yml` publishes on every
+   * version tag. Asked only when "Check for updates" is pressed — never on a
+   * timer. A fork points it at its own releases; empty switches the button
+   * off, and the Packages screen says why rather than offering one that fails.
    */
-  UPDATE_URL: z.string().default(''),
+  UPDATE_URL: z.string().default('https://api.github.com/repos/blue91321/Blue-Everything-App/releases/latest'),
 
   /* ---- app integrations ------------------------------------------ */
 

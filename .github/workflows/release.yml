@@ -1,0 +1,82 @@
+# Builds a release whenever a version tag is pushed:
+#
+#   git tag v0.4.1 && git push origin v0.4.1
+#
+# On Windows, because the app is a Windows app: the agent is Win32 through and
+# through, and the checks should run where it runs. The zip is also uploaded as
+# a workflow artifact, so a run started by hand (Actions → Release → Run
+# workflow) produces a download without publishing anything.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-fund --no-audit
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # The suites with no network and no hardware in them. The voice and Win32
+      # checks need a microphone and a desktop, which a runner does not have.
+      - name: Checks
+        run: |
+          npm run smoke -w @everything/server
+          npm run manga-check -w @everything/server
+          npm run notes-check -w @everything/server
+          npm run integrations-check -w @everything/server
+          npm run modules-check -w @everything/server
+          npm run vault-check -w @everything/server
+          npm run import-check -w @everything/server
+          npm run voice-check -w @everything/server
+          npm run weather-check -w @everything/server
+          npm run publish-check
+
+      - name: Build the app
+        run: npm run build -w @everything/web
+
+      - name: Package
+        run: node scripts/package-release.mjs
+
+      - name: Keep as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: blue-everything
+          path: dist/release/*.zip
+
+      # The version's own section of CHANGELOG.md becomes the release notes.
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="## $version" '$0 == v {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          cat >> notes.md <<'EOF'
+
+          ---
+
+          **Installing:** unzip anywhere, install [Node 24+](https://nodejs.org), and double-click `Blue Everything.cmd`. The first run installs what it needs and takes a few minutes.
+
+          **Updating:** double-click `Update Blue Everything.cmd`, or Settings → Packages → Check for updates. Your data is backed up to `backups\` first and is never replaced.
+          EOF
+          sha256sum dist/release/*.zip | sed 's#dist/release/##' > dist/release/SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" dist/release/*.zip dist/release/SHA256SUMS.txt \
+            --title "Blue Everything $version" --notes-file notes.md

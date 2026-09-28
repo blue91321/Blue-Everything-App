@@ -21,6 +21,7 @@ import { featureRoutes } from './routes/features.js';
 import { moduleRoutes } from './routes/modules.js';
 import { gameRoutes } from './routes/games.js';
 import { restartRoutes } from './routes/restart.js';
+import { updateRoutes } from './routes/update.js';
 import { agentStartRoutes } from './routes/agent-start.js';
 import { agentAliveRoutes } from './routes/agent-alive.js';
 import { habitRoutes } from './routes/habits.js';
@@ -93,6 +94,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * the note in the route.
    */
   await app.register(restartRoutes);
+  await app.register(updateRoutes);
   /*
    * Beside it, for the same reason: "the agent has stopped" is a state the app
    * has to be able to fix from inside, and a package must not be able to be the

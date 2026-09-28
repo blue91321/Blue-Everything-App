@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, type AppSettings, type Device, type Session } from '../api';
+import { api, type AppSettings, type Device, type Session, type UpdateCheck } from '../api';
 import { InstalledPackages } from './InstalledPackages';
 import { GamesTab } from './GamesTab';
 import { Logo, type LogoShape } from '../Logo';
@@ -936,6 +936,10 @@ function PackagesTab({ session }: { session: Session }) {
   const state = useAsync(() => api.features.get(), [], ['settings']);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
+  // Above the early returns below, like every hook here — see App's for why.
+  const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   const data = state.data;
   if (state.loading) return <div className="empty">loading…</div>;
@@ -956,6 +960,34 @@ function PackagesTab({ session }: { session: Session }) {
 
   const updates = data.updates;
 
+  async function checkForUpdates() {
+    setError('');
+    setChecking(true);
+    try {
+      setCheck(await api.updates.check());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not check for updates.');
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function update() {
+    if (!check?.latest) return;
+    const ok = window.confirm(
+      `Update to ${check.latest}? The app stops, updates and starts again — about a minute, longer if dependencies changed. ` +
+        'Your data is backed up to the backups folder first and is not replaced.'
+    );
+    if (!ok) return;
+    setError('');
+    try {
+      await api.updates.apply();
+      setUpdating(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The update could not be started.');
+    }
+  }
+
   return (
     <section>
       <h2>Packages</h2>
@@ -972,7 +1004,7 @@ function PackagesTab({ session }: { session: Session }) {
               <div className="title">Blue Everything {data.appVersion}</div>
               <div className="meta" style={{ marginTop: 4 }}>
                 {updates?.configured
-                  ? `Updates come from ${updates.source}.`
+                  ? 'Everything below ships with the app, so it is all this version. Updates come from its GitHub releases.'
                   : 'Everything below ships with the app, so it is all this version. Packages downloaded separately will show their own.'}
               </div>
               {/* Says why rather than leaving a dead button to be poked at.
@@ -980,19 +1012,62 @@ function PackagesTab({ session }: { session: Session }) {
                   EVERYTHING_FEATURES overrides them. */}
               {!updates?.configured && (
                 <div className="meta" style={{ marginTop: 4 }}>
-                  No update source is set up yet — set <code>UPDATE_URL</code> once the download site exists.
+                  Update checking is switched off: <code>UPDATE_URL</code> is empty.
                 </div>
               )}
             </div>
             <button
               className="btn"
-              disabled={!updates?.configured}
-              title={updates?.configured ? 'Check the download site for newer versions' : 'No update source configured'}
-              onClick={() => setError('Update checking is not wired up yet.')}
+              disabled={!updates?.configured || checking || updating}
+              title={updates?.configured ? 'Ask GitHub for the newest release' : 'No update source configured'}
+              onClick={() => void checkForUpdates()}
             >
-              Check for updates
+              {checking ? 'Checking…' : 'Check for updates'}
             </button>
           </div>
+
+          {updating && (
+            <div className="banner" style={{ marginTop: 10 }}>
+              Updating to {check?.latest}. The app will disconnect and come back on its own in a minute or two; the
+              log is <code>logs\update.log</code>.
+            </div>
+          )}
+
+          {check && !updating && (
+            <div style={{ marginTop: 10 }}>
+              {check.note ? (
+                <div className="meta">Nothing has been released yet.</div>
+              ) : !check.newer ? (
+                <div className="meta">You have the newest version ({check.current}).</div>
+              ) : (
+                <>
+                  <div className="row between">
+                    <div className="title">{check.latest} is available</div>
+                    {check.canApply ? (
+                      <button className="btn primary" onClick={() => void update()}>
+                        Update now
+                      </button>
+                    ) : (
+                      <span className="meta">Update from the PC running the app.</span>
+                    )}
+                  </div>
+                  <div className="meta" style={{ marginTop: 4 }}>
+                    {check.kind === 'git'
+                      ? 'This copy is a git clone, so it pulls the new version.'
+                      : 'This copy came from a release zip, so it downloads the new one and replaces only the files the app ships.'}{' '}
+                    Your data, settings and installed packages are kept, and backed up first. Or double-click{' '}
+                    <code>Update Blue Everything.cmd</code>.
+                  </div>
+                  {check.notes && <pre className="meta update-notes">{check.notes}</pre>}
+                  {check.url && (
+                    <a className="meta" href={check.url} target="_blank" rel="noreferrer">
+                      The release on GitHub
+                    </a>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
