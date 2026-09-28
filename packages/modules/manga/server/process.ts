@@ -56,7 +56,7 @@
  * another.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, createWriteStream, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, createWriteStream, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { dataDir } from '@everything/server/module-api';
 import { SuwayomiAdapter } from './suwayomi.js';
@@ -124,6 +124,111 @@ export function explainFailure(said: string, code: number | null): string {
 /** How often to ask whether it has finished starting. */
 const POLL_MS = 1_000;
 
+/**
+ * How long a `running` claim is believed without asking again.
+ *
+ * `ensureRunning` is called by every route that needs a source, so verifying on
+ * each one would put a round trip in front of every chapter list. A few seconds
+ * is short enough that a dead JVM is noticed on the next thing you tap, and
+ * long enough that a burst of requests costs one check.
+ */
+const TRUST_MS = 5_000;
+
+/* ------------------------------------------------------------------ *
+ * Who owns the JVM
+ * ------------------------------------------------------------------ *
+ *
+ * More than one server can be running against this checkout at a time, and that
+ * is ordinary rather than exotic: `npm run smoke` builds a whole app, the dev
+ * server is a second one, and any diagnostic that boots the server is a third.
+ * Each of them loads this package, finds Suwayomi already answering on 4567 and
+ * adopts it — which is right, since spawning a second JVM into an occupied port
+ * only produces one that cannot bind.
+ *
+ * What was wrong is what happened next. `onClose` stops Suwayomi so a surviving
+ * child cannot hold the port with nobody owning it, and an adopted process was
+ * stopped by that rule exactly like a spawned one. So **running the test suite
+ * killed the running app's Suwayomi**, mid-use, and the app went on reporting it
+ * as running. That is not hypothetical: it is how this was found.
+ *
+ * Ownership is therefore written down rather than assumed. The server that
+ * started it — or adopted it while nobody else had a claim — records itself
+ * here, and everyone else may *use* that JVM and must not stop it.
+ *
+ * On disk rather than in memory because the whole point is that the other
+ * claimant is a different process. A claim whose pid is gone is stale and free
+ * to take, which is what makes this survive a force-killed restart: the old
+ * server's claim dies with it, and the new one adopts and takes over.
+ */
+interface Claim {
+  pid: number;
+  port: number;
+  at: number;
+}
+
+function claimFile(): string {
+  const dir = join(dataDir, 'suwayomi');
+  mkdirSync(dir, { recursive: true });
+  return join(dir, 'owner.json');
+}
+
+/** Whether a process is still there. Signal 0 tests without sending anything. */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means it exists and belongs to somebody else, which is still alive.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function readClaim(): Claim | null {
+  try {
+    const raw = JSON.parse(readFileSync(claimFile(), 'utf8')) as Partial<Claim>;
+    if (typeof raw.pid !== 'number' || typeof raw.port !== 'number') return null;
+    return { pid: raw.pid, port: raw.port, at: typeof raw.at === 'number' ? raw.at : 0 };
+  } catch {
+    // No file, or one written by a half-finished write. Either way: unclaimed.
+    return null;
+  }
+}
+
+/**
+ * Take the claim if it is free, and say whether we hold it.
+ *
+ * Free means nobody has claimed it, the claimant is gone, or the claimant is
+ * us. Anything else and another live server is managing that JVM.
+ */
+function claimOwnership(port: number): boolean {
+  const held = readClaim();
+  if (held && held.pid !== process.pid && pidAlive(held.pid)) return false;
+  try {
+    writeFileSync(claimFile(), JSON.stringify({ pid: process.pid, port, at: Date.now() } satisfies Claim));
+    return true;
+  } catch {
+    // An unwritable data folder should not stop manga working; it only means
+    // this server cannot prove ownership, so it will not stop the JVM either.
+    return false;
+  }
+}
+
+/** Do we hold the claim right now? */
+function ownsSuwayomi(): boolean {
+  const held = readClaim();
+  return held !== null && held.pid === process.pid;
+}
+
+/** Give it up, so the next server may take it. Only ever our own. */
+function releaseOwnership(): void {
+  if (!ownsSuwayomi()) return;
+  try {
+    rmSync(claimFile(), { force: true });
+  } catch {
+    // A stale file is harmless: the pid in it is about to stop being alive.
+  }
+}
+
 export type ManagedState =
   | { state: 'off' }
   | { state: 'starting'; since: number }
@@ -144,6 +249,8 @@ class SuwayomiProcess {
   private lastPort: number | null = null;
   /** The in-flight start, so five requests at once wait on one JVM. */
   private starting: Promise<ManagedState> | null = null;
+  /** When `running` was last confirmed by something actually answering. */
+  private verifiedAt = 0;
 
   get state(): ManagedState {
     return this.status;
@@ -164,7 +271,23 @@ class SuwayomiProcess {
 
     this.touch(mode);
 
-    if (this.status.state === 'running') return this.status;
+    /*
+     * A `running` claim is checked before it is believed.
+     *
+     * It used to be trusted outright, and that is the second half of the bug
+     * above: once the suite had killed the JVM this process had adopted, there
+     * was no child handle and so no `exit` event, and the status stayed
+     * `running` for ever. `/api/manga/source` then answered
+     * `state: running, pid: 16308` and `reachable: false` in the same breath,
+     * and — far worse — **Start did nothing**, because this line saw `running`
+     * and returned the dead pid. The only way out was Stop and then Start,
+     * which nobody should have to guess.
+     */
+    if (this.status.state === 'running') {
+      if (Date.now() - this.verifiedAt < TRUST_MS) return this.status;
+      if (await this.answering(baseUrl)) return this.status;
+      this.status = { state: 'off' };
+    }
     if (this.starting) return this.starting;
 
     /*
@@ -187,7 +310,13 @@ class SuwayomiProcess {
     this.lastPort = portOf(baseUrl);
     const existing = await new SuwayomiAdapter(baseUrl).describe();
     if (existing.reachable) {
+      /*
+       * Adopted. The claim is only taken if it is going spare — if another live
+       * server started this JVM, it stays theirs to stop, and we simply use it.
+       */
+      claimOwnership(this.lastPort);
       this.status = { state: 'running', since: Date.now(), pid: pidListeningOn(portOf(baseUrl)) };
+      this.verifiedAt = Date.now();
       return this.status;
     }
 
@@ -308,7 +437,10 @@ class SuwayomiProcess {
       if (failed !== null) return { state: 'failed', problem: failed };
       const health = await adapter.describe();
       if (health.reachable) {
+        // Ours: we spawned it, so we are the one that must stop it.
+        claimOwnership(port);
         this.status = { state: 'running', since: Date.now(), pid: this.child?.pid ?? null };
+        this.verifiedAt = Date.now();
         this.touch(mode);
         return this.status;
       }
@@ -338,6 +470,34 @@ class SuwayomiProcess {
     return this.status.state === 'failed' ? this.status.problem : null;
   }
 
+  /** Is anything actually there? One request, used to check a stale claim. */
+  private async answering(baseUrl: string): Promise<boolean> {
+    const health = await new SuwayomiAdapter(baseUrl).describe();
+    this.noteReachable(health.reachable);
+    return health.reachable;
+  }
+
+  /**
+   * Told what something just found, so the reported state cannot contradict it.
+   *
+   * `/api/manga/source` asks Suwayomi directly and then reports `managed`
+   * alongside the answer. Those two came from different places and disagreed:
+   * "running, pid 16308" next to "could not reach Suwayomi". A status that
+   * argues with the evidence printed beside it is worse than no status.
+   *
+   * Unreachable becomes `off` rather than `failed`, because `off` is what is
+   * true — it is not running — and the screen draws a Start button against it.
+   * A failure card would be a claim about *why*, which this does not know.
+   */
+  noteReachable(reachable: boolean): void {
+    if (reachable) {
+      this.verifiedAt = Date.now();
+      return;
+    }
+    this.verifiedAt = 0;
+    if (this.status.state === 'running') this.status = { state: 'off' };
+  }
+
   /**
    * Push the idle deadline out. Called whenever anything asks the source
    * something.
@@ -351,6 +511,8 @@ class SuwayomiProcess {
     this.idleTimer = null;
     if (mode === 'always') return;
 
+    // Not `force`: an idle timer is this server deciding nobody needs it, which
+    // is not a thing it may decide about another server's JVM.
     this.idleTimer = setTimeout(() => this.stop(), IDLE_STOP_MS);
     // Must never hold the process open, or `smoke` and `features-check` hang on
     // an app that will not close.
@@ -376,7 +538,7 @@ class SuwayomiProcess {
    * thing Windows has in the POSIX sense — so this is platform-specific on
    * purpose, with a plain `kill` everywhere else.
    */
-  stop(port?: number): void {
+  stop(port?: number, options: { force?: boolean } = {}): void {
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
@@ -384,6 +546,27 @@ class SuwayomiProcess {
     // Set before killing, so the `exit` handler does not report a deliberate
     // stop as a crash.
     this.status = { state: 'off' };
+    this.verifiedAt = 0;
+
+    /*
+     * A JVM somebody else is managing is not ours to kill.
+     *
+     * This is the guard the smoke suite needed. It boots a whole app, adopts
+     * the Suwayomi the real one is using, asserts, and closes cleanly — and
+     * that clean close is exactly what runs this. Without the claim it walked
+     * the process tree of a JVM it had never started, and manga stopped working
+     * in the app the person was actually using, with nothing anywhere saying
+     * why.
+     *
+     * `force` is the one press that means it regardless: **Stop**, on the
+     * Manga → More card. Somebody who asks for that has asked about the thing
+     * on the port rather than about our claim to it, which is also what makes
+     * it the way out of a JVM left behind by a server that never released one.
+     */
+    if (!options.force && !ownsSuwayomi()) {
+      this.child = null;
+      return;
+    }
 
     /*
      * The pid we spawned, or whatever is holding the port.
@@ -400,6 +583,10 @@ class SuwayomiProcess {
     const spawned = this.child?.pid ?? null;
     const holder = knownPort !== null ? pidListeningOn(knownPort) : null;
     this.child = null;
+    // Before the kill, not after: on the way out of the process there may be no
+    // "after", and a claim left behind would make the next server think a live
+    // owner still had it.
+    releaseOwnership();
 
     if (process.platform === 'win32') {
       /*

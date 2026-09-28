@@ -125,6 +125,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 import { ServerUnreachable } from '@app/api';
 import { useNow } from '@app/clock';
+import { useBackStep } from '@app/view-history';
 import { manga } from './manga-api';
 import { NEEDS } from './device-text';
 import { Icon } from './Icons';
@@ -182,6 +183,21 @@ export function Reader({
   hasPrevious?: boolean;
   hasNext?: boolean;
 }) {
+  /*
+   * Back closes the reader and puts you back on the chapter list.
+   *
+   * Mounted for the whole reading session rather than per chapter: the arrows
+   * change `chapter` without remounting this component, so reading three in a
+   * row is still one step and back returns to the list rather than walking
+   * through the chapters you just read.
+   *
+   * It is here rather than at each of the three places a reader opens from —
+   * the chapter list, a series' details, and the offline shelf — because all
+   * three hand it an `onClose` and none of them should have to know this
+   * exists. `close` is what the ✕ and the end-of-chapter button call now, so
+   * leaving by hand and leaving by back are the same route.
+   */
+  const close = useBackStep(onClose);
   const [urls, setUrls] = useState<(string | null)[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -509,7 +525,7 @@ export function Reader({
         onKeyDown={touched}
         onFocusCapture={touched}
       >
-        <button className="btn subtle manga-reader-back" onClick={onClose}>
+        <button className="btn subtle manga-reader-back" onClick={close}>
           ‹ {backLabel}
         </button>
         <span className="manga-reader-title" title={chapter.name}>
@@ -591,7 +607,7 @@ export function Reader({
 
       {total !== null && (
         <div className="row between manga-reader-end">
-          <button className="btn subtle" onClick={onClose}>
+          <button className="btn subtle" onClick={close}>
             ‹ {backLabel}
           </button>
           {/*

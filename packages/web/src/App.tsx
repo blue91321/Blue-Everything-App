@@ -18,6 +18,7 @@ import { ConnectivityBanner } from './ConnectivityBanner';
 import { Home } from './Home';
 import { onDataChange } from './live';
 import { onNavigate } from './nav';
+import { onPopView, pushView, startHistory, viewFromUrl } from './view-history';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
@@ -103,9 +104,16 @@ export function App() {
    * A phone opens on the launcher; anything wider on the Dashboard, as it
    * always has. Decided once, at load — rotating the phone or widening the
    * window later is not a reason to throw you back to a different screen.
+   *
+   * **The URL wins when it names a screen**, which is what makes a refresh land
+   * you where you were rather than back at the default. That is the ordinary
+   * case on Android, where pulling down to reload is a gesture rather than a
+   * decision, and being moved for it reads as the app losing your place.
    */
-  const [view, setView] = useState<NavId>(() =>
-    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches ? 'home' : 'dashboard'
+  const [view, setView] = useState<NavId>(
+    () =>
+      viewFromUrl() ??
+      (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches ? 'home' : 'dashboard')
   );
   /**
    * The row a screen should open for editing when it arrives, from the
@@ -293,7 +301,19 @@ export function App() {
     nav: NavItem[];
     isDesktop: boolean;
     setDrawerOpen: (open: boolean) => void;
-  }>({ nav: [], isDesktop: true, setDrawerOpen: () => {} });
+    /** Overlaid and showing — the only state in which back should close it. */
+    drawerOpen: boolean;
+  }>({ nav: [], isDesktop: true, setDrawerOpen: () => {}, drawerOpen: false });
+
+  /**
+   * The current view, readable from a listener registered once at mount.
+   *
+   * Same split, same reason: the popstate and navigation handlers are
+   * subscribed with an empty dependency list, so `view` inside them would be
+   * whatever it was on the first render for the life of the app.
+   */
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   useEffect(
     () =>
@@ -304,9 +324,65 @@ export function App() {
         // blank screen.
         if (!items.some((item) => item.id === wanted)) return;
         setView(wanted as NavId);
+        pushView(wanted);
         setFocus(wantedFocus ?? null);
         setSearch(wantedSearch ?? null);
         if (!wide) setDrawerOpen(false);
+      }),
+    []
+  );
+
+  /*
+   * Tell the browser where we started, once.
+   *
+   * With the launcher seeded underneath, going back from any screen reaches the
+   * launcher instead of leaving the app — see `view-history.ts`. Run from an
+   * effect rather than during render because it touches `window.history`, which
+   * is not something to do while React is deciding what to draw.
+   *
+   * Above the early returns with every other hook: React counts hooks per
+   * render, and this file has already taken the whole app down with error #310
+   * once for putting one below them.
+   */
+  useEffect(() => {
+    startHistory(viewRef.current);
+    // Deliberately once, at mount. Every later entry is pushed at the moment
+    // somebody navigates, which is the only place that knows a *new* screen was
+    // asked for rather than one being restored by a back press.
+  }, []);
+
+  /*
+   * Back, or forward.
+   *
+   * **An open menu is closed and the navigation still happens**, which is one
+   * step short of what Android does elsewhere — there, back with a drawer open
+   * closes the drawer and goes nowhere. That version was built and taken out
+   * again, because the only way to express it is to push the entry back on
+   * during `popstate`, and Chrome's installed-app host does not count a
+   * re-pushed entry as somewhere it can go back to: the *next* back press shut
+   * the whole app. Measured on an Android 16 emulator — the history said
+   * `length: 2` at `#/tasks`, and back closed it anyway.
+   *
+   * A menu that closes and takes you back one screen is a small surprise. An
+   * app that quits a press early is the bug this whole file exists to fix, so
+   * the simple version wins until the other can be built without touching the
+   * stack from inside a pop.
+   *
+   * Everything here is read from a ref rather than from state. A handler
+   * registered once at mount closes over the first render's values forever, and
+   * "is the menu open" answered from a stale render is exactly the trap
+   * `useEdgeDrawer` and the notes drag-and-drop both document.
+   */
+  useEffect(
+    () =>
+      onPopView((wanted) => {
+        const { drawerOpen, setDrawerOpen } = latest.current;
+        // Left open, it would hang over whichever screen back just reached.
+        if (drawerOpen) setDrawerOpen(false);
+        if (wanted === null) return;
+        setView(wanted as NavId);
+        setFocus(null);
+        setSearch(null);
       }),
     []
   );
@@ -394,7 +470,7 @@ export function App() {
   // makes a drag feel laggy.
   // Not a hook: the ref is created above, with the others, and only fed here
   // where the values it carries actually exist.
-  latest.current = { nav, isDesktop, setDrawerOpen: drawer.setOpen };
+  latest.current = { nav, isDesktop, setDrawerOpen: drawer.setOpen, drawerOpen: !isDesktop && drawer.open };
 
   const drawerStyle = isDesktop
     ? undefined
@@ -405,6 +481,10 @@ export function App() {
 
   function go(id: NavId) {
     setView(id);
+    // One entry per screen you actually asked for. `pushView` ignores a repeat
+    // of the screen already showing, so tapping the current tab does not leave
+    // a back press that appears to do nothing.
+    pushView(id);
     if (!isDesktop) drawer.setOpen(false);
   }
 

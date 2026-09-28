@@ -23,6 +23,7 @@ import { gameRoutes } from './routes/games.js';
 import { restartRoutes } from './routes/restart.js';
 import { updateRoutes } from './routes/update.js';
 import { agentStartRoutes } from './routes/agent-start.js';
+import { desktopIconRoutes } from './routes/desktop-icon.js';
 import { agentAliveRoutes } from './routes/agent-alive.js';
 import { habitRoutes } from './routes/habits.js';
 import { noteRoutes } from './routes/notes.js';
@@ -102,6 +103,13 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   await app.register(agentStartRoutes);
   await app.register(agentAliveRoutes);
+  /*
+   * Core, and beside those two rather than on the Settings screen's own routes:
+   * this is part of "set this machine up to run the app", which has to work on
+   * an install where something optional is broken — that is when somebody is
+   * most likely to be looking for a reliable way back in.
+   */
+  await app.register(desktopIconRoutes);
   // Core: the one screen that can tell you a feature is off has to work when it is.
   await app.register(featureRoutes);
   /*

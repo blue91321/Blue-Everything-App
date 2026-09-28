@@ -21,6 +21,7 @@
 import { useEffect, useState } from 'react';
 import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
+import { pushStep } from '@app/view-history';
 import type { FeatureViewProps } from '@app/features/index';
 import { Chapters } from './Chapters';
 import { Extensions } from './Extensions';
@@ -55,7 +56,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   /** Bumped to send the More tab's setup card into view. */
   const [setupFocus, setSetupFocus] = useState(0);
   const goToSetup = () => {
-    setTab('more');
+    goTab('more');
     setSetupFocus((n) => n + 1);
   };
 
@@ -78,6 +79,29 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
   const [comparing, setComparing] = useState<{ id: string; from: 'list' | 'chapters' } | null>(null);
   /** Which of the five. `useState`, like every other bit of navigation here. */
   const [tab, setTab] = useState<Tab>('library');
+
+  /**
+   * Switch tabs, and leave a step behind so back comes back to this one.
+   *
+   * Android's back button used to jump straight out of the manga screen from
+   * anywhere inside it — from Browse to the Dashboard in one press — because
+   * these five tabs are this package's own idea and the app's history knew
+   * nothing about them.
+   *
+   * One step per change rather than one for "not on Library": going
+   * Library → Browse → History and pressing back should reach Browse, which is
+   * where you were, not the tab this screen happens to open on.
+   *
+   * `setTab` itself is left alone for the one caller that is not a tap — a
+   * title handed in from the Dashboard's release rows, which is already a
+   * navigation and should not owe a second back press to undo.
+   */
+  const goTab = (next: Tab) => {
+    if (next === tab) return;
+    const previous = tab;
+    pushStep(() => setTab(previous));
+    setTab(next);
+  };
   /** A library series whose source page is open — Series details. */
   const [details, setDetails] = useState<string | null>(null);
   /** A search handed to Browse — the 🔍, or details on a series with no source yet. */
@@ -144,7 +168,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
       setDetails(series.id);
       window.scrollTo(0, 0);
     } else {
-      setTab('browse');
+      goTab('browse');
       setBrowseSearch({ query: series.title, at: Date.now() });
     }
   }
@@ -269,7 +293,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
             aria-label="Search every source"
             title="Search every source"
             onClick={() => {
-              setTab('browse');
+              goTab('browse');
               setBrowseSearch({ query: '', at: Date.now() });
             }}
           >
@@ -316,11 +340,11 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
                 <div className="card">
                   <p className="empty">
                     Nothing yet. Find something in{' '}
-                    <button className="btn subtle" onClick={() => setTab('browse')}>
+                    <button className="btn subtle" onClick={() => goTab('browse')}>
                       Browse
                     </button>
                     , or follow a series by name under{' '}
-                    <button className="btn subtle" onClick={() => setTab('more')}>
+                    <button className="btn subtle" onClick={() => goTab('more')}>
                       More
                     </button>
                     .
@@ -378,9 +402,13 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               aria-selected={tab === t.id}
               className={tab === t.id ? 'on' : undefined}
               onClick={() => {
-                // Tapping the tab you are on goes back to its top, as on every phone.
-                if (tab === t.id) window.scrollTo({ top: 0, behavior: 'smooth' });
-                setTab(t.id);
+                // Tapping the tab you are on goes back to its top, as on every
+                // phone — and leaves no step, because you have not gone anywhere.
+                if (tab === t.id) {
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  return;
+                }
+                goTab(t.id);
               }}
             >
               <t.icon />

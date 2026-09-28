@@ -21,6 +21,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useAsync } from '@app/useAsync';
+import { useBackStep } from '@app/view-history';
 import { useButtonMenu } from '@app/ContextMenu';
 import { Cover } from './Cover';
 import { Icon } from './Icons';
@@ -78,6 +79,14 @@ export function Chapters({
   /** Go straight back into the chapter you were reading — the library's Continue. */
   continueOnOpen?: boolean;
 }) {
+  /*
+   * Back closes the chapter list and returns to whichever tab opened it.
+   *
+   * The reader pushes one of these too, so a chapter open over this list is two
+   * steps deep and back unwinds them one at a time — which is what the shelf,
+   * the list and the page already look like on screen.
+   */
+  const close = useBackStep(onClose);
   const list = useAsync(() => manga.reader.chapters(seriesId), [seriesId]);
   const [open, setOpen] = useState<SourceChapter | null>(null);
   const [resume, setResume] = useState<{ page: number; offset: number } | null>(null);
@@ -193,7 +202,7 @@ export function Chapters({
     try {
       await manga.source.unlink(seriesId);
       onChanged?.();
-      onClose();
+      close();
     } catch (error) {
       setProblem(error instanceof Error ? error.message : 'could not unlink it');
     }
@@ -204,7 +213,7 @@ export function Chapters({
     try {
       await manga.remove(seriesId);
       onChanged?.();
-      onClose();
+      close();
     } catch (error) {
       setProblem(error instanceof Error ? error.message : 'could not remove it');
     }
@@ -219,10 +228,51 @@ export function Chapters({
    */
   const count = data ? new Set(data.chapters.map((c) => c.number)).size : null;
 
+  /*
+   * Whether this series is kept for good — see the server's `archive.ts`.
+   *
+   * Read from the overview rather than asking about this one series, because
+   * the card on More reads the same call and `api.ts` coalesces two readers of
+   * one path into one request.
+   */
+  const archive = useAsync(() => manga.archive.overview());
+  const kept = archive.data?.series.find((a) => a.seriesId === seriesId) ?? null;
+
+  const keepEverything = async () => {
+    try {
+      await manga.archive.start(seriesId);
+      archive.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'could not start keeping it');
+    }
+  };
+
+  const stopKeeping = async () => {
+    try {
+      // Files kept: stopping what comes next and throwing away what you have
+      // are different decisions, and only one can be undone. More has the other.
+      await manga.archive.stop(seriesId, false);
+      archive.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'could not stop');
+    }
+  };
+
   const menu = useButtonMenu(() => [
     ...(onDetails ? [{ label: 'Series details', onSelect: onDetails }] : []),
     { label: 'Other sources', onSelect: onCompare },
     { label: busy ? 'Checking the site…' : 'Check the site for chapters', onSelect: () => void refresh(), disabled: busy },
+    /*
+     * Named for what it does rather than "Download": the Downloads tab already
+     * means saving to *this device*, and this is the PC keeping the whole thing
+     * for good. Two different promises deserve two different words.
+     */
+    kept
+      ? {
+          label: `Stop keeping chapters (${kept.complete}/${kept.chapters} saved)`,
+          onSelect: () => void stopKeeping(),
+        }
+      : { label: 'Keep every chapter on the PC', onSelect: () => void keepEverything() },
     { label: 'Unlink this source', onSelect: () => void unlink() },
     { label: 'Stop following', onSelect: () => void unfollow(), danger: true },
   ]);
@@ -286,7 +336,7 @@ export function Chapters({
   return (
     <div className="card manga-chapters-screen">
       <div className="row between">
-        <button className="btn subtle" onClick={onClose}>
+        <button className="btn subtle" onClick={close}>
           ‹ Back
         </button>
         <button className="manga-icon-btn" aria-label="More for this series" aria-haspopup="menu" onClick={menu.open}>

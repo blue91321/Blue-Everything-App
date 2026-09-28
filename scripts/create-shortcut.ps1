@@ -77,7 +77,7 @@ foreach ($path in $targets) {
 
 # Same action, one level down: "set this machine up to run the app". Registering
 # the URL scheme is what lets the app's own offline screen start the server after
-# it has been stopped — see scriptsegister-protocol.ps1 for why that is narrow.
+# it has been stopped — see scripts\register-protocol.ps1 for why that is narrow.
 # A failure here must not cost the shortcuts, which are the point of this script.
 try {
   & (Join-Path $PSScriptRoot 'register-protocol.ps1')

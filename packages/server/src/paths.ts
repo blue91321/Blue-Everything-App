@@ -54,6 +54,15 @@ export const modulesStateFile = or(config.MODULES_STATE, resolve(repoRoot, 'modu
 /** What the tray's Restart runs, and what the in-app button runs too. */
 export const restartScript = resolve(repoRoot, 'scripts/restart.ps1');
 
+/**
+ * Puts the Desktop and Start Menu shortcuts there, and registers `everything:`.
+ *
+ * The same script `Create Desktop Icon.cmd` runs, named here for the same
+ * reason everything else in this file is: it has been counted by hand from a
+ * route before and disabled the button every time.
+ */
+export const shortcutScript = resolve(repoRoot, 'scripts/create-shortcut.ps1');
+
 /** Updates to the newest release, backing your data up first. */
 export const updateScript = resolve(repoRoot, 'scripts/update.ps1');
 

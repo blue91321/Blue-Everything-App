@@ -18,6 +18,7 @@
  */
 import { useState } from 'react';
 import { Cover } from './Cover';
+import { Archive } from './Archive';
 import { ImportCard } from './Import';
 import { SourceCard } from './SourceCard';
 import { manga, type Candidate, type Library, type SeriesSummary } from './manga-api';
@@ -164,6 +165,10 @@ export function More({
           ))}
         </div>
       )}
+
+      {/* Above "New chapters", because this is the setting about what is kept
+          rather than what is announced. */}
+      <Archive />
 
       <div className="card">
         <div className="row between">

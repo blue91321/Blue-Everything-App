@@ -1,0 +1,23 @@
+# Windows scripts keep their bytes, exactly as they are.
+#
+# `core.autocrlf` is on by default on Windows, which normalises CRLF to LF going
+# into the repository and back on the way out. That is right for source, and
+# wrong for these three:
+#
+#   - a `.cmd` file with LF line endings is a Windows hazard in its own right,
+#     and these are the three double-clickable files the whole app is opened
+#     with;
+#   - `publish-check` now inspects these files byte by byte, because a stray
+#     carriage return inside a comment silently ended the comment and turned the
+#     rest of the sentence into a command — a bug that shipped in every release
+#     from v0.2.1. A guard that reads the bytes should read the bytes that are
+#     actually stored;
+#   - and it keeps a one-byte fix looking like a one-byte fix. Without this, the
+#     repair to that carriage return was a 90-line diff, which is exactly how a
+#     real change hides.
+#
+# `-text` means "no conversion in either direction": what is committed is what
+# was written, on every machine whatever its git is configured to do.
+*.ps1 -text
+*.cmd -text
+*.bat -text

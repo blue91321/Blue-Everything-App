@@ -1448,6 +1448,18 @@ export const api = {
   },
 
   /**
+   * The Desktop and Start Menu shortcuts, made from inside the app.
+   *
+   * `create` waits and reports, unlike `restart.now` — nothing is being stopped
+   * here, and the paths it comes back with are the answer to "where did it
+   * go", which a redirected Desktop makes a real question.
+   */
+  desktopIcon: {
+    status: () => request<{ available: boolean; local: boolean; script: string | null }>('/api/desktop-icon'),
+    create: () => post<{ ok: boolean; created: string[] }>('/api/desktop-icon'),
+  },
+
+  /**
    * Starting the Windows agent, without restarting the server it is talking to.
    *
    * Separate from `restart` because the two answer different questions: the

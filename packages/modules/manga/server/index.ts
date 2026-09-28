@@ -79,6 +79,20 @@ import { fillTags } from './tags.js';
 import { withoutMature } from './mature.js';
 import { setupState, startSetup } from './setup.js';
 import { cachedPage, cachedPageList, fillChapter, keepPage, rememberChapter } from './page-cache.js';
+import {
+  archivedPage,
+  archivedPageList,
+  diskUsage,
+  isArchived,
+  overview as archiveOverview,
+  runQueue,
+  seriesProgress,
+  startArchive,
+  stopArchive,
+  sweepArchive,
+  type ArchiveTools,
+  type ChapterToArchive,
+} from './archive.js';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
 /**
@@ -527,35 +541,47 @@ export async function routes(app: FastifyInstance): Promise<void> {
   app.get('/api/manga/source', async () => {
     const store = read();
     const { suwayomiUrl, suwayomiJar, manageSuwayomi } = store;
-    const managed = suwayomiProcess.state;
     const url = effectiveUrl(store, DEFAULT_BASE_URL);
 
     // Only offered when nothing is chosen yet: a scan of Downloads on every
     // poll would be disk work for a question already answered.
     const foundJars = suwayomiJar ? [] : findJars();
 
-    const base = {
+    /*
+     * Read *after* the health check below, not before.
+     *
+     * This used to be taken at the top, and the two halves of the answer then
+     * came from different places and could disagree — the response said
+     * `state: running, pid 16308` beside `could not reach Suwayomi`, about the
+     * same JVM, in the same object. The process had been stopped by another
+     * server and nothing here had noticed. Asking first and reporting second is
+     * what keeps the two from arguing.
+     */
+    const base = () => ({
       defaultUrl: DEFAULT_BASE_URL,
       readLanguages: store.readLanguages,
       jar: suwayomiJar,
       manage: manageSuwayomi,
       mode: store.suwayomiMode,
-      managed,
+      managed: suwayomiProcess.state,
       foundJars,
-    };
+    });
 
-    if (!url) return { ...base, configured: false, url: null, health: null };
+    if (!url) return { ...base(), configured: false, url: null, health: null };
 
     /*
      * Not asked while we are managing it and it is off — that is the ordinary
      * resting state, and reporting it as "unreachable" would make the normal
-     * case look broken. The `managed` state above already says what is true.
+     * case look broken. The `managed` state already says what is true.
      */
-    if (manageSuwayomi && managed.state !== 'running') {
-      return { ...base, configured: true, url, health: null };
+    if (manageSuwayomi && suwayomiProcess.state.state !== 'running') {
+      return { ...base(), configured: true, url, health: null };
     }
 
-    return { ...base, configured: true, url, health: await new SuwayomiAdapter(url).describe() };
+    const health = await new SuwayomiAdapter(url).describe();
+    // Which corrects the claim if it has stopped answering — see `noteReachable`.
+    suwayomiProcess.noteReachable(health.reachable);
+    return { ...base(), configured: true, url, health };
   });
 
   /** Start it now, and wait until it answers. */
@@ -567,10 +593,17 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return suwayomiProcess.ensureRunning(suwayomiJar, suwayomiUrl ?? DEFAULT_BASE_URL, suwayomiMode);
   });
 
-  /** Stop it now, rather than waiting out the idle timer. */
+  /**
+   * Stop it now, rather than waiting out the idle timer.
+   *
+   * `force`, unlike every other stop here: this is somebody pressing Stop about
+   * the thing on the port, not this server tidying up after itself. It is also
+   * the way out of a JVM left behind by a server that went away without
+   * releasing its claim, which is the one case nothing else can reach.
+   */
   app.post('/api/manga/source/stop', async (request) => {
     localOnly(request as unknown as { isLocal: boolean });
-    suwayomiProcess.stop();
+    suwayomiProcess.stop(undefined, { force: true });
     return suwayomiProcess.state;
   });
 
@@ -1783,11 +1816,125 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * — and over Tailscale the phone cannot reach it at all. So each one becomes a
    * proxied URL, and the path travels as an opaque parameter this server checks.
    */
+  /* ---- keeping a series for good - see `archive.ts` ---- */
+
+  /**
+   * What the archive worker needs, resolved fresh each time.
+   *
+   * Built here rather than inside `archive.ts` so that file talks to no source
+   * and touches no store: it owns the folder and the queue, and everything
+   * about *where chapters come from* stays on this side of the line. It is the
+   * same split `ArchiveTools` describes from the other end.
+   */
+  function archiveTools(): ArchiveTools & { chapters: (mangaId: string) => Promise<ChapterToArchive[]> } {
+    const connect = async (): Promise<string | null> => {
+      const store = read();
+      const url = effectiveUrl(store, DEFAULT_BASE_URL);
+      if (!url) return null;
+      if (store.manageSuwayomi && store.suwayomiJar) {
+        const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+        if (state.state !== 'running') return null;
+      } else {
+        suwayomiProcess.touch(store.suwayomiMode);
+      }
+      return url;
+    };
+
+    return {
+      connect,
+      pages: async (chapterId: string) => {
+        const url = await connect();
+        if (!url) throw new SourceError('the source is not running');
+        return new SuwayomiAdapter(url).pages(chapterId);
+      },
+      chapters: async (mangaId: string) => {
+        const url = await connect();
+        if (!url) throw new SourceError('the source is not running');
+        const list = await new SuwayomiAdapter(url).chapters(mangaId, true);
+        return list.map((c) => ({ id: c.id, number: c.number, name: c.name }));
+      },
+    };
+  }
+
+  /** Nudge the worker, never awaited: a caller should not wait on a download. */
+  const workArchive = () => {
+    void runQueue(archiveTools()).catch((error) => {
+      app.log.warn({ err: error }, 'manga archive worker stopped');
+    });
+  };
+
+  /** Everything kept for good, what it occupies, and what is being fetched. */
+  app.get('/api/manga/archive', async () => ({ ...archiveOverview(), disk: diskUsage() }));
+
+  /** One series' archive, including the chapters it could not finish. */
+  app.get('/api/manga/:id/archive', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const progress = seriesProgress(id);
+    if (!progress) return reply.code(404).send({ error: 'this series is not archived' });
+    return progress;
+  });
+
+  /**
+   * Keep this series - every chapter it has, and everything that comes next.
+   *
+   * Safe to send again: it is also how "catch up on what is missing" and
+   * "retry the chapters that failed" are asked for, since `startArchive`
+   * queues only what is not already complete.
+   */
+  app.post('/api/manga/:id/archive', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const ctx = await reader(id);
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    try {
+      const list = await ctx.adapter.chapters(ctx.series.source!.mangaId, true);
+      const added = startArchive(
+        { id: ctx.series.id, title: ctx.series.title, source: ctx.series.source },
+        list.map((c) => ({ id: c.id, number: c.number, name: c.name }))
+      );
+      workArchive();
+      return { ...added, progress: seriesProgress(id) };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  /**
+   * Stop archiving it.
+   *
+   * **Keeps the files unless `files=delete` says otherwise**, because "stop
+   * saving what comes next" and "throw away what I saved" are different
+   * decisions and only one of them can be undone - the distinction the notes
+   * folder menu draws in as many words. The destructive path is reachable only
+   * by asking for it.
+   */
+  app.delete('/api/manga/:id/archive', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { files } = request.query as { files?: string };
+    if (!isArchived(id)) return reply.code(404).send({ error: 'this series is not archived' });
+    return stopArchive(id, { deleteFiles: files === 'delete' });
+  });
+
+  /** Work the queue now, rather than waiting for the sweep. */
+  app.post('/api/manga/archive/run', { config: { announce: false } }, async () => {
+    workArchive();
+    return archiveOverview();
+  });
+
   app.get('/api/manga/:id/chapters/:chapterId/pages', async (request, reply) => {
     const { id, chapterId } = request.params as { id: string; chapterId: string };
     const asUrls = (pages: string[]) => ({
       pages: pages.map((path) => `/api/manga/${id}/page?p=${encodeURIComponent(path)}`),
     });
+
+    /*
+     * The archive first, because it is the copy meant to outlast the source
+     * — and unlike the cache it is never evicted, so a hit here is a hit for
+     * good. Nothing is fetched and Suwayomi is not needed.
+     */
+    const archived = archivedPageList(id, chapterId);
+    if (archived) return asUrls(archived);
 
     // One of the last ten opened: from disk, with no Suwayomi needed — see `page-cache.ts`.
     const kept = cachedPageList(id, chapterId);
@@ -1830,6 +1977,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const { p } = request.query as { p?: string };
     if (!p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
       return reply.code(400).send({ error: 'not a page' });
+    }
+
+    // Kept for good, and preferred over everything: see the chapter route above.
+    const saved = archivedPage(id, p);
+    if (saved) {
+      return reply.header('content-type', saved.type).header('cache-control', 'private, max-age=604800').send(saved.body);
     }
 
     const kept = cachedPage(id, p);
@@ -2022,6 +2175,17 @@ export async function routes(app: FastifyInstance): Promise<void> {
       await sweepReleases();
       // A few series' genres each sweep, only while Suwayomi is up — see `tags.ts`.
       await fillTags(TAGS_PER_SWEEP);
+      /*
+       * And anything new for an archived series, queued and then fetched.
+       *
+       * Here rather than on an interval of its own: the process is already
+       * awake for the sweep, and this project requires a timer to justify
+       * itself against the attention loop's numbers. An install with nothing
+       * archived does no work at all — `sweepArchive` returns on an empty
+       * list before it asks anything.
+       */
+      await sweepArchive(archiveTools());
+      workArchive();
     } catch (error) {
       // Never allowed to escape. This runs with nobody waiting on it, and an
       // unhandled rejection would take the server down over somebody else's
@@ -2075,6 +2239,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
      * The port is passed for the one case the process cannot know it: a JVM
      * adopted after a restart that nothing has asked anything of yet. Only
      * while the app manages Suwayomi — one you run yourself is not ours to stop.
+     *
+     * **Deliberately not forced.** This is the line that killed the running
+     * app's Suwayomi every time the smoke suite closed its own app: the suite
+     * adopts whatever is on 4567 and this then stopped it. `stop` now declines
+     * unless this server holds the claim, so a second server tidies up after
+     * itself and leaves the first one's JVM alone.
      */
     const store = read();
     const url = store.manageSuwayomi ? effectiveUrl(store, DEFAULT_BASE_URL) : null;

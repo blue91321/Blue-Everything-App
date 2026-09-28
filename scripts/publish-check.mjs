@@ -203,6 +203,35 @@ for (const path of tracked.filter((p) => p.endsWith('.ps1'))) {
   }
 }
 
+/*
+ * A carriage return on its own ends the line, including inside a comment.
+ *
+ * Second time in this same file, and the first one cost a debugging session
+ * because the damage is invisible: `create-shortcut.ps1` carried a comment
+ * reading `see scripts\register-protocol.ps1`, except the `\r` was stored as an
+ * actual 0x0D. PowerShell treats a lone CR as a line terminator, so the comment
+ * ended in the middle of the sentence and `egister-protocol.ps1 for why that is
+ * narrow.` became a command — thrown at the top level, outside the try/catch
+ * meant to make that step survivable. "Create Desktop Icon.cmd" made both
+ * shortcuts, then died in red text without registering the `everything:` link.
+ *
+ * It reads perfectly in every editor, which is the whole problem: the file says
+ * one thing and PowerShell runs another, and nothing anywhere says so.
+ */
+for (const path of tracked.filter((p) => /\.(ps1|cmd|bat)$/i.test(p))) {
+  const bytes = readFileSync(resolve(repo, path));
+  const stray = [];
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0x0d && bytes[i + 1] !== 0x0a) stray.push(i);
+  }
+  if (stray.length > 0) {
+    problems.push(
+      `${path} has a carriage return that is not a line ending (byte ${stray[0]}) — ` +
+        'PowerShell ends the line there, so what follows is run rather than read'
+    );
+  }
+}
+
 const label = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 if (warnings.length > 0) {

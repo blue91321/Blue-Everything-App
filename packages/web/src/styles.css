@@ -737,6 +737,35 @@ button {
   transform: translateY(1px);
 }
 
+/*
+ * A link wearing a button.
+ *
+ * `.btn` was written for `<button>`, which brings the font rules and a box of
+ * its own; an anchor is inline, underlined, and inherits whatever size the text
+ * around it had. It has to be a real `<a href>` rather than a click handler for
+ * the reason the `everything:` and `discord:` links already are — Chromium
+ * treats an anchor navigation as a user gesture far more readily than a
+ * scripted one, and drops the scripted kind silently.
+ */
+/*
+ * A line of `.meta` that is a warning rather than a note.
+ *
+ * The archive uses it for chapters it could not fetch: a gap in a backup has to
+ * look different from a count, because "18 of 20" and "two are missing and will
+ * not come" are not the same sentence.
+ */
+.meta.warn {
+  color: var(--danger);
+}
+
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  font-family: inherit;
+  font-size: 14px;
+  text-decoration: none;
+}
+
 /* Big round check target — the most-tapped control in the app. */
 .check {
   width: 26px;

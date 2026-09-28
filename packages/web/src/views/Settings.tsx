@@ -367,6 +367,7 @@ type TabId = (typeof TABS)[number]['id'];
 const SECTION_TAB: Record<string, TabId> = {
   'dashboard-panel': 'general',
   'menu-drawer': 'general',
+  'desktop-icon': 'devices',
 };
 
 /**
@@ -767,6 +768,11 @@ function DevicesTab({ session, onChanged }: { session: Session; onChanged: () =>
           {session.version && <div className="meta">Version {session.version}</div>}
         </div>
       </section>
+
+      {/* First on this tab after "this device", because it is the first thing
+          anybody wants: a way back into the app that is not the folder they
+          unzipped. */}
+      <DesktopIcon />
 
       {session.local && (
         <section>
@@ -1660,6 +1666,96 @@ function QuietHours() {
 }
 
 /**
+ * Put the app's icon on the Desktop.
+ *
+ * This has always been `Create Desktop Icon.cmd`, and having that as the only
+ * way meant the answer to "how do I open this tomorrow" was "go back to the
+ * folder you unzipped it into" — which is the friction the double-clickable
+ * files were supposed to remove, turning up one level higher. The first thing
+ * anybody wants after getting the app open is a reliable way back to it, and
+ * they are already looking at the app when they want it.
+ *
+ * **It reports where the shortcut went, rather than saying "done".** OneDrive
+ * redirects the Desktop, so the folder Windows means by it is often not
+ * `%USERPROFILE%\Desktop` — the script asks Windows and prints the paths, and
+ * repeating them here is what stops "it worked" being followed by "then where
+ * is it".
+ *
+ * Absent rather than disabled from the phone. The Desktop in question is the
+ * PC's, so the button could only ever apologise there.
+ */
+function DesktopIcon() {
+  const status = useAsync(() => api.desktopIcon.status(), [], ['devices']);
+  const [busy, setBusy] = useState(false);
+  const [made, setMade] = useState<string[] | null>(null);
+  const [problem, setProblem] = useState('');
+
+  if (status.loading || !status.data?.local) return null;
+
+  async function create() {
+    setBusy(true);
+    setProblem('');
+    setMade(null);
+    try {
+      const result = await api.desktopIcon.create();
+      setMade(result.created);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'could not make the shortcut');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section id="desktop-icon">
+      <h2>Desktop icon</h2>
+      <div className="card">
+        <div className="meta">
+          Puts a <strong>Blue Everything</strong> icon on your Desktop and in the Start Menu. Clicking it
+          starts the app if it is not already running, then opens it in its own window — so this folder is
+          not something you ever need to find again.
+        </div>
+
+        {status.data.available ? (
+          <>
+            <div className="row" style={{ marginTop: 8 }}>
+              <button className="btn primary" onClick={create} disabled={busy}>
+                {busy ? 'making it…' : made ? 'Make it again' : 'Create desktop icon'}
+              </button>
+              {busy && <span className="meta">the first one also builds the icon, which takes a moment</span>}
+            </div>
+
+            {made && (
+              <div className="meta ok-text" style={{ marginTop: 8 }}>
+                {made.length > 0 ? (
+                  <>
+                    Done — it went here:
+                    {made.map((path) => (
+                      <div key={path}>
+                        <code>{path}</code>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  'Done.'
+                )}
+                <div style={{ marginTop: 4 }}>You can drag the Desktop one onto your taskbar to pin it.</div>
+              </div>
+            )}
+            {problem && <div className="banner">{problem}</div>}
+          </>
+        ) : (
+          <div className="meta" style={{ marginTop: 8 }}>
+            The script that does this is missing, so double-click{' '}
+            <code>Create Desktop Icon.cmd</code> in the app's folder instead.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
  * Step-by-step for putting Everything on a phone.
  *
  * The address matters more than the code: iOS will only install a web app, and
@@ -1691,9 +1787,48 @@ function AddDeviceGuide({ onAdded }: { onAdded: () => void }) {
   return (
     <div className="card guide">
       <ol>
+        {/*
+          The step that was a sentence and is now a link.
+          "Make sure Tailscale is on both devices" is a fine instruction for
+          somebody who has it, and for everybody else it is an errand: work out
+          what Tailscale is, find the right site among the search results, and
+          pick the right download for the machine you are sitting at. Every step
+          of that is a chance to give up, and none of it is a decision — there
+          is exactly one place to get it.
+
+          Whether it is *running here* is already known, so the step says which
+          half is outstanding rather than making you check.
+        */}
         <li>
-          <strong>Make sure Tailscale is on both devices.</strong>
-          <div className="meta">It's what lets your phone reach this PC from anywhere. Free for personal use.</div>
+          <strong>Install Tailscale on both devices.</strong>
+          <div className="meta">
+            It's what lets your phone reach this PC from anywhere, without opening anything to the
+            internet. Free for personal use, and you sign in to it with the same account on both.
+          </div>
+          <div className="row wrap" style={{ gap: '.35rem', marginTop: 8 }}>
+            <a
+              className="btn"
+              href="https://tailscale.com/download/windows"
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              Download for this PC
+            </a>
+            <a className="btn subtle" href="https://tailscale.com/download" target="_blank" rel="noreferrer noopener">
+              Get it for your phone
+            </a>
+          </div>
+          {!info.loading &&
+            (info.data?.tailscale ? (
+              <div className="meta ok-text" style={{ marginTop: 6 }}>
+                Running on this PC as <code>{info.data.tailscale.dnsName}</code> — the phone is the half
+                left to do.
+              </div>
+            ) : (
+              <div className="meta" style={{ marginTop: 6 }}>
+                Not running on this PC yet. Install it, sign in, and this page will fill in the rest.
+              </div>
+            ))}
         </li>
 
         <li>

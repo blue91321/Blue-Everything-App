@@ -5,6 +5,61 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.5.0
+
+### Back and refresh behave on Android
+
+Reported from a phone: reloading landed you on a different screen, and the back
+arrow closed the app instead of going up one.
+
+- **The screen you are on is in the URL** (`#/notes`), so a refresh keeps your
+  place and back walks up through the screens you visited before leaving.
+- **Back works inside Manga too** — from the reader to the chapter list, from
+  the chapter list to the tab, and between the five tabs. Those are the
+  package's own navigation, which the app's history had never heard of.
+- Back with the menu open closes the menu and goes back one screen. The version
+  that closed only the menu had to push a history entry back during `popstate`,
+  and Chrome's installed-app host does not count that as somewhere it can go
+  back to: the next press shut the whole app.
+
+### Keep a series for good
+
+- **Manga → chapter list → ⋯ → Keep every chapter on the PC.** The whole series
+  is saved to this machine's disk, and every new chapter as it is released. It
+  is still there when the site is not, and it reads with Suwayomi stopped.
+- **It is readable without this app**, which is the point of a backup: ordinary
+  folders of zero-padded, correctly-named images, with a `series.json` beside
+  them saying what they are.
+- Not a cache and not the Downloads tab. Nothing evicts it. **Manga → More →
+  Kept for good** shows what is saved, what it occupies, what is downloading,
+  and — separately — any chapter that could not be fetched.
+- Stopping keeps the files. Deleting them is a separate button that asks first.
+
+### Suwayomi
+
+- **The test suite no longer kills it.** Any second server — `npm run smoke`,
+  the dev server, a diagnostic — adopted the running app's Suwayomi and stopped
+  it on the way out, mid-use. Ownership is written down now, and a server only
+  stops the JVM it started.
+- **The status cannot lie any more.** With the JVM gone it went on reporting
+  `running` beside `could not reach Suwayomi`, and Start did nothing because it
+  believed itself. A `running` claim is checked before it is trusted, and the
+  status is read after asking rather than before.
+
+### Setting up
+
+- **Create a desktop icon from inside the app** (Settings → Devices), which
+  reports where the shortcut went — the Desktop is not always where you think
+  when OneDrive has moved it.
+- `create-shortcut.ps1` carried a stray carriage return inside a comment, which
+  PowerShell reads as the end of the line: the rest of the sentence was run as a
+  command. It made the shortcuts, then died before registering the
+  `everything:` link, so the offline screen's **Start it** button has never
+  worked on any install set up that way — every release since 0.2.1.
+  publish-check now refuses a script carrying one.
+- **Tailscale has download links** on the add-a-device guide, and the step says
+  whether it is already running on this PC.
+
 ## 0.4.2
 
 ### Nothing to install first

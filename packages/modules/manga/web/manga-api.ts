@@ -423,6 +423,31 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   return apiRequest<T>(path, init);
 }
 
+/** One archived series, as the server counts it. */
+export interface ArchiveProgress {
+  seriesId: string;
+  title: string;
+  folder: string;
+  addedAt: number;
+  chapters: number;
+  complete: number;
+  /** Tried and could not be finished. Reported, never hidden. */
+  failed: number;
+  pages: number;
+  bytes: number;
+  queued: number;
+  updatedAt: number;
+}
+
+export interface ArchiveOverview {
+  series: ArchiveProgress[];
+  queued: number;
+  working: { seriesId: string; number: number; name: string } | null;
+  bytes: number;
+  root: string;
+  disk?: { bytes: number; files: number };
+}
+
 export const manga = {
   list: () => call<Library>('/api/manga'),
   history: () => call<{ entries: HistoryEntry[] }>('/api/manga/history'),
@@ -445,6 +470,29 @@ export const manga = {
       }),
     matching: () => call<MatchingState>('/api/manga/import/matching'),
     matchAgain: () => call<MatchingState>('/api/manga/import/matching', { method: 'POST' }),
+  },
+
+  /**
+   * Keeping a series for good — see the server's `archive.ts`.
+   *
+   * `start` is also "catch up" and "try the failed ones again": the server
+   * queues only what is not already complete, so pressing it twice costs
+   * nothing.
+   */
+  archive: {
+    overview: () => call<ArchiveOverview>('/api/manga/archive'),
+    of: (id: string) => call<ArchiveProgress>(`/api/manga/${id}/archive`),
+    start: (id: string) =>
+      call<{ queued: number; already: number; progress: ArchiveProgress | null }>(`/api/manga/${id}/archive`, {
+        method: 'POST',
+      }),
+    /** Keeps what is saved unless `deleteFiles` — two different decisions. */
+    stop: (id: string, deleteFiles = false) =>
+      call<{ removed: boolean; deleted: boolean }>(
+        `/api/manga/${id}/archive${deleteFiles ? '?files=delete' : ''}`,
+        { method: 'DELETE' }
+      ),
+    run: () => call<ArchiveOverview>('/api/manga/archive/run', { method: 'POST' }),
   },
 
   ignored: {
