@@ -5,7 +5,7 @@ iPhone.
 
 It is not a to-do list. The point is that it knows what you are doing on
 Windows, holds a reminder while you are mid-match, and delivers it the instant
-You hit a natural break. Tasks, habits, time tracking and notes exist to give
+you hit a natural break. Tasks, habits, time tracking and notes exist to give
 that engine something worth saying.
 
 Built for one user. There is no multi-tenancy, no accounts and no sign-up flow,
@@ -22,56 +22,44 @@ Windows agent  ──┐
 
 ## Pick what you actually want
 
-The nudge engine is the app. Everything else is optional, and "optional" means
-three separable things:
+The nudge engine is the app. Everything else is optional:
 
 | | What it does |
 | --- | --- |
-| **on** | the default |
+| **on** | the default for everything that ships |
 | **off** | routes unmounted, tab hidden, the agent never loads it |
 | **deleted** | remove the folder; the app boots and reports it as not installed |
 
-```bash
-npm run features
-```
+**Settings → Packages** lists them — the password vault, voice, app
+integrations, phone push, weather and manga, each in `packages/modules/<name>/`
+— with a switch, its size and a Remove button. A change takes a restart, and
+the screen has the button for it. Habits, notes and time tracking can be
+switched off but not deleted: the Dashboard uses them.
 
-```
-Password vault       on
-                     Encrypted password storage, CSV import, and the browser extension.
-                     delete: packages/server/src/features/vault  packages/web/src/features/vault  packages/extension
-
-Voice commands       on
-                     Wake word, spoken commands, and the popup at the cursor.
-                     costs: ~150MB of models on disk, and 198MB resident while the microphone is open
-                     delete: packages/server/src/features/voice  packages/web/src/features/voice  packages/agent/src/features/voice
-```
-
-Switch things off with:
-
-```bash
-npm run features -- --set voice=off,vault=off
-```
-
-That writes `features.json`, which is per-install and gitignored — what you run
-is a property of your machine, not of the project. `FEATURES=vault,voice` in the
-environment overrides it, and `FEATURES=none` is core only.
-
-To reclaim the disk as well, delete the folders it lists. The server logs
-`feature vault: on, but not installed`, the PWA hides the tab, and nothing
-breaks. Proven, not asserted:
-
-```bash
-npm run features-check
-```
-
-`habits`, `notes` and `time` can be switched off but not deleted — the Dashboard
-renders habits inline. The manifest says which is which rather than pretending
-everything is removable.
+The same switches are in `features.json` and `modules.json` (per-install, and
+gitignored), and `npm run features-check` proves each package can be switched
+off and deleted without breaking the build.
 
 ## Running it
 
-Requires **Node 24+** and Windows for the agent. The server and PWA are
-portable; only the agent is Win32-specific.
+Requires **Windows**, **Node 24+** and git. The server and PWA are portable;
+only the agent is Win32-specific.
+
+```bash
+git clone https://github.com/blue91321/Blue-Everything-App.git
+```
+
+Then double-click **`Blue Everything.cmd`** in the folder. The first run
+installs dependencies and builds the app, which takes a few minutes; after that
+it opens in its own window in seconds, with a tray icon under the `^` arrow.
+**`Create Desktop Icon.cmd`** adds a shortcut, **`Start Automatically.cmd`**
+starts it at logon, and **`Stop Blue Everything.cmd`** stops it, as does **Stop** on the
+tray icon.
+
+Nothing is shared between installs: your database lives in `data/` in your
+copy and is never committed.
+
+From a terminal instead:
 
 ```bash
 npm install
@@ -80,9 +68,14 @@ npm run dev   -w @everything/server   # server on :8787, migrations applied on b
 npm run agent -w @everything/agent    # the Windows agent — needs the server up
 ```
 
-On Windows there are four double-clickable files in the repo root
-(`Blue Everything.cmd`, `Stop Blue Everything.cmd`, `Create Desktop Icon.cmd`,
-`Start Automatically.cmd`) so you never need a terminal to use it.
+### Manga, if you want it
+
+Chapters come from [Suwayomi](https://github.com/Suwayomi/Suwayomi-Server/releases/latest),
+a separate program: download the `Suwayomi-Server-….jar` and install **Java 21
+or newer** so that `java` is on your PATH. Then **Manga → More → Where chapters
+come from** finds the jar (or takes its path), and the app starts Suwayomi when
+you read and stops it afterwards. Add sources from **Extensions** on the same
+card — a fresh Suwayomi has none, and finds nothing until you do.
 
 ### The phone
 
@@ -108,7 +101,7 @@ npm run voice-setup -w @everything/agent
 prints exactly what to download and where to put it, then proves the microphone
 and recognisers work. Voice is off by default in settings even when installed —
 it is the only feature that holds a microphone open, so it should be something
-You switched on rather than something you find already running.
+you switched on rather than something you find already running.
 
 ## Checking your work
 

@@ -5,6 +5,44 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.4.0
+
+### Manga, as a package
+
+A new shipped package, `packages/modules/manga`: follow series, read them, and
+be told when a chapter lands — at a stopping point, like every other nudge.
+
+- **Sources through Suwayomi**, which the app can start and stop for you, only
+  while you are using it, and which goes when Blue Everything does. Extensions
+  install from inside the app. Suwayomi is a separate download and needs Java.
+- **A reader laid out like a reading app**: pages fill the screen, controls hide
+  after a few seconds and come back on a tap, a strip of page thumbnails, and a
+  gear for brightness, page width and the hide timers. The arrows move between
+  chapters.
+- **A library of covers**, three across on a phone, with a NEW badge counting
+  the chapters to catch up on. Sort by last read (new chapters on top, if you
+  like), most to catch up on, last updated, title or recently added; filter by
+  new chapters, a source that is not answering, no source yet, or a genre.
+- **Browse** your sources: popular, recently released, and a search across all
+  of them grouped by series, with adult titles hidden unless you say otherwise.
+- **Compare one series across every source**, and say whether a source that
+  claims to be ahead really is.
+- **History and Downloads tabs.** Chapters save to the device and read offline.
+- **Bring a library in from Manga Reader** (iOS) by its iMazing app backup:
+  favourites, what you read and where you were, then each series looked for on
+  your installed sources by its exact title.
+- **The last ten chapters opened are kept on the PC**, so going back to one is
+  instant and works with Suwayomi stopped.
+- New-chapter notifications, and a task per chapter, are each a switch.
+
+### The rest of the app
+
+- **The whole app works offline.** Every screen opens with what the device last
+  saw, under a banner saying so; changes queue and are sent when the PC answers.
+- **The phone opens on a home screen** of every part of the app as a tile.
+- **The tray icon is the app.** When it goes — stopped, crashed, killed — the
+  server and Suwayomi go with it, rather than running on with nothing on screen.
+
 ## 0.3.2
 
 ### Notes, rebuilt as a linked notebook
