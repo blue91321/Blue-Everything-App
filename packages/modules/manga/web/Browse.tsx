@@ -62,6 +62,17 @@ export function Browse({
       return 'mature';
     }
   });
+  // A small button at the end of the tab row rather than a sentence above the
+  // grid: set once and left, so it should not take a line of every visit.
+  // Up here with the other hooks: below the early returns it would run on some
+  // renders and not others, which is React error #310 and a blank screen.
+  const hideMenu = useButtonMenu(() =>
+    (Object.keys(HIDE_LABEL) as Hide[]).map((level) => ({
+      label: `${level === hideMature ? '✓ ' : '\u2003'}${HIDE_LABEL[level]}`,
+      onSelect: () => chooseHide(level),
+    }))
+  );
+
   /** Series followed from this screen since it opened, by result key, so buttons change at once. */
   const [followed, setFollowed] = useState<Record<string, string>>({});
   const [note, setNote] = useState<string | null>(null);
@@ -153,15 +164,6 @@ export function Browse({
   }
 
   const subs: Sub[] = ['popular', ...(source?.supportsLatest ? (['latest'] as const) : []), 'search'];
-
-  // A small button at the end of the tab row rather than a sentence above the
-  // grid: set once and left, so it should not take a line of every visit.
-  const hideMenu = useButtonMenu(() =>
-    (Object.keys(HIDE_LABEL) as Hide[]).map((level) => ({
-      label: `${level === hideMature ? '✓ ' : '\u2003'}${HIDE_LABEL[level]}`,
-      onSelect: () => chooseHide(level),
-    }))
-  );
 
   function chooseHide(level: Hide) {
     setHideMature(level);
