@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Stops Blue Everything and starts it again.
 

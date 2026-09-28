@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Updates Blue Everything to the newest release, keeping everything that is yours.
 
@@ -54,6 +54,9 @@ function VersionOf([string]$text) {
   $clean = $text.Trim().TrimStart('v')
   try { return [version]$clean } catch { return [version]'0.0.0' }
 }
+
+# The app's own Node, for npm below — see node-runtime.ps1.
+. (Join-Path $PSScriptRoot 'node-runtime.ps1')
 
 $current = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
 $isGit = Test-Path (Join-Path $root '.git')
@@ -169,11 +172,27 @@ else {
     Copy-Item $from $to -Force
   }
   Copy-Item $newList $oldList -Force
+
+  # The bundled Node and dependencies are swapped whole rather than listed file
+  # by file — thousands of files, and nothing of yours is ever inside them.
+  foreach ($bundled in 'runtime\node', 'node_modules') {
+    $from = Join-Path $new.FullName $bundled
+    if (Test-Path $from) {
+      $to = Join-Path $root $bundled
+      if (Test-Path $to) { Remove-Item $to -Recurse -Force }
+      New-Item -ItemType Directory -Force -Path (Split-Path $to) | Out-Null
+      Move-Item $from $to
+      Say "Replaced $bundled"
+    }
+  }
   Remove-Item $work -Recurse -Force
 }
 
 Say 'Installing dependencies...'
-& npm install --no-fund --no-audit
+# Offline first: a release brought them, and only the links to the app's own
+# packages need making. A git clone falls through to fetching what changed.
+& npm install --offline --no-fund --no-audit 2>$null
+if ($LASTEXITCODE -ne 0) { & npm install --no-fund --no-audit }
 if ($LASTEXITCODE -ne 0) { throw 'npm install failed — your data is untouched and backed up' }
 
 # The built app page is rebuilt by start.ps1 when the sources are newer.

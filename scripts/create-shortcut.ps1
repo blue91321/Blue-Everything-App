@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Puts a "Blue Everything" icon on the Desktop and in the Start Menu.
 
@@ -51,7 +51,10 @@ if ($Remove) {
 if (-not (Test-Path $icon)) {
   Write-Host 'Building the icon first...' -ForegroundColor Cyan
   Push-Location $root
-  try { & npm run icons -w @everything/web | Out-Null } finally { Pop-Location }
+  try {
+    . (Join-Path $PSScriptRoot 'node-runtime.ps1')
+    & npm run icons -w @everything/web | Out-Null
+  } finally { Pop-Location }
 }
 
 $shell = New-Object -ComObject WScript.Shell

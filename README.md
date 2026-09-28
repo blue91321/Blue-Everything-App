@@ -42,37 +42,39 @@ off and deleted without breaking the build.
 
 ## Running it
 
-Requires **Windows**, **Node 24+** and git. The server and PWA are portable;
-only the agent is Win32-specific.
+**You need:** Windows 10 or 11, 64-bit, and an internet connection the first
+time. Nothing else — don't install Node.js or Java: the app keeps its own
+copies inside its folder and never uses ones installed on the PC.
+
+**Easiest:** download the zip from the
+[releases page](https://github.com/blue91321/Blue-Everything-App/releases/latest),
+unzip it anywhere, and double-click **`Blue Everything.cmd`**. `START HERE.txt`
+in the folder says the same, with the manga steps.
+
+**Or with git:**
 
 ```bash
 git clone https://github.com/blue91321/Blue-Everything-App.git
 ```
 
-Then double-click **`Blue Everything.cmd`** in the folder. The first run
-installs dependencies and builds the app, which takes a few minutes; after that
-it opens in its own window in seconds, with a tray icon under the `^` arrow.
-**`Create Desktop Icon.cmd`** adds a shortcut, **`Start Automatically.cmd`**
-starts it at logon, and **`Stop Blue Everything.cmd`** stops it, as does **Stop** on the
-tray icon.
+then double-click `Blue Everything.cmd` in the folder. The first run downloads
+Node.js into `runtime\node` and installs dependencies, a few minutes once.
 
-Nothing is shared between installs: your database lives in `data/` in your
-copy and is never committed.
+Either way it opens in its own window, with an icon in the tray under the `^`
+arrow. **`Create Desktop Icon.cmd`** adds a shortcut, **`Start
+Automatically.cmd`** starts it at logon, and **`Stop Blue Everything.cmd`**
+stops it, as does **Stop** on the tray icon.
 
-From a terminal instead:
+Everything lives in the folder: your database is in `packages\server\data`,
+and is never committed or uploaded.
 
-```bash
-npm install
-npm run build -w @everything/web      # build the PWA; the server serves it
-npm run dev   -w @everything/server   # server on :8787, migrations applied on boot
-npm run agent -w @everything/agent    # the Windows agent — needs the server up
-```
+### Manga, if you want it
 
-### Or from a release
-
-Every version is also a zip on the [releases page](https://github.com/blue91321/Blue-Everything-App/releases):
-unzip it anywhere, install [Node 24+](https://nodejs.org), and double-click
-`Blue Everything.cmd`. No git needed.
+Open **Manga** and press **Set up manga**. It downloads Suwayomi — the program
+that finds and serves chapters — and the Java 21 it needs, about 210 MB once,
+into the app's folder, and starts it. Then press **Manage extensions** and add a
+source or two. Don't download Suwayomi or Java yourself; if you already run
+Suwayomi, "Use a Suwayomi you already have" on the same card takes its `.jar`.
 
 ### Updating
 
@@ -87,15 +89,6 @@ Check for updates**. Either way:
   ships, removing any the new version no longer includes.
 
 Updates only ever happen when you ask. The app never checks on its own.
-
-### Manga, if you want it
-
-Chapters come from [Suwayomi](https://github.com/Suwayomi/Suwayomi-Server/releases/latest),
-a separate program: download the `Suwayomi-Server-….jar` and install **Java 21
-or newer** so that `java` is on your PATH. Then **Manga → More → Where chapters
-come from** finds the jar (or takes its path), and the app starts Suwayomi when
-you read and stops it afterwards. Add sources from **Extensions** on the same
-card — a fresh Suwayomi has none, and finds nothing until you do.
 
 ### The phone
 

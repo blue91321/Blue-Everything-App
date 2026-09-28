@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Starts the Blue Everything server and Windows agent.
 
@@ -37,9 +37,14 @@ $url = "http://127.0.0.1:$port"
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Host 'Node.js is not installed, or not on PATH.' -ForegroundColor Red
-  Write-Host 'Install it from https://nodejs.org and run this again.'
+# The app's own Node, in runtime\node — downloaded there on a git clone's first
+# run, already inside a release zip. Nothing on the PC needs installing.
+try {
+  . (Join-Path $PSScriptRoot 'node-runtime.ps1')
+}
+catch {
+  Write-Host "Could not get Node.js: $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host 'The first run needs the internet once, to download it into the app folder.'
   exit 1
 }
 
@@ -94,6 +99,18 @@ if (-not (Test-Path (Join-Path $root 'node_modules'))) {
   Push-Location $root
   try {
     & npm install --no-fund --no-audit
+    if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
+  } finally { Pop-Location }
+}
+elseif (-not (Test-Path (Join-Path $root 'node_modules\@everything\server'))) {
+  # A release zip carries every dependency but not the four links npm makes to
+  # the app's own packages — a zip cannot hold them. Making them needs nothing
+  # downloaded.
+  Write-Host 'First run: finishing the install...' -ForegroundColor Cyan
+  Push-Location $root
+  try {
+    & npm install --offline --no-fund --no-audit
+    if ($LASTEXITCODE -ne 0) { & npm install --no-fund --no-audit }
     if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
   } finally { Pop-Location }
 }

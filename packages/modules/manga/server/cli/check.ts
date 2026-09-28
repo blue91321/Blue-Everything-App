@@ -43,7 +43,7 @@ import {
 // integrations/web/presence.ts.
 import { judgeSources, languageName, orderSources, type SourceRow } from '../../web/judge.js';
 import { uploadedAtMs } from '../suwayomi.js';
-import { portOf } from '../process.js';
+import { explainFailure, findJars, portOf } from '../process.js';
 import { dueForCheck, pollable, RECENT_SLOTS, seriesUrl } from '../releases.js';
 import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiChanges } from '../browse.js';
 import { thumbPath } from '../present.js';
@@ -674,6 +674,22 @@ check('https defaults to 443', portOf('https://example.test') === 443);
 // Never NaN, which would be handed to a process lookup.
 check("nonsense falls back to Suwayomi's own", portOf('not a url') === 4567);
 check('empty falls back too', portOf('') === 4567);
+
+/* ------------------------------------------------------------------ */
+console.log('\nwhen Suwayomi will not start\n');
+
+// Word for word what a PC with Java 17 printed, trying the 2.3 jar.
+const java17 =
+  'Error: LinkageError occurred while loading main class suwayomi.tachidesk.MainKt\n\tjava.lang.UnsupportedClassVersionError: suwayomi/tachidesk/MainKt has been compiled by a more recent version of the Java Runtime (class file version 65.0), this version of the Java Runtime only recognizes class file versions up to 61.0';
+const tooOld = explainFailure(java17, 1);
+check('an old Java is named, with the version it is', tooOld.includes('Java 21') && tooOld.includes('Java 17'), tooOld);
+check('and the fix is the setup button', tooOld.includes('Set up manga'));
+// And what it printed when pointed at the installer instead.
+const msi = explainFailure('Error: Invalid or corrupt jarfile C:\\x\\Suwayomi-Server-v2.3.2243-windows-x64.msi', 1);
+check('an installer chosen as the jar is called an installer', msi.includes('.msi') && msi.includes('Set up manga'), msi);
+check('anything else points at the log', explainFailure('something new', 3).includes('log'));
+// Only the app's own folders: the Downloads search is what offered the .msi.
+check('jars are looked for inside the app only', findJars().every((p) => !/Downloads/i.test(p)));
 
 /* ------------------------------------------------------------------ */
 console.log('\nthe rotation\n');

@@ -80,6 +80,10 @@ logs/
 # every update. Personal exactly as the database is.
 /backups/
 
+# The app's own Node.js, downloaded by scripts/node-runtime.ps1 (or shipped in a
+# release zip). A program, not source.
+/runtime/
+
 # ---- Large third-party binaries -----------------------------------------
 # Voice models: ~150MB of third-party binaries, downloaded by voice-setup.
 # Not ours, not small, and not something a git history should carry.

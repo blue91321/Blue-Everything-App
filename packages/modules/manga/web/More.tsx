@@ -39,6 +39,7 @@ export function More({
   onExtensions,
   onOpenUi,
   onCompare,
+  setupFocus = 0,
 }: {
   data: Library | undefined;
   local: boolean;
@@ -49,6 +50,8 @@ export function More({
   onExtensions: () => void;
   onOpenUi: () => void;
   onCompare: (s: SeriesSummary) => void;
+  /** Bumped by the screen's setup banner: open the setup card and scroll to it. */
+  setupFocus?: number;
 }) {
   const [results, setResults] = useState<Candidate[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -251,7 +254,7 @@ export function More({
 
       <ImportCard local={local} onChanged={onChanged} />
 
-      <SourceCard local={local} onExtensions={onExtensions} onOpenUi={onOpenUi} />
+      <SourceCard local={local} onExtensions={onExtensions} onOpenUi={onOpenUi} focus={setupFocus} />
     </div>
   );
 }

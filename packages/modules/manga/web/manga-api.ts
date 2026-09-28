@@ -181,6 +181,16 @@ export interface ExtensionList {
   suggestedRepo: string;
 }
 
+/** How "Set up manga" is getting on — see `server/setup.ts`. */
+export interface SetupState {
+  running: boolean;
+  step: string | null;
+  received: number;
+  total: number | null;
+  done: boolean;
+  problem: string | null;
+}
+
 /** What the app's own Suwayomi process is doing, when it is managing one. */
 export type ManagedState =
   | { state: 'off' }
@@ -456,6 +466,13 @@ export const manga = {
       call<SourceState>('/api/manga/source', { method: 'PUT', body: JSON.stringify({ mode }) }),
     start: () => call<ManagedState>('/api/manga/source/start', { method: 'POST' }),
     stop: () => call<ManagedState>('/api/manga/source/stop', { method: 'POST' }),
+    /** One press: Java and Suwayomi into the app's folder, started, extension list added. */
+    setup: () => call<SetupState>('/api/manga/source/setup', { method: 'POST' }),
+    setupState: () => call<SetupState>('/api/manga/source/setup'),
+    /** The end of Suwayomi's log, for the card. */
+    log: () => call<{ lines: string[]; path: string }>('/api/manga/source/log'),
+    /** The whole log, in Notepad on the PC. */
+    openLog: () => call<{ ok: true }>('/api/manga/source/log/open', { method: 'POST' }),
     /** `allLanguages` is a one-off wider search; it does not change the setting. */
     search: (id: string, q?: string, allLanguages = false) => {
       const params = new URLSearchParams();

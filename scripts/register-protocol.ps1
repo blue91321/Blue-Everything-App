@@ -1,4 +1,4 @@
-<#
+﻿<#
     Teach Windows what an `everything:` link means, so the app can start itself.
 
     The app window survives the server stopping — the service worker keeps the

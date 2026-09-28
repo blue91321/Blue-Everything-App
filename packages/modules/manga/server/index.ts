@@ -61,7 +61,9 @@ import {
   type SourceMatch,
 } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL, KEIYOUSHI_REPO } from './suwayomi.js';
-import { suwayomiProcess, findJars, portOf } from './process.js';
+import { suwayomiProcess, findJars, portOf, suwayomiLogPath } from './process.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import {
   applyImport,
   ImportRefused,
@@ -75,8 +77,8 @@ import {
 import { matchingState, startMatching, unmatchedCount } from './matching.js';
 import { fillTags } from './tags.js';
 import { withoutMature } from './mature.js';
+import { setupState, startSetup } from './setup.js';
 import { cachedPage, cachedPageList, fillChapter, keepPage, rememberChapter } from './page-cache.js';
-import { homedir } from 'node:os';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
 /**
@@ -530,7 +532,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
     // Only offered when nothing is chosen yet: a scan of Downloads on every
     // poll would be disk work for a question already answered.
-    const foundJars = suwayomiJar ? [] : findJars(homedir());
+    const foundJars = suwayomiJar ? [] : findJars();
 
     const base = {
       defaultUrl: DEFAULT_BASE_URL,
@@ -572,6 +574,39 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return suwayomiProcess.state;
   });
 
+  /**
+   * One press: Java and Suwayomi downloaded into the app's folder, switched on,
+   * started, and the extension list added — see `setup.ts`. Local-only: it
+   * downloads and runs programs on this machine.
+   */
+  app.post('/api/manga/source/setup', { config: { announce: false } }, async (request) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    return startSetup();
+  });
+
+  app.get('/api/manga/source/setup', async () => setupState());
+
+  /**
+   * The end of Suwayomi's log, for the card to show when it will not start —
+   * read in the app, so it works from the phone too, rather than a path to go
+   * and find. The last 80 lines, which is several launches.
+   */
+  app.get('/api/manga/source/log', async () => {
+    const path = suwayomiLogPath();
+    if (!existsSync(path)) return { lines: [], path };
+    const lines = readFileSync(path, 'utf8').split(/\r?\n/);
+    return { lines: lines.slice(-80), path };
+  });
+
+  /** The whole log, in Notepad, on the PC. Local-only: it opens a window here. */
+  app.post('/api/manga/source/log/open', { config: { announce: false } }, async (request, reply) => {
+    localOnly(request as unknown as { isLocal: boolean });
+    const path = suwayomiLogPath();
+    if (!existsSync(path)) return reply.code(404).send({ error: 'there is no log yet — Suwayomi has not been started' });
+    spawn('notepad.exe', [path], { detached: true, stdio: 'ignore' }).unref();
+    return { ok: true };
+  });
+
   /** Set, or clear with an empty string. */
   app.put('/api/manga/source', async (request, reply) => {
     localOnly(request as unknown as { isLocal: boolean });
@@ -593,6 +628,13 @@ export async function routes(app: FastifyInstance): Promise<void> {
       // Switching management on with nothing to run is a setting that could only
       // fail later, so it is refused now with the reason.
       if (manage && !jar) return reply.code(400).send({ error: 'choose a Suwayomi jar first' });
+      // The installer is the download people pick by mistake, and it is not a
+      // jar: said now, rather than as "Invalid or corrupt jarfile" in a log.
+      if (jar && !/\.jar$/i.test(jar)) {
+        return reply.code(400).send({
+          error: 'that is not a .jar — the .msi and .zip are installers. Press "Set up manga" and the app fetches the right file.',
+        });
+      }
       // Stopped rather than orphaned: turning management off while it is up
       // would leave a JVM nobody owns holding the port.
       if (!manage) suwayomiProcess.stop();
@@ -625,7 +667,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
           manage: after.manageSuwayomi,
           mode: after.suwayomiMode,
           managed: suwayomiProcess.state,
-          foundJars: after.suwayomiJar ? [] : findJars(homedir()),
+          foundJars: after.suwayomiJar ? [] : findJars(),
           health: null,
         };
       }
@@ -678,7 +720,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       manage: after.manageSuwayomi,
       mode: after.suwayomiMode,
       managed: suwayomiProcess.state,
-      foundJars: after.suwayomiJar ? [] : findJars(homedir()),
+      foundJars: after.suwayomiJar ? [] : findJars(),
       health,
     };
   }

@@ -2195,6 +2195,53 @@ file to double-click, named — because a protocol that was never registered doe
 nothing visible at all. The button is hidden entirely off loopback: from the
 phone over Tailscale it could only ever appear to do nothing.
 
+### Nothing to install first, and nothing outside the folder
+
+The first person to try this on another PC had to install Node.js before it
+would start, then failed to run manga twice: their Java was 17 and Suwayomi
+needs 21 (`UnsupportedClassVersionError … class file version 65.0`), and then
+they pointed the app at Suwayomi's `.msi` installer, which is not a jar. Each is
+now impossible rather than explained.
+
+- **The app's own Node, in `runtime\node`** (`scripts/node-runtime.ps1`,
+  dot-sourced by `start.ps1`, `update.ps1` and `create-shortcut.ps1`). It is put
+  first on the process's PATH, so the server, the agent and npm all inherit it,
+  and a Node installed on the PC is never used. A git clone downloads it on
+  first run; a release zip already has it and every dependency (`--bundle` in
+  `package-release.mjs`), leaving out only npm's four links to the app's own
+  packages — a zip cannot hold a link — which `start.ps1` makes with
+  `npm install --offline`. `runtime/` is gitignored.
+- **Set up manga is one button** (`server/setup.ts`): Temurin Java 21 from
+  Adoptium and Suwayomi's plain `.jar`, both into
+  `packages/server/data/suwayomi-runtime/`, then management on, Suwayomi
+  started, and the extension repository added — a fresh Suwayomi lists nothing
+  until one is. The launcher prefers that Java whenever it exists. About 210MB,
+  against 320MB for Suwayomi's own Windows bundle, which carries an interface
+  this app frames anyway.
+- **Only the app's folders are searched for a jar.** `findJars` looked in
+  Downloads and the home folder, and that is how an `.msi` was offered; a path
+  that is not a `.jar` is refused with the reason.
+- **Failures are put in words** (`explainFailure`): an old Java (with its
+  version worked out from the class-file number), an installer as the jar, a
+  port in use, out of memory. Anything else ends "the log below says why", and
+  the card shows the log's end — from the phone too — with Open in Notepad on
+  the PC. `/api/logs/:name` does the same for the app's own logs, so the update
+  banner's log is a button rather than a path.
+- **Every Manga tab has a banner** while it is not set up or not starting, and
+  its button opens the More tab's setup card and scrolls to it; the card also
+  opens itself while anything needs doing.
+- **`START HERE.txt`** at the root says what to run, what is needed (Windows 10
+  or 11, 64-bit — nothing else) and the manga steps. CRLF, for Notepad.
+
+**Every `.ps1` carries a UTF-8 byte-order mark, and publish-check refuses one
+with non-ASCII bytes that does not.** Windows PowerShell 5.1 reads a script
+without one as ANSI, so an em dash becomes three characters, one of them a
+curly quote it accepts as a string delimiter. In a comment that is harmless;
+inside a string the script does not parse. `create-shortcut.ps1` was in that
+state — "Create Desktop Icon.cmd" failed on every PC — and the new
+`update.ps1` would have been too. Found by parsing every script with
+`[Parser]::ParseFile`, which is worth doing after any edit to one.
+
 ### Releases, and updating without losing anything
 
 **A version tag builds a release.** `.github/workflows/release.yml` runs on

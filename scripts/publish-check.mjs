@@ -183,6 +183,26 @@ for (const author of authors) {
 
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* 5. PowerShell scripts that Windows PowerShell can read              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Windows PowerShell 5.1 — the one on every Windows PC — reads a script with no
+ * byte-order mark as ANSI, not UTF-8. An em dash is then three characters, and
+ * one of them is a curly quote PowerShell accepts as a string delimiter: inside
+ * a string, that ends the string and the script does not parse at all.
+ * `create-shortcut.ps1` shipped broken this way, so "Create Desktop Icon.cmd"
+ * failed on every PC. Any script with a non-ASCII byte must carry the mark.
+ */
+for (const path of tracked.filter((p) => p.endsWith('.ps1'))) {
+  const bytes = readFileSync(resolve(repo, path));
+  const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  if (!bom && bytes.some((b) => b > 127)) {
+    problems.push(`${path} has non-ASCII characters and no UTF-8 byte-order mark — Windows PowerShell will misread it`);
+  }
+}
+
 const label = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 if (warnings.length > 0) {

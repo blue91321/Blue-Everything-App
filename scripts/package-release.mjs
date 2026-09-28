@@ -22,7 +22,7 @@
  * section of CLAUDE.md describes.
  */
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -66,6 +66,26 @@ for (const file of files) {
   mkdirSync(dirname(to), { recursive: true });
   cpSync(join(root, file), to);
 }
+/*
+ * `--bundle`: Node.js and every dependency, so the zip runs with nothing
+ * installed and nothing downloaded — the first other PC failed at "install
+ * Node". Both are swapped whole by `update.ps1` rather than listed in
+ * release-files.txt. npm's links to the app's own packages are left out: a zip
+ * cannot hold a link, and `start.ps1` makes them offline on the first run.
+ */
+if (process.argv.includes('--bundle')) {
+  const node = join(root, 'runtime/node/node.exe');
+  if (!existsSync(node)) {
+    console.error('runtime/node is missing — run scripts/node-runtime.ps1 first');
+    process.exit(1);
+  }
+  cpSync(join(root, 'runtime/node'), join(stage, 'runtime/node'), { recursive: true });
+  cpSync(join(root, 'node_modules'), join(stage, 'node_modules'), {
+    recursive: true,
+    filter: (src) => !lstatSync(src).isSymbolicLink() && !src.replaceAll('\\', '/').includes('/node_modules/@everything'),
+  });
+}
+
 writeFileSync(join(stage, 'release-files.txt'), [...files, 'release-files.txt'].map((f) => f.replaceAll('/', '\\')).join('\r\n') + '\r\n');
 
 /*

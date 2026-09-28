@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Runs Blue Everything automatically when you log in.
 

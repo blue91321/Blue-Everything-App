@@ -3782,6 +3782,52 @@ div.manga-chapter-row {
   font-family: inherit;
 }
 
+/* Manga's setup: the one thing to do, made unmissable. */
+.manga-setup {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+.manga-setup h3 {
+  margin: 0 0 6px;
+}
+
+.manga-setup progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.manga-setup-go {
+  font-size: 1rem;
+  padding: 8px 18px;
+}
+
+.manga-setup-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* The end of Suwayomi's log: kept as it was printed, scrolled rather than wrapped. */
+.manga-log {
+  max-height: 18rem;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  font-size: 0.75rem;
+  white-space: pre;
+}
+
+.manga-source-advanced {
+  margin-top: 12px;
+}
+
 .manga-browse-hide {
   margin-left: auto;
   flex: none;

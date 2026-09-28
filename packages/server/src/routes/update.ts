@@ -18,7 +18,7 @@
  * that broke something cannot also take away the way to update past it.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
@@ -72,6 +72,30 @@ export async function updateRoutes(app: FastifyInstance): Promise<void> {
       canApply: request.isLocal && existsSync(updateScript),
       kind: existsSync(resolve(repoRoot, '.git')) ? 'git' : 'release',
     };
+  });
+
+  /**
+   * The app's own logs, by name: the end of one in the app, or the whole of it
+   * in Notepad on the PC. So a message naming a log can be a button rather than
+   * a path to go and find. Only a bare `name.log` inside `logs/` — the name is
+   * checked against a pattern, never joined as given.
+   */
+  const logFile = (name: string) => (/^[a-z][a-z-]*\.log$/.test(name) ? resolve(repoRoot, 'logs', name) : null);
+
+  app.get('/api/logs/:name', async (request, reply) => {
+    const file = logFile((request.params as { name: string }).name);
+    if (!file) return reply.code(400).send({ error: 'not a log' });
+    if (!existsSync(file)) return { lines: [] };
+    return { lines: readFileSync(file, 'utf8').split(/\r?\n/).slice(-80) };
+  });
+
+  app.post('/api/logs/:name/open', { config: { announce: false } }, async (request, reply) => {
+    if (!request.isLocal) return reply.code(403).send({ error: 'logs open on the PC running the app' });
+    const file = logFile((request.params as { name: string }).name);
+    if (!file) return reply.code(400).send({ error: 'not a log' });
+    if (!existsSync(file)) return reply.code(404).send({ error: 'that log has not been written yet' });
+    spawn('notepad.exe', [file], { detached: true, stdio: 'ignore' }).unref();
+    return { ok: true };
   });
 
   app.post('/api/updates/apply', { config: { announce: false } }, async (request, reply) => {

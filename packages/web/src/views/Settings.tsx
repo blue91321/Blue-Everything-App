@@ -1028,8 +1028,12 @@ function PackagesTab({ session }: { session: Session }) {
 
           {updating && (
             <div className="banner" style={{ marginTop: 10 }}>
-              Updating to {check?.latest}. The app will disconnect and come back on its own in a minute or two; the
-              log is <code>logs\update.log</code>.
+              Updating to {check?.latest}. The app will disconnect and come back on its own in a minute or two. If it
+              does not,{' '}
+              <button className="btn subtle" onClick={() => void api.logs.open('update.log').catch((e: Error) => setError(e.message))}>
+                open the update log
+              </button>
+              .
             </div>
           )}
 

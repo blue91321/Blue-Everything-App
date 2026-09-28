@@ -68,6 +68,51 @@ export const IDLE_STOP_MS = 15 * 60_000;
 /** How long to wait for the JVM and its extensions before giving up. */
 export const START_TIMEOUT_MS = 90_000;
 
+/**
+ * Where "Set up manga" puts Java and Suwayomi — inside the install, so nothing
+ * lands anywhere else on the machine. See `setup.ts`.
+ */
+export const RUNTIME_DIR = join(dataDir, 'suwayomi-runtime');
+
+/** The Java runtime setup downloaded, if this install has one. */
+export function bundledJava(): string | null {
+  const exe = join(RUNTIME_DIR, 'jre', 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+  return existsSync(exe) ? exe : null;
+}
+
+/** Everything Suwayomi printed, launch by launch. The card shows its end. */
+export function suwayomiLogPath(): string {
+  const dir = join(dataDir, 'logs');
+  mkdirSync(dir, { recursive: true });
+  return join(dir, 'suwayomi.log');
+}
+
+/**
+ * What went wrong, in words that say what to do.
+ *
+ * "Suwayomi exited (1)" sent somebody to a log to find a Java class-file
+ * version number. The failures that happen in practice are few and each has
+ * one fix, so they are recognised here and the rest falls back to the exit
+ * code — with the log a click away on the card either way.
+ */
+export function explainFailure(said: string, code: number | null): string {
+  if (/UnsupportedClassVersionError/.test(said)) {
+    const has = /recognizes class file versions up to (\d+)/.exec(said);
+    const java = has ? ` (the one installed is Java ${Number(has[1]) - 44})` : '';
+    return `The Java on this PC is too old for Suwayomi, which needs Java 21${java}. Press "Set up manga" and the app downloads its own copy into its folder — nothing else on the PC changes.`;
+  }
+  if (/Invalid or corrupt jarfile|Unable to access jarfile/.test(said)) {
+    return 'That file is not the Suwayomi program. The .msi and .zip downloads are installers — press "Set up manga" instead, and the app fetches the right one.';
+  }
+  if (/Address already in use|BindException/.test(said)) {
+    return 'Something else is using Suwayomi\'s port (4567). Close the other copy of Suwayomi, then press Start now.';
+  }
+  if (/OutOfMemoryError/.test(said)) {
+    return 'Suwayomi ran out of memory. Close some programs and press Start now.';
+  }
+  return `Suwayomi stopped as it started (exit code ${code ?? 'unknown'}). The log below says why.`;
+}
+
 /** How often to ask whether it has finished starting. */
 const POLL_MS = 1_000;
 
@@ -98,9 +143,7 @@ class SuwayomiProcess {
 
   /** The log, because a failed launch and an unclicked button look identical. */
   private logPath(): string {
-    const dir = join(dataDir, 'logs');
-    mkdirSync(dir, { recursive: true });
-    return join(dir, 'suwayomi.log');
+    return suwayomiLogPath();
   }
 
   /**
@@ -110,6 +153,7 @@ class SuwayomiProcess {
    * caller during startup joins the first rather than spawning a second JVM.
    */
   async ensureRunning(jarPath: string, baseUrl: string, mode: SuwayomiMode = 'on-demand'): Promise<ManagedState> {
+
     this.touch(mode);
 
     if (this.status.state === 'running') return this.status;
@@ -163,9 +207,15 @@ class SuwayomiProcess {
     const log = createWriteStream(this.logPath(), { flags: 'a' });
     log.write(`\n--- starting ${new Date(begunAt).toISOString()} ${jarPath} (port ${port}) ---\n`);
 
+    // What it printed this launch, so a failure can be put in words — see `explainFailure`.
+    let said = '';
+
     try {
       this.child = spawn(
-        'java',
+        // The Java that setup downloaded into the app's folder, when there is
+        // one: a PC with an older Java installed must never be asked to run a
+        // jar that needs 21, which is exactly how the first other PC failed.
+        bundledJava() ?? 'java',
         [
           `-Dsuwayomi.tachidesk.config.server.port=${port}`,
           // Its own folder under ours, so it never writes into the app's data
@@ -202,13 +252,21 @@ class SuwayomiProcess {
 
     this.child.stdout?.pipe(log);
     this.child.stderr?.pipe(log);
+    const listen = (chunk: Buffer) => {
+      said = (said + chunk.toString()).slice(-8000);
+    };
+    this.child.stdout?.on('data', listen);
+    this.child.stderr?.on('data', listen);
 
     this.child.on('error', (error) => {
       // The commonest one by far: no `java` on PATH. Said as itself rather than
       // as "Suwayomi failed to start", because the fix is completely different.
       this.status = {
         state: 'failed',
-        problem: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'java is not on PATH' : error.message,
+        problem:
+          (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ? 'Java is not installed. Press "Set up manga" and the app downloads everything it needs into its own folder.'
+            : error.message,
       };
       this.child = null;
     });
@@ -219,7 +277,7 @@ class SuwayomiProcess {
       // An exit during normal running is a crash; after `stop()` the state is
       // already 'off' and must not be overwritten with a failure.
       if (this.status.state === 'running' || this.status.state === 'starting') {
-        this.status = { state: 'failed', problem: `Suwayomi exited (${code}) — see data/logs/suwayomi.log` };
+        this.status = { state: 'failed', problem: explainFailure(said, code) };
       }
     });
 
@@ -417,8 +475,14 @@ export function portOf(baseUrl: string): number {
  * (`Suwayomi-Server-v2.3.2243.jar`), so an exact filename would find nothing on
  * the commonest case of all — a fresh download sitting in Downloads.
  */
-export function findJars(home: string): string[] {
-  const dirs = [join(dataDir, 'suwayomi'), join(home, 'Downloads'), join(home, 'Suwayomi'), home];
+/**
+ * Suwayomi jars inside this install — never the rest of the machine. It used
+ * to look in Downloads and the home folder too, and offer what it found there,
+ * which is exactly how the first other PC was offered an installer `.msi` from
+ * its Downloads. Only the app's own folders now.
+ */
+export function findJars(_home?: string): string[] {
+  const dirs = [RUNTIME_DIR, join(dataDir, 'suwayomi')];
   const found: string[] = [];
 
   for (const dir of dirs) {

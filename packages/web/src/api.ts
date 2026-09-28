@@ -1390,6 +1390,13 @@ export const api = {
   connectInfo: () => request<ConnectInfo>('/api/connect-info'),
 
   /** What the newest release is, and installing it — see `routes/update.ts`. */
+  /** The app's own logs, by name — see `routes/update.ts`. */
+  logs: {
+    tail: (name: string) => request<{ lines: string[] }>(`/api/logs/${encodeURIComponent(name)}`),
+    /** In Notepad, on the PC. */
+    open: (name: string) => request<{ ok: boolean }>(`/api/logs/${encodeURIComponent(name)}/open`, { method: 'POST' }),
+  },
+
   updates: {
     check: () => request<UpdateCheck>('/api/updates/check'),
     /** Local-only. Answers at once; the app stops, updates and starts itself. */

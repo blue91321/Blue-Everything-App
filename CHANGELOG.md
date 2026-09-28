@@ -5,6 +5,40 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.4.2
+
+### Nothing to install first
+
+Found by the first person to try it on another PC: they had to install Node.js
+before it would start, and then manga would not run at all.
+
+- **Node.js is inside.** The release zip carries its own Node and every
+  dependency; a git clone downloads Node into `runtime\node` on first run. The
+  app never uses a Node installed on the PC. The only prerequisite is Windows
+  10 or 11, 64-bit.
+- **`START HERE.txt`** says what to run, what you need, and how to set manga up.
+- **The desktop-icon script works.** `create-shortcut.ps1` could not be parsed
+  by Windows PowerShell at all: every script here was UTF-8 without a
+  byte-order mark, which Windows PowerShell reads as ANSI, and an em dash inside
+  a string became a quote that ended it. All scripts carry the mark now, and
+  publish-check refuses one that does not.
+
+### Manga sets itself up
+
+- **Set up manga** is one button. It downloads Java 21 and Suwayomi into the
+  app's folder, switches it on, starts it and adds the extension list. The PC's
+  own Java is never used — the failure was a PC with Java 17 installed, and
+  Suwayomi needs 21.
+- **Every Manga tab says so when it is not set up**, with a button that goes
+  straight to the setup card, which opens itself.
+- **Failures say what to do.** An old Java, an installer chosen instead of the
+  jar, a port in use and running out of memory are each named with their fix;
+  anything else has **See the log** on the card, and **Open in Notepad** on the
+  PC. The same for the update log.
+- **Only the app's own folders are searched for a Suwayomi jar.** Searching
+  Downloads is what offered the `.msi` installer, which is not a jar; a path
+  that is not a `.jar` is now refused with that reason.
+
 ## 0.4.1
 
 ### Releases, and updating without losing anything

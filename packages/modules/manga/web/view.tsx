@@ -33,6 +33,7 @@ import { History } from './History';
 import { Icon } from './Icons';
 import { Library } from './Library';
 import { More } from './More';
+import { failing, needsSetup } from './SourceCard';
 import { flushQueue } from './sync-queue';
 import { manga, type SeriesSummary } from './manga-api';
 
@@ -49,6 +50,14 @@ const TABS: Array<{ id: Tab; label: string; icon: () => React.ReactElement }> = 
 export default function MangaView({ search, onFocused, local }: FeatureViewProps) {
   useNow();
   const library = useAsync(() => manga.list());
+  // Whether chapters can come from anywhere yet — for the banner below.
+  const source = useAsync(() => manga.source.get());
+  /** Bumped to send the More tab's setup card into view. */
+  const [setupFocus, setSetupFocus] = useState(0);
+  const goToSetup = () => {
+    setTab('more');
+    setSetupFocus((n) => n + 1);
+  };
 
   /** The MangaDex search on More, held here so it survives switching tabs. */
   const [query, setQuery] = useState('');
@@ -272,6 +281,23 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
           {problem && <p className="banner">{problem}</p>}
 
           {/*
+            * Every tab but More says so when manga cannot work yet, with the one
+            * button that fixes it — "where do I click" should never be a question.
+            */}
+          {tab !== 'more' && source.data && (needsSetup(source.data) || failing(source.data)) && (
+            <div className="banner manga-setup-banner">
+              <span>
+                {needsSetup(source.data)
+                  ? 'Manga needs a one-time setup before it can find or read anything.'
+                  : 'Suwayomi, which finds and serves chapters, is not starting.'}
+              </span>
+              <button className="btn primary" onClick={goToSetup}>
+                {needsSetup(source.data) ? 'Set up manga' : 'See what is wrong'}
+              </button>
+            </div>
+          )}
+
+          {/*
             * Browse mounts the first time it is opened — it starts Suwayomi,
             * which somebody only looking at their list should not pay for — and
             * then stays, hidden, so switching tabs keeps what you were looking at.
@@ -338,6 +364,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               onExtensions={() => setManagingExtensions(true)}
               onOpenUi={() => setSuwayomiOpen(true)}
               onCompare={(s) => setComparing({ id: s.id, from: 'list' })}
+              setupFocus={setupFocus}
             />
           )}
         </div>

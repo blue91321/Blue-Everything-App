@@ -51,8 +51,14 @@ jobs:
       - name: Build the app
         run: npm run build -w @everything/web
 
+      # The app's own Node, into runtime/node — the same script a git clone runs
+      # on first start — so the zip carries it and needs nothing installed.
+      - name: Bundle Node.js
+        shell: powershell
+        run: . ./scripts/node-runtime.ps1
+
       - name: Package
-        run: node scripts/package-release.mjs
+        run: node scripts/package-release.mjs --bundle
 
       - name: Keep as an artifact
         uses: actions/upload-artifact@v4
@@ -73,7 +79,7 @@ jobs:
 
           ---
 
-          **Installing:** unzip anywhere, install [Node 24+](https://nodejs.org), and double-click `Blue Everything.cmd`. The first run installs what it needs and takes a few minutes.
+          **Installing:** unzip the folder anywhere (Windows 10 or 11, 64-bit) and double-click `Blue Everything.cmd`. Nothing else needs installing — Node.js is inside. For manga, open Manga and press **Set up manga**.
 
           **Updating:** double-click `Update Blue Everything.cmd`, or Settings â†’ Packages â†’ Check for updates. Your data is backed up to `backups\` first and is never replaced.
           EOF

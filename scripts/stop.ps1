@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Stops the Blue Everything server and agent, and the Suwayomi it started.
 

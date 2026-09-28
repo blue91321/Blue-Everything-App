@@ -1,0 +1,43 @@
+BLUE EVERYTHING - START HERE
+============================
+
+WHAT YOU NEED
+  - Windows 10 or 11, 64-bit.
+  - An internet connection the first time.
+  That is all. Do NOT install Node.js, Java or anything else: the app keeps
+  its own copies inside this folder and never uses ones installed on the PC.
+
+TO START IT
+  Double-click:   Blue Everything.cmd
+
+  The first time takes a minute or two while it finishes setting itself up.
+  After that the app opens in its own window in a few seconds, and a small
+  icon appears in the system tray (the ^ arrow by the clock).
+
+  Optional:
+    Create Desktop Icon.cmd    - a desktop and Start menu shortcut
+    Start Automatically.cmd    - start it when you log in (press again to undo)
+    Stop Blue Everything.cmd   - stop it (or right-click the tray icon -> Stop)
+
+TO READ MANGA
+  1. In the app, open  Manga  (in the menu on the left, or the Home screen).
+  2. Press the  Set up manga  button. It downloads the program that finds and
+     serves chapters (Suwayomi) and the Java it needs - about 210 MB, once -
+     into this folder. Do not download Suwayomi or Java yourself.
+  3. When it says "Next: add sources", press  Manage extensions  and install
+     one or two sources (MangaFire, Weeb Central, Asura Scans...).
+  4. Go to  Browse  to find something to read.
+
+  If something goes wrong, the setup card says what, and has a
+  "See the log" button.
+
+TO UPDATE
+  Double-click:   Update Blue Everything.cmd
+  or in the app:  Settings -> Packages -> Check for updates
+
+  Your data is backed up to the "backups" folder first, and is never replaced.
+
+WHERE YOUR DATA IS
+  packages\server\data   - your database, library and settings
+  Everything the app uses stays inside this folder. Deleting the folder
+  removes all of it.
