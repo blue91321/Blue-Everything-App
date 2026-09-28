@@ -52,6 +52,7 @@ import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup,
 import { failureReason, fallbackSources, pickMatch, siteKey, sourceForSite } from '../matching.js';
 import { BACKUP, PLAIN } from './mangareader-fixture.js';
 import { normaliseTags } from '../tags.js';
+import { isMature } from '../mature.js';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -986,6 +987,8 @@ console.log('\ntags\n');
   check('one spelling per tag, whatever case it came in', tags.filter((t) => t === 'Action').length === 1, tags.join(', '));
   check('the spellings sources get wrong are put right', tags.includes('Manhwa') && tags.includes('Sci-Fi') && tags.includes('Martial Arts'));
   check('shouting and whispering are capitalised', tags.includes('Slice of Life') && tags.includes('Drama'));
+  check('adult genres are caught however a source writes them', ['Ecchi', 'Adult (18+)', 'Smut', 'Mature', 'R-18', 'hentai'].every((g) => isMature([g])));
+  check('and ordinary ones are not', !isMature(['Action', 'Drama', 'Romance', 'Martial Arts', 'Adventure', 'Manhwa']));
   check('and anything that is not a tag is dropped', tags.every((t) => typeof t === 'string' && t.length > 0), String(tags.length));
 }
 

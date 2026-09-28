@@ -74,6 +74,7 @@ import {
 } from './mangareader.js';
 import { matchingState, startMatching, unmatchedCount } from './matching.js';
 import { fillTags } from './tags.js';
+import { withoutMature } from './mature.js';
 import { homedir } from 'node:os';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
 
@@ -1206,7 +1207,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
   /** One page of a source's popular list or its newest releases. */
   app.get('/api/manga/browse/list', async (request, reply) => {
-    const { source, type, page } = request.query as { source?: string; type?: string; page?: string };
+    const { source, type, page, safe } = request.query as { source?: string; type?: string; page?: string; safe?: string };
     if (!source || !SOURCE_ID.test(source)) return reply.code(400).send({ error: 'which source?' });
     if (type !== 'popular' && type !== 'latest') return reply.code(400).send({ error: 'popular or latest' });
     const n = Number.parseInt(page ?? '1', 10);
@@ -1225,7 +1226,15 @@ export async function routes(app: FastifyInstance): Promise<void> {
         type === 'popular' ? 'POPULAR' : 'LATEST',
         n
       );
-      return { results: got.matches.map((m) => present(ctx.store, m)), hasNextPage: got.hasNextPage, page: n };
+      // `safe=1` leaves adult titles out — see `mature.ts` for how they are found.
+      const filtered = safe === '1' ? await withoutMature(ctx.adapter, got.matches) : null;
+      return {
+        results: (filtered?.matches ?? got.matches).map((m) => present(ctx.store, m)),
+        hasNextPage: got.hasNextPage,
+        page: n,
+        hidden: filtered?.hidden ?? 0,
+        unchecked: filtered?.unchecked ?? 0,
+      };
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
       throw error;

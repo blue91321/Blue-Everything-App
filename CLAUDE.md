@@ -492,6 +492,22 @@ fixed 110px cover centred in each cell, which on a phone was two covers and a
 lot of nothing. Measured: three at 320px (85px covers) and 375px (103px), five
 at 768px, ten at 1440px, with 8px between covers at every width.
 
+**Browse hides adult titles** in Popular and Latest, per device and on unless
+switched off (`mature.ts`). Neither obvious signal works: Suwayomi marks nearly
+every source installed here NSFW because each *can* carry adult titles, and a
+listing rarely carries genres (3 of 50 on MangaFire's popular page). So each
+title's genres are looked up — Suwayomi's stored copy first, then the site, six
+at a time inside an eight-second budget — and Suwayomi keeps what it fetched,
+so a page is slow once and immediate after. A title still unknown when the
+budget runs out is **shown and counted**, because hiding every unknown would
+empty a first visit to a slow source.
+
+**Opening a series fetches its chapters the first time.** The chapter list is
+read from Suwayomi's stored copy so opening one does not scrape a site — and a
+series just linked has no stored copy, so it opened empty, on whichever source
+was picked. An empty copy now falls through to asking the site once. Found on
+Second Life Ranker, whose source had all 234 chapters the whole time.
+
 **Sort** is five orders (last read, most to catch up on, last updated, title,
 recently added) plus a ticked **New chapters on top**, all remembered in
 `localStorage` like the folded note folders, because sorting the phone's shelf
@@ -563,6 +579,14 @@ with every screen that learns to open a chapter. The window still scrolls, so
 the read line and `scrollY` are unchanged, and closing restores the scroll
 position taken during the reader's first render, before the page shrank.
 
+- **The arrows go between chapters, not pages.** Scrolling and the thumbnail
+  strip already move between pages; the arrows were the one way to leave a
+  chapter without scrolling to its end. Next from the **last page** marks the
+  chapter read, as the button at the end does; from partway through it only
+  moves on, since skipping is not finishing. Each screen that opens the reader
+  answers "the chapter beside this one" from its own list, by number, so a
+  source listing two editions of chapter 50 does not stop the arrow at the
+  second.
 - **Hidden is `opacity` plus `pointer-events: none`, not `visibility`**, so a
   hidden control cannot catch a tap meant for the page but can still be reached
   by keyboard, where focusing it brings the bars back.

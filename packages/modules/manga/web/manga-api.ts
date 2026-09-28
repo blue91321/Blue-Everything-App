@@ -486,9 +486,10 @@ export const manga = {
     get: () => call<BrowseState>('/api/manga/browse'),
     setSource: (id: string) =>
       call<{ selected: string }>('/api/manga/browse/source', { method: 'PUT', body: JSON.stringify({ id }) }),
-    list: (source: string, type: 'popular' | 'latest', page: number) =>
-      call<{ results: BrowseResult[]; hasNextPage: boolean; page: number }>(
-        `/api/manga/browse/list?source=${encodeURIComponent(source)}&type=${type}&page=${page}`
+    /** `safe` leaves adult titles out; `hidden` and `unchecked` say what that did. Older servers send neither. */
+    list: (source: string, type: 'popular' | 'latest', page: number, safe = false) =>
+      call<{ results: BrowseResult[]; hasNextPage: boolean; page: number; hidden?: number; unchecked?: number }>(
+        `/api/manga/browse/list?source=${encodeURIComponent(source)}&type=${type}&page=${page}${safe ? '&safe=1' : ''}`
       ),
     filters: (source: string) =>
       call<{ filters: SourceFilter[] }>(`/api/manga/browse/filters?source=${encodeURIComponent(source)}`),

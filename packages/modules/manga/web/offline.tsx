@@ -107,6 +107,17 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
           lastPlace.current = { ...where, at: Date.now() };
           saver.note(where);
         }}
+        // Only what is saved on this device can be opened here, so only those count.
+        onGo={(direction) => {
+          saver.flush();
+          const target = beside(chapters, open.number, direction);
+          if (!target) return;
+          lastPlace.current = null;
+          setResume(null);
+          setOpen(target);
+        }}
+        hasPrevious={beside(chapters, open.number, -1) !== undefined}
+        hasNext={beside(chapters, open.number, 1) !== undefined}
         onFinished={async (n) => {
           saver.flush();
           lastPlace.current = null;
@@ -178,4 +189,11 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
       )}
     </div>
   );
+}
+
+/** The chapter next to `n` by number, one way or the other — duplicate editions of `n` skipped. */
+function beside<T extends { number: number }>(list: readonly T[], n: number, direction: -1 | 1): T | undefined {
+  return list
+    .filter((c) => (direction === 1 ? c.number > n : c.number < n))
+    .sort((a, b) => (a.number - b.number) * direction)[0];
 }

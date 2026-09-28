@@ -227,6 +227,15 @@ export function Chapters({
     { label: 'Stop following', onSelect: () => void unfollow(), danger: true },
   ]);
 
+  function go(direction: -1 | 1) {
+    if (!open) return;
+    saver.flush();
+    const target = beside(list.data?.chapters ?? [], open.number, direction);
+    if (!target) return;
+    setResume(null);
+    setOpen(target);
+  }
+
   async function finished(chapterNumber: number) {
     saver.flush();
     try {
@@ -264,6 +273,9 @@ export function Chapters({
           setTimeout(() => list.reload(), 400);
         }}
         onFinished={(n) => void finished(n)}
+        onGo={go}
+        hasPrevious={beside(list.data?.chapters ?? [], open.number, -1) !== undefined}
+        hasNext={beside(list.data?.chapters ?? [], open.number, 1) !== undefined}
         onPosition={(p) =>
           saver.note({ chapter: open.number, chapterId: open.id, chapterName: open.name, ...p })
         }
@@ -422,4 +434,11 @@ export function Chapters({
       </div>
     </div>
   );
+}
+
+/** The chapter next to `n` by number, one way or the other — duplicate editions of `n` skipped. */
+function beside<T extends { number: number }>(list: readonly T[], n: number, direction: -1 | 1): T | undefined {
+  return list
+    .filter((c) => (direction === 1 ? c.number > n : c.number < n))
+    .sort((a, b) => (a.number - b.number) * direction)[0];
 }

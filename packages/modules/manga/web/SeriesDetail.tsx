@@ -141,6 +141,16 @@ export function SeriesDetail({
               }
             : undefined
         }
+        onGo={(direction) => {
+          saver.flush();
+          const target = beside(page.chapters, open.number, direction);
+          if (!target) return;
+          lastPlace.current = null;
+          setResume(null);
+          setOpen(target);
+        }}
+        hasPrevious={beside(page.chapters, open.number, -1) !== undefined}
+        hasNext={beside(page.chapters, open.number, 1) !== undefined}
         onFinished={async (n) => {
           saver.flush();
           lastPlace.current = null;
@@ -329,4 +339,11 @@ export function SeriesDetail({
       </div>
     </div>
   );
+}
+
+/** The chapter next to `n` by number, one way or the other — duplicate editions of `n` skipped. */
+function beside<T extends { number: number }>(list: readonly T[], n: number, direction: -1 | 1): T | undefined {
+  return list
+    .filter((c) => (direction === 1 ? c.number > n : c.number < n))
+    .sort((a, b) => (a.number - b.number) * direction)[0];
 }

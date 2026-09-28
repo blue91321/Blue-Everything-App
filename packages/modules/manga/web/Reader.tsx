@@ -38,9 +38,12 @@
  * not be — the controls stay put, since Back is then the only useful thing on
  * the screen.
  *
- * Previous and next are **pages**, as in that app; the next *chapter* is the
- * button at the end of the strip, because finishing is something you say
- * rather than something inferred.
+ * Previous and next are **chapters**. They were pages, as in that app, but
+ * pages are what scrolling and the thumbnail strip are for, and the arrows
+ * were the one control for leaving a chapter without scrolling to its end.
+ * Going on from the **last page** marks the chapter read, as the button at the
+ * end of the strip does; going on from partway through does not, because
+ * skipping a chapter is not finishing it.
  *
  * ### It takes the whole screen
  *
@@ -152,6 +155,9 @@ export function Reader({
   resume = null,
   onPosition,
   backLabel = 'Chapters',
+  onGo,
+  hasPrevious = false,
+  hasNext = false,
 }: {
   /** A followed series. */
   seriesId?: string;
@@ -170,6 +176,11 @@ export function Reader({
   onPosition?: (place: { page: number; offset: number; pages: number }) => void;
   /** Where Back goes, named: the chapter list, or a series' details page. */
   backLabel?: string;
+  /** Open the chapter before or after this one, by number, without marking anything read. */
+  onGo?: (direction: -1 | 1) => void;
+  /** Whether there is a chapter that way, for the arrows' disabled state. */
+  hasPrevious?: boolean;
+  hasNext?: boolean;
 }) {
   const [urls, setUrls] = useState<(string | null)[]>([]);
   const [total, setTotal] = useState<number | null>(null);
@@ -605,9 +616,10 @@ export function Reader({
           <div className="manga-reader-nav">
             <button
               className="manga-reader-arrow"
-              aria-label="Previous page"
-              disabled={page <= 0}
-              onClick={() => jumpTo(page - 1)}
+              aria-label="Previous chapter"
+              title="Previous chapter"
+              disabled={!onGo || !hasPrevious}
+              onClick={() => onGo?.(-1)}
             >
               <Icon.previous />
             </button>
@@ -616,9 +628,11 @@ export function Reader({
             </span>
             <button
               className="manga-reader-arrow"
-              aria-label="Next page"
-              disabled={page >= total - 1}
-              onClick={() => jumpTo(page + 1)}
+              aria-label="Next chapter"
+              title="Next chapter"
+              disabled={!onGo || !hasNext}
+              // From the last page this is finishing; from anywhere else, skipping.
+              onClick={() => (page >= total - 1 ? onFinished(chapter.number) : onGo?.(1))}
             >
               <Icon.next />
             </button>

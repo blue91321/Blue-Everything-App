@@ -3772,6 +3772,11 @@ div.manga-chapter-row {
   border-color: var(--accent);
 }
 
+.manga-browse-safe {
+  display: block;
+  margin: 8px 0;
+}
+
 .manga-lib-more {
   display: block;
   margin: 18px auto 0;

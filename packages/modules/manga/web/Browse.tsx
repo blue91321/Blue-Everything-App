@@ -51,6 +51,14 @@ export function Browse({
   const [state, setState] = useState<BrowseState | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [sub, setSub] = useState<Sub>('popular');
+  // On unless switched off, and per device: what is fine on the PC may not be on the phone.
+  const [hideMature, setHideMature] = useState(() => {
+    try {
+      return localStorage.getItem(HIDE_MATURE_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  });
   /** Series followed from this screen since it opened, by result key, so buttons change at once. */
   const [followed, setFollowed] = useState<Record<string, string>>({});
   const [note, setNote] = useState<string | null>(null);
@@ -143,6 +151,15 @@ export function Browse({
 
   const subs: Sub[] = ['popular', ...(source?.supportsLatest ? (['latest'] as const) : []), 'search'];
 
+  function toggleMature(on: boolean) {
+    setHideMature(on);
+    try {
+      localStorage.setItem(HIDE_MATURE_KEY, on ? '1' : '0');
+    } catch {
+      // Kept for this visit only.
+    }
+  }
+
   return (
     <div className="card manga-browse">
       {note && <p className="meta">{note}</p>}
@@ -185,10 +202,18 @@ export function Browse({
       </div>
 
       {source && sub !== 'search' && (
+        <label className="meta manga-browse-safe">
+          <input type="checkbox" checked={hideMature} onChange={(e) => toggleMature(e.target.checked)} /> Hide adult
+          titles (mature, ecchi, smut and the like)
+        </label>
+      )}
+
+      {source && sub !== 'search' && (
         <SourceList
-          key={`${source.id}:${sub}`}
+          key={`${source.id}:${sub}:${hideMature ? 'safe' : 'all'}`}
           sourceId={source.id}
           type={sub}
+          hideMature={hideMature}
           following={followingOf}
           onFollow={follow}
           onRead={onRead}
@@ -205,11 +230,14 @@ export function Browse({
 
 const keyOf = (r: { sourceName: string; id: string }) => `${r.sourceName}:${r.id}`;
 
+const HIDE_MATURE_KEY = 'manga.browse-hide-mature';
+
 /* ---- Popular and Recently released ---- */
 
 function SourceList({
   sourceId,
   type,
+  hideMature,
   following,
   onFollow,
   onRead,
@@ -217,6 +245,7 @@ function SourceList({
 }: {
   sourceId: string;
   type: 'popular' | 'latest';
+  hideMature: boolean;
   following: (r: BrowseResult) => string | null;
   onFollow: (r: BrowseResult) => Promise<void>;
   onRead: (id: string) => void;
@@ -227,12 +256,17 @@ function SourceList({
   const [more, setMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [problem, setProblem] = useState<string | null>(null);
+  const [hidden, setHidden] = useState(0);
+  const [unchecked, setUnchecked] = useState(0);
 
   async function load(next: number) {
     setLoading(true);
     setProblem(null);
     try {
-      const got = await manga.browse.list(sourceId, type, next);
+      const got = await manga.browse.list(sourceId, type, next, hideMature);
+      setHidden((n) => n + (got.hidden ?? 0));
+      // Only the latest page's: an earlier page's unknowns are known by now.
+      setUnchecked(got.unchecked ?? 0);
       // A source's next page often repeats the tail of the last; shown once.
       setResults((rs) => {
         const seen = new Set(rs.map(keyOf));
@@ -257,13 +291,25 @@ function SourceList({
     <>
       {problem && <p className="banner">{problem}</p>}
       {results.length === 0 && loading && <p className="empty">Loading…</p>}
-      {results.length === 0 && !loading && !problem && <p className="empty">This source listed nothing.</p>}
+      {results.length === 0 && !loading && !problem && (
+        <p className="empty">
+          {hidden > 0 ? 'Everything on this page was an adult title.' : 'This source listed nothing.'}
+        </p>
+      )}
+      {hideMature && (hidden > 0 || unchecked > 0) && (
+        <p className="meta">
+          {hidden > 0 ? `${hidden} adult title${hidden === 1 ? '' : 's'} hidden.` : ''}
+          {unchecked > 0
+            ? ` ${unchecked} could not be checked in time and are shown; they will be checked next time.`
+            : ''}
+        </p>
+      )}
       <div className="manga-browse-grid">
         {results.map((r) => (
           <Tile key={keyOf(r)} result={r} following={following(r)} onFollow={onFollow} onRead={onRead} onOpen={onOpen} />
         ))}
       </div>
-      {more && results.length > 0 && (
+      {more && (results.length > 0 || hidden > 0) && (
         <button className="btn" disabled={loading} onClick={() => void load(page + 1)}>
           {loading ? 'Loading…' : 'More'}
         </button>
