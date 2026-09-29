@@ -272,21 +272,37 @@ export function onPopView(handler: (view: string | null) => void): () => void {
  * every render — which is most of them — does not push and pop an entry each
  * time.
  */
-export function useBackStep(onBack: () => void): () => void {
+export function useBackStep(onBack: () => void, options: { consumeOnUnmount?: boolean } = {}): () => void {
   const latest = useRef(onBack);
   latest.current = onBack;
   const id = useRef(0);
+  const consume = useRef(options.consumeOnUnmount === true);
+  consume.current = options.consumeOnUnmount === true;
 
   useEffect(() => {
     id.current = pushStep(() => latest.current());
-    /*
-     * Unmounted without going back — the screen around it was replaced, or a
-     * package's tab was switched off under it. The entry stays in the stack
-     * because removing one from the middle is not something the History API
-     * offers; dropping the handler is what stops it closing something that is
-     * no longer there.
-     */
-    return () => forgetStep(id.current);
+    return () => {
+      /*
+       * **`consumeOnUnmount` is for a screen that cannot be left any other
+       * way**, and the reader is the one: it draws over the whole app, so the
+       * only ways out are back and its own controls. Anything that unmounts it
+       * therefore *was* a close, and the entry should go with it.
+       *
+       * That is the bug this option exists for, reported as "the back button
+       * wouldn't work after I got sent to the chapter select screen by tapping
+       * next chapter". Next with nothing after it closes the reader by setting
+       * its chapter to null — a plain unmount, down a path that never went
+       * through `close()` — so its entry stayed in the stack with no handler,
+       * and the next back press spent itself on it and appeared to do nothing.
+       *
+       * Everything else keeps the old behaviour, and must: a screen you can
+       * navigate *away* from unmounts for reasons that are not closing, and
+       * calling `history.back()` then would take you somewhere nobody asked to
+       * go. Dropping the handler is all that is safe there.
+       */
+      if (consume.current) popStep(id.current);
+      else forgetStep(id.current);
+    };
   }, []);
 
   return useCallback(() => popStep(id.current), []);

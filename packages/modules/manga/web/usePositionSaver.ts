@@ -13,6 +13,7 @@
  * for. `sendBeacon` would be the usual tool and cannot carry the bearer token.
  */
 import { useEffect, useRef } from 'react';
+import { isIncognito } from './incognito';
 import { getToken } from '@app/api';
 import { enqueue } from './sync-queue';
 
@@ -34,6 +35,10 @@ export function usePositionSaver(seriesId: string | null) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const send = (leaving = false) => {
+    // Reading with nothing written down — see `incognito.ts`. Checked here
+    // rather than at each caller, because this is the one door every saved
+    // place goes through.
+    if (isIncognito()) return;
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
     const place = pending.current;

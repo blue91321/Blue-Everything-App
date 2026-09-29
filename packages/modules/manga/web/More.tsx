@@ -19,6 +19,7 @@
 import { useState } from 'react';
 import { Cover } from './Cover';
 import { Archive } from './Archive';
+import { isIncognito, setIncognito } from './incognito';
 import { ImportCard } from './Import';
 import { SourceCard } from './SourceCard';
 import { manga, type Candidate, type Library, type SeriesSummary } from './manga-api';
@@ -30,6 +31,48 @@ const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
   cancelled: 'cancelled',
   unknown: 'status unknown',
 };
+
+/**
+ * Reading without it being written down — see `incognito.ts`.
+ *
+ * Its own card rather than a line inside "New chapters", which is about what
+ * gets *announced*: this is about what gets *recorded*, and folding them
+ * together would put a switch about your reading history under a heading about
+ * notifications.
+ *
+ * `useState` seeded once from storage rather than read on every render: it is
+ * a device setting that only this control changes, and `localStorage` on a
+ * render path is a synchronous read nobody needs.
+ */
+function Incognito() {
+  const [on, setOn] = useState(isIncognito);
+
+  return (
+    <div className="card">
+      <h3>Reading privately</h3>
+      <label className="meta">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => {
+            setIncognito(e.target.checked);
+            setOn(e.target.checked);
+          }}
+        />{' '}
+        Do not record what I read on this device
+      </label>
+      <p className="meta">
+        Chapters you open are not marked read and your place is not saved, so nothing new reaches History. What is
+        already there is untouched — History&apos;s ✕ is what removes that, one row at a time.
+      </p>
+      <p className="meta">
+        {/* The honest boundary, said rather than left to be found. */}
+        Saving a chapter for offline still writes it to this device: a file is a file whatever this switch says. It is
+        per device, so turning it on here leaves your phone as it was.
+      </p>
+    </div>
+  );
+}
 
 export function More({
   data,
@@ -169,6 +212,8 @@ export function More({
       {/* Above "New chapters", because this is the setting about what is kept
           rather than what is announced. */}
       <Archive />
+
+      <Incognito />
 
       <div className="card">
         <div className="row between">

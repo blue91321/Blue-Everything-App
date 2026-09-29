@@ -617,6 +617,8 @@ export const manga = {
       if (saved) return { pages: saved };
       return call<{ pages: string[] }>(`/api/manga/${id}/chapters/${chapterId}/pages`);
     },
+    /** Forget the saved place — the other half of removing a History row. */
+    clearPosition: (id: string) => call<{ ok: true }>(`/api/manga/${id}/position`, { method: 'DELETE' }),
     markRead: (id: string, chapter: number, read = true) =>
       call<{ readChapters: number[] }>(`/api/manga/${id}/read`, {
         method: 'PUT',

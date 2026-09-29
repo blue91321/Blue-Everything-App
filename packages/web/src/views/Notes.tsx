@@ -193,7 +193,18 @@ function useCollapsedFolders() {
 }
 
 export function Notes({ session }: { session?: { local: boolean } }) {
-  const [folder, setFolder] = useState<string | undefined>(undefined);
+  /**
+   * Which folder is being shown: a path, `''` for the root, `undefined` for
+   * every note at once.
+   *
+   * **It opens at the root, not at "All notes".** Everything flattened into one
+   * list is a pile of whatever was touched most recently, which tells you
+   * nothing about the shape of the notebook — the root shows the folders you
+   * made and the notes you have not filed yet, which is what every file manager
+   * shows when you open a drive. "All notes" is still one tap away and is the
+   * better answer when you are looking *for* something rather than *at* things.
+   */
+  const [folder, setFolder] = useState<string | undefined>('');
   const [tag, setTag] = useState<string | undefined>(undefined);
   const [search, setSearch] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -380,9 +391,15 @@ export function Notes({ session }: { session?: { local: boolean } }) {
     }
   }
 
-  /** Stop filtering by a folder that is no longer in the tree. */
+  /**
+   * Stop filtering by a folder that is no longer in the tree.
+   *
+   * Up to the root rather than out to "All notes": deleting the folder you are
+   * standing in should leave you where it was, among its neighbours, not in a
+   * flat list of the whole notebook.
+   */
   function leaveIfInside(path: string) {
-    if (folder === path || (folder ?? '').startsWith(`${path}/`)) setFolder(undefined);
+    if (folder === path || (folder ?? '').startsWith(`${path}/`)) setFolder('');
   }
 
   async function removeFolder(path: string, withNotes: boolean) {
@@ -539,9 +556,24 @@ export function Notes({ session }: { session?: { local: boolean } }) {
               <em> Not in a folder</em> to take it back out.
             </div>
 
+            {/*
+              Shut until you want it.
+              Every tag in the notebook, laid out as chips, is a wall of buttons
+              between the folders and everything below them — on a phone it was
+              most of a screen of things nobody had asked to see. It is a filter,
+              and a filter you are not using should cost one line.
+
+              `<details>` rather than state of its own, which is the call the
+              voice command groups already make: the keyboard and the screen
+              reader behaviour come from the browser rather than being rebuilt.
+
+              **The summary names the tag while one is chosen**, so a shut
+              section can never hide the thing narrowing the list — the rule
+              every other filtered list here follows.
+            */}
             {(tags.data?.tags.length ?? 0) > 0 && (
-              <>
-                <div className="meta notes-side-head">Tags</div>
+              <details className="notes-tags">
+                <summary>{tag ? `Tags · #${tag}` : `Tags (${tags.data?.tags.length ?? 0})`}</summary>
                 <div className="row wrap" style={{ gap: '.25rem' }}>
                   {tags.data?.tags.map((entry) => (
                     <button
@@ -556,7 +588,7 @@ export function Notes({ session }: { session?: { local: boolean } }) {
                     </button>
                   ))}
                 </div>
-              </>
+              </details>
             )}
           </aside>
 
@@ -830,44 +862,68 @@ function SubfolderRow({
   onDissolve: (path: string) => void;
 }) {
   // The same choices the tree offers, because it is the same folder.
-  const menu = useContextMenu(() =>
-    entry.count === 0
-      ? [{ label: 'Delete folder', onSelect: () => onRemove(entry.path, false), danger: true }]
-      : ([
-          {
-            label: `Keep the ${entry.count} ${entry.count === 1 ? 'note' : 'notes'}, remove the folder`,
-            onSelect: () => onDissolve(entry.path),
-          },
-          {
-            label: `Delete folder and ${entry.count} ${entry.count === 1 ? 'note' : 'notes'}`,
-            onSelect: () => onRemove(entry.path, true),
-            danger: true,
-          },
-        ] satisfies MenuItem[])
+  const choices = useCallback(
+    (): MenuItem[] =>
+      entry.count === 0
+        ? [{ label: 'Delete folder', onSelect: () => onRemove(entry.path, false), danger: true }]
+        : [
+            {
+              label: `Keep the ${entry.count} ${entry.count === 1 ? 'note' : 'notes'}, remove the folder`,
+              onSelect: () => onDissolve(entry.path),
+            },
+            {
+              label: `Delete folder and ${entry.count} ${entry.count === 1 ? 'note' : 'notes'}`,
+              onSelect: () => onRemove(entry.path, true),
+              danger: true,
+            },
+          ],
+    [entry.count, entry.path, onRemove, onDissolve]
   );
+
+  /*
+   * Two ways in, because there are two kinds of device.
+   *
+   * Right-click is the desktop affordance this project states it will not
+   * half-build for touch — and that left folder deletion unreachable on a
+   * phone, where these rows are the *only* folder navigation there is, since
+   * the tree beside them is off screen. So the row carries a ⋯ as well, with
+   * the same list behind both rather than a second one to keep in step.
+   */
+  const menu = useContextMenu(choices);
+  const button = useButtonMenu(choices);
 
   return (
     <>
-      <button
+      <div
         {...target}
         {...source}
         className={`notes-subfolder${lit ? ' drop-here' : ''}`}
-        onClick={() => onOpen(entry.path)}
         onContextMenu={menu.onContextMenu}
         title={`${entry.path} — open, or drag notes onto it`}
       >
-        <span className="notes-subfolder-glyph" aria-hidden="true">
-          ▤
-        </span>
-        <span className="notes-subfolder-name truncate">{entry.name}</span>
-        <span className="meta">
-          {entry.count} {entry.count === 1 ? 'note' : 'notes'}
-        </span>
-        <span className="notes-subfolder-go" aria-hidden="true">
-          ›
-        </span>
-      </button>
+        <button className="notes-subfolder-open" onClick={() => onOpen(entry.path)}>
+          <span className="notes-subfolder-glyph" aria-hidden="true">
+            ▤
+          </span>
+          <span className="notes-subfolder-name truncate">{entry.name}</span>
+          <span className="meta">
+            {entry.count} {entry.count === 1 ? 'note' : 'notes'}
+          </span>
+          <span className="notes-subfolder-go" aria-hidden="true">
+            ›
+          </span>
+        </button>
+        <button
+          className="notes-subfolder-more"
+          aria-label={`What to do with ${entry.name}`}
+          aria-haspopup="menu"
+          onClick={button.open}
+        >
+          ⋯
+        </button>
+      </div>
       {menu.menu}
+      {button.menu}
     </>
   );
 }

@@ -22,7 +22,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAsync } from '@app/useAsync';
 import { useBackStep } from '@app/view-history';
-import { useButtonMenu } from '@app/ContextMenu';
+import { isIncognito } from './incognito';
+import { useButtonMenu, type MenuItem } from '@app/ContextMenu';
 import { Cover } from './Cover';
 import { Icon } from './Icons';
 import { chapterText } from './judge';
@@ -53,6 +54,56 @@ const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
   cancelled: 'cancelled',
   unknown: 'status unknown',
 };
+
+/**
+ * One row per chapter number, and which entry that row is.
+ *
+ * Sources list the same chapter more than once — MangaFire carries two
+ * editions of most of them, which is why the head here already counts distinct
+ * *numbers* rather than entries and read "864 chapters" for a series at 419.
+ * A list where every chapter appears twice is one you cannot scan, and the two
+ * rows offer no way to tell which is the one to open.
+ *
+ * **Nothing here can know which is "real", and it does not pretend to.** That
+ * is the hard half, and the honest answer is a rule stated plainly rather than
+ * a guess dressed as a fact:
+ *
+ *   1. the entry you already have a place in, so collapsing the list can never
+ *      move the chapter you are halfway through;
+ *   2. otherwise the most recently uploaded, which is the later of two
+ *      editions and usually the corrected one;
+ *   3. otherwise whichever the source listed first, because the order it sends
+ *      is the order it leads with.
+ *
+ * None of that is certain, so it is reversible: the ⋯ menu turns it off and
+ * every entry comes back. Collapsing hides rows, and a list that quietly hides
+ * things had better say so and offer the way back.
+ */
+export function pickOnePerNumber(
+  chapters: readonly SourceChapter[],
+  placeChapterId: string | null
+): { shown: SourceChapter[]; duplicates: number } {
+  const byNumber = new Map<number, SourceChapter[]>();
+  for (const c of chapters) {
+    const had = byNumber.get(c.number);
+    if (had) had.push(c);
+    else byNumber.set(c.number, [c]);
+  }
+
+  const shown: SourceChapter[] = [];
+  let duplicates = 0;
+  for (const group of byNumber.values()) {
+    duplicates += group.length - 1;
+    shown.push(
+      group.find((c) => c.id === placeChapterId) ??
+        [...group].sort((a, b) => (b.uploadedAt ?? 0) - (a.uploadedAt ?? 0))[0]!
+    );
+  }
+  // Back into the order the source sent, which is what the list is sorted by.
+  const order = new Map(chapters.map((c, i) => [c.id, i]));
+  shown.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  return { shown, duplicates };
+}
 
 export function Chapters({
   seriesId,
@@ -91,6 +142,20 @@ export function Chapters({
   const [open, setOpen] = useState<SourceChapter | null>(null);
   const [resume, setResume] = useState<{ page: number; offset: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  /**
+   * Collapse duplicate chapter numbers to one row.
+   *
+   * Remembered in `localStorage` like the library's sort and the folded note
+   * folders, and for the same reason: it is a view preference about one screen,
+   * and a list you collapsed on the phone should not collapse on the PC.
+   */
+  const [oneRow, setOneRow] = useState(() => {
+    try {
+      return localStorage.getItem('everything.manga.everyVersion') !== '1';
+    } catch {
+      return true;
+    }
+  });
   const saver = usePositionSaver(seriesId);
   const continued = useRef(false);
   const offline = useOffline();
@@ -107,6 +172,9 @@ export function Chapters({
         ? data.chapters.find((c) => c.id === place.chapterId) ?? null
         : data.chapters.find((c) => c.number === place.chapter) ?? null
       : null;
+  const { shown: oneEach, duplicates } = pickOnePerNumber(data?.chapters ?? [], place?.chapterId ?? null);
+  const listed = oneRow ? oneEach : (data?.chapters ?? []);
+
   const furthestRead = data ? Math.max(-Infinity, ...data.chapters.filter((c) => c.read).map((c) => c.number)) : -Infinity;
   const nextUp =
     data && furthestRead > -Infinity
@@ -310,6 +378,31 @@ export function Chapters({
           onSelect: () => void stopKeeping(),
         }
       : { label: 'Keep every chapter on the PC', onSelect: () => void keepEverything() },
+    /*
+     * Only offered when there is something to collapse. A switch about
+     * duplicates on a source that lists none is a setting for a problem you do
+     * not have, and it invites the question of what it would do.
+     */
+    ...(duplicates > 0
+      ? [
+          {
+            label: oneRow
+              ? `Show every version (${duplicates} more)`
+              : `One row per chapter (hides ${duplicates})`,
+            onSelect: () => {
+              const next = !oneRow;
+              setOneRow(next);
+              try {
+                if (next) localStorage.removeItem('everything.manga.everyVersion');
+                else localStorage.setItem('everything.manga.everyVersion', '1');
+              } catch {
+                // A browser that will not remember it still honours the change
+                // for as long as this screen is open.
+              }
+            },
+          } satisfies MenuItem,
+        ]
+      : []),
     { label: 'Unlink this source', onSelect: () => void unlink() },
     { label: 'Stop following', onSelect: () => void unfollow(), danger: true },
   ]);
@@ -325,13 +418,27 @@ export function Chapters({
 
   async function finished(chapterNumber: number) {
     saver.flush();
-    try {
-      await manga.reader.markRead(seriesId, chapterNumber);
-    } catch {
-      // The connection dropped mid-chapter: queued, and sent when it is back.
-      enqueue({ kind: 'read', seriesId, chapter: chapterNumber, at: Date.now() });
+    /*
+     * Incognito stops the *recording*, not the reading — see `incognito.ts`.
+     *
+     * Only this block is skipped. An earlier version returned here instead,
+     * which also skipped moving on to the next chapter: reading without a
+     * record is not the same as reading one chapter and stopping, and the
+     * difference is the whole feature.
+     *
+     * The offline queue goes with it. Queued, the read would simply be written
+     * down later, which is the thing that was not wanted rather than a delayed
+     * version of it.
+     */
+    if (!isIncognito()) {
+      try {
+        await manga.reader.markRead(seriesId, chapterNumber);
+      } catch {
+        // The connection dropped mid-chapter: queued, and sent when it is back.
+        enqueue({ kind: 'read', seriesId, chapter: chapterNumber, at: Date.now() });
+      }
+      void updateSnapshot(seriesId, { read: chapterNumber });
     }
-    void updateSnapshot(seriesId, { read: chapterNumber });
     const all = list.data?.chapters ?? [];
     /*
      * The next one *up*, not the next in the array. The list is newest-first, so
@@ -496,8 +603,21 @@ export function Chapters({
       )}
 
       <div className="manga-chapters">
-        {data?.chapters.map((c) => {
-          const here = sameCopy && place?.chapterId === c.id;
+        {listed.map((c) => {
+          /*
+           * Where you were, even after changing source.
+           *
+           * This asked `sameCopy`, which compares the source's own manga id —
+           * so switching source silently dropped the marker, and the chapter
+           * you were halfway through went back to looking untouched. Reported
+           * as switching a source losing when you last read something.
+           *
+           * `placeChapter` already falls back to matching by chapter *number*,
+           * which means the same thing wherever you read it — the rule
+           * `readChapters` follows one level up. So the row is marked either
+           * way; what changes is how much can honestly be said about it.
+           */
+          const here = placeChapter?.id === c.id;
           const job = jobs.get(c.id);
           const isSaved = saved[c.id] !== undefined;
           return (
@@ -506,13 +626,21 @@ export function Chapters({
             <div key={c.id} className={`manga-chapter-row${c.read ? ' read' : ''}${here ? ' started' : ''}`}>
               <button
                 className="manga-chapter-open"
-                onClick={() => read(c, here && place ? { page: place.page, offset: place.offset } : null)}
+                // Resumed at the page only on the copy that page was counted on.
+                onClick={() => read(c, here && sameCopy && place ? { page: place.page, offset: place.offset } : null)}
               >
                 <span className="title truncate">{c.name}</span>
                 <span className="meta">
                   {c.scanlator ? `${c.scanlator} · ` : ''}
                   {c.uploadedAt ? new Date(c.uploadedAt).toLocaleDateString() : ''}
-                  {here && place ? ` · page ${place.page + 1} of ${place.pages}` : ''}
+                  {/*
+                    * The page only means something on the copy it was counted
+                    * on: another source paginates differently, so "page 9 of
+                    * 128" would be a precise claim about the wrong book. The
+                    * chapter survives the move; the page does not, and says so
+                    * rather than being quietly wrong.
+                    */}
+                  {here && place ? (sameCopy ? ` · page ${place.page + 1} of ${place.pages}` : ' · you were here') : ''}
                   {c.read ? (c.readOn ? ` · read on ${c.readOn}` : ' · read') : ''}
                   {/* Kept on the PC for good, which the ✓ beside it is not about. */}
                   {onThePc.has(c.number) ? ' · on the PC' : ''}

@@ -2185,6 +2185,23 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * The source is taken from the series, not the caller, for the reason read
    * marks are: the reader only serves the linked source.
    */
+  /**
+   * Forget where you were in this series.
+   *
+   * The other half of taking something out of History: a series you are partway
+   * through appears there as `reading`, and that entry is the saved place
+   * rather than a read record, so `read: false` cannot reach it.
+   *
+   * Not local-only. What you have read is your data, editable from the phone
+   * like the rest of it — the same call the habit pictures make.
+   */
+  app.delete('/api/manga/:id/position', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!read().series.some((s) => s.id === id)) return reply.code(404).send({ error: 'no such series' });
+    writePosition(id, null);
+    return { ok: true };
+  });
+
   app.put('/api/manga/:id/position', { config: { announce: false } }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as Partial<Record<keyof ReadingPosition, unknown>> | null;

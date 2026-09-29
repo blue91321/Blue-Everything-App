@@ -1938,6 +1938,46 @@ a.btn {
   top: 0.5rem;
 }
 
+/*
+ * Not sticky once the columns are stacked.
+ *
+ * Sticky is right beside a long note: the tree holds its place while you read
+ * past it. In one column there is the whole list underneath for it to travel
+ * over, and it does — measured at 375px, pinned at the top and overlapping the
+ * notes by **134px**, with its hint line and tag chips drawn straight through
+ * the cards because neither carries a background of its own. Reported as text
+ * overlapping while scrolling on a phone.
+ *
+ * **After the rule it overrides, not inside the stacking block above.** A
+ * container query adds no specificity, so the plain `.notes-side` further down
+ * the file simply won and the override did nothing at all — which looked
+ * exactly like the fix not working.
+ */
+@container notes-screen (max-width: 900px) {
+  .notes-side {
+    position: static;
+  }
+}
+
+/*
+ * A filter you are not using costs one line — see the note in `Notes.tsx`.
+ *
+ * The browser's own disclosure triangle, not one drawn here. A `::before` with
+ * a hex escape was the first version and rendered as two tofu boxes beside a
+ * marker that had not gone away; the native one is already the right glyph in
+ * the right place, and it rotates itself.
+ *
+ * It does **not** take `.notes-side-head`, which upper-cases its text — that
+ * is right for the word "Tags" and wrong for the tag beside it, which turned
+ * `#books` into `#BOOKS`. A tag is written the way you wrote it.
+ */
+.notes-tags > summary {
+  cursor: pointer;
+  padding: 0.15rem 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .notes-side-head {
   margin-top: 0.4rem;
   text-transform: uppercase;
@@ -2167,6 +2207,45 @@ a.btn {
 
 .notes-subfolder:hover {
   border-color: var(--accent);
+}
+
+/*
+ * The row is a row, not a button, because it now holds two.
+ *
+ * A button inside a button is not something a browser will render, and the ⋯
+ * has to be its own control: right-click is a desktop affordance and a phone
+ * has none, so deleting a folder was unreachable on the one device where these
+ * rows are the *only* folder navigation there is.
+ */
+.notes-subfolder-open {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notes-subfolder-more {
+  flex: none;
+  padding: 0 0.15rem;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.notes-subfolder-more:hover,
+.notes-subfolder-more:focus-visible {
+  color: var(--text);
 }
 
 .notes-subfolder-glyph {
@@ -2752,6 +2831,34 @@ a.btn {
   height: auto;
 }
 
+/*
+ * A gap that says what it is, and offers to fix itself.
+ *
+ * It shares `.manga-page-waiting` so it keeps that slot's size and place in the
+ * strip — the difference is only that this one can be pressed. Left as a bare
+ * number, a page that had failed was indistinguishable from one still coming
+ * over a slow connection, and the only way to retry was to leave the chapter
+ * and open it again.
+ */
+.manga-page-failed {
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  padding: 1.5rem 1rem;
+  text-align: center;
+}
+
+.manga-page-failed:hover:not(:disabled),
+.manga-page-failed:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.manga-page-failed:disabled {
+  cursor: default;
+}
+
 .manga-page-waiting {
   display: flex;
   align-items: center;
@@ -3265,6 +3372,26 @@ a.btn {
  */
 div.manga-chapter-row {
   cursor: default;
+}
+
+/*
+ * The chapter number never gives way; the line beside it does.
+ *
+ * Both were ordinary flex items, so both could shrink — and reading a chapter
+ * grows the line beside it by four words (`· read on MangaFire (EN)`). It took
+ * the width it wanted by wrapping to a second line, and the title, which is the
+ * one carrying `.truncate`, was the only thing left to squeeze. Read rows drew
+ * "Ch...." directly under unread ones drawing "Ch. 42". Reported from a phone,
+ * where the row is narrowest and it happens first.
+ *
+ * The number is the shortest and most useful text in the row, so it is the
+ * wrong thing to spend. Capped rather than simply fixed, because a source that
+ * *names* a chapter instead of numbering it can hand this a whole sentence, and
+ * that one should still ellipsis rather than push the date off the row.
+ */
+.manga-chapter-open > .title {
+  flex: none;
+  max-width: 60%;
 }
 
 .manga-chapter-open {
@@ -4018,6 +4145,48 @@ div.manga-chapter-row {
 .manga-history .card {
   padding-top: 4px;
   padding-bottom: 4px;
+}
+
+/*
+ * The row is a row now, not a button, because it holds two: the one that opens
+ * the chapter, and the one that takes the entry out. A button inside a button
+ * is not something a browser will render — the same restructure the notes
+ * folder rows and the chapter rows already went through.
+ */
+.manga-history-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manga-history-remove {
+  flex: none;
+  padding: 0 0.35rem;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.manga-history-remove:hover:not(:disabled),
+.manga-history-remove:focus-visible {
+  color: var(--danger);
+}
+
+.manga-history-remove:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .manga-history-row {

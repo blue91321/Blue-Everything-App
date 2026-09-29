@@ -197,8 +197,29 @@ export function Reader({
    * exists. `close` is what the ✕ and the end-of-chapter button call now, so
    * leaving by hand and leaving by back are the same route.
    */
-  const close = useBackStep(onClose);
+  // `consumeOnUnmount`: the reader covers the whole app, so nothing can
+  // navigate away from it — every unmount is a close, including the one that
+  // happens when Next runs out of chapters. See the note in `view-history.ts`.
+  const close = useBackStep(onClose, { consumeOnUnmount: true });
   const [urls, setUrls] = useState<(string | null)[]>([]);
+  /**
+   * The source's own page paths, kept so one page can be asked for again.
+   *
+   * A ref rather than state: nothing renders from it, and it must be readable
+   * by a retry handler that was created on an earlier render.
+   */
+  const paths = useRef<string[]>([]);
+  /**
+   * Pages that were asked for and did not come.
+   *
+   * Distinct from "not here yet", which is what an empty slot used to mean for
+   * both — so a page that had failed looked exactly like one still on its way,
+   * and the only way out was to leave the chapter and open it again. Reported
+   * as wanting a way to refresh images that are not loading.
+   */
+  const [failed, setFailed] = useState<Set<number>>(new Set());
+  /** The ones being fetched again right now, so the button cannot be pressed twice. */
+  const [retrying, setRetrying] = useState<Set<number>>(new Set());
   const [total, setTotal] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   /*
@@ -234,6 +255,47 @@ export function Reader({
     setHeading(null);
   };
 
+  /**
+   * Fetch one page again.
+   *
+   * Per page rather than per chapter, because that is the shape of the
+   * failure: a strip of a hundred images over somebody else's CDN loses one
+   * here and there, and throwing away ninety-nine good pages to recover one is
+   * a poor trade — especially on a phone paying for them twice.
+   *
+   * The object URL is not revoked on success, for the same reason the loader
+   * keeps its own list: the ones this chapter made are released together when
+   * it closes, and revoking one still referenced by a rendered `<img>` would
+   * blank a page that had just arrived.
+   */
+  const retryPage = async (index: number) => {
+    const path = paths.current[index];
+    if (!path || retrying.has(index)) return;
+    setRetrying((had) => new Set(had).add(index));
+    try {
+      // The same call the loader makes: only the page *list* differs in preview.
+      const url = await manga.reader.page(path);
+      setUrls((current) => {
+        const copy = [...current];
+        copy[index] = url;
+        return copy;
+      });
+      setFailed((had) => {
+        const next = new Set(had);
+        next.delete(index);
+        return next;
+      });
+    } catch {
+      // Still not coming. It stays marked, so the button stays there.
+    } finally {
+      setRetrying((had) => {
+        const next = new Set(had);
+        next.delete(index);
+        return next;
+      });
+    }
+  };
+
   useEffect(() => {
     let alive = true;
     const made: string[] = [];
@@ -249,6 +311,8 @@ export function Reader({
         if (!alive) return;
         setTotal(pages.length);
         setUrls(new Array(pages.length).fill(null));
+        paths.current = pages;
+        setFailed(new Set());
 
         let next = 0;
         const worker = async () => {
@@ -269,8 +333,10 @@ export function Reader({
               });
             } catch {
               // One page failing must not stop the rest: a strip with a gap is
-              // readable, a blank screen is not. The slot stays null and the
-              // count says how many arrived.
+              // readable, a blank screen is not. The slot stays null — and is
+              // now *marked* as failed, so the gap can say what it is and offer
+              // to try again rather than looking like a slow connection.
+              if (alive) setFailed((had) => new Set(had).add(index));
             }
           }
         };
@@ -597,6 +663,15 @@ export function Reader({
                 if (returning.current && returnTo()) arrived();
               }}
             />
+          ) : failed.has(index) ? (
+            <button
+              key={index}
+              className="manga-page-waiting manga-page-failed"
+              onClick={() => void retryPage(index)}
+              disabled={retrying.has(index)}
+            >
+              {retrying.has(index) ? `Page ${index + 1} — fetching…` : `Page ${index + 1} did not load — tap to try again`}
+            </button>
           ) : (
             <div key={index} className="manga-page-waiting">
               {index + 1}

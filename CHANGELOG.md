@@ -5,6 +5,50 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.5.2
+
+Everything in the two improvement notes, plus two asked for alongside them.
+
+### Notes
+
+- **Folders can be deleted on a phone.** Folder rows carry a ⋯ with the same
+  choices right-click always gave. These rows are the only folder navigation
+  there is on touch, since the tree beside them is off screen.
+- **Text no longer overlaps when scrolling.** The folder tree was sticky at
+  every width; stacked into one column it pinned to the top and drew its hint
+  line and tag chips through the note cards — measured at 375px as a 134px
+  overlap.
+- **Notes opens on "Not in a folder"**, so you see the folders you made rather
+  than a flat pile of everything. "All notes" is one tap above it.
+- **Tags are a filter that opens when clicked**, shut by default, naming the
+  chosen tag while one is active.
+
+### Manga
+
+- **A page that will not load says so and offers to try again**, one page at a
+  time. It used to be stored exactly like a page still arriving, so a gap
+  looked like a slow connection.
+- **Switching a source keeps where you were.** Nothing was ever lost — the
+  marker was matched on the source's own id, so a switch silently dropped it.
+  It matches on chapter number now. The page within the chapter is not carried
+  across, because another copy paginates differently.
+- **History rows can be removed**, which is the same act as marking a chapter
+  unread. A series you are partway through is the saved place instead, so that
+  is cleared on its own.
+- **Reading privately** (More): chapters are not marked read and your place is
+  not saved on this device. What is already recorded is untouched. Saving a
+  chapter for offline still writes a file, which the switch says outright.
+- **Duplicate chapters collapse to one row per number** — 46 rows where a
+  source listed 71. Nothing can know which entry is real and this does not
+  pretend to: the rule is the one you have a place in, else the newest upload,
+  else the source's own order, and ⋯ turns it off.
+- **Back works after "Finished — next chapter" runs out of chapters.** Closing
+  the reader that way unmounted it without consuming its history entry, so the
+  next back press was swallowed.
+- **The chapter number is no longer cut off once a chapter is read.** Reading
+  adds four words beside it, and the number was the only part that could
+  ellipsis, so it was the part that gave way.
+
 ## 0.5.1
 
 All from a second person testing it, which is the only way most of this was
