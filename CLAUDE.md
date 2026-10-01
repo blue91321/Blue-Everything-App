@@ -895,23 +895,32 @@ position taken during the reader's first render, before the page shrank.
   later would ever clear it. From partway through it marks nothing, which is
   the arrow's own rule.
 
-  **The Next arrow does not move when it appears.** Next and the skip are one
-  group of constant width, and the skip is always rendered, hidden with
-  `visibility` when there is nothing to skip — otherwise a control joining and
-  leaving the bar would shift Next every few chapters, the complaint this
-  document makes about the ☰ arriving by a different door. Measured at 1280px
-  across 2 → 2.1 → 2: Next's right edge is **58px from the window edge every
-  time**.
+  **The Next arrow does not move when it appears, and nothing is reserved to
+  achieve that.** The skip sits *before* Next inside a group pinned to the
+  right, so the group grows **leftwards** into slack the bar already has: Next
+  is flush right whether or not a skip is there.
 
-  **That made the bar three columns rather than `space-between`**, and finding
-  out why cost a report from a phone. `space-between` centres the middle item
-  between its *neighbours*, not in the bar — so the moment the right-hand side
-  became wider than the left (Next plus its skip, 92px against the back arrow's
-  44) the page counter sat about 24px left of centre on **every** chapter,
-  including the ones with no skip at all. Two equal `1fr` tracks put it in the
+  That took two goes, and the first is the instructive one. It had the skip
+  *after* Next and always rendered, hidden with `visibility`, to hold the room
+  open — Next stayed put, and every chapter without a skip showed 48px of
+  reserved nothing at the end of the bar. **Reserving space is not the only way
+  to stop something moving**, and it is the way that costs a hole; pinning the
+  far edge and letting the group grow inwards costs nothing. Reported from the
+  PC, a day after the same button was reported from a phone for the counter
+  below.
+
+  **The bar is three columns rather than `space-between`**, and finding out why
+  cost a report from a phone. `space-between` centres the middle item between
+  its *neighbours*, not in the bar — so the moment the right-hand side became
+  wider than the left the page counter sat about 24px left of centre on **every**
+  chapter, including the ones with no skip. Two equal `1fr` tracks put it in the
   middle of the bar whatever the sides weigh, and the sides still reach the
-  edges. Measured at 390px with the skip showing and hidden: the counter's
-  centre is the bar's centre, off by **0** in both.
+  edges — which is also what gives the group its slack to grow into.
+
+  Measured at 1280px and at 390px, with the skip showing and absent: both arrows
+  10px from their own edge, the counter off centre by **0**, and 59px between
+  the counter and the skip at phone width. One button has now pushed this bar
+  around twice; the three numbers above are what it is checked against.
 
   Unlike the chrome's own hiding, this one is meant to leave the tab order:
   `visibility: hidden` plus `disabled`, because a button that would do nothing

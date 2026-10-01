@@ -4501,13 +4501,8 @@ html:has(body > .manga-reader)::-webkit-scrollbar {
   cursor: pointer;
 }
 
-/* Holds its room without being seen, reachable or tabbable. */
-.manga-reader-skip.empty {
-  visibility: hidden;
-}
-
 @media (hover: hover) {
-  .manga-reader-skip:not(.empty):hover {
+  .manga-reader-skip:hover {
     background: var(--accent);
     color: var(--accent-text);
   }

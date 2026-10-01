@@ -747,15 +747,39 @@ export function Reader({
               {page + 1} / {total}
             </span>
             {/*
-              * Next and the skip are one group, and the group's width never
-              * changes — see `.manga-reader-next`. A skip is offered on a
-              * minority of chapters (40 of Eleceed's 461), so letting it take
-              * part in the bar's spacing would move the Next arrow every few
-              * chapters. That is the complaint this app makes about the ☰ and
-              * answers the same way: reserve the room, and never move the
-              * control somebody reaches for without looking.
+              * The skip sits *before* Next, and the group is pinned to the
+              * right — which is what lets Next never move without reserving
+              * anything.
+              *
+              * It was the other way round, with the skip after Next and always
+              * rendered so the room was held open: Next stayed put, and every
+              * chapter without a skip showed 48px of reserved nothing at the
+              * end of the bar. Reported from the PC after the counter was
+              * reported from the phone, which is twice that this one button
+              * has pushed the bar around.
+              *
+              * Right-aligned in a `1fr` track, the group grows *leftwards* into
+              * slack the bar already has. So Next is flush right whether or not
+              * a skip is there, nothing is reserved, and the counter stays in
+              * the middle because the track boundary has not moved.
               */}
             <div className="manga-reader-next">
+              {/*
+                * Labelled with the number rather than given an icon of its own.
+                * "Skip" is meaningless without saying where to, and a second
+                * arrow-like glyph beside the first is the one thing guaranteed
+                * to be mistaken for it.
+                */}
+              {onSkip && skipTo !== null && (
+                <button
+                  className="manga-reader-skip"
+                  aria-label={`Skip to chapter ${skipTo}`}
+                  title={`Skip to chapter ${skipTo}, past the point chapters`}
+                  onClick={() => onSkip(page >= total - 1)}
+                >
+                  {skipTo}
+                </button>
+              )}
               <button
                 className="manga-reader-arrow"
                 aria-label="Next chapter"
@@ -765,28 +789,6 @@ export function Reader({
                 onClick={() => (page >= total - 1 ? onFinished(chapter.number) : onGo?.(1))}
               >
                 <Icon.next />
-              </button>
-              {/*
-                * Labelled with the number rather than given an icon of its own.
-                * "Skip" is meaningless without saying where to, and a second
-                * arrow-like glyph beside the first is the one thing guaranteed
-                * to be mistaken for it.
-                *
-                * Always rendered, hidden with `visibility` when there is
-                * nothing to skip — which is what holds the room open. Unlike
-                * the chrome's own hiding, this one is meant to leave the tab
-                * order too: a button that would do nothing should not be
-                * something to tab onto.
-                */}
-              <button
-                className={`manga-reader-skip${skipTo === null ? ' empty' : ''}`}
-                aria-label={skipTo === null ? undefined : `Skip to chapter ${skipTo}`}
-                title={skipTo === null ? undefined : `Skip to chapter ${skipTo}, past the point chapters`}
-                aria-hidden={skipTo === null}
-                disabled={!onSkip || skipTo === null}
-                onClick={() => onSkip?.(page >= total - 1)}
-              >
-                {skipTo ?? ''}
               </button>
             </div>
           </div>
