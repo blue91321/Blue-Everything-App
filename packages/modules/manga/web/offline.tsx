@@ -20,6 +20,7 @@ import { manga } from './manga-api';
 import { sizeText, updateSnapshot, useOffline, type SavedChapter, type SavedSeries } from './offline-store';
 import { enqueue, pendingCount } from './sync-queue';
 import { usePositionSaver } from './usePositionSaver';
+import { beside, skippedBetween, skipTarget } from './chapter-nav.js';
 import { NEEDS, NOT_YET_SENT, WHILE_REACHABLE } from './device-text';
 
 export default function MangaOffline({ onClose }: OfflineViewProps) {
@@ -118,6 +119,38 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
         }}
         hasPrevious={beside(chapters, open.number, -1) !== undefined}
         hasNext={beside(chapters, open.number, 1) !== undefined}
+        {...(() => {
+          /*
+           * Only what is saved on this device can be opened here, so the skip
+           * is offered against the downloaded list — a point chapter you never
+           * downloaded is not something to pass over, it was never in the way.
+           */
+          const target = skipTarget(chapters, open.number);
+          return {
+            skipTo: target?.number ?? null,
+            onSkip: async (finishing: boolean) => {
+              if (!target) return;
+              saver.flush();
+              lastPlace.current = null;
+              if (finishing) {
+                for (const n of [open.number, ...skippedBetween(chapters, open.number, target.number)]) {
+                  try {
+                    await manga.reader.markRead(series.seriesId, n);
+                  } catch {
+                    enqueue({ kind: 'read', seriesId: series.seriesId, chapter: n, at: Date.now() });
+                  }
+                }
+                const highest = Math.max(open.number, ...skippedBetween(chapters, open.number, target.number));
+                await updateSnapshot(series.seriesId, {
+                  read: highest,
+                  ...(place && place.chapter <= highest ? { position: null } : {}),
+                });
+              }
+              setResume(null);
+              setOpen(target);
+            },
+          };
+        })()}
         onFinished={async (n) => {
           saver.flush();
           lastPlace.current = null;
@@ -191,9 +224,4 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
   );
 }
 
-/** The chapter next to `n` by number, one way or the other — duplicate editions of `n` skipped. */
-function beside<T extends { number: number }>(list: readonly T[], n: number, direction: -1 | 1): T | undefined {
-  return list
-    .filter((c) => (direction === 1 ? c.number > n : c.number < n))
-    .sort((a, b) => (a.number - b.number) * direction)[0];
-}
+

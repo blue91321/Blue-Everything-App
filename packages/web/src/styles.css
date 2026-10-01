@@ -1557,6 +1557,81 @@ a.btn {
  * "We brought you here." Without it, arriving at a settings section is
  * indistinguishable from the tab you clicked happening to open on it.
  */
+/*
+ * The two Dashboard pickers, side by side and the same width.
+ *
+ * They configure the two columns of one screen, so they are shown as two
+ * columns — stacked, they read as two unrelated settings and the second sits
+ * below the fold on a laptop.
+ *
+ * A **container** query, not a media one. What decides whether two columns fit
+ * is the width this screen actually has, and docking the menu takes 260px of
+ * it without the window changing at all — so a viewport query would keep two
+ * columns while the drawer squeezed them to nothing. That is the mistake the
+ * notes screen made and the fix it landed on.
+ *
+ * `align-items: start` so the shorter card keeps its own height instead of
+ * stretching to match its neighbour, which would put a long run of empty card
+ * under whichever list is shorter.
+ */
+.settings-pair-wrap {
+  /*
+   * The container is the *wrapper*, not the grid. A `@container` rule styles
+   * descendants of the container, never the container itself — putting both on
+   * one element is a rule that silently never applies, and the layout stays
+   * stacked at every width with nothing saying why.
+   */
+  container: settings-pair / inline-size;
+}
+
+.settings-pair {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+
+@container settings-pair (min-width: 760px) {
+  .settings-pair {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* The sections inside carry their own margins; the grid owns the spacing. */
+.settings-pair > section {
+  margin: 0;
+  min-width: 0;
+}
+
+/*
+ * Reordering by dragging, in the Dashboard pickers.
+ *
+ * The arrows stay and are still the keyboard's way — this is the pointer's.
+ * `touch-action: none` is what lets a drag start on a phone at all, and it is
+ * on the grip alone: on the whole row it would mean the list could not be
+ * scrolled past.
+ */
+.picker-grip {
+  flex: none;
+  padding: 0 .35rem;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.picker-row.dragging {
+  background: var(--surface-raised);
+  border-radius: 8px;
+}
+
+.picker-row.dragging .picker-grip {
+  cursor: grabbing;
+  color: var(--accent);
+}
+
 .flash {
   animation: flash 1.4s ease-out;
 }
@@ -3779,6 +3854,16 @@ div.manga-chapter-row {
 
 /* ---- library ---- */
 
+/*
+ * The Dashboard's shelf card draws the Library's own grid, so it has to be the
+ * same container — otherwise the `@container manga-library` rule below never
+ * matches and the card is three tiles across at every width, including the full
+ * width of the Dashboard's main column.
+ *
+ * Named together rather than the card copying the grid rules, which would be
+ * two definitions of one shelf and the second to drift.
+ */
+.manga-shelf-panel,
 .manga-library {
   container: manga-library / inline-size;
 }
@@ -4355,6 +4440,58 @@ html:has(body > .manga-reader)::-webkit-scrollbar {
 .manga-reader-arrow:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/*
+ * Skip to the next whole chapter — see `skipTarget`.
+ *
+ * Deliberately not a second round arrow. It sits beside one, and two circles
+ * of the same size with similar glyphs is the arrangement most likely to be
+ * pressed by mistake in the dark with a thumb. It carries the number instead,
+ * which is also the only thing that says where it goes.
+ *
+ * Shorter and squarer than the arrow, in the accent, so it reads as a label
+ * you may press rather than a peer of the control it follows.
+ */
+/*
+ * Next and its skip, as one group of constant width — see the Reader. The bar
+ * is `space-between`, so anything that joins or leaves it moves the arrows; a
+ * fixed group means Next is in the same place on every chapter whether or not
+ * a skip is offered.
+ */
+.manga-reader-next {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.manga-reader-skip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+/* Holds its room without being seen, reachable or tabbable. */
+.manga-reader-skip.empty {
+  visibility: hidden;
+}
+
+@media (hover: hover) {
+  .manga-reader-skip:not(.empty):hover {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
 }
 
 .manga-reader-count {

@@ -29,7 +29,9 @@ import {
   seriesStatus,
   worthPolling,
 } from '../identity.js';
-import { alreadyRaised, type ReadingPosition, type Store } from '../library.js';
+import { alreadyRaised, clampReadAhead, MAX_READ_AHEAD, type ReadingPosition, type Store } from '../library.js';
+import { KEEP_CHAPTERS, readAheadAt } from '../page-cache.js';
+import { beside, skippedBetween, skipTarget } from '../../web/chapter-nav.js';
 import { totalChaptersFrom } from '../mangaupdates.js';
 import {
   readableChapter,
@@ -725,6 +727,10 @@ const store: Store = {
   suwayomiMode: 'on-demand',
   readLanguages: ['en'],
   releaseTasks: false,
+  readAheadChapters: 1,
+  shelfShow: 'all',
+  shelfSort: 'follow',
+  shelfNewFirst: true,
   releaseNudges: true,
   browseSource: null,
   ignoredSources: [],
@@ -1041,4 +1047,109 @@ if (process.argv.includes('--live')) {
 console.log(
   failures === 0 ? '\n\x1b[32mall good\x1b[0m\n' : `\n\x1b[31m${failures} failed\x1b[0m\n`
 );
+/* ------------------------------------------------------------------ */
+console.log('\nreading ahead\n');
+
+check('one chapter by default', clampReadAhead(undefined) === 1);
+check('zero is kept, not read as missing', clampReadAhead(0) === 0, 'off has to mean off');
+check('three is allowed', clampReadAhead(3) === 3);
+// A hand-edited manga.json is why this is clamped rather than trusted: a 50
+// here would be fifty chapters of somebody else's bandwidth from one tap.
+check('above the cap is brought down', clampReadAhead(50) === MAX_READ_AHEAD);
+check('below zero is brought up', clampReadAhead(-4) === 0);
+check('a fraction is rounded', clampReadAhead(2.4) === 2);
+check('a string is not a number', clampReadAhead('3') === 1);
+check('NaN is not a number either', clampReadAhead(Number.NaN) === 1);
+
+/*
+ * The ordering rule, which is the part of this that is easy to get wrong and
+ * silently costly: a chapter fetched *ahead* of you was never opened, so if it
+ * sorted as "now" it would push the chapter in your hands down the list — and
+ * at three ahead, the one you are reading would be evicted before three you
+ * have not looked at.
+ */
+{
+  /*
+   * Opened at `openedAt`; the prefetch runs twenty seconds later, because the
+   * current chapter had to finish downloading first. That gap is the whole
+   * bug: the first version computed these offsets from `Date.now()` at
+   * prefetch time, so they landed *in front of* the chapter being read and the
+   * cache ordered itself backwards — no.4, no.3, then what you were reading.
+   *
+   * The first version of this very check asserted the intended numbers rather
+   * than how they are derived, so it passed against the broken code. It calls
+   * `readAheadAt` now, which is the thing that was wrong.
+   */
+  const openedAt = Date.now();
+  const whenThePrefetchRan = openedAt + 20_000;
+  void whenThePrefetchRan;
+
+  const order = [
+    { id: 'reading', at: openedAt },
+    { id: 'ahead-1', at: readAheadAt(openedAt, 0) },
+    { id: 'ahead-2', at: readAheadAt(openedAt, 1) },
+    { id: 'older', at: openedAt - 60_000 },
+  ].sort((a, b) => b.at - a.at);
+
+  check(
+    'what you are reading stays in front of what was fetched ahead',
+    order[0].id === 'reading' && order[1].id === 'ahead-1' && order[2].id === 'ahead-2',
+    order.map((e) => e.id).join(' > ')
+  );
+  check('and older history is still behind both', order[3].id === 'older');
+  check(
+    'the offset is measured from the open, not from when the prefetch ran',
+    readAheadAt(openedAt, 0) < openedAt && readAheadAt(openedAt, 0) < whenThePrefetchRan,
+    'twenty seconds of downloading must not promote a guess'
+  );
+}
+
+check(
+  'three ahead still leaves most of the cache to real history',
+  KEEP_CHAPTERS - MAX_READ_AHEAD === 7,
+  String(KEEP_CHAPTERS - MAX_READ_AHEAD) + ' of ' + String(KEEP_CHAPTERS) + ' chapters you actually opened'
+);
+
+/* ------------------------------------------------------------------ */
+console.log('\nthe second way to go next\n');
+
+/*
+ * The case this exists for: chapter 2, then point chapters, then 3. Nothing
+ * can know whether 2 was a compilation already containing 2.1 and 2.2 or
+ * whether those genuinely come next — the numbering carries no signal — so the
+ * arrow keeps going to 2.1 and this is the second destination offered beside
+ * it.
+ */
+const withPoints = [{ number: 1 }, { number: 2 }, { number: 2.1 }, { number: 2.2 }, { number: 3 }, { number: 4 }];
+
+check('the arrow still goes to the point chapter', beside(withPoints, 2, 1)?.number === 2.1);
+check('and the skip goes past them to 3', skipTarget(withPoints, 2)?.number === 3);
+check('from a point chapter it also reaches 3', skipTarget(withPoints, 2.1)?.number === 3);
+check('what it passes over is named', JSON.stringify(skippedBetween(withPoints, 2, 3)) === '[2.1,2.2]');
+
+/*
+ * Offered only when it does something different. A control on every chapter
+ * that did the same as the arrow beside it is one nobody could learn.
+ */
+const plain = [{ number: 1 }, { number: 2 }, { number: 3 }];
+check('nothing is offered when the next chapter is already whole', skipTarget(plain, 2) === undefined);
+check('nor on the last chapter', skipTarget(withPoints, 4) === undefined);
+
+const trailing = [{ number: 2 }, { number: 2.1 }, { number: 2.2 }];
+check('nor when there is no whole chapter left to reach', skipTarget(trailing, 2) === undefined);
+
+/*
+ * Sources list the same chapter twice — MangaFire carries two editions of most
+ * of them — and the duplicates must cost nothing in either direction.
+ */
+const doubled = [{ number: 2 }, { number: 2 }, { number: 2.1 }, { number: 2.1 }, { number: 3 }, { number: 3 }];
+check('a duplicate edition does not stop the arrow', beside(doubled, 2, 1)?.number === 2.1);
+check('nor the skip', skipTarget(doubled, 2)?.number === 3);
+check(
+  'and a doubled point chapter is marked read once, not twice',
+  JSON.stringify(skippedBetween(doubled, 2, 3)) === '[2.1]'
+);
+
+check('backwards still works', beside(withPoints, 2.1, -1)?.number === 2);
+
 process.exit(failures === 0 ? 0 : 1);

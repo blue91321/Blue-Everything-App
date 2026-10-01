@@ -23,14 +23,31 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
-# Matching on the project path avoids killing unrelated node processes — there
-# are usually several on a dev machine.
+<#
+  Matching on the project path avoids killing unrelated node processes — there
+  are usually several on a dev machine.
+
+  Three image names, because start.ps1 launches the two services from named
+  copies of node.exe so that Task Manager says which is which. `node.exe`
+  stays on the list and is not legacy: `npm run dev`, `npm run agent` and
+  anything started by hand all run the plain name, and an install that could
+  not make the links runs it too. The names are what the *launcher* chose;
+  what identifies these processes is still the path on the command line.
+#>
 $escaped = [regex]::Escape($root)
-$processes = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+$processes = Get-CimInstance Win32_Process `
+    -Filter "Name='node.exe' OR Name='Blue Everything.exe' OR Name='Blue Everything Server.exe'" |
   Where-Object { $_.CommandLine -and $_.CommandLine -match $escaped }
 
 foreach ($p in $processes) {
-  $what = if ($p.CommandLine -match 'agent') { 'agent' } elseif ($p.CommandLine -match 'server') { 'server' } else { 'node' }
+  # The image name already says it for the two the launcher started; the
+  # command line is how a plain node.exe is told apart.
+  $what =
+    if ($p.Name -eq 'Blue Everything Server.exe') { 'server' }
+    elseif ($p.Name -eq 'Blue Everything.exe') { 'agent' }
+    elseif ($p.CommandLine -match 'agent') { 'agent' }
+    elseif ($p.CommandLine -match 'server') { 'server' }
+    else { 'node' }
   Write-Host "Stopping $what (pid $($p.ProcessId))"
   Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
 }

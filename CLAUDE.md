@@ -129,6 +129,85 @@ under the fixed ☰, so it keeps the row the heading held.
 applies `:hover` to whatever was last tapped and leaves it there, so the tile
 you just came back from would stay lit.
 
+### Both columns are chosen side by side
+
+The two pickers sit as two columns of equal width on the Settings screen,
+because they configure the two columns of the Dashboard. Stacked — which is how
+they first shipped — they read as two unrelated settings, and the second was
+below the fold on a laptop.
+
+**A container query, not a media one.** What decides whether two columns fit is
+the width this screen actually has, and docking the menu takes 260px of it
+without the window changing at all. Measured at a 1440px window with the menu
+docked: the pair has **1141px**, not 1440, and splits into two 564.5px columns.
+At 820px it has 521 and stacks. A viewport query would have been asking about a
+number that is not the one that matters — the same mistake the notes screen made
+and the same fix.
+
+**The container is a wrapper, not the grid**, and that is not tidiness. A
+`@container` rule styles *descendants* of the container and never the container
+itself, so declaring both on one element is a rule that silently never applies —
+the layout stays stacked at every width with nothing anywhere saying why. Caught
+by writing it the wrong way first.
+
+`align-items: start`, so the shorter card keeps its height rather than
+stretching to its neighbour's and leaving a long run of empty card under
+whichever list is shorter.
+
+**The refresh rate moved above both.** It used to sit inside the side-column
+section, on the reasoning that the panels are the part of the Dashboard whose
+content moves without anybody touching it. That was true when the main column
+held only your own tasks; it is not now that a shelf card can sit there and go
+stale exactly as a panel does. It governs both columns, so it sits above both.
+
+### The Dashboard itself is a list too
+
+`settings.dashboard_blocks`, the same shape as the panel list below: a JSON
+array of opaque ids. The main column used to be a fixed run of JSX, so "put
+habits at the top" was an edit to `Dashboard.tsx` rather than a setting — and a
+package could contribute a card to the narrow column *beside* the content but
+never to the content itself.
+
+**Core's seven sections are ids like any other.** `blocks.ts` lists them with
+`core:` ids and `Dashboard.tsx` looks each up in a map it builds from its own
+state. They are closures, not components, deliberately: every one reads the same
+`tasks`, `habits`, `settling` and `reloadAll`, so making them components would
+mean threading all of that through each to gain nothing. The ordering is a list
+of strings; what the strings name is that map.
+
+**A panel put in this column is resolved exactly as the side column resolves
+it**, through `resolvePanel`. So the main column holds two kinds of thing and
+the loop that draws it does not know which is which — which is the whole point,
+and is what lets a package's card sit between your tasks and your habits with
+nothing in core learning it exists. Verified by putting the weather card
+between habits and capture.
+
+**Empty means the default order, not an empty Dashboard**, and that is the one
+place this differs from the panel list, where empty is a real choice. An empty
+side column is something somebody picks; an empty Dashboard is not, and it is
+what every install in existence would have had on the morning this shipped. So
+`[]` means "whatever the app ships with", `CORE_BLOCKS` is both the registry and
+that default, and removing everything gives you the default back rather than a
+blank page.
+
+The cost is stated on the screen rather than hidden: once you have chosen an
+order, a section added in a later version does not appear until you add it — so
+the picker lists everything available rather than only what is unused, and says
+which of the two states you are in.
+
+**A core section whose feature is switched off is dropped**, which today means
+`core:habits`. The section is core's but the feature is not always on, and a
+heading with nothing under it is worse than its absence — the same respect
+`notes:recent` pays its own switch.
+
+**The picker is one component used twice.** It was written for the side column
+and the main column needed exactly it, so `OrderedPicker` took the ↑/↓, the
+add/remove and the "not in this build, kept for when it is back" note, and both
+sections render it. The same call `useButtonMenu` made when the New menu wanted
+the right-click menu's measuring and clamping.
+
+Cost: **101.4KB → 102.3KB** gzipped on the main bundle for the whole thing.
+
 ### The Dashboard's side column
 
 A second column on a wide screen, holding **as many panels as you like, one
@@ -141,11 +220,39 @@ weight: the PWA and the server update independently, so a browser holding an
 older bundle reads that field and draws one panel rather than an empty column.
 Migration `0039` backfills the list from it, so nobody loses what they had.
 
-Reordering is **↑/↓ and a whole-list write**, the same idiom the Habits screen
-uses. Drag and drop is the one interaction that has to be built twice — once for
-the mouse and once for touch — and a list of three does not need it. A panel is
-appended when added rather than inserted, because the bottom is predictable and
-anywhere else is a guess about intent.
+Reordering is **↑/↓ *and* a drag**, both writing the whole list, the same idiom
+the Habits screen uses. A panel is appended when added rather than inserted,
+because the bottom is predictable and anywhere else is a guess about intent.
+
+**The drag reverses what this said**, which was that "drag and drop is the one
+interaction that has to be built twice — once for the mouse and once for touch".
+That is true of HTML5 drag-and-drop, which does not exist on iOS at all and is
+why the notes tree's drag is desktop-only and documented as a gap. **Pointer
+events are not that**: one set of handlers, and a finger is a pointer. The
+objection was to a particular way of building one, not to the thing. Reported as
+the arrows being fiddly once the list grew past three or four, which they are.
+
+**The grip is a handle, not the whole row**, and that is what makes it work on a
+phone. A drag can only begin on touch once the browser is told to stop scrolling
+— `touch-action: none` — and on the whole row that would mean the list could not
+be scrolled past at all. On a grip it costs nothing: everywhere else in the row
+still scrolls.
+
+**The arrows stay, and not out of politeness.** They are the keyboard's way: the
+grip is `aria-hidden` and deliberately not focusable, since a third control that
+does what the two beside it do and cannot be operated by keyboard is noise to
+anybody using one.
+
+**The list on screen is a draft until the save comes back.** Dropping writes the
+whole list, and clearing the draft at that moment would snap the row to its old
+place for the length of the round trip and then jump it forward again — which
+reads as the drag having failed and then un-failed. The draft is held until the
+saved value arrives and matches. A drag that ends where it started writes
+nothing at all.
+
+Verified by driving real pointer events both ways: a mouse drag of the last row
+to the top, and a `pointerType: 'touch'` drag of the first row to the fourth,
+each reordering live during the drag and persisting after it.
 
 Each panel gets **its own Suspense boundary**, not one around the column: they
 are separate chunks that arrive independently, and a shared boundary would hold
@@ -502,6 +609,159 @@ through. Bounded by chapters, not bytes: a long webtoon chapter is tens of
 megabytes, so ten is a few hundred at most. `index.json` is the only record,
 and a folder it does not name is removed on the next write.
 
+**And a few are fetched ahead of you** (More → *Fetch ahead while reading*),
+0 to 3, **one by default**. The cache above fills *behind* you — a chapter is
+kept once opened — so going back was instant and going forward was not, which
+is the direction people read in. One ahead is the chapter you are nearly
+certainly about to open, and it costs one chapter of somebody else's bandwidth
+for one you were going to ask for anyway; two is a guess and three is a guess
+that costs three. Zero is genuinely off.
+
+**Three at most, because the cache keeps ten.** A bound here is a bound on how
+much of your history a guess may take: at three ahead, seven of the ten are
+still chapters you opened yourself.
+
+Four things about it are deliberate, and three are about not taking something
+away to provide it:
+
+- **It never starts Suwayomi.** `reader()` would, which is right for a chapter
+  you asked for and wrong for a guess about one you have not — `on-demand`
+  exists so a JVM is not resident for something used in bursts, and waking it to
+  speculate would quietly undo that. So it asks whether Suwayomi is *already*
+  up, the same question the release sweep asks, and does nothing if not.
+- **It runs after the current chapter is filled, one chapter at a time.** The
+  reader's own page requests are what must be fast; a prefetch racing them for
+  the same source would make the chapter you are reading slower in order to
+  serve the one you are not.
+- **"Next" is by chapter number, not list position** — the rule the reader's
+  arrows already follow. Verified on Eleceed, which lists two entries for most
+  numbers: opening chapter 1 fetched 2 and 2.1 and skipped the duplicates at
+  227 and 229. Decimal numbers are real and are not rounded past.
+- **Anything already archived or already complete is skipped**, so re-reading a
+  series you have saved costs nothing.
+
+**A prefetched chapter is recorded as older than the one you are reading**, and
+getting that wrong is silent. The ten are evicted by when they were opened, and
+a chapter fetched ahead was never opened at all — recorded as "now" it sits in
+*front* of the chapter in your hands, so at three ahead the one you are reading
+is evicted before three you have not looked at.
+
+The first version did exactly that, and the reason is worth keeping: the offset
+was `Date.now() - 1 - i`, evaluated **when the prefetch runs** — which is after
+the current chapter has finished downloading. Twenty seconds of downloading
+later, "one millisecond behind" was ten seconds in front, and the cache ordered
+itself backwards: no.4, no.3, then what was actually being read. Measured on
+Archmage Curriculum before the fix and on Eleceed after it.
+
+`readAheadAt(openedAt, nth)` is named and exported for one reason: so it can be
+asserted. **The first version of that test asserted the intended numbers rather
+than how they are derived, so it passed against the broken code** — it builds
+the offsets through the real function now, with a twenty-second gap between the
+open and the prefetch, which is the thing that was wrong.
+
+**A series can be starred**, and that is a smaller set than the library. Every
+series here is followed — that is what being in the library means — and the
+Manga Reader import made the library *itself* "things you chose", since its
+favourites became the whole shelf. So a star is the set inside it you actually
+keep up with. On the ⋯ menu of a chapter list, first in that menu because it is
+the only entry you would use more than once; everything below it is something
+you do to a series once and never again. **Favourites** is second in the
+Library's filter row, next to All rather than at the end — the other three are
+fault-finding and this is the one you would leave on.
+
+**Only `true` is ever stored.** Nine hundred series arrived from the import and
+nobody starred any of them, so writing `false` onto every one would be a lot of
+JSON saying nothing; `favourite` is optional and absent means no.
+
+**The Dashboard card is `manga:shelf`**, a second panel from the same module —
+`panel.tsx` branches on the id rather than becoming two chunks, since the two
+share the request, the covers and the empty states. It shows the library or
+only the starred, in an order that **follows the Library tab by default**.
+
+That default is a `localStorage` read on purpose. The Library's sort is per
+device — sorting the phone's shelf should not reorder the PC's — so a card that
+followed a server-side copy would disagree with the screen it claims to follow.
+Pinning an order instead stores it on the server, so a pinned card agrees
+everywhere. The storage follows the wish rather than the other way round: "keep
+these in step" is per device because the thing it follows is, and "I want this
+one order" is shared because you said it once about the card itself. Verified
+both ways on a real library of 890.
+
+**The sort had to leave `Library.tsx` to be usable here.** Importing any part of
+that file pulls the whole Library screen into the card's chunk — Rollup cannot
+tree-shake that, which is the 9.5KB the friends panel once paid to render six
+words. `shelf.ts` holds the comparators and has **no imports but a type**, the
+same property `presence.ts` and `chapter-nav.ts` have, and `Library.tsx`
+re-exports from it so no importer had to change.
+
+**It draws the Library's own tile and the Library's own grid**, rather than a
+list of thin rows. That was the first version and it was wrong in a way worth
+naming: a card showing the same series as rows is a *second way of drawing a
+shelf*, and the one you have to learn twice. The cover, the NEW badge, the
+newest chapter on its bar and the source underneath are what a shelf looks like
+here, so the card is those.
+
+`Tile.tsx` is the extraction that made it possible — importing it from
+`Library.tsx` would have pulled the paging, the filters and the sort row into
+the card's chunk, which is the 9.5KB mistake again. Its four actions are
+optional and the right-click menu is built from whichever arrived: the Library
+offers all of them, the card offers only opening, because details, other-sources
+and stop-following are things you do *to* a library rather than from a glance at
+one.
+
+**The card declares `container: manga-library`, the same name the Library
+screen does.** The grid is three across until a `@container manga-library
+(min-width: 560px)` rule widens it, so without that the card would be three
+tiles across at every width including the full Dashboard. Named together rather
+than the card copying the grid rules, which would be two definitions of one
+shelf and the second to drift. Measured: 3 columns at 390px with 115px tiles,
+5 columns at an 809px main column with 151px tiles, no sideways scroll at
+either.
+
+**Twelve tiles, and a count of the rest.** Every tile fetches its cover when it
+mounts and this install follows nine hundred series — the Library draws sixty at
+a time for that reason, and a Dashboard card is a glance rather than a page.
+Twelve divides by three, four and six, so it ends on a full row at most of the
+widths the grid produces; at five columns it does not, and a ragged last row is
+what any responsive grid does. The "and N more" button underneath is what says
+the list was cut rather than ended.
+
+**"New chapters on top" is half of the order, and following only the other half
+read as not following at all.** The Library's sort and its tick box are one
+control there; the first version followed the sort and passed `false` for the
+box, so a card claiming to mirror the Library put nothing new at the top of it.
+In `follow` both come from that device. Pinned, the box is the card's own
+(`shelfNewFirst`, server-side) so a pinned card agrees across devices in both
+halves rather than one — and the box only *appears* in the settings while the
+sort is pinned, because a second copy of it that did nothing is the lie the
+disabled-slider case already argues against.
+
+**Its settings are on the Manga tab, not in Settings.** Everything they decide
+is about manga — which series, in which order — while Settings decides only
+whether the card is on the Dashboard and where in the column it sits. The same
+split the live panel's scope draws, from the other side.
+
+**So the card carries its own button to them**, and that needed one thing core
+had never wired. The side column has a single *Change what's here* on its
+`aside`, which every panel gets free: the slot is core's, so the button about
+the slot is core's. A card in the **main** column has no such shared edge — it
+sits among the task sections with nothing around it — so the button has to be
+the package's, and it goes somewhere core could not have sent you anyway.
+
+`FeatureViewProps` carried `search` and not `focus`. Core has carried `focus`
+for its own screens since the right-click menu, and this document already
+describes it as "opaque, read differently by each screen" — it simply was never
+handed to a feature, so a package's card had no way to link to the setting that
+configures it. It is passed now, and `MangaView` answers `focus: 'shelf'` by
+opening More and bringing that card into view with a moment of highlight, on a
+`setTimeout` rather than `requestAnimationFrame` for the reason the Settings
+screen took three goes to learn.
+
+**It is not called "Change what's here".** Both buttons can be on screen at
+once — this card in the main column, core's on the `aside` — and two buttons
+with one label going to two different screens is worse than one name being
+longer. Found by clicking the wrong one while testing.
+
 **New-chapter notifications can be switched off** (More → New chapters),
 beside the task switch. Off, chapters are still noticed and recorded, so the
 NEW badge, the catch-up count and "last updated" carry on; only the nudge is
@@ -608,6 +868,52 @@ position taken during the reader's first render, before the page shrank.
   answers "the chapter beside this one" from its own list, by number, so a
   source listing two editions of chapter 50 does not stop the arrow at the
   second.
+- **After a chapter with point chapters, Next has a second destination.** A
+  source may list 2, then 2.1 and 2.2, then 3 — and **nothing can know what
+  those are.** Sometimes 2 is a compilation that already contains them and the
+  point chapters are the same pages split up; sometimes they are side stories
+  or a later correction and genuinely come next. The numbering carries no
+  signal, so guessing would be wrong about half the libraries it met.
+
+  So it is not a rule about which to show. The arrow still goes to 2.1, because
+  that is what "next" means when nobody has said otherwise, and a second
+  control beside it goes to 3 — which is how you say otherwise. It is labelled
+  with the number rather than given an icon, because "skip" says nothing
+  without saying where to, and a second arrow-like glyph beside the first is
+  the one thing guaranteed to be mistaken for it.
+
+  **Offered only when it does something different**: not when the next chapter
+  is already whole, not on the last chapter, and not when there is no whole
+  chapter ahead at all. A control on every chapter that did the same as the
+  arrow beside it is one nobody could learn. On Eleceed it appears on 40 of 461
+  chapters.
+
+  **Finishing by it marks the chapters passed over read**, and that follows
+  from what pressing it means: skipping 2.1 and 2.2 to reach 3 is the claim
+  that chapter 2 contained them, so leaving them unread would put a NEW badge
+  and a catch-up count on chapters you have in substance read — and nothing
+  later would ever clear it. From partway through it marks nothing, which is
+  the arrow's own rule.
+
+  **The Next arrow does not move when it appears.** The bottom bar is
+  `space-between`, so a control that joined and left it would shift Next every
+  few chapters — the complaint this document makes about the ☰, arriving by a
+  different door. Next and the skip are one group of constant width, and the
+  skip is always rendered, hidden with `visibility` when there is nothing to
+  skip. Measured at 1280px across 2 → 2.1 → 2: Next's right edge is **58px from
+  the window edge every time**.
+
+  Unlike the chrome's own hiding, this one is meant to leave the tab order:
+  `visibility: hidden` plus `disabled`, because a button that would do nothing
+  should not be something to tab onto.
+
+  `chapter-nav.ts` holds `beside`, `skipTarget` and `skippedBetween`. `beside`
+  had been copied into `Chapters.tsx`, `SeriesDetail.tsx` and `offline.tsx`,
+  and this would have been a fourth, fifth and sixth copy — "what is next" is
+  one question however many screens can open a reader. The file has **no
+  imports**, the same property that lets `presence.ts` be asserted, so
+  `manga-check` tests the rule directly.
+
 - **Hidden is `opacity` plus `pointer-events: none`, not `visibility`**, so a
   hidden control cannot catch a tap meant for the page but can still be reached
   by keyboard, where focusing it brings the bars back.
@@ -2010,8 +2316,8 @@ Three things there are easy to get wrong:
   | …plus `detached: true` | **no** | — |
   | `cmd /c start /b "" powershell.exe …` | yes | yes |
 
-  The child must outlive its parent, because `stop.ps1` kills every `node.exe`
-  whose command line names this project — including the agent whose menu was
+  The child must outlive its parent, because `stop.ps1` kills every Node
+  process whose command line names this project — including the agent whose menu was
   just clicked. But `detached: true` on Windows means `DETACHED_PROCESS`, and
   `powershell.exe` needs a console host: with no console it exits instantly
   without running a line. `start` has the command processor create the process
@@ -2073,6 +2379,98 @@ The absolute entry path matters beyond tidiness: `-WorkingDirectory` is what
 lets `--import tsx` resolve the loader, but only the *command line* is visible to
 `Get-CimInstance`, and that's how `stop.ps1` distinguishes these from every
 other node process on the machine.
+
+#### The two processes say which they are
+
+They were two rows reading `node.exe`, which is no use for the question anybody
+actually asks of Task Manager: which of these is mine, what is it costing, and
+what do I end if it misbehaves. A dev machine has several node processes and
+none of them says whose it is. They are **Blue Everything** and **Blue
+Everything Server** now, so a resource check is
+`Get-Process "Blue Everything*"` rather than a hunt through command lines.
+
+**A running program cannot name itself here, which is the whole reason this is
+a launcher change.** Windows takes a process's name from the file it was
+started from. `process.title` renames the process on Linux and on Windows only
+sets the console window title — and these run hidden, so it sets nothing at
+all. So the only way to be legible in that list is to be *started from* a file
+with the right name, and `node-runtime.ps1` makes two of those beside the Node
+it already owns.
+
+**Hard links, not copies.** node.exe is 89MB, and relabelling two rows should
+not cost a quarter of a gigabyte. They are made in the folder node.exe is
+already in, so they are on the same volume by construction — the one thing a
+hard link needs — and being beside it means the process starts in exactly the
+environment it did before. Measured: three names, one 89MB file, **0 KB** of
+disk.
+
+**Every step of it falls back to `node.exe` itself.** A label is worth a few
+milliseconds at startup and not worth an app that will not start, so a volume
+with no links to give gets a copy, and a folder that refuses both gets the
+plain name and no label. `stop.ps1` therefore matches all three names and not
+just the new two — and that is not legacy either: `npm run dev`, `npm run
+agent` and anything started by hand all run the plain name.
+
+**The staleness check is length *and* write time**, which is the one test that
+covers both shapes: a hard link shares them with node.exe by definition, so it
+can only ever fail for a copy left behind by a Node upgrade. That case matters
+more than it sounds — a stale copy of an older Node would go on running the app
+on a version it is not meant to be on, invisibly, because everything would
+still work.
+
+**The release zip leaves them out.** A zip cannot hold a link, so each would go
+in as another whole Node — and `node-runtime.ps1` makes them on first run
+against whatever node.exe is actually there, which is also what keeps them from
+going stale across an update.
+
+**Naming them turned up a bug, which is not a coincidence.** Ending a process
+from Task Manager is the thing a name invites you to do, and the day these got
+names somebody ended the agent — and found the app neither closed nor came back.
+
+Both halves of that were real. The server *did* close itself, ninety seconds
+later, exactly as `agent-watch.ts` says it should; what it did not do is say so,
+and two minutes of an app that looks stuck is indistinguishable from one that is.
+The second half was the actual fault: **`start.ps1` treated "the port is open" as
+"the app is running"**, and the app is a server *and* an agent. So
+double-clicking it printed "already running" and did nothing, the agent never
+came back, and the server then closed for the lack of it — a restart that
+appeared to shut the app down.
+
+The fix is one question asked properly. `Test-AgentRunning` sits beside
+`Test-Listening` and asks it the way `stop.ps1` already does — an image name
+Node is started from here, and a command line naming this checkout. The server's
+command line names the checkout too and ends in `packages\server\src\main.ts`,
+so it can never match on `agent`. When the server is up and the agent is not, it
+hands over to **the `-AgentOnly` path that already existed** for this exact
+shape: the Voice screen's *Start it* is the same situation reached from inside
+the app. A second way to start an agent would have been a second thing to keep
+right.
+
+The reverse is guarded too, and was never reachable before: with the server down
+and the agent alive, the full path used to start a second agent — two tray
+icons, two sets of nudges, and two microphones wanting one device.
+
+**Which also removes the silence.** Restarting now brings the agent back inside
+the ninety seconds, it checks in, and the server never closes at all — so the
+window nobody could see through is a window nobody has to wait out. Verified by
+ending the agent and double-clicking: same server pid, new agent pid, one agent,
+and the watchdog never fired.
+
+What is *not* labelled is the app window: that is Brave or Edge with
+`--app=http://127.0.0.1:8787`, so its memory belongs to the browser and its name
+always will. It is still findable by that command line, and worth counting
+separately — it is a browser rendering a page, not part of the 135MB above.
+
+**`start.ps1` said `Check $logDir\agent.err.log` and printed `Check .err.log`
+and a beep.** The `\a` was stored as an actual 0x07, so PowerShell read
+`$logDirgent` — an undefined variable — and the message for a failed agent start
+named no file. Found while reading that branch for this change, and it is the
+second escape sequence to ship as the byte it names: the first was a lone `\r`
+in `create-shortcut.ps1`, which cost a debugging session and broke that script
+on every PC. So `publish-check` no longer checks for one byte. Tab, newline and
+a CR that is part of a CRLF are the only control bytes a script has any use
+for; **anything else in one is refused by name and offset.** Verified by
+planting a bell in a tracked script and watching it fail.
 
 ### Offline: the app keeps working without the server
 

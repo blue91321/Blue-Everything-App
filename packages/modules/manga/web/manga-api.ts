@@ -24,6 +24,8 @@ export interface SeriesSummary {
   checkedAt: number | null;
   error: string | null;
   addedAt: number;
+  /** Starred. Optional: an older server does not send it. */
+  favourite?: boolean;
   coverPath: string | null;
   url: string | null;
   malId: number | null;
@@ -404,6 +406,13 @@ export interface Library {
   releaseTasks?: boolean;
   /** Whether a new chapter raises a notification at all. Optional for the same reason. */
   releaseNudges?: boolean;
+  /** Chapters fetched ahead while reading. Optional: an older server sends neither. */
+  readAheadChapters?: number;
+  maxReadAhead?: number;
+  /** What the Dashboard card lists and how. Optional: an older server sends neither. */
+  shelfShow?: 'all' | 'favourites';
+  shelfSort?: 'follow' | 'read' | 'catchup' | 'updated' | 'title' | 'added';
+  shelfNewFirst?: boolean;
 }
 
 export interface SweepResult {
@@ -460,6 +469,15 @@ export const manga = {
   checkNow: () => call<SweepResult>('/api/manga/check', { method: 'POST' }),
   setReleaseNudges: (on: boolean) =>
     call<{ releaseNudges: boolean }>('/api/manga/release-nudges', { method: 'PUT', body: JSON.stringify({ on }) }),
+  setFavourite: (id: string, on: boolean) =>
+    call<{ favourite: boolean }>(`/api/manga/${id}/favourite`, { method: 'PUT', body: JSON.stringify({ on }) }),
+  setShelf: (body: { show?: 'all' | 'favourites'; sort?: string; newFirst?: boolean }) =>
+    call<{ shelfShow: string; shelfSort: string }>('/api/manga/shelf', { method: 'PUT', body: JSON.stringify(body) }),
+  setReadAhead: (chapters: number) =>
+    call<{ readAheadChapters: number }>('/api/manga/read-ahead', {
+      method: 'PUT',
+      body: JSON.stringify({ chapters }),
+    }),
   setReleaseTasks: (on: boolean) =>
     call<{ releaseTasks: boolean }>('/api/manga/release-tasks', { method: 'PUT', body: JSON.stringify({ on }) }),
 

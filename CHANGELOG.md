@@ -5,6 +5,56 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.5.3
+
+The Dashboard is yours to arrange, the two background processes say what they
+are, and a few things asked for while reading.
+
+### The Dashboard
+
+- **You choose what is on it, and in what order.** Settings → General → *On the
+  Dashboard*: move habits above your tasks, drop a package's card between them,
+  or take a section off entirely. The two pickers now sit side by side, because
+  they configure the two columns of one screen.
+- **Reorder by dragging as well as by the arrows**, on a phone too — the grip
+  is a handle rather than the whole row, so the list still scrolls past it. The
+  arrows stay as the keyboard's way.
+- **Nothing changes until you choose something.** An empty list means the order
+  the app ships with, and "Back to the default order" returns to it.
+
+### Manga
+
+- **A shelf on the Dashboard.** Your library drawn as it is on the Library tab —
+  covers, the NEW badge, the newest chapter — showing everything or only the
+  starred, in the order that tab is using, including its "New chapters on top"
+  box. Or pin an order of its own, which then agrees across your devices.
+- **Series can be starred**, from the ⋯ on a chapter list, with a *Favourites*
+  filter on the Library tab.
+- **Chapters are fetched ahead while you read**, one by default, up to three, or
+  off. The next chapter opens from this PC rather than from the source. It never
+  starts Suwayomi for a guess, and runs only after the chapter you are reading
+  has finished downloading.
+- **After a chapter with point chapters, Next has a second destination.** From
+  chapter 2 the arrow still goes to 2.1; a button beside it goes to 3. Nothing
+  can know whether 2 was a compilation already containing them, so both are
+  offered. Finishing by the skip marks what it passed over as read.
+
+### Running it
+
+- **The two processes are named.** Task Manager shows *Blue Everything* and
+  *Blue Everything Server* instead of two anonymous `node.exe` rows, so
+  `Get-Process "Blue Everything*"` answers what the app is costing.
+- **Ending the agent and reopening the app now brings it back.** It used to say
+  "already running" and do nothing — because it only checked the port, and the
+  app is a server *and* an agent. The server then closed itself ninety seconds
+  later for the lack of one, so the restart appeared to shut the app down.
+- **`Create Desktop Icon.cmd` works.** A stray byte in `create-shortcut.ps1`
+  ended a line early, so it made both shortcuts and then died without
+  registering the `everything:` link. Shipped broken since 0.2.1.
+- **The failed-agent message names the log file again**, for the same class of
+  reason — an escape sequence stored as the byte it names. `publish-check`
+  refuses both now.
+
 ## 0.5.2
 
 Everything in the two improvement notes, plus two asked for alongside them.

@@ -1,0 +1,17 @@
+-- What is on the Dashboard's main column, and in what order.
+--
+-- The side column has been an ordered list of opaque ids since 0039; the main
+-- column was hard-coded — capture, the queue, three task sections, habits,
+-- finished. So "put habits at the top" was not a setting, it was an edit to
+-- `Dashboard.tsx`, and a package could contribute a card to the narrow column
+-- beside the content but not to the content itself.
+--
+-- Same shape as `dashboard_panels` deliberately: a JSON array of opaque ids,
+-- nothing validating them, so an id belonging to a package that is switched off
+-- keeps its place and comes back when the package does.
+--
+-- Empty means "the default order", not "an empty Dashboard". That is the one
+-- place this differs from the panel list, where empty is a real choice — a
+-- Dashboard with nothing on it is not a thing anybody is choosing, and it would
+-- be what every existing install got on the morning this shipped.
+ALTER TABLE `settings` ADD `dashboard_blocks` text DEFAULT '[]' NOT NULL;

@@ -31,6 +31,8 @@ export type SeriesSummary = {
   checkedAt: number | null;
   error: string | null;
   addedAt: number;
+  /** Starred — see `Series.favourite`. Always a boolean here, unlike on disk. */
+  favourite: boolean;
   /** Present only when there is a cover to fetch, so the screen need not guess. */
   coverPath: string | null;
   /** The MangaUpdates page, which is also where the credit link points. */
@@ -189,6 +191,7 @@ export function seriesSummary(series: Series): SeriesSummary {
     checkedAt: series.checkedAt,
     error: series.error,
     addedAt: series.addedAt,
+    favourite: series.favourite === true,
     coverPath: coverPathOf(series),
     url: series.muId ? seriesUrl(series.muId) : null,
     malId: series.malId,

@@ -204,7 +204,17 @@ for (const path of tracked.filter((p) => p.endsWith('.ps1'))) {
 }
 
 /*
- * A carriage return on its own ends the line, including inside a comment.
+ * A control byte that is not a line ending, in a script.
+ *
+ * Two of these have shipped now, both from the same cause: an escape sequence
+ * written into the file as the byte it names rather than as the two characters
+ * it is. A lone `\r` ends a PowerShell line; `\a` is a bell, which prints
+ * nothing and eats the letter after it. `start.ps1` said
+ * `"Check $logDir\agent.err.log"` with the `\a` stored as 0x07, so PowerShell
+ * read `$logDirgent` — an undefined variable — and the message for a failed
+ * agent start came out as `Check .err.log` and a beep.
+ *
+ * The carriage return is the one that cost a debugging session:
  *
  * Second time in this same file, and the first one cost a debugging session
  * because the damage is invisible: `create-shortcut.ps1` carried a comment
@@ -215,19 +225,28 @@ for (const path of tracked.filter((p) => p.endsWith('.ps1'))) {
  * meant to make that step survivable. "Create Desktop Icon.cmd" made both
  * shortcuts, then died in red text without registering the `everything:` link.
  *
- * It reads perfectly in every editor, which is the whole problem: the file says
- * one thing and PowerShell runs another, and nothing anywhere says so.
+ * Both read perfectly in every editor, which is the whole problem: the file
+ * says one thing and PowerShell runs another, and nothing anywhere says so. So
+ * the rule is the general one rather than a check per byte — tab, newline and a
+ * CR that is part of a CRLF are the only control bytes a script has any use
+ * for, and anything else in one got there by accident.
  */
 for (const path of tracked.filter((p) => /\.(ps1|cmd|bat)$/i.test(p))) {
   const bytes = readFileSync(resolve(repo, path));
-  const stray = [];
-  for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0x0d && bytes[i + 1] !== 0x0a) stray.push(i);
+  let at = -1;
+  for (let i = 0; i < bytes.length && at < 0; i++) {
+    const b = bytes[i];
+    if (b === 0x09 || b === 0x0a) continue;
+    if (b === 0x0d && bytes[i + 1] === 0x0a) continue;
+    if (b < 0x20 || b === 0x7f) at = i;
   }
-  if (stray.length > 0) {
+  if (at >= 0) {
+    const b = bytes[at];
     problems.push(
-      `${path} has a carriage return that is not a line ending (byte ${stray[0]}) — ` +
-        'PowerShell ends the line there, so what follows is run rather than read'
+      `${path} has a control byte at ${at} (0x${b.toString(16).padStart(2, '0')}) that is not a line ending — ` +
+        (b === 0x0d
+          ? 'PowerShell ends the line there, so what follows is run rather than read'
+          : 'it is almost certainly an escape sequence written as the byte it names')
     );
   }
 }

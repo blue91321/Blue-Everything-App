@@ -77,6 +77,7 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     speakerThreshold: row.speakerThreshold / 100,
     hiddenProviders: parseHiddenProviders(row.hiddenProviders),
     dashboardPanels: parsePanelList(row.dashboardPanels),
+    dashboardBlocks: parsePanelList(row.dashboardBlocks),
   };
 }
 
@@ -174,6 +175,15 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
          * hand React two children with one key, and there is no reading of "show
          * me who is online, then who is online" worth supporting.
          */
+        /*
+         * Deduplicated like the panels, and for the same reason — but *not*
+         * given an older-PWA fallback, because there is nothing to fall back
+         * to: a browser that has not heard of this draws the built-in order,
+         * which is exactly right.
+         */
+        ...(body.dashboardBlocks === undefined
+          ? {}
+          : { dashboardBlocks: JSON.stringify([...new Set(body.dashboardBlocks)]) }),
         ...(body.dashboardPanels === undefined
           ? {}
           : (() => {

@@ -1581,6 +1581,63 @@ console.log('\nthe side column holds a list, in order');
   await setPanels(['integrations:friends']);
 }
 
+console.log('\nthe main column holds a list too\n');
+
+{
+  const settingsNow = async () => (await app.inject({ method: 'GET', url: '/api/settings' })).json();
+  const setBlocks = async (dashboardBlocks: string[]) =>
+    app.inject({ method: 'PATCH', url: '/api/settings', payload: { dashboardBlocks } });
+
+  /*
+   * Empty is the *default order*, not an empty Dashboard — which is the one
+   * place this differs from the panel list above, and the difference matters:
+   * every install in existence had an empty column on the morning this shipped,
+   * and a Dashboard that drew nothing would have been what they all saw.
+   */
+  const fresh = await settingsNow();
+  check('a fresh install stores nothing at all', fresh.dashboardBlocks.length === 0, JSON.stringify(fresh.dashboardBlocks));
+
+  await setBlocks(['core:habits', 'core:capture', 'core:queue']);
+  const moved = await settingsNow();
+  check(
+    'an order is stored as given',
+    moved.dashboardBlocks.join(',') === 'core:habits,core:capture,core:queue',
+    moved.dashboardBlocks.join(',')
+  );
+
+  // Leaving a section out is the feature, not a mistake to repair: a picker
+  // that could only reorder would not be able to hide "Coming up".
+  check('and a section left out stays out', !moved.dashboardBlocks.includes('core:coming-up'));
+
+  await setBlocks(['core:habits', 'core:habits', 'core:capture']);
+  const deduped = await settingsNow();
+  check(
+    'duplicates are dropped, as they are for panels',
+    deduped.dashboardBlocks.join(',') === 'core:habits,core:capture',
+    deduped.dashboardBlocks.join(',')
+  );
+
+  /*
+   * Opaque, exactly like a panel id. An id belonging to a package that is
+   * switched off must keep its place rather than being rewritten away, or
+   * switching the package back on would not restore the Dashboard you had.
+   */
+  await setBlocks(['core:habits', 'nobody:answers-to-this', 'core:capture']);
+  const unknown = await settingsNow();
+  check(
+    'an unknown id keeps its place rather than being refused',
+    unknown.dashboardBlocks.join(',') === 'core:habits,nobody:answers-to-this,core:capture'
+  );
+
+  // A panel and a core section are the same kind of thing to this list, which
+  // is what lets a package's card sit between your tasks and your habits.
+  await setBlocks(['core:habits', 'manga:shelf', 'core:capture']);
+  check('a panel id sits among the core sections', (await settingsNow()).dashboardBlocks[1] === 'manga:shelf');
+
+  await setBlocks([]);
+  check('and emptying it means the default order again', (await settingsNow()).dashboardBlocks.length === 0);
+}
+
 /* ------------------------------------------------------------------ */
 
 console.log('\nthings that must stay shut');

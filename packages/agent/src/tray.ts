@@ -15,6 +15,11 @@
  * it. Two hidden `node.exe` processes with `-WindowStyle Hidden` are invisible
  * to anyone who does not already know they are there, and the only way to stop
  * or restart them was a `.cmd` file in a folder you had to remember the path to.
+ * They are named now — `node-runtime.ps1` starts them from two hard links
+ * called `Blue Everything.exe` and `Blue Everything Server.exe`, so Task
+ * Manager says which is which — but a name in a list you have to go looking
+ * for is not the same as a place to click, so this is still the answer to
+ * "where is it".
  *
  * ### It stops and restarts the whole app, not just the agent
  *
@@ -24,10 +29,11 @@
  * does not have to know how to launch a server — it does not import one, and
  * the server stays a thing that could move to a VPS tomorrow.
  *
- * **The child must outlive its parent.** `stop.ps1` kills every `node.exe`
- * whose command line names this project, and that includes the process reading
- * this comment. So the script is spawned detached, as `powershell.exe`, which
- * the filter does not match — it carries on and finishes the job after the
+ * **The child must outlive its parent.** `stop.ps1` kills every process whose
+ * command line names this project and whose image is one of Node's three names
+ * here — `node.exe` and the two named links it is also started from — and that
+ * includes the process reading this comment. So the script is spawned detached,
+ * as `powershell.exe`, which the filter does not match — it carries on and finishes the job after the
  * agent it was launched from is gone. A `child_process` left attached would be
  * killed halfway through and leave the server running with nothing to stop it.
  *
@@ -244,9 +250,9 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
  * | …plus `detached: true` | **no** | — |
  * | `cmd /c start /b "" powershell.exe …` | yes | yes |
  *
- * The child *has* to outlive its parent: `stop.ps1` kills every `node.exe`
- * whose command line names this project, which includes the agent whose menu
- * was just clicked. But `detached: true` on Windows means `DETACHED_PROCESS` —
+ * The child *has* to outlive its parent: `stop.ps1` kills every Node process
+ * whose command line names this project — under any of the three names it is
+ * started from — which includes the agent whose menu was just clicked. But `detached: true` on Windows means `DETACHED_PROCESS` —
  * no console at all — and `powershell.exe` needs a console host, so it exits
  * immediately without running a line of the script.
  *

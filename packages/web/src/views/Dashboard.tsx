@@ -1,11 +1,13 @@
-import { Suspense, useEffect} from 'react';
+import { Fragment, Suspense, useEffect, type ReactNode } from 'react';
 import { api, type Nudge, type Task } from '../api';
 import { useAsync } from '../useAsync';
 import { refreshEvery } from '../live';
 import { useSettling } from '../useSettling';
 import { clockTime, endOfToday, relative, startOfToday } from '../format';
 import { goTo } from '../nav';
-import { chosenPanels } from '../panels';
+import { chosenPanels, resolvePanel } from '../panels';
+import { chosenBlocks, isCoreBlock } from '../blocks';
+import { featureEnabled } from '../features';
 import { TaskRow, HabitRow } from '../rows';
 import { Capture } from './Capture';
 
@@ -69,27 +71,25 @@ export function Dashboard() {
    *
    * Zero is off and is the default, so this hook usually starts nothing at all.
    */
-  const every = settings.data?.dashboardRefreshSeconds ?? 0;
-  useEffect(() => refreshEvery(every), [every]);
-
-  return (
-    /*
-     * `has-panel` widens the container, and it does that through
-     * `.app:has(.dash.has-panel)` in the stylesheet rather than by `App` passing
-     * a class down. `App` does not read settings and threading one boolean
-     * through it purely to set a max-width would be a prop through three
-     * components for a layout question the child already knows the answer to.
-     *
-     * Where `:has()` is unsupported this degrades to the one-column layout with
-     * the panel stacked underneath, which is exactly what a narrow screen gets
-     * anyway — so the fallback is a real layout rather than a broken one.
-     */
-    <div className={panels.length > 0 ? 'dash has-panel' : 'dash'}>
-      <div className="dash-main">
+  /**
+   * Core's own sections, by id.
+   *
+   * Closures rather than components, deliberately: every one of these reads the
+   * same `tasks`, `habits`, `settling` and `reloadAll`, so making them
+   * components would mean threading all of it through each to gain nothing. The
+   * ordering is a list of strings; what the strings name is this map.
+   *
+   * A section that renders nothing when empty still returns null here rather
+   * than being left out of the map, so the picker can offer it and the order
+   * can hold its place.
+   */
+  const coreBlocks: Record<string, () => ReactNode> = {
+    'core:capture': () => (
       <section>
         <Capture onAdded={reloadAll} />
       </section>
-
+    ),
+    'core:queue': () => (
       <section>
         <h2>Waiting for a good moment</h2>
         {queue.loading && <div className="empty">loading…</div>}
@@ -115,11 +115,13 @@ export function Dashboard() {
           <div className="empty">Nothing queued. You'll be left alone.</div>
         )}
       </section>
-
+    ),
+    'core:due-today': () => (
       <TaskSection title="Due today" tasks={dueToday} onChange={reloadAll} settling={settling} empty="Nothing due." />
-      <TaskSection title="Anytime" tasks={anytime} onChange={reloadAll} settling={settling} />
-      <TaskSection title="Coming up" tasks={upcoming} onChange={reloadAll} settling={settling} />
-
+    ),
+    'core:anytime': () => <TaskSection title="Anytime" tasks={anytime} onChange={reloadAll} settling={settling} />,
+    'core:coming-up': () => <TaskSection title="Coming up" tasks={upcoming} onChange={reloadAll} settling={settling} />,
+    'core:habits': () => (
       <section>
         <h2>Habits left</h2>
         {habitsLeft.length === 0 && !habits.loading && <div className="empty">All done for now.</div>}
@@ -127,8 +129,9 @@ export function Dashboard() {
           <HabitRow key={habit.id} habit={habit} onChange={reloadAll} settling={settling} receivedAt={habits.receivedAt} />
         ))}
       </section>
-
-      {(finished.length > 0 || habitsDone.length > 0) && (
+    ),
+    'core:finished': () =>
+      finished.length > 0 || habitsDone.length > 0 ? (
         <section className="done-area">
           <h2>Finished today</h2>
           {habitsDone.map((habit) => (
@@ -138,8 +141,58 @@ export function Dashboard() {
             <TaskRow key={task.id} task={task} onChange={reloadAll} settling={settling} />
           ))}
         </section>
-      )}
-      </div>
+      ) : null,
+  };
+
+  /**
+   * The main column, in the order you chose.
+   *
+   * Three kinds of id and one loop. A core section draws from the map above; a
+   * panel id resolves to the same lazy component the side column uses, so a
+   * package's card can sit between your tasks and your habits without core
+   * learning anything about it; anything else draws nothing, which is what
+   * should happen while whatever owned it is switched off.
+   *
+   * `core:habits` is dropped when habits are switched off — the section is
+   * core's but the *feature* is not always on, and a heading with nothing under
+   * it would be worse than its absence.
+   */
+  const blocks = chosenBlocks(settings.data).map((id) => {
+    if (isCoreBlock(id)) {
+      if (id === 'core:habits' && !featureEnabled('habits')) return null;
+      return <Fragment key={id}>{coreBlocks[id]?.() ?? null}</Fragment>;
+    }
+    const Panel = resolvePanel(id);
+    if (!Panel) return null;
+    /*
+     * Its own boundary, like the side column's — these are separate chunks that
+     * arrive independently, and one boundary around the column would hold your
+     * task list back until the slowest card had landed.
+     */
+    return (
+      <Suspense key={id} fallback={<div className="empty">loading…</div>}>
+        <Panel panelId={id} />
+      </Suspense>
+    );
+  });
+
+  const every = settings.data?.dashboardRefreshSeconds ?? 0;
+  useEffect(() => refreshEvery(every), [every]);
+
+  return (
+    /*
+     * `has-panel` widens the container, and it does that through
+     * `.app:has(.dash.has-panel)` in the stylesheet rather than by `App` passing
+     * a class down. `App` does not read settings and threading one boolean
+     * through it purely to set a max-width would be a prop through three
+     * components for a layout question the child already knows the answer to.
+     *
+     * Where `:has()` is unsupported this degrades to the one-column layout with
+     * the panel stacked underneath, which is exactly what a narrow screen gets
+     * anyway — so the fallback is a real layout rather than a broken one.
+     */
+    <div className={panels.length > 0 ? 'dash has-panel' : 'dash'}>
+      <div className="dash-main">{blocks}</div>
 
       {panels.length > 0 && (
         <aside className="dash-panel">

@@ -157,6 +157,8 @@ export function Reader({
   onPosition,
   backLabel = 'Chapters',
   onGo,
+  onSkip,
+  skipTo = null,
   hasPrevious = false,
   hasNext = false,
 }: {
@@ -179,6 +181,17 @@ export function Reader({
   backLabel?: string;
   /** Open the chapter before or after this one, by number, without marking anything read. */
   onGo?: (direction: -1 | 1) => void;
+  /**
+   * Go to the next *whole* chapter instead, passing over the point chapters.
+   *
+   * `finishing` mirrors the arrow's own rule: from the last page this is
+   * finishing and the chapters passed over are marked read with it, because
+   * skipping them is the claim that this chapter already contained them. From
+   * partway through it only moves, since skipping is not finishing.
+   */
+  onSkip?: (finishing: boolean) => void;
+  /** The number it would go to, shown on the control. Null when there is nothing to skip. */
+  skipTo?: number | null;
   /** Whether there is a chapter that way, for the arrows' disabled state. */
   hasPrevious?: boolean;
   hasNext?: boolean;
@@ -694,6 +707,22 @@ export function Reader({
           <button className="btn primary" onClick={() => onFinished(chapter.number)}>
             {preview ? 'Next chapter' : 'Finished — next chapter'}
           </button>
+          {/*
+            * The second destination, and only when there is one — see
+            * `skipTarget`. It sits beside the ordinary button rather than
+            * replacing it, because which is right depends on something only
+            * you can see: whether this chapter was a compilation of the point
+            * chapters after it, or whether those come next.
+            */}
+          {onSkip && skipTo !== null && (
+            <button
+              className="btn subtle"
+              onClick={() => onSkip(true)}
+              title={preview ? undefined : `Marks everything up to ${skipTo} read`}
+            >
+              {preview ? `Skip to ${skipTo}` : `Finished — skip to ${skipTo}`}
+            </button>
+          )}
         </div>
       )}
 
@@ -717,16 +746,49 @@ export function Reader({
             <span className="manga-reader-count">
               {page + 1} / {total}
             </span>
-            <button
-              className="manga-reader-arrow"
-              aria-label="Next chapter"
-              title="Next chapter"
-              disabled={!onGo || !hasNext}
-              // From the last page this is finishing; from anywhere else, skipping.
-              onClick={() => (page >= total - 1 ? onFinished(chapter.number) : onGo?.(1))}
-            >
-              <Icon.next />
-            </button>
+            {/*
+              * Next and the skip are one group, and the group's width never
+              * changes — see `.manga-reader-next`. A skip is offered on a
+              * minority of chapters (40 of Eleceed's 461), so letting it take
+              * part in the bar's spacing would move the Next arrow every few
+              * chapters. That is the complaint this app makes about the ☰ and
+              * answers the same way: reserve the room, and never move the
+              * control somebody reaches for without looking.
+              */}
+            <div className="manga-reader-next">
+              <button
+                className="manga-reader-arrow"
+                aria-label="Next chapter"
+                title="Next chapter"
+                disabled={!onGo || !hasNext}
+                // From the last page this is finishing; from anywhere else, skipping.
+                onClick={() => (page >= total - 1 ? onFinished(chapter.number) : onGo?.(1))}
+              >
+                <Icon.next />
+              </button>
+              {/*
+                * Labelled with the number rather than given an icon of its own.
+                * "Skip" is meaningless without saying where to, and a second
+                * arrow-like glyph beside the first is the one thing guaranteed
+                * to be mistaken for it.
+                *
+                * Always rendered, hidden with `visibility` when there is
+                * nothing to skip — which is what holds the room open. Unlike
+                * the chrome's own hiding, this one is meant to leave the tab
+                * order too: a button that would do nothing should not be
+                * something to tab onto.
+                */}
+              <button
+                className={`manga-reader-skip${skipTo === null ? ' empty' : ''}`}
+                aria-label={skipTo === null ? undefined : `Skip to chapter ${skipTo}`}
+                title={skipTo === null ? undefined : `Skip to chapter ${skipTo}, past the point chapters`}
+                aria-hidden={skipTo === null}
+                disabled={!onSkip || skipTo === null}
+                onClick={() => onSkip?.(page >= total - 1)}
+              >
+                {skipTo ?? ''}
+              </button>
+            </div>
           </div>
           {/*
             * Wheel, not scroll: this box is also scrolled by the code that keeps

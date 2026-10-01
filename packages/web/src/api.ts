@@ -516,6 +516,14 @@ export interface AppSettings {
    */
   dashboardPanels?: string[];
   /**
+   * The main column's blocks, in order — the core sections and any panel put
+   * among them.
+   *
+   * Optional for the same reason, and **empty means the built-in order** rather
+   * than an empty Dashboard: see `chosenBlocks`.
+   */
+  dashboardBlocks?: string[];
+  /**
    * What the live panel narrows to — `all` or `favourites`.
    *
    * A real pair rather than an opaque string, unlike `dashboardPanel`: these two
@@ -1570,6 +1578,8 @@ export const api = {
       dashboardPanel?: string;
       /** The side column's panels, in order. Deduplicated by the server. */
       dashboardPanels?: string[];
+      /** The main column's blocks, in order. Deduplicated by the server. */
+      dashboardBlocks?: string[];
       /** What the live panel narrows to. The Live tab always shows everything. */
       livePanelScope?: 'all' | 'favourites';
     }) => patch<AppSettings>('/api/settings', payload),

@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Cover } from './Cover';
 import { Reader } from './Reader';
+import { beside, skippedBetween, skipTarget } from './chapter-nav.js';
 import { chapterText } from './judge';
 import { manga, type BrowseResult, type SeriesDetailPage } from './manga-api';
 import { usePositionSaver } from './usePositionSaver';
@@ -151,6 +152,26 @@ export function SeriesDetail({
         }}
         hasPrevious={beside(page.chapters, open.number, -1) !== undefined}
         hasNext={beside(page.chapters, open.number, 1) !== undefined}
+        {...(() => {
+          const target = skipTarget(page.chapters, open.number);
+          return {
+            skipTo: target?.number ?? null,
+            onSkip: async (finishing: boolean) => {
+              if (!target) return;
+              saver.flush();
+              lastPlace.current = null;
+              // Nothing is recorded for a series only being previewed — the
+              // same rule `onFinished` here already follows.
+              if (finishing && ownSeriesId) {
+                for (const n of [open.number, ...skippedBetween(page.chapters, open.number, target.number)]) {
+                  await manga.reader.markRead(ownSeriesId, n).catch(() => undefined);
+                }
+              }
+              setResume(null);
+              setOpen(target);
+            },
+          };
+        })()}
         onFinished={async (n) => {
           saver.flush();
           lastPlace.current = null;
@@ -341,9 +362,4 @@ export function SeriesDetail({
   );
 }
 
-/** The chapter next to `n` by number, one way or the other — duplicate editions of `n` skipped. */
-function beside<T extends { number: number }>(list: readonly T[], n: number, direction: -1 | 1): T | undefined {
-  return list
-    .filter((c) => (direction === 1 ? c.number > n : c.number < n))
-    .sort((a, b) => (a.number - b.number) * direction)[0];
-}
+

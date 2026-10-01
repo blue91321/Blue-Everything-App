@@ -116,6 +116,19 @@ export type Series = SeriesIds & {
   error: string | null;
   addedAt: number;
   /**
+   * Starred, so it can be picked out of a library of hundreds.
+   *
+   * **Optional, and absent means no.** Nine hundred series arrived from the
+   * Manga Reader import and none of them was starred by anybody, so writing
+   * `false` onto every one would be a lot of JSON saying nothing. Only `true`
+   * is ever stored.
+   *
+   * Deliberately not the same thing as following a series. Everything here is
+   * followed — that is what being in the library means — and a star is the
+   * smaller set you actually keep up with.
+   */
+  favourite?: boolean;
+  /**
    * Where a series brought in from another app came from: the app, the site it
    * was last read on there (and every site it was read on, newest first), the
    * title it had, and the newest chapter that app knew of. `matching.ts` finds it on an installed source by the site and title;
@@ -179,6 +192,25 @@ export type SeriesSource = {
   title: string;
   sourceName: string;
 };
+
+/** What the Dashboard card lists — see `Store.shelfShow`. */
+export type ShelfShow = 'all' | 'favourites';
+
+/**
+ * How it is ordered: the Library tab's own order on this device, or a fixed one.
+ *
+ * The keys mirror the Library's `SortKey` and are deliberately not imported
+ * from it — that file is the browser's and this is the server's, and the server
+ * only ever stores the string.
+ */
+export type ShelfSort = 'follow' | 'read' | 'catchup' | 'updated' | 'title' | 'added';
+
+const SHELF_SORTS: ShelfSort[] = ['follow', 'read', 'catchup', 'updated', 'title', 'added'];
+
+/** Anything unrecognised falls back, so a hand-edited file cannot break the card. */
+export function clampShelfSort(value: unknown): ShelfSort {
+  return SHELF_SORTS.includes(value as ShelfSort) ? (value as ShelfSort) : 'follow';
+}
 
 export type Store = {
   /**
@@ -247,6 +279,63 @@ export type Store = {
    */
   releaseTasks: boolean;
   /**
+   * How many chapters ahead to fetch while you read, 0 to 3.
+   *
+   * The page cache fills *behind* you — a chapter is kept once you open it — so
+   * going back was instant and going forward was not, which is the direction
+   * people actually read in. One chapter ahead means the next one opens from
+   * disk, through a source that may be slow and a Suwayomi that may be asleep.
+   *
+   * **One by default**, because that is the chapter you are nearly certainly
+   * about to open, and it costs one chapter of somebody else's bandwidth for
+   * one you were going to ask for anyway. Reading two ahead is a guess, and
+   * three is a guess that costs three.
+   *
+   * **Three at most, because the cache keeps ten.** Prefetching further would
+   * spend your history on chapters you have not read: at three ahead, seven of
+   * the ten are still chapters you actually opened. A bound here is a bound on
+   * how much of the cache a guess may take.
+   *
+   * **Zero is genuinely off** — nothing is fetched and nothing is queued, which
+   * is the setting somebody on a metered connection is choosing.
+   */
+  readAheadChapters: number;
+  /**
+   * What the Dashboard card shows: your whole shelf, or only the starred ones.
+   *
+   * `all` by default rather than `favourites`, because a fresh install has
+   * nothing starred and a card that opens empty is a card you take off again.
+   */
+  shelfShow: ShelfShow;
+  /**
+   * How the Dashboard card is ordered.
+   *
+   * **`follow` is the default and means "whatever the Library tab is set to on
+   * this device"** — which is `localStorage`, so the PC and the phone can
+   * differ, exactly as their Library tabs already do. That is one control in
+   * two places, which is what "based on the current sorting" asks for.
+   *
+   * Pinning an order instead stores it *here*, on the server, so a pinned card
+   * agrees across devices. The storage follows the wish rather than the other
+   * way round: "keep these in step" is per device because the thing it follows
+   * is, and "I want this one order" is shared because you said it once about
+   * the card itself.
+   */
+  shelfSort: ShelfSort;
+  /**
+   * "New chapters on top" for the card — **only consulted when the sort is
+   * pinned.**
+   *
+   * In `follow` the box comes from the Library tab on that device, along with
+   * the order, because the two are one control there and reading half of it
+   * from here would make the card disagree with the screen it claims to
+   * follow. Pinned, the card is self-contained and this is its own answer, kept
+   * on the server so every device draws it the same way.
+   *
+   * On by default, matching the Library's own default.
+   */
+  shelfNewFirst: boolean;
+  /**
    * Whether a new chapter raises a nudge at all. On unless switched off, which
    * is what it always did. Off, chapters are still noticed and recorded — the
    * NEW badge, "last updated" and the release log all carry on — and nothing
@@ -306,6 +395,15 @@ export type ReleaseLink = {
  * running, when the next read handed back a library with somebody's old series
  * already in it. Test clean-up in this module did exactly that, repeatedly.
  */
+/** The most chapters that may be fetched ahead — see `Store.readAheadChapters`. */
+export const MAX_READ_AHEAD = 3;
+
+/** 0 to 3, whole chapters, defaulting to one. Anything else is not a number. */
+export function clampReadAhead(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 1;
+  return Math.min(MAX_READ_AHEAD, Math.max(0, Math.round(value)));
+}
+
 function emptyStore(): Store {
   return {
     suwayomiUrl: null,
@@ -315,6 +413,10 @@ function emptyStore(): Store {
     suwayomiMode: 'on-demand',
     readLanguages: [...DEFAULT_LANGUAGES],
     releaseTasks: false,
+    readAheadChapters: 1,
+    shelfShow: 'all',
+    shelfSort: 'follow',
+    shelfNewFirst: true,
     releaseNudges: true,
     browseSource: null,
     ignoredSources: [],
@@ -337,6 +439,15 @@ export function read(): Store {
           ? parsed.readLanguages
           : [...DEFAULT_LANGUAGES],
       releaseTasks: parsed.releaseTasks === true,
+      /*
+       * Clamped on read rather than trusted. This file is the one place a
+       * hand-edited manga.json is made sense of, and a 50 here would be fifty
+       * chapters of somebody else's bandwidth fetched from one tap.
+       */
+      readAheadChapters: clampReadAhead(parsed.readAheadChapters),
+      shelfShow: parsed.shelfShow === 'favourites' ? 'favourites' : 'all',
+      shelfSort: clampShelfSort(parsed.shelfSort),
+      shelfNewFirst: parsed.shelfNewFirst !== false,
       archiveFolder:
         typeof parsed.archiveFolder === 'string' && parsed.archiveFolder.trim() ? parsed.archiveFolder : null,
       releaseNudges: parsed.releaseNudges !== false,
@@ -370,6 +481,8 @@ export function read(): Store {
         readChapters: Array.isArray(s.readChapters) ? s.readChapters : [],
         readLog: Array.isArray(s.readLog) ? s.readLog : [],
         reviews: Array.isArray(s.reviews) ? s.reviews : [],
+        // Only `true` survives, so a stray `"yes"` in a hand-edited file is a no.
+        ...(s.favourite === true ? { favourite: true as const } : {}),
       })),
       links: Array.isArray(parsed.links) ? parsed.links : [],
     };

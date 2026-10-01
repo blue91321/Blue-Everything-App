@@ -597,7 +597,7 @@ export function App() {
         */}
         {feature && (
           <Suspense fallback={<div className="empty">loading…</div>}>
-            <feature.View local={session.local} search={search} onFocused={clearFocus} />
+            <feature.View local={session.local} search={search} focus={focus} onFocused={clearFocus} />
           </Suspense>
         )}
 
@@ -611,7 +611,7 @@ export function App() {
           <Suspense fallback={<div className="empty">loading…</div>}>
             {(() => {
               const Screen = packageScreen(packageId);
-              return <Screen key={packageId} local={session.local} search={search} onFocused={clearFocus} />;
+              return <Screen key={packageId} local={session.local} search={search} focus={focus} onFocused={clearFocus} />;
             })()}
           </Suspense>
         )}

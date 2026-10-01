@@ -48,13 +48,15 @@ const TABS: Array<{ id: Tab; label: string; icon: () => React.ReactElement }> = 
   { id: 'more', label: 'More', icon: Icon.more },
 ];
 
-export default function MangaView({ search, onFocused, local }: FeatureViewProps) {
+export default function MangaView({ search, focus, onFocused, local }: FeatureViewProps) {
   useNow();
   const library = useAsync(() => manga.list());
   // Whether chapters can come from anywhere yet — for the banner below.
   const source = useAsync(() => manga.source.get());
   /** Bumped to send the More tab's setup card into view. */
   const [setupFocus, setSetupFocus] = useState(0);
+  /** The same, for the Dashboard card's settings — see the effect below. */
+  const [shelfFocus, setShelfFocus] = useState(0);
   const goToSetup = () => {
     goTab('more');
     setSetupFocus((n) => n + 1);
@@ -141,6 +143,23 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
     }
     onFocused?.();
   }, [search, onFocused, library.data]);
+
+  /*
+   * Something elsewhere asked for one thing on this screen — today only the
+   * Dashboard card's "Change what's here", which lands on More and brings its
+   * shelf settings into view.
+   *
+   * Cleared through `onFocused` at the end, like the search above: clearing it
+   * changes `focus`, which re-runs this, and announcing it first would cancel
+   * the thing it just asked for. That ordering cost three goes on the Settings
+   * screen and is written down there.
+   */
+  useEffect(() => {
+    if (focus !== 'shelf') return;
+    goTab('more');
+    setShelfFocus((n) => n + 1);
+    onFocused?.();
+  }, [focus, onFocused]);
 
   async function remove(series: SeriesSummary) {
     if (!confirm(`Stop following ${series.title}?`)) return;
@@ -389,6 +408,7 @@ export default function MangaView({ search, onFocused, local }: FeatureViewProps
               onOpenUi={() => setSuwayomiOpen(true)}
               onCompare={(s) => setComparing({ id: s.id, from: 'list' })}
               setupFocus={setupFocus}
+              shelfFocus={shelfFocus}
               setupFirst={Boolean(source.data && (needsSetup(source.data) || failing(source.data)))}
             />
           )}

@@ -796,6 +796,20 @@ export const settings = sqliteTable('settings', {
    */
   dashboardPanels: text('dashboard_panels').notNull().default('[]'),
 
+  /**
+   * What is on the Dashboard's **main** column, and in what order.
+   *
+   * The same shape as `dashboard_panels` and for the same reasons: opaque ids,
+   * nothing validating them, so an id belonging to a package that is switched
+   * off keeps its place and comes back with the package.
+   *
+   * **Empty means the default order, not an empty Dashboard**, which is the one
+   * place this differs from the panel list. An empty side column is a real
+   * choice somebody makes; an empty Dashboard is not, and it is what every
+   * existing install would have had on the morning this shipped.
+   */
+  dashboardBlocks: text('dashboard_blocks').notNull().default('[]'),
+
   updatedAt: touched(),
 });
 

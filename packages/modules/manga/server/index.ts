@@ -35,6 +35,8 @@ import { CREDIT, readSeries } from './mangaupdates.js';
 import {
   read,
   write,
+  MAX_READ_AHEAD,
+  clampShelfSort,
   newSeries,
   findExisting,
   readPositions,
@@ -79,7 +81,15 @@ import { matchingState, startMatching, unmatchedCount } from './matching.js';
 import { fillTags } from './tags.js';
 import { withoutMature } from './mature.js';
 import { setupState, startSetup } from './setup.js';
-import { cachedPage, cachedPageList, fillChapter, keepPage, rememberChapter } from './page-cache.js';
+import {
+  cachedPage,
+  cachedPageList,
+  chapterIsComplete,
+  fillChapter,
+  keepPage,
+  readAheadAt,
+  rememberChapter,
+} from './page-cache.js';
 import {
   archivedPage,
   archivedPageList,
@@ -247,6 +257,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
       releaseTasks: store.releaseTasks,
       /** Whether a new chapter raises a nudge — see `Store.releaseNudges`. */
       releaseNudges: store.releaseNudges,
+      /** How many chapters are fetched ahead — see `Store.readAheadChapters`. */
+      readAheadChapters: store.readAheadChapters,
+      /** The cap, sent rather than written into the screen twice. */
+      maxReadAhead: MAX_READ_AHEAD,
+      /** What the Dashboard card lists, and in what order — see `Store.shelfShow`. */
+      shelfShow: store.shelfShow,
+      shelfSort: store.shelfSort,
+      shelfNewFirst: store.shelfNewFirst,
     };
   });
 
@@ -347,6 +365,89 @@ export async function routes(app: FastifyInstance): Promise<void> {
       }
     }
     return { releaseNudges: store.releaseNudges };
+  });
+
+  /**
+   * What the Dashboard card lists, and how it is ordered.
+   *
+   * One route for both, because they are two fields of one card and a screen
+   * changing one nearly always wants to leave the other alone — which an
+   * optional field says better than two endpoints would.
+   */
+  app.put('/api/manga/shelf', async (request, reply) => {
+    const body = request.body as { show?: unknown; sort?: unknown; newFirst?: unknown } | null;
+    const store = read();
+
+    if (body?.show !== undefined) {
+      if (body.show !== 'all' && body.show !== 'favourites') {
+        return reply.code(400).send({ error: "show must be 'all' or 'favourites'" });
+      }
+      store.shelfShow = body.show;
+    }
+    if (body?.newFirst !== undefined) {
+      if (typeof body.newFirst !== 'boolean') return reply.code(400).send({ error: 'newFirst must be true or false' });
+      store.shelfNewFirst = body.newFirst;
+    }
+    if (body?.sort !== undefined) {
+      // Checked rather than clamped here: a value the screen cannot have sent
+      // is a mistake worth reporting, where a hand-edited file is not.
+      if (clampShelfSort(body.sort) !== body.sort) {
+        return reply.code(400).send({ error: 'that is not an order this card offers' });
+      }
+      store.shelfSort = body.sort as typeof store.shelfSort;
+    }
+    write(store);
+    return { shelfShow: store.shelfShow, shelfSort: store.shelfSort, shelfNewFirst: store.shelfNewFirst };
+  });
+
+  /**
+   * Star a series, or take the star off.
+   *
+   * Not local-only, like the read log beside it: what you keep up with is your
+   * data, editable from the phone like the rest of it.
+   *
+   * Only `true` is stored — see `Series.favourite`. Taking a star off deletes
+   * the key rather than writing `false`, so the file does not slowly fill with
+   * nine hundred denials.
+   */
+  app.put('/api/manga/:id/favourite', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { on?: unknown } | null;
+    if (typeof body?.on !== 'boolean') return reply.code(400).send({ error: 'send on: true or false' });
+
+    const store = read();
+    const series = store.series.find((s) => s.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+
+    if (body.on) series.favourite = true;
+    else delete series.favourite;
+    write(store);
+    return { favourite: series.favourite === true };
+  });
+
+  /**
+   * How many chapters to fetch ahead, 0 to 3 — see `Store.readAheadChapters`.
+   *
+   * Not local-only, like the two switches above it: what gets cached is a fact
+   * about your reading rather than about this machine, and it is as editable
+   * from the phone as the rest of it.
+   *
+   * Nothing is fetched on the way out. The number is read at the start of the
+   * next chapter you open, which is the moment it can act on it without
+   * speculating about a series you are not in.
+   */
+  app.put('/api/manga/read-ahead', async (request, reply) => {
+    const body = request.body as { chapters?: unknown } | null;
+    if (typeof body?.chapters !== 'number' || !Number.isInteger(body.chapters)) {
+      return reply.code(400).send({ error: 'send chapters: a whole number' });
+    }
+    if (body.chapters < 0 || body.chapters > MAX_READ_AHEAD) {
+      return reply.code(400).send({ error: `chapters must be between 0 and ${MAX_READ_AHEAD}` });
+    }
+    const store = read();
+    store.readAheadChapters = body.chapters;
+    write(store);
+    return { readAheadChapters: store.readAheadChapters };
   });
 
   /** Candidates from MangaDex for what was typed. Writes nothing. */
@@ -2014,6 +2115,97 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return archiveOverview();
   });
 
+  /** One read-ahead run at a time per series, so a fast reader cannot stack them. */
+  const readingAhead = new Set<string>();
+
+  /**
+   * Fetch the next few chapters while you read this one.
+   *
+   * The cache fills *behind* you — a chapter is kept once opened — so going
+   * back was instant and going forward was not, which is the direction people
+   * read in. `Store.readAheadChapters` says how many, 0 to 3, one by default.
+   *
+   * Four things about this are deliberate, and three of them are about not
+   * taking something away to provide it:
+   *
+   *   - **it never starts Suwayomi.** `reader()` would, which is right for a
+   *     chapter you asked for and wrong for a guess about one you have not:
+   *     on-demand mode exists so a JVM is not resident for something used in
+   *     bursts, and waking it to speculate would quietly undo that. So this
+   *     asks whether it is already up — the same question the release sweep
+   *     asks — and does nothing if not;
+   *   - **it runs after the current chapter is filled, and one chapter at a
+   *     time.** The reader's own page requests are what must be fast; a
+   *     prefetch racing them for the same source would make the chapter you are
+   *     reading slower to serve the one you are not;
+   *   - **"next" is by chapter number, not list position**, the same rule the
+   *     reader's arrows follow, so a source listing two editions of chapter 50
+   *     does not spend the whole budget on the second copy of where you are;
+   *   - **anything already archived or already complete is skipped**, so
+   *     re-reading a series you have saved costs nothing at all.
+   *
+   * Failures are silent by design. Nothing asked for this, nobody is waiting on
+   * it, and a chapter that did not prefetch is simply a chapter that loads the
+   * way it always did.
+   */
+  async function readAhead(seriesId: string, chapterId: string, openedAt: number): Promise<void> {
+    const store = read();
+    const ahead = store.readAheadChapters;
+    if (ahead <= 0 || readingAhead.has(seriesId)) return;
+
+    // Already running is the only state worth speculating in — see above.
+    if (store.manageSuwayomi && suwayomiProcess.state.state !== 'running') return;
+
+    readingAhead.add(seriesId);
+    try {
+      const ctx = await reader(seriesId);
+      if ('error' in ctx) return;
+
+      const list = await ctx.adapter.chapters(ctx.series.source!.mangaId, false);
+      const here = list.find((c) => c.id === chapterId);
+      if (!here) return;
+
+      /*
+       * Distinct numbers above this one, nearest first. Distinct because a
+       * source listing two editions of chapter 51 should cost one slot, not
+       * two — and the first of them is the one the reader's own Next lands on.
+       */
+      const seen = new Set<number>();
+      const next: typeof list = [];
+      for (const c of [...list].sort((a, b) => a.number - b.number)) {
+        if (c.number <= here.number || seen.has(c.number)) continue;
+        seen.add(c.number);
+        next.push(c);
+        if (next.length >= ahead) break;
+      }
+
+      for (const [i, chapter] of next.entries()) {
+        if (archivedPageList(seriesId, chapter.id) || chapterIsComplete(seriesId, chapter.id)) continue;
+        const pages = cachedPageList(seriesId, chapter.id) ?? (await ctx.adapter.pages(chapter.id));
+        if (pages.length === 0) continue;
+        /*
+         * Behind the chapter being read, and behind each other in the order
+         * they would be opened — so the cache evicts the furthest guess first
+         * and never the chapter in your hands. See `rememberChapter`.
+         *
+         * **Measured from when the chapter was opened, not from now.** The
+         * first version used `Date.now()` here, which is evaluated at prefetch
+         * time — by then the current chapter had been filling for twenty
+         * seconds, so "a millisecond behind it" was ten seconds in front, and
+         * the cache ordered itself exactly backwards: no.4, no.3, then the
+         * chapter actually being read. Caught by the test written for it.
+         */
+        if (rememberChapter(seriesId, chapter.id, pages, readAheadAt(openedAt, i))) {
+          await fillChapter(ctx.url, seriesId, chapter.id);
+        }
+      }
+    } catch {
+      // Nobody is waiting on this; the next chapter simply loads as before.
+    } finally {
+      readingAhead.delete(seriesId);
+    }
+  }
+
   app.get('/api/manga/:id/chapters/:chapterId/pages', async (request, reply) => {
     const { id, chapterId } = request.params as { id: string; chapterId: string };
     const asUrls = (pages: string[]) => ({
@@ -2034,7 +2226,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
       const store = read();
       const url = effectiveUrl(store, DEFAULT_BASE_URL);
       // Moved to the front; any page still missing is fetched if Suwayomi happens to be up.
-      if (rememberChapter(id, chapterId, kept) && url) void fillChapter(url, id, chapterId);
+      const openedAt = Date.now();
+      if (rememberChapter(id, chapterId, kept, openedAt) && url) {
+        void fillChapter(url, id, chapterId).then(() => readAhead(id, chapterId, openedAt));
+      } else void readAhead(id, chapterId, openedAt);
       return asUrls(kept);
     }
 
@@ -2043,7 +2238,11 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
     try {
       const pages = await ctx.adapter.pages(chapterId);
-      if (pages.length > 0 && rememberChapter(id, chapterId, pages)) void fillChapter(ctx.url, id, chapterId);
+      // After this chapter is on disk, never beside it — see `readAhead`.
+      const openedAt = Date.now();
+      if (pages.length > 0 && rememberChapter(id, chapterId, pages, openedAt)) {
+        void fillChapter(ctx.url, id, chapterId).then(() => readAhead(id, chapterId, openedAt));
+      } else void readAhead(id, chapterId, openedAt);
       return asUrls(pages);
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });

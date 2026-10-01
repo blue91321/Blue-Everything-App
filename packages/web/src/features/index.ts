@@ -29,6 +29,20 @@ export interface FeatureViewProps {
    * search box, and a feature that does not simply ignores it.
    */
   search?: string | null;
+  /**
+   * One thing on this screen to open and bring into view, sent from elsewhere.
+   *
+   * **Opaque, and read differently by each screen** — a row id on Tasks, a
+   * section id on Settings, a tab-and-card on Manga. Core never looks inside
+   * it, which is what lets a package name something core has never heard of.
+   *
+   * Separate from `search` rather than encoded into it, because "open this one
+   * thing" and "show me everything matching" are different requests and a
+   * screen may want both. Core has carried this for its own screens since the
+   * right-click menu; it simply was not handed to features, so a package's
+   * card had no way to link to the setting that configures it.
+   */
+  focus?: string | null;
   /** Called once the hint above has been acted on, so it is not applied twice. */
   onFocused?: () => void;
 }

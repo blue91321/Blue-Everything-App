@@ -365,6 +365,13 @@
       "when": 1786064308000,
       "tag": "0051_note_folders",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1786064309000,
+      "tag": "0052_dashboard_blocks",
+      "breakpoints": true
     }
   ]
 }

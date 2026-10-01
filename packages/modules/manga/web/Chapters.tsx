@@ -21,6 +21,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { useAsync } from '@app/useAsync';
+import { beside, skippedBetween, skipTarget } from './chapter-nav.js';
 import { useBackStep } from '@app/view-history';
 import { isIncognito } from './incognito';
 import { useButtonMenu, type MenuItem } from '@app/ContextMenu';
@@ -403,15 +404,72 @@ export function Chapters({
           } satisfies MenuItem,
         ]
       : []),
+    /*
+     * First in the menu, because it is the only entry here you would use more
+     * than once — everything below it is something you do to a series once and
+     * never again (link it, unlink it, stop following it).
+     */
+    {
+      label: series?.favourite ? 'Remove from favourites' : 'Add to favourites',
+      onSelect: () => void toggleFavourite(),
+    },
     { label: 'Unlink this source', onSelect: () => void unlink() },
     { label: 'Stop following', onSelect: () => void unfollow(), danger: true },
   ]);
+
+  /** Star or unstar, then reload so the head and the library row agree. */
+  async function toggleFavourite() {
+    if (!series) return;
+    try {
+      await manga.setFavourite(series.id, !series.favourite);
+      onChanged?.();
+      list.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'that could not be saved');
+    }
+  }
 
   function go(direction: -1 | 1) {
     if (!open) return;
     saver.flush();
     const target = beside(list.data?.chapters ?? [], open.number, direction);
     if (!target) return;
+    setResume(null);
+    setOpen(target);
+  }
+
+  /**
+   * Go to the next whole chapter, passing over the point chapters.
+   *
+   * **Finishing marks the ones passed over read as well**, and that follows
+   * from what pressing it means. Skipping 2.1 and 2.2 to reach 3 is the claim
+   * that chapter 2 already contained them — so leaving them unread would put a
+   * NEW badge and a catch-up count on chapters you have, in substance, read,
+   * and it would stay wrong forever because nothing later would clear it.
+   *
+   * Moving on from partway through marks nothing, which is the arrow's own
+   * rule: skipping is not finishing.
+   */
+  async function skip(finishing: boolean) {
+    if (!open) return;
+    const all = list.data?.chapters ?? [];
+    const target = skipTarget(all, open.number);
+    if (!target) return;
+    saver.flush();
+
+    if (finishing && !isIncognito()) {
+      // This one and everything between, nearest first — see `skippedBetween`.
+      for (const n of [open.number, ...skippedBetween(all, open.number, target.number)]) {
+        try {
+          await manga.reader.markRead(seriesId, n);
+        } catch {
+          enqueue({ kind: 'read', seriesId, chapter: n, at: Date.now() });
+        }
+      }
+      void updateSnapshot(seriesId, { read: Math.max(open.number, ...skippedBetween(all, open.number, target.number)) });
+      list.reload();
+    }
+
     setResume(null);
     setOpen(target);
   }
@@ -468,6 +526,8 @@ export function Chapters({
         }}
         onFinished={(n) => void finished(n)}
         onGo={go}
+        onSkip={(finishing) => void skip(finishing)}
+        skipTo={skipTarget(list.data?.chapters ?? [], open.number)?.number ?? null}
         hasPrevious={beside(list.data?.chapters ?? [], open.number, -1) !== undefined}
         hasNext={beside(list.data?.chapters ?? [], open.number, 1) !== undefined}
         onPosition={(p) =>
@@ -681,9 +741,3 @@ export function Chapters({
   );
 }
 
-/** The chapter next to `n` by number, one way or the other — duplicate editions of `n` skipped. */
-function beside<T extends { number: number }>(list: readonly T[], n: number, direction: -1 | 1): T | undefined {
-  return list
-    .filter((c) => (direction === 1 ? c.number > n : c.number < n))
-    .sort((a, b) => (a.number - b.number) * direction)[0];
-}

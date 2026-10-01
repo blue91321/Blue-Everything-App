@@ -96,16 +96,48 @@ export function cachedPage(seriesId: string, path: string): { body: Buffer; type
   return null;
 }
 
-/** Put a chapter at the front, keeping ten. Returns whether it still needs pages fetched. */
-export function rememberChapter(seriesId: string, chapterId: string, pages: string[]): boolean {
+/**
+ * Put a chapter at the front, keeping ten. Returns whether it still needs pages
+ * fetched.
+ *
+ * `at` exists for read-ahead, and the ordering it buys is load-bearing. The ten
+ * are evicted by when they were opened, and a chapter fetched *ahead* of you
+ * was never opened at all — recorded with `Date.now()` it would sit in front of
+ * the chapter you are reading, so the one in your hands would be thrown out
+ * before three you have not looked at. Read-ahead passes a moment just behind
+ * the current chapter instead, which puts them exactly where they belong: ahead
+ * of your older history, behind what you are reading.
+ */
+export function rememberChapter(seriesId: string, chapterId: string, pages: string[], at = Date.now()): boolean {
   const index = readIndex();
   const had = index.chapters.find((c) => c.seriesId === seriesId && c.chapterId === chapterId);
-  const entry: Entry = had
-    ? { ...had, pages, at: Date.now() }
-    : { seriesId, chapterId, pages, stored: {}, at: Date.now() };
-  index.chapters = [entry, ...index.chapters.filter((c) => c !== had)].slice(0, KEEP_CHAPTERS);
+  const entry: Entry = had ? { ...had, pages, at } : { seriesId, chapterId, pages, stored: {}, at };
+  // Sorted rather than unshifted, because `at` is no longer always "now".
+  index.chapters = [entry, ...index.chapters.filter((c) => c !== had)]
+    .sort((a, b) => b.at - a.at)
+    .slice(0, KEEP_CHAPTERS);
   writeIndex(index);
   return pages.some((p) => !(p in entry.stored));
+}
+
+/**
+ * Where the nth chapter fetched ahead sits in the order.
+ *
+ * Named and exported so it can be asserted, because getting it wrong is silent:
+ * the cache still works, it just evicts the chapter in your hands first.
+ *
+ * **`openedAt`, never `Date.now()`.** This is computed while the prefetch runs,
+ * which is however long the current chapter took to download — so a value taken
+ * now is *newer* than the chapter being read, not older. That was the bug.
+ */
+export function readAheadAt(openedAt: number, nth: number): number {
+  return openedAt - 1 - nth;
+}
+
+/** Is this chapter in the ten, with every page already on disk? */
+export function chapterIsComplete(seriesId: string, chapterId: string): boolean {
+  const e = readIndex().chapters.find((c) => c.seriesId === seriesId && c.chapterId === chapterId);
+  return Boolean(e && e.pages.length > 0 && e.pages.every((page) => page in e.stored));
 }
 
 /** Keep one page's bytes, if its chapter is still one of the ten. */

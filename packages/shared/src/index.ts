@@ -2014,6 +2014,12 @@ export const updateSettingsSchema = z.object({
    * you are scrolling a sidebar to read a sidebar.
    */
   dashboardPanels: z.array(z.string().max(64)).max(8).optional(),
+  /*
+   * Longer than the panel list because it holds the core sections too — seven
+   * of those before a single package has contributed anything. Still bounded:
+   * this is a Dashboard, not a page builder.
+   */
+  dashboardBlocks: z.array(z.string().max(64)).max(24).optional(),
   /**
    * Whether the live panel shows everyone or only the starred ones.
    *

@@ -23,7 +23,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -79,7 +79,17 @@ if (process.argv.includes('--bundle')) {
     console.error('runtime/node is missing — run scripts/node-runtime.ps1 first');
     process.exit(1);
   }
-  cpSync(join(root, 'runtime/node'), join(stage, 'runtime/node'), { recursive: true });
+  /*
+   * Without the named copies. They are hard links to node.exe beside it, so
+   * they cost nothing on disk — but a zip cannot hold a link, and each would go
+   * in as another whole Node. `node-runtime.ps1` makes them on the first run
+   * against whatever node.exe is actually there, which is also what keeps them
+   * from going stale across a Node upgrade.
+   */
+  cpSync(join(root, 'runtime/node'), join(stage, 'runtime/node'), {
+    recursive: true,
+    filter: (src) => !basename(src).startsWith('Blue Everything'),
+  });
   cpSync(join(root, 'node_modules'), join(stage, 'node_modules'), {
     recursive: true,
     filter: (src) => !lstatSync(src).isSymbolicLink() && !src.replaceAll('\\', '/').includes('/node_modules/@everything'),

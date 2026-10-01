@@ -5,6 +5,8 @@ import { GamesTab } from './GamesTab';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
 import { panelChoices } from '../panels';
+import { CORE_BLOCKS, chosenBlocks } from '../blocks';
+import { featureEnabled } from '../features';
 import { Toggle } from '../controls';
 import { clockTime, relative } from '../format';
 import {
@@ -364,8 +366,231 @@ type TabId = (typeof TABS)[number]['id'];
  * DOM until its tab is open — so finding it has to start from knowing where it
  * is. The key is the element's `id`, which is also what the caller passes.
  */
+/**
+ * A reorderable list of chosen ids, with the rest offered underneath.
+ *
+ * Both Dashboard columns are this: an ordered list of opaque ids drawn from one
+ * pool of choices. It was written once for the side column and the main column
+ * needed exactly it, so it is a component rather than a second copy — the same
+ * call `useButtonMenu` made when the New menu wanted the right-click menu's
+ * measuring and clamping.
+ *
+ * **Both arrows and a drag**, which reverses what this file said.
+ *
+ * The argument against a drag was that it "has to be built twice, once for the
+ * mouse and once for touch" — true of HTML5 drag-and-drop, which does not exist
+ * on iOS at all and is why the notes tree's drag is desktop-only. Pointer
+ * events are not that: one set of handlers, and a finger is a pointer. So the
+ * objection was really to a *particular way* of building one.
+ *
+ * The arrows stay, and not out of politeness. They are the keyboard's way —
+ * the grip is `aria-hidden` and not focusable, because a third control that
+ * cannot be operated by keyboard is noise to anybody using one — and they are
+ * exact where a drag is approximate.
+ */
+function OrderedPicker({
+  chosen,
+  choices,
+  saving,
+  onChange,
+  missingNote,
+}: {
+  chosen: string[];
+  choices: Array<{ id: string; label: string; hint?: string }>;
+  saving: boolean;
+  onChange: (ids: string[]) => void;
+  /** What to say beside an id nothing currently answers to. */
+  missingNote: string;
+}) {
+  const labelFor = (id: string) => choices.find((c) => c.id === id)?.label ?? id;
+  const available = choices.filter((c) => !chosen.includes(c.id));
+
+  /*
+   * While a drag is in progress the list on screen is this, not the prop.
+   *
+   * It is also held *after* the drop, until the saved value comes back and
+   * matches — otherwise the row snaps to its old place for the length of the
+   * round trip and then jumps forward again, which reads as the drag having
+   * failed and then un-failed.
+   */
+  const [draft, setDraft] = useState<string[] | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const rows = useRef(new Map<string, HTMLElement>());
+  const order = draft ?? chosen;
+
+  // The prop caught up (or something else changed it): the draft has done its job.
+  const chosenKey = JSON.stringify(chosen);
+  useEffect(() => {
+    setDraft(null);
+    setDragging(null);
+  }, [chosenKey]);
+
+  /** Swap with a neighbour and write the whole list, as the Habits screen does. */
+  const move = (index: number, delta: number) => {
+    const next = [...chosen];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    onChange(next);
+  };
+
+  /**
+   * Where the pointer is, as an index into the list on screen.
+   *
+   * Measured against the rows themselves rather than computed from a row
+   * height, because the rows are not all one height — a long label wraps, and
+   * "not in this build, kept for when it is back" wraps on a phone.
+   *
+   * Past either end clamps rather than returning nothing, so dragging to the
+   * top of the card means the top of the list, which is what the gesture looks
+   * like it should do.
+   */
+  const indexAt = (y: number, list: string[]): number => {
+    let first: DOMRect | null = null;
+    let last: DOMRect | null = null;
+    for (let i = 0; i < list.length; i++) {
+      const el = rows.current.get(list[i]);
+      if (!el) continue;
+      const box = el.getBoundingClientRect();
+      first ??= box;
+      last = box;
+      if (y >= box.top && y <= box.bottom) return i;
+    }
+    if (first && y < first.top) return 0;
+    if (last && y > last.bottom) return list.length - 1;
+    return -1;
+  };
+
+  return (
+    <>
+      {/*
+        The chosen ones first, in their order, because that is what the column
+        looks like — the list on screen and the column on the Dashboard read top
+        to bottom the same way.
+      */}
+      {order.map((id, index) => (
+        <div
+          className={`row picker-row${dragging === id ? ' dragging' : ''}`}
+          key={id}
+          ref={(el) => {
+            if (el) rows.current.set(id, el);
+            else rows.current.delete(id);
+          }}
+          style={{ alignItems: 'center', gap: '.4rem', marginTop: 6 }}
+        >
+          {/*
+            A handle, not the whole row.
+
+            On touch the browser has to be told to stop scrolling before a drag
+            can begin — `touch-action: none` — and putting that on the whole row
+            would mean the list could not be scrolled past on a phone. On a
+            handle it costs nothing: everywhere else in the row still scrolls.
+
+            `aria-hidden`, and not focusable: it does exactly what the ↑ and ↓
+            beside it already do, and a third control in the tab order that
+            cannot be operated by keyboard is noise to anybody using one.
+          */}
+          <span
+            className="picker-grip"
+            aria-hidden="true"
+            title="Drag to reorder"
+            onPointerDown={(e) => {
+              if (saving || order.length < 2) return;
+              // Or the browser starts a text selection and the drag never happens.
+              e.preventDefault();
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              setDraft([...order]);
+              setDragging(id);
+            }}
+            onPointerMove={(e) => {
+              if (dragging !== id) return;
+              const current = draft ?? chosen;
+              const from = current.indexOf(id);
+              const to = indexAt(e.clientY, current);
+              if (to < 0 || to === from) return;
+              const next = [...current];
+              next.splice(to, 0, next.splice(from, 1)[0]);
+              setDraft(next);
+            }}
+            onPointerUp={() => {
+              if (dragging !== id) return;
+              setDragging(null);
+              // Only when it actually moved: a tap on the grip should not spend
+              // a write saying the list is what it already was.
+              if (draft && JSON.stringify(draft) !== chosenKey) onChange(draft);
+              else setDraft(null);
+            }}
+            onPointerCancel={() => {
+              setDragging(null);
+              setDraft(null);
+            }}
+          >
+            ⠿
+          </span>
+
+          <span className="grow">
+            {labelFor(id)}
+            {/*
+              One whose feature is switched off keeps its place rather than being
+              dropped. The stored order is left alone so turning the feature back
+              on restores it — the Dashboard simply draws one fewer meanwhile.
+            */}
+            {!choices.some((c) => c.id === id) && <span className="meta"> — {missingNote}</span>}
+          </span>
+
+          <button
+            className="btn subtle"
+            aria-label={`Move ${labelFor(id)} up`}
+            disabled={saving || index === 0}
+            onClick={() => move(index, -1)}
+          >
+            ↑
+          </button>
+          <button
+            className="btn subtle"
+            aria-label={`Move ${labelFor(id)} down`}
+            disabled={saving || index === order.length - 1}
+            onClick={() => move(index, 1)}
+          >
+            ↓
+          </button>
+          <button
+            className="btn subtle"
+            aria-label={`Remove ${labelFor(id)}`}
+            disabled={saving}
+            onClick={() => onChange(order.filter((other) => other !== id))}
+          >
+            remove
+          </button>
+        </div>
+      ))}
+
+      {available.length > 0 && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          <div className="meta" style={{ marginBottom: 8 }}>{chosen.length === 0 ? 'Available' : 'Also available'}</div>
+
+          {available.map((choice) => (
+            <div className="row" key={choice.id} style={{ alignItems: 'center', gap: '.4rem', marginTop: 6 }}>
+              <span className="grow">
+                {choice.label}
+                {choice.hint && <span className="meta"> — {choice.hint}</span>}
+              </span>
+              {/* Appended rather than inserted: the bottom is predictable, and
+                  anywhere else is a guess about what you meant. */}
+              <button className="btn subtle" disabled={saving} onClick={() => onChange([...chosen, choice.id])}>
+                add
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 const SECTION_TAB: Record<string, TabId> = {
   'dashboard-panel': 'general',
+  'dashboard-blocks': 'general',
   'menu-drawer': 'general',
   'desktop-icon': 'devices',
 };
@@ -503,7 +728,26 @@ function GeneralTab() {
     <>
       <Appearance />
       <MenuDrawer />
-      <DashboardPanel />
+      {/*
+        The two columns of the Dashboard, shown as two columns.
+        They were stacked, which made the screen read as two unrelated settings
+        rather than as the two halves of one layout — and the second was below
+        the fold on a laptop. Side by side, "On the Dashboard" and "Beside the
+        Dashboard" say what they are by sitting where they sit.
+
+        A container query, not a media one: what decides whether two columns fit
+        is the width of this screen, which the docked menu changes without the
+        window moving at all. Asking the viewport would keep two columns while
+        the drawer squeezed them — the same mistake the notes screen made and
+        the same fix.
+      */}
+      <DashboardRefresh />
+      <div className="settings-pair-wrap">
+        <div className="settings-pair">
+          <DashboardBlocks />
+          <DashboardPanel />
+        </div>
+      </div>
       <section>
         <h2>This app</h2>
         <div className="card">
@@ -529,6 +773,115 @@ function GeneralTab() {
  * of them, each wants a line of explanation about what you would actually see,
  * and a `<select>` has nowhere to put one.
  */
+/**
+ * What is on the Dashboard's main column, and in what order.
+ *
+ * Sits above the side-column picker because it is the Dashboard — the column
+ * you are actually looking at — where the other is the strip beside it.
+ */
+/**
+ * How often the Dashboard refetches, above both pickers.
+ *
+ * It used to sit inside the side-column section, on the reasoning that the
+ * panels are the part of the Dashboard whose content moves without anybody
+ * touching it — which was true when the only thing in the main column was your
+ * own tasks. It is not any more: a shelf card there goes stale exactly as a
+ * panel does. So it governs both columns, and now sits above both rather than
+ * inside one of them.
+ */
+function DashboardRefresh() {
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
+  return (
+    <section>
+      <RefreshRate
+        seconds={settings.data?.dashboardRefreshSeconds ?? 0}
+        onPick={(seconds) => void api.settings.update({ dashboardRefreshSeconds: seconds }).then(settings.reload)}
+      />
+    </section>
+  );
+}
+
+function DashboardBlocks() {
+  const settings = useAsync(() => api.settings.get(), [], ['settings']);
+  const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState('');
+
+  // A server older than this column drops the field, and a picker that writes
+  // something the server discards is worse than no picker at all.
+  if (settings.data && settings.data.dashboardBlocks === undefined) return null;
+
+  const chosen = chosenBlocks(settings.data);
+  const isDefault = (settings.data?.dashboardBlocks ?? []).length === 0;
+
+  /*
+   * Core's own sections, plus everything the side column could hold. One pool,
+   * two columns: a card is a card, and which column it goes in is your choice
+   * rather than a property of the thing.
+   *
+   * A core section belonging to a switched-off feature is left out, the same
+   * respect `notes:recent` pays its own switch.
+   */
+  const choices = [
+    ...CORE_BLOCKS.filter((block) => !block.featureId || featureEnabled(block.featureId)).map(
+      ({ id, label, hint }) => ({ id, label, hint })
+    ),
+    ...panelChoices().map(({ id, label, hint }) => ({ id, label, hint })),
+  ];
+
+  const save = async (blocks: string[]) => {
+    setSaving(true);
+    setProblem('');
+    try {
+      await api.settings.update({ dashboardBlocks: blocks });
+      settings.reload();
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section id="dashboard-blocks">
+      <h2>On the Dashboard</h2>
+
+      <div className="card">
+        <div className="meta" style={{ marginBottom: 8 }}>
+          The Dashboard itself, top to bottom. Move anything anywhere — habits above your tasks, a
+          package's card between them — or take a section off entirely.
+        </div>
+
+        <OrderedPicker
+          chosen={chosen}
+          choices={choices}
+          saving={saving}
+          onChange={(ids) => void save(ids)}
+          missingNote="not in this build, kept for when it is back"
+        />
+
+        {/*
+          Said rather than left to be inferred. An empty stored list and a list
+          that happens to match the built-in order look identical on screen, and
+          only one of them keeps up with a later version that adds a section.
+        */}
+        <div className="meta" style={{ marginTop: 12 }}>
+          {isDefault
+            ? 'This is the order the app ships with. Anything new in a later version appears here on its own.'
+            : 'Your own order. A section added in a later version will not appear until you add it below.'}
+        </div>
+
+        {!isDefault && (
+          <button className="btn subtle" style={{ marginTop: 8 }} disabled={saving} onClick={() => void save([])}>
+            Back to the default order
+          </button>
+        )}
+
+        {problem && <div className="meta warn" style={{ marginTop: 8 }}>{problem}</div>}
+      </div>
+    </section>
+  );
+}
+
 function DashboardPanel() {
   const settings = useAsync(() => api.settings.get(), [], ['settings']);
   const [saving, setSaving] = useState(false);
@@ -548,8 +901,6 @@ function DashboardPanel() {
   const chosen =
     settings.data?.dashboardPanels ??
     (settings.data?.dashboardPanel ? [settings.data.dashboardPanel] : []);
-
-  const available = choices.filter((panel) => !chosen.includes(panel.id));
 
   /**
    * One writer for every control here.
@@ -571,31 +922,9 @@ function DashboardPanel() {
     }
   };
 
-  /** Swap with a neighbour and write the whole list, as the Habits screen does. */
-  const move = (index: number, delta: number) => {
-    const next = [...chosen];
-    const target = index + delta;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    void save(next);
-  };
-
-  const labelFor = (id: string) => choices.find((panel) => panel.id === id)?.label ?? id;
-
   return (
     <section id="dashboard-panel">
       <h2>Beside the Dashboard</h2>
-
-      {/*
-        Its own card above the panel list, because it governs the whole screen
-        rather than the column — but it lives in this section because the column
-        is what it is *for*: the panels are the part of the Dashboard whose
-        content moves without anybody touching it.
-      */}
-      <RefreshRate
-        seconds={settings.data?.dashboardRefreshSeconds ?? 0}
-        onPick={(seconds) => void api.settings.update({ dashboardRefreshSeconds: seconds }).then(settings.reload)}
-      />
 
       <div className="card">
         <div className="meta" style={{ marginBottom: 8 }}>
@@ -618,69 +947,13 @@ function DashboardPanel() {
           this way, a list of three or four does not need a drag, and a drag is
           the one interaction that has to be built twice for touch.
         */}
-        {chosen.map((id, index) => (
-          <div className="row" key={id} style={{ alignItems: 'center', gap: '.4rem', marginTop: 6 }}>
-            <span className="grow">
-              {labelFor(id)}
-              {/*
-                A panel whose feature is switched off keeps its place rather than
-                being dropped from the list. The stored order is left alone so
-                turning the feature back on restores it — the Dashboard simply
-                draws one fewer in the meantime.
-              */}
-              {!choices.some((panel) => panel.id === id) && (
-                <span className="meta"> — not in this build, kept for when it is back</span>
-              )}
-            </span>
-
-            <button
-              className="btn subtle"
-              aria-label={`Move ${labelFor(id)} up`}
-              disabled={saving || index === 0}
-              onClick={() => move(index, -1)}
-            >
-              ↑
-            </button>
-            <button
-              className="btn subtle"
-              aria-label={`Move ${labelFor(id)} down`}
-              disabled={saving || index === chosen.length - 1}
-              onClick={() => move(index, 1)}
-            >
-              ↓
-            </button>
-            <button
-              className="btn subtle"
-              aria-label={`Remove ${labelFor(id)}`}
-              disabled={saving}
-              onClick={() => void save(chosen.filter((other) => other !== id))}
-            >
-              remove
-            </button>
-          </div>
-        ))}
-
-        {available.length > 0 && (
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-            <div className="meta" style={{ marginBottom: 8 }}>
-              {chosen.length === 0 ? 'Available' : 'Also available'}
-            </div>
-
-            {available.map((panel) => (
-              <div className="row" key={panel.id} style={{ alignItems: 'center', gap: '.4rem', marginTop: 6 }}>
-                <span className="grow">
-                  {panel.label}
-                  {panel.hint && <span className="meta"> — {panel.hint}</span>}
-                </span>
-                {/* Appended rather than inserted: a new panel going to the bottom
-                    is predictable, where anywhere else is a guess about intent. */}
-                <button className="btn subtle" disabled={saving} onClick={() => void save([...chosen, panel.id])}>
-                  add
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <OrderedPicker
+          chosen={chosen}
+          choices={choices}
+          saving={saving}
+          onChange={(ids) => void save(ids)}
+          missingNote="not in this build, kept for when it is back"
+        />
 
         {/*
           Only while the live panel is one of them. A scope control for a panel

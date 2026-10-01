@@ -16,7 +16,7 @@
  * genuinely need a look. The import card counts them instead, says which sites
  * they came from, and offers to search again.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Cover } from './Cover';
 import { Archive } from './Archive';
 import { isIncognito, setIncognito } from './incognito';
@@ -84,6 +84,7 @@ export function More({
   onOpenUi,
   onCompare,
   setupFocus = 0,
+  shelfFocus = 0,
   setupFirst = false,
 }: {
   data: Library | undefined;
@@ -97,6 +98,8 @@ export function More({
   onCompare: (s: SeriesSummary) => void;
   /** Bumped by the screen's setup banner: open the setup card and scroll to it. */
   setupFocus?: number;
+  /** Bumped when the Dashboard card's button asked for these settings. */
+  shelfFocus?: number;
   /** Manga is not set up, or not starting: the card that fixes it goes first rather than under three others. */
   setupFirst?: boolean;
 }) {
@@ -111,6 +114,31 @@ export function More({
   const [sweep, setSweep] = useState<string | null>(null);
   const [savingReleaseTasks, setSavingReleaseTasks] = useState(false);
   const [savingNudges, setSavingNudges] = useState(false);
+  const [savingAhead, setSavingAhead] = useState(false);
+  const [savingShelf, setSavingShelf] = useState(false);
+  const shelfRef = useRef<HTMLDivElement | null>(null);
+
+  /*
+   * Bring the shelf settings into view when the Dashboard card asked for them,
+   * and say so with a moment of highlight — otherwise arriving here is
+   * indistinguishable from the More tab happening to look like this.
+   *
+   * `setTimeout`, not `requestAnimationFrame`: this screen is behind a tab and
+   * a `useAsync`, and rAF does not fire at all when the page is not
+   * compositing. Written down at length on the Settings screen, which took
+   * three goes to learn it.
+   */
+  useEffect(() => {
+    if (!shelfFocus) return;
+    const id = setTimeout(() => {
+      const el = shelfRef.current;
+      if (!el) return;
+      el.scrollIntoView({ block: 'center' });
+      el.classList.add('flash');
+      setTimeout(() => el.classList.remove('flash'), 1400);
+    }, 60);
+    return () => clearTimeout(id);
+  }, [shelfFocus]);
 
   async function runSearch(event: React.FormEvent) {
     event.preventDefault();
@@ -261,6 +289,146 @@ export function More({
             Notify me when a new chapter is out. Off, new chapters still show on the library — the NEW badge and the
             count — and nothing waits on the Dashboard; switching it off clears the ones waiting now.
           </label>
+        )}
+        {/*
+          The Dashboard card. Here rather than on the Settings screen because
+          everything it decides is about *manga* — which series, in which order
+          — while Settings decides only whether the card is on the Dashboard at
+          all and where in the column it sits. The split is the same one the
+          live panel's scope draws, from the other side.
+        */}
+        {data?.shelfShow !== undefined && (
+          <div style={{ marginTop: 10 }} ref={shelfRef} className="manga-shelf-settings">
+            <div className="meta">On the Dashboard — add "My shelf" in Settings first</div>
+
+            <div className="row wrap" style={{ gap: '.35rem', marginTop: 6 }}>
+              {([
+                { key: 'all', label: 'Everything' },
+                { key: 'favourites', label: 'Favourites only' },
+              ] as const).map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  className={data.shelfShow === option.key ? 'btn primary' : 'btn subtle'}
+                  disabled={savingShelf}
+                  onClick={async () => {
+                    setSavingShelf(true);
+                    try {
+                      await manga.setShelf({ show: option.key });
+                      onChanged();
+                    } finally {
+                      setSavingShelf(false);
+                    }
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="row wrap" style={{ gap: '.35rem', marginTop: 6 }}>
+              {([
+                { key: 'follow', label: 'Same as the Library tab' },
+                { key: 'read', label: 'Last read' },
+                { key: 'catchup', label: 'Most to catch up on' },
+                { key: 'updated', label: 'Last updated' },
+                { key: 'title', label: 'Title' },
+                { key: 'added', label: 'Recently added' },
+              ] as const).map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  className={data.shelfSort === option.key ? 'btn primary' : 'btn subtle'}
+                  disabled={savingShelf}
+                  onClick={async () => {
+                    setSavingShelf(true);
+                    try {
+                      await manga.setShelf({ sort: option.key });
+                      onChanged();
+                    } finally {
+                      setSavingShelf(false);
+                    }
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            {/*
+              Only while the order is pinned. In `follow` this box comes from
+              the Library tab along with the sort — the two are one control
+              there, and a second copy here that did nothing would be the lie
+              the disabled-slider case already argues against.
+            */}
+            {data.shelfSort !== 'follow' && (
+              <label className="meta" style={{ display: 'block', marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={data.shelfNewFirst !== false}
+                  disabled={savingShelf}
+                  onChange={async (e) => {
+                    setSavingShelf(true);
+                    try {
+                      await manga.setShelf({ newFirst: e.target.checked });
+                      onChanged();
+                    } finally {
+                      setSavingShelf(false);
+                    }
+                  }}
+                />{' '}
+                New chapters on top
+              </label>
+            )}
+
+            <div className="meta" style={{ marginTop: 6 }}>
+              {data.shelfSort === 'follow'
+                ? 'The card is ordered however this device has the Library tab sorted, including its "New chapters on top" box — change either there and the card follows. Both are per device, so your PC and phone can differ.'
+                : 'A fixed order for the card, kept on the server, so every device shows it the same way. The Library tab keeps its own sort and its own box.'}
+            </div>
+          </div>
+        )}
+
+        {/*
+          Buttons rather than a slider, the same call the refresh rate and the
+          drawer breakpoint make: four named answers, where every position
+          between them is a worse version of a neighbour. Hidden entirely
+          against an older server, which would ignore the setting.
+        */}
+        {data?.readAheadChapters !== undefined && (
+          <div style={{ marginTop: 10 }}>
+            <div className="meta">Fetch ahead while reading</div>
+            <div className="row wrap" style={{ gap: '.35rem', marginTop: 6 }}>
+              {[0, 1, 2, 3].slice(0, (data.maxReadAhead ?? 3) + 1).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={data.readAheadChapters === n ? 'btn primary' : 'btn subtle'}
+                  disabled={savingAhead}
+                  onClick={async () => {
+                    setSavingAhead(true);
+                    try {
+                      await manga.setReadAhead(n);
+                      onChanged();
+                    } finally {
+                      setSavingAhead(false);
+                    }
+                  }}
+                >
+                  {n === 0 ? 'Off' : n === 1 ? '1 chapter' : `${n} chapters`}
+                </button>
+              ))}
+            </div>
+            <div className="meta" style={{ marginTop: 6 }}>
+              {data.readAheadChapters === 0
+                ? 'Off — a chapter is only saved once you open it, so the next one loads from the source.'
+                : 'The next ' +
+                  (data.readAheadChapters === 1 ? 'chapter is' : `${data.readAheadChapters} chapters are`) +
+                  ' downloaded while you read, so they open from this PC. Only while the source is already' +
+                  ' running — this never starts it — and the ten kept chapters still favour what you opened' +
+                  ' yourself.'}
+            </div>
+          </div>
         )}
         {data?.releaseTasks !== undefined && (
           <label className="meta">
