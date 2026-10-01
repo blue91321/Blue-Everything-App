@@ -4416,11 +4416,28 @@ html:has(body > .manga-reader)::-webkit-scrollbar {
  * they read over white panels and black ones alike; only the thumbnails sit on
  * a bar.
  */
+/*
+ * Three columns, not `space-between`.
+ *
+ * `space-between` centres the middle item between its *neighbours*, not in the
+ * bar — so the moment the right-hand side became wider than the left (Next plus
+ * its skip, 92px against the back arrow's 44) the page counter sat about 24px
+ * left of centre on every chapter. Reported from a phone, where it is obvious.
+ *
+ * Two equal `1fr` tracks put the counter in the middle of the bar whatever the
+ * sides weigh, and the sides still reach the edges — so the back arrow keeps
+ * its place, and Next keeps the fixed offset from the right that stopped it
+ * moving when a skip appears.
+ */
 .manga-reader-nav {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   padding: 0 10px 8px;
+}
+
+.manga-reader-nav > .manga-reader-arrow:first-child {
+  justify-self: start;
 }
 
 .manga-reader-arrow {
@@ -4463,6 +4480,8 @@ html:has(body > .manga-reader)::-webkit-scrollbar {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+  /* The right-hand track of the bar's grid — see `.manga-reader-nav`. */
+  justify-self: end;
 }
 
 .manga-reader-skip {

@@ -895,13 +895,23 @@ position taken during the reader's first render, before the page shrank.
   later would ever clear it. From partway through it marks nothing, which is
   the arrow's own rule.
 
-  **The Next arrow does not move when it appears.** The bottom bar is
-  `space-between`, so a control that joined and left it would shift Next every
-  few chapters — the complaint this document makes about the ☰, arriving by a
-  different door. Next and the skip are one group of constant width, and the
-  skip is always rendered, hidden with `visibility` when there is nothing to
-  skip. Measured at 1280px across 2 → 2.1 → 2: Next's right edge is **58px from
-  the window edge every time**.
+  **The Next arrow does not move when it appears.** Next and the skip are one
+  group of constant width, and the skip is always rendered, hidden with
+  `visibility` when there is nothing to skip — otherwise a control joining and
+  leaving the bar would shift Next every few chapters, the complaint this
+  document makes about the ☰ arriving by a different door. Measured at 1280px
+  across 2 → 2.1 → 2: Next's right edge is **58px from the window edge every
+  time**.
+
+  **That made the bar three columns rather than `space-between`**, and finding
+  out why cost a report from a phone. `space-between` centres the middle item
+  between its *neighbours*, not in the bar — so the moment the right-hand side
+  became wider than the left (Next plus its skip, 92px against the back arrow's
+  44) the page counter sat about 24px left of centre on **every** chapter,
+  including the ones with no skip at all. Two equal `1fr` tracks put it in the
+  middle of the bar whatever the sides weigh, and the sides still reach the
+  edges. Measured at 390px with the skip showing and hidden: the counter's
+  centre is the bar's centre, off by **0** in both.
 
   Unlike the chrome's own hiding, this one is meant to leave the tab order:
   `visibility: hidden` plus `disabled`, because a button that would do nothing
