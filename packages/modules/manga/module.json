@@ -2,7 +2,7 @@
   "id": "manga",
   "label": "Manga",
   "blurb": "Your reading list, read and browsed through Suwayomi, with a nudge when a chapter you are waiting for lands.",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "author": "blue91321",
   "server": "server/index.ts",
   "notes": "Chapters come through Suwayomi, a separate program you install that runs Tachiyomi extensions — this package ships no extensions and reads no site itself. MangaDex supplies each series' ids and cover, and MangaUpdates its release history; neither needs an account."
