@@ -659,6 +659,96 @@ than how they are derived, so it passed against the broken code** — it builds
 the offsets through the real function now, with a twenty-second gap between the
 open and the prefetch, which is the thing that was wrong.
 
+**Shelves** (More → Shelves) group the library however you like, and
+**membership is many-to-many**. A series could have belonged to one shelf like a
+file to a folder, which is simpler to build and answers "which one is this in"
+— these behave like tags instead, because that is what somebody sorting nine
+hundred series wants and a single field would have made every arrangement
+exclusive. The cost is stated rather than hidden: counts overlap, so the shelves
+do not add up to the total, and the screen says so rather than letting the
+arithmetic look broken.
+
+Named on the More tab and **put on from the chapter list's head**, where a row
+of chips sits under the title: one per shelf, plus the star, tapped to add and
+tapped again to remove.
+
+That was a correction. The first version offered it only in the tile's
+right-click menu — which is a desktop affordance, and **touch has no
+right-click**, so on a phone there was no way to shelve anything at all and on a
+PC it was a feature you had to already know about. Reported as not being
+findable, which it was not. The chips are visible rather than behind the ⋯ beside
+them for the same reason: a menu is where you put what somebody already knows to
+look for. The menu keeps its ticked lines, which are quicker once you know.
+
+**A shelf can be hidden**, which keeps what is on it out of *Everything* — for
+the pile you do not want to look at, without unfollowing it and losing where you
+were. It is still one tap away, and the row marks it with a ◌.
+
+**Hidden wins over every other shelf a series is on.** With many-to-many
+membership a series can be on a hidden shelf and a visible one at once, and the
+two say opposite things about *Everything* — so the one answering "keep this out
+of my way" takes it, because an unreliable hide is worth nothing. Picking the
+shelf itself always shows what is on it.
+
+**And the count says so**: *890 of 891 · 1 put away*. It read "891 series" with
+one deliberately kept out, which is the stale-number-as-fact this app is against
+— and a count that has quietly dropped is the thing somebody goes looking for a
+bug in.
+
+Two things this cost, both found by measuring rather than reading:
+
+- **`seriesSummary` did not carry `libraries`**, so every shelf filtered to
+  nothing while the counts beside them said otherwise. The counts are computed
+  server-side from the store and were right; the grid had nothing to filter on.
+- **"Everything" is stored as the empty string**, and `getItem` hands that back
+  as `''` rather than null — so a *reload* filtered for a shelf whose id is `''`
+  and drew an empty library reading "0 of 891". Only on a reload, which is
+  exactly when nobody is watching the thing they just changed.
+
+**Removing a shelf keeps every series on it**, and the button says so in full
+rather than relying on the word "remove" — a file manager's "delete folder"
+takes the contents and nothing here does. The only things deleted are a name and
+a set of memberships. Which shelf you are looking at is per device, like the
+sort.
+
+**Reading something you do not follow is recorded too.** Opening a chapter from
+Browse used to write nothing at all — no history, no place kept — so dipping
+into something and coming back a week later meant finding it again and
+remembering where you were. The reader asks the server for a record the first
+time a chapter opens, keyed on the source and its id, and from then on it
+behaves exactly like a followed series: the same read route, the same position
+route, the same History, with *not following* on the row.
+
+**The reader's context resolves one too**, and leaving it out broke the whole
+feature on its first real use: the reader asks `/api/manga/:id/chapters/:id/pages`
+by id, that route's `reader()` helper looked only at `store.series`, and the
+answer was **"no such series"** — a message about the one thing this exists to
+avoid needing. Reported as "it says no such series but works after I add it".
+
+Widening the helper's return to `Series | Glimpse` rather than casting is what
+made the compiler name the one caller of ten that genuinely needs a followed
+series: the chapter list's bookkeeping, which clears the failure flag the grid
+shows and takes a baseline for the sweep. A glimpse has neither, so that block
+is guarded and the rest of the route — title, source, read log, position — works
+on either.
+
+**Deliberately a list of its own, not a `Series` with a flag.** 87 places in
+this module read `store.series` — the sweep, the counts, the grid, the matcher,
+the archive — and every one would have had to learn to skip a kind of series it
+had never heard of. `store.glimpses` is a list nothing reads unless it means to.
+Its fields are *named* to match `Series` where they overlap, which is not
+tidiness either: `/api/manga/:id/read` and both position routes then work on one
+unchanged, because they touch only those fields.
+
+**Following one absorbs it.** The read log and the place move onto the new
+series and the row goes, or History would list the same chapters twice — once as
+"not following" and once not, with neither wrong. Verified: two rows before,
+two rows after, and the glimpse gone.
+
+**A record is asked for by the reader, not by Browse.** Looking at a cover is
+not reading it, and a history of everything glanced at on a browse page would be
+worth less than none.
+
 **A series can be starred**, and that is a smaller set than the library. Every
 series here is followed — that is what being in the library means — and the
 Manga Reader import made the library *itself* "things you chose", since its
@@ -798,8 +888,45 @@ without "what has moved" pinned over it. *Most to catch up on* counts whole
 chapters between where you are and the newest, which is also what the badge
 says (`12 NEW`) — an estimate, since sources skip and split numbers.
 
-**Filters** across the top: new chapters, **source not answering**, no source
-yet, and a tag. Not answering means the last check or the last opening of its
+**"Source not answering" was three things wearing one label**, which an audit of
+a real library settled: 698 linked series, 8 of them marked broken, and the 8
+were two unrelated problems with two different fixes.
+
+- **A timeout** (5 of 8) — Suwayomi busy, a site slow. Nothing is wrong by the
+  time you look.
+- **"No chapters found"** (3 of 8) — the source *answered*, and said it has
+  nothing for that id. This file already said so in the source-comparison
+  route: "an answer rather than a failure — exactly what you wanted to know".
+  That reading was honoured there and nowhere else. It has its own filter now,
+  **Source has nothing for it**, because waiting does not mend it: the wrong
+  entry was linked, or the series has been taken off that source, and the fix is
+  to find another one.
+
+**And a failure was sticky for days.** The oldest timeout was two days old. The
+first attempt at that was to make a failed row *due* sooner — an hour instead of
+its daily slot — and it changed nothing, because they were already due. The
+measurement is what found it: those four rows had **216, 331, 451 and 216
+series queued ahead of them**, all equally due, against a back half of twelve
+slots that clears about eight an hour. A row 451 deep waits more than two days.
+
+So `RETRY_SLOTS` reserves two of the twelve for rows whose last check failed —
+the same answer `RECENT_SLOTS` gives the series you are reading. Two, not more:
+a source genuinely down would otherwise spend a sixth of every sweep failing,
+and these are the rows least likely to reward one. Verified on the real library:
+**two sweeps took it from two to zero**, and the three that genuinely have
+nothing stayed, which is correct.
+
+**Eligibility and priority are different things**, and that is the part worth
+keeping: a queue where everything is due is a queue where "sooner" means
+nothing.
+
+**The tile says when, not just what.** "Not answering" reads as a claim about
+right now and is a claim about whenever it was last asked, which for something
+you have not opened in a while can be a day or two ago. The hover now carries
+the age beside the message.
+
+**Filters** across the top: new chapters, **source not answering**, source has
+nothing for it, no source yet, and a tag. Not answering means the last check or the last opening of its
 chapter list failed — the chapter list now records a failure on the series and
 clears it when the source answers, because the sweep alone reaches a dozen
 series every half hour. In that view a cover opens the search for another
@@ -936,6 +1063,19 @@ position taken during the reader's first render, before the page shrank.
 - **Hidden is `opacity` plus `pointer-events: none`, not `visibility`**, so a
   hidden control cannot catch a tap meant for the page but can still be reached
   by keyboard, where focusing it brings the bars back.
+- **The bottom of the chapter means its last page**, whatever the geometry says.
+  The counter otherwise takes the first page crossing the read line, which is
+  right everywhere except the very end: a chapter whose **last page is shorter
+  than the screen** leaves the page before it still crossing that line at
+  maximum scroll, so the counter stops one short and can never reach the end.
+  Next then reads as "skipping, not finishing" however far you scrolled, and the
+  chapter is never marked read.
+
+  Reported as chapters not counting when reading several in a row, which is
+  exactly when it shows: it is **deterministic per chapter**, so a run loses the
+  ones with a short final page and keeps the rest — which is why the read log
+  had gaps like 16→19 and 20→22 inside otherwise clean sessions. Measured at
+  860px with a 120px last page: fully scrolled, the counter said page 84 of 86.
 - **Jumping to a page is returning to one.** Pages above a target load now
   rather than lazily and the scroll is re-applied as each lands, the same
   machinery `resume` uses. Verified: a thumbnail put page 5's top on the read
@@ -947,6 +1087,54 @@ position taken during the reader's first render, before the page shrank.
 - **The thumbnail strip listens for the wheel, not for scroll.** The code that
   keeps the current page centred scrolls it too, and a scroll handler took that
   for a touch and held the controls up for as long as you read.
+
+#### Getting down a long chapter
+
+- **The scrollbar is back, and is a choice.** It was hidden outright on the
+  reasoning that a 15px strip down one side is the last piece of browser left
+  showing and the page counter already says where you are. The counter says
+  where you are — **it is not something you can grab**, and a long chapter is
+  exactly where you want to throw yourself two thirds of the way down. The
+  default is now to show it, because a scrollbar is what a page normally has
+  and its absence was the surprise; the gear hides it for anybody who wanted
+  the clean edge.
+- **The page can be dragged to scroll, with a mouse.** `pointerType === 'mouse'`
+  only, deliberately: a finger already scrolls by dragging, and claiming that
+  gesture would mean fighting the browser for it and losing momentum and
+  rubber-banding, which touch does better than this could.
+- **Four pixels of slop, and the click that ends a drag is swallowed.** A tap on
+  the pages toggles the controls, so without both of those a drag would scroll
+  *and* hide the chrome, and a click with a twitch in it would scroll a few
+  pixels instead of toggling. The pointer is captured only once a drag is known
+  — taken on `pointerdown` it would eat every ordinary click.
+- **A drag that starts on the controls does nothing.** That is somebody missing
+  a button, and scrolling the page out from under them is the wrong apology.
+- **The pages refuse to be dragged out of the window**, and without that the
+  feature worked everywhere except on a page. An `<img>` is draggable by
+  default — to another tab, to the desktop — and that native drag begins on
+  mousedown and takes every event after it. So pressing on the margin beside a
+  page scrolled and pressing on the page itself dragged a ghost of it around,
+  which is exactly how it was reported.
+
+  `user-select: none` does not cover this: selecting text and dragging an image
+  are two mechanisms and each refuses separately. **Both spellings are needed**
+  — the `draggable` attribute is what Chrome and Firefox read, `-webkit-user-drag`
+  is what WebKit reads, and this reader is used on an iPhone. Not gated on the
+  drag-to-scroll setting, since nobody drags a manga page to their desktop on
+  purpose mid-chapter and gating it would make one switch change two things.
+- **The position is a ref, not state.** A `setState` per `pointermove` would
+  re-render a strip of seventy images sixty times a second — the same reason
+  `useEdgeDrawer` keeps its drag position in one.
+
+Measured by driving real pointer events: a 300px drag scrolls exactly 300px and
+leaves the controls alone; a plain click still toggles them; a 2px twitch
+scrolls nothing and still toggles; a `pointerType: 'touch'` drag is ignored
+entirely, so native scrolling keeps it; and a drag begun **on a page** scrolls
+its full distance with **no** native image drag started.
+
+The Library needed none of this — it scrolls with the window and has always had
+the scrollbar, drawing sixty tiles at a time with a *Show more* button behind
+the observer that adds the next sixty.
 
 #### The gear, and what a web app cannot do from it
 
@@ -1062,6 +1250,27 @@ linked series has `latestChapter: null`, which the sweep records as a baseline
 without raising anything. Nine hundred series linking in an evening must not
 become nine hundred nudges about chapters that came out while you were using
 the other app. Until then, the old app's newest chapter stands in for the bar.
+
+**The sweep writes against a freshly read store, never the one it began with** —
+and until this was found, it did the opposite. `sweepReleases` holds a store
+across every network call it makes: a dozen series, each a request to somebody
+else's site, seconds at best and most of a minute when a source is slow. Writing
+that store at the end **overwrote everything done in the app meanwhile** — a
+series followed, a chapter marked read, a star, a shelf — silently, and only
+sometimes, which is the worst shape a bug can have.
+
+Found when two shelves made during the sweep that runs 45 seconds after boot
+vanished a moment later. It is not new: this file has written a minutes-old
+store since it was written. What makes it worth recording is that **the pattern
+was already here and this was the one place not following it** — `tags.ts` and
+`matching.ts` both re-read immediately before writing, in the same module.
+
+Only the seven fields the sweep is allowed to change are copied across, and only
+onto series that still exist: one unfollowed mid-sweep stays unfollowed. The
+field list is named rather than spread, so a field added to the sweep and not
+added there is computed and dropped rather than silently clobbering. Verified by
+making a shelf and starring a series while a sweep ran: both survived, and the
+sweep still re-checked 36 series.
 
 **A sweep keeps eight of its twelve slots for this month's series.** The
 rotation was fair, and fairness is wrong once a library is large: nine hundred

@@ -33,7 +33,22 @@ function dayOf(at: number, now: Date): string {
   });
 }
 
-export function History({ onOpen }: { onOpen: (seriesId: string, carryOn: boolean) => void }) {
+export function History({
+  onOpen,
+  onGlimpse,
+}: {
+  onOpen: (seriesId: string, carryOn: boolean) => void;
+  /**
+   * Open something read but not followed.
+   *
+   * It has no series of its own to open, so the row hands back what the source
+   * calls it and the screen rebuilds a browse result from that — landing on the
+   * details card, which is where Continue and Follow already live. No new
+   * screen, and the one thing you might want to do about such a row is already
+   * on the one it goes to.
+   */
+  onGlimpse?: (entry: { seriesId: string; sourceMangaId: string; title: string; sourceName: string; carryOn: boolean }) => void;
+}) {
   /*
    * Fetched each time the tab opens — it is mounted only while shown — because
    * your place is saved quietly as you scroll, without announcing a change, so
@@ -99,7 +114,20 @@ export function History({ onOpen }: { onOpen: (seriesId: string, carryOn: boolea
                 key={`${e.kind}:${e.seriesId}:${e.chapter}:${e.at}`}
                 className={`manga-history-row${e.kind === 'reading' ? ' reading' : ''}`}
               >
-                <button className="manga-history-open" onClick={() => onOpen(e.seriesId, e.kind === 'reading')}>
+                <button
+                  className="manga-history-open"
+                  onClick={() =>
+                    e.following === false && e.sourceMangaId && onGlimpse
+                      ? onGlimpse({
+                          seriesId: e.seriesId,
+                          sourceMangaId: e.sourceMangaId,
+                          title: e.title,
+                          sourceName: e.source ?? '',
+                          carryOn: e.kind === 'reading',
+                        })
+                      : onOpen(e.seriesId, e.kind === 'reading')
+                  }
+                >
                   <Cover path={e.coverPath} title={e.title} size={40} />
                   <span className="manga-row-text">
                     <span className="title truncate">{e.title}</span>
@@ -110,6 +138,13 @@ export function History({ onOpen }: { onOpen: (seriesId: string, carryOn: boolea
                           }`
                         : `Finished chapter ${chapterText(e.chapter)}`}
                       {e.source ? ` · ${sourceLabel(e.source)}` : ''}
+                      {/*
+                        Said on the row rather than left to be noticed. A title
+                        in History that is not in your library looks like a
+                        series you have lost until something says why it is not
+                        there.
+                      */}
+                      {e.following === false ? ' · not following' : ''}
                     </span>
                   </span>
                   <span className="meta manga-history-time">

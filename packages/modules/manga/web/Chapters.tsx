@@ -109,6 +109,7 @@ export function pickOnePerNumber(
 export function Chapters({
   seriesId,
   series,
+  libraries = [],
   onClose,
   onCompare,
   onDetails,
@@ -119,6 +120,8 @@ export function Chapters({
   seriesId: string;
   /** The library's summary of it: status, when it was checked, and whether that failed. */
   series?: SeriesSummary;
+  /** The shelves on offer, drawn as chips on the head. Empty on an older server. */
+  libraries?: Array<{ id: string; name: string; hidden?: boolean }>;
   /** The source's page for it — Series details. */
   onDetails?: () => void;
   /** Unlinked or unfollowed from the ⋯, so the library behind this reloads. */
@@ -417,6 +420,23 @@ export function Chapters({
     { label: 'Stop following', onSelect: () => void unfollow(), danger: true },
   ]);
 
+  const [shelving, setShelving] = useState(false);
+
+  /** Put this series on exactly these shelves — a whole-list write. */
+  async function setShelves(ids: string[]) {
+    if (!series) return;
+    setShelving(true);
+    try {
+      await manga.libraries.set(series.id, ids);
+      onChanged?.();
+      list.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'that could not be saved');
+    } finally {
+      setShelving(false);
+    }
+  }
+
   /** Star or unstar, then reload so the head and the library row agree. */
   async function toggleFavourite() {
     if (!series) return;
@@ -569,6 +589,60 @@ export function Chapters({
             */}
           {series?.error && <span className="meta urgent">Last check failed: {series.error}</span>}
           {series?.notWatchingBecause && <span className="meta">Not watched — {series.notWatchingBecause}</span>}
+
+          {/*
+            Shelves, as chips you tap.
+            
+            This was only in the tile's right-click menu, which is a desktop
+            affordance — **touch has no right-click**, so on a phone there was
+            no way to shelve anything at all, and on a PC it was a feature you
+            had to already know about. Reported as not being findable, which it
+            was not.
+            
+            Here because this is where you land when you tap a cover, and it is
+            the screen that is already about one series. Visible rather than
+            behind the ⋯ beside it for the same reason: a menu is where you put
+            what somebody already knows to look for.
+            
+            The star joins them, so the two things you can file a series under
+            sit together rather than one being a chip and the other a menu item.
+          */}
+          {series && (
+            <div className="manga-shelf-chips">
+              <button
+                className={`manga-shelf-chip${series.favourite ? ' on' : ''}`}
+                aria-pressed={series.favourite === true}
+                disabled={shelving}
+                onClick={() => void toggleFavourite()}
+                title={series.favourite ? 'Remove from favourites' : 'Add to favourites'}
+              >
+                {series.favourite ? '★' : '☆'} Favourite
+              </button>
+              {libraries.map((l) => {
+                const on = series.libraries?.includes(l.id) === true;
+                return (
+                  <button
+                    key={l.id}
+                    className={`manga-shelf-chip${on ? ' on' : ''}`}
+                    aria-pressed={on}
+                    disabled={shelving}
+                    onClick={() =>
+                      void setShelves(
+                        on ? (series.libraries ?? []).filter((x) => x !== l.id) : [...(series.libraries ?? []), l.id]
+                      )
+                    }
+                  >
+                    {on ? '✓ ' : '+ '}
+                    {l.hidden ? '◌ ' : ''}
+                    {l.name}
+                  </button>
+                );
+              })}
+              {libraries.length === 0 && (
+                <span className="meta">No shelves yet — make one on the More tab.</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       {problem && <p className="banner">{problem}</p>}

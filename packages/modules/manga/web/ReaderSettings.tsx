@@ -45,6 +45,35 @@ export function ReaderSettings({
           With Never they stay until you tap the page. Touching the controls restarts the countdown, and this panel
           holds them up while it is open. Kept on this device.
         </p>
+
+        {/*
+          Behind More with the countdowns, not on the front panel: these are set
+          once and left, where brightness and width are reached for mid-chapter.
+          Both are shown everywhere rather than hidden on touch — a phone browser
+          decides for itself whether a scrollbar is drawn, and a tablet with a
+          mouse is a real thing.
+        */}
+        <label className="manga-reader-check">
+          <input
+            type="checkbox"
+            checked={prefs.scrollbar}
+            onChange={(e) => onChange({ scrollbar: e.target.checked })}
+          />{' '}
+          Show the scrollbar
+        </label>
+
+        <label className="manga-reader-check">
+          <input
+            type="checkbox"
+            checked={prefs.dragToScroll}
+            onChange={(e) => onChange({ dragToScroll: e.target.checked })}
+          />{' '}
+          Drag the page to scroll
+        </label>
+
+        <p className="meta">
+          Dragging is for a mouse — a finger already scrolls that way, so this leaves touch alone.
+        </p>
       </div>
     );
   }

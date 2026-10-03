@@ -106,6 +106,14 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
   };
   /** A library series whose source page is open — Series details. */
   const [details, setDetails] = useState<string | null>(null);
+  /**
+   * A History row for something read but not followed.
+   *
+   * Held as what the source calls it rather than as a series id, because there
+   * is no series — the details card below is rebuilt from this, which is where
+   * Continue and Follow already are.
+   */
+  const [glimpsing, setGlimpsing] = useState<{ sourceMangaId: string; title: string; sourceName: string; carryOn: boolean } | null>(null);
   /** A search handed to Browse — the 🔍, or details on a series with no source yet. */
   const [browseSearch, setBrowseSearch] = useState<{ query: string; at: number } | null>(null);
   const [browsed, setBrowsed] = useState(false);
@@ -233,6 +241,7 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
         seriesId={reading}
         series={current}
         coverPath={current?.coverPath ?? null}
+        libraries={data?.libraries ?? []}
         continueOnOpen={continuing}
         onClose={() => {
           setReading(null);
@@ -256,6 +265,47 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
         }
         onChanged={() => library.reload()}
       />
+    );
+  }
+  /*
+   * Something from History you are not following, shown as the source's own
+   * details card — the same card Browse opens, with no `ownSeriesId`, so it
+   * finds its own record again through `glimpse` the moment a chapter opens.
+   */
+  if (!overlay && glimpsing) {
+    overlay = (
+      <div className="card manga-browse">
+        <SeriesDetail
+          result={{
+            id: glimpsing.sourceMangaId,
+            title: glimpsing.title,
+            sourceName: glimpsing.sourceName,
+            lang: null,
+            url: null,
+            thumbnailUrl: null,
+            coverPath: null,
+            following: null,
+          }}
+          others={[]}
+          following={null}
+          onBack={() => setGlimpsing(null)}
+          onOpen={() => undefined}
+          onFollow={async (r) => {
+            /*
+             * The same call Browse makes, not a copy of its handler — and the
+             * server moves this row's read log onto the new series and drops
+             * the row, so History shows one record of it rather than two.
+             */
+            await manga.browse.follow(r);
+            setGlimpsing(null);
+            library.reload();
+          }}
+          onRead={(id) => {
+            setGlimpsing(null);
+            setReading(id);
+          }}
+        />
+      </div>
     );
   }
   if (!overlay && details) {
@@ -379,6 +429,13 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
                   onDetails={showDetails}
                   onCompare={(s) => setComparing({ id: s.id, from: 'list' })}
                   onRemove={(s) => void remove(s)}
+                  libraries={data.libraries ?? []}
+                  onShelves={(s, ids) => {
+                    void manga.libraries
+                      .set(s.id, ids)
+                      .then(() => library.reload())
+                      .catch((e: unknown) => setProblem(e instanceof Error ? e.message : 'could not save that'));
+                  }}
                 />
               )}
             </>
@@ -391,6 +448,7 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
                 setContinuing(carryOn);
                 setReading(id);
               }}
+              onGlimpse={(e) => setGlimpsing(e)}
             />
           )}
 

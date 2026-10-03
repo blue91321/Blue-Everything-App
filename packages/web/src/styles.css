@@ -4318,16 +4318,122 @@ body:has(> .manga-reader) > #root {
 }
 
 /*
- * And the scrollbar goes too, on a PC: a 15px strip down one side of the page
- * is the one piece of the browser left showing, and the page counter already
- * says where you are. Scrolling itself is untouched.
+ * Shelf chips on a chapter list's head.
+ *
+ * Visible rather than behind the ⋯ beside them: this was only in the tile's
+ * right-click menu, which touch does not have at all — so on a phone there was
+ * no way to shelve anything, and on a PC it was a feature you had to already
+ * know about.
  */
-html:has(body > .manga-reader) {
+.manga-shelf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 8px;
+}
+
+.manga-shelf-chip {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.manga-shelf-chip.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.manga-shelf-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .manga-shelf-chip:not(.on):not(:disabled):hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+}
+
+/* A checkbox row in the reader's gear, matching its sliders' spacing. */
+.manga-reader-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 10px;
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+/*
+ * The scrollbar can go, and no longer does by default.
+ *
+ * It was hidden outright: a 15px strip down one side is the last piece of
+ * browser left showing, and the page counter already says where you are. The
+ * counter says where you are — it is not something you can *grab*, and a long
+ * chapter is exactly where you want to throw yourself two thirds of the way
+ * down. It is a choice in the gear now, and the default is to show it, because
+ * a scrollbar is what a page normally has and its absence was the surprise.
+ */
+html:has(body > .manga-reader.no-scrollbar) {
   scrollbar-width: none;
 }
 
-html:has(body > .manga-reader)::-webkit-scrollbar {
+html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
   display: none;
+}
+
+/*
+ * Dragging the page to scroll it, with a mouse.
+ *
+ * `grab` only where there is a pointer to show it to, and only on the pages —
+ * the controls keep their own cursors, and a finger is not offered a hand it
+ * cannot see.
+ */
+@media (hover: hover) {
+  .manga-reader.draggable .manga-strip {
+    cursor: grab;
+  }
+
+  .manga-reader.draggable .manga-strip:active {
+    cursor: grabbing;
+  }
+}
+
+/*
+ * Nothing is selectable while a drag may be in progress. Without this a drag
+ * across a chapter highlights the alt text of every page it passes, which then
+ * sits there blue until the next click.
+ */
+.manga-reader.draggable .manga-strip {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/*
+ * And the pictures themselves are not draggable.
+ *
+ * An `<img>` can be dragged out of the page by default — to another tab, to the
+ * desktop — and that native drag begins on mousedown and takes every event
+ * after it, so pressing on a page and moving dragged a ghost of it around and
+ * scrolled nothing, while pressing on the margin beside it worked fine.
+ * `user-select` above does not cover it: selecting text and dragging an image
+ * are two mechanisms and each refuses separately.
+ *
+ * Not gated on `.draggable`: the scroll gesture is optional, but nobody drags a
+ * manga page to their desktop on purpose mid-chapter, and leaving it possible
+ * only when the setting is off would make the setting change two things.
+ */
+.manga-strip img {
+  /* Prefixed only; there is no unprefixed `user-drag`, in any spec. */
+  -webkit-user-drag: none;
 }
 
 .manga-reader {

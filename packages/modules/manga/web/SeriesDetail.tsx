@@ -85,9 +85,54 @@ export function SeriesDetail({
   const [problem, setProblem] = useState<string | null>(null);
   const [blurbOpen, setBlurbOpen] = useState(false);
   const [open, setOpen] = useState<Chapter | null>(null);
+
+  /**
+   * Open a chapter, making sure there is something to record into first.
+   *
+   * For a followed series there already is. For anything else this asks the
+   * server for a record keyed on the source and its id — find-or-create, so
+   * coming back to the same thing carries on the same history rather than
+   * starting a second one.
+   *
+   * A failure is swallowed and the chapter still opens. Not being able to write
+   * down that you read something is not a reason to stop you reading it; it
+   * degrades to exactly the old behaviour, which was no record at all.
+   */
+  const openChapter = async (c: Chapter) => {
+    if (!ownSeriesId && !glimpseId) {
+      try {
+        const made = await manga.glimpse({
+          adapter: 'suwayomi',
+          mangaId: result.id,
+          sourceName: result.sourceName,
+          title: result.title,
+          coverUrl: result.thumbnailUrl ?? null,
+        });
+        setGlimpseId(made.id);
+      } catch {
+        // Reading without a record is the behaviour this replaced, not a failure.
+      }
+    }
+    setOpen(c);
+  };
   const [following_, setFollowing] = useState(false);
   // Only for your own series' linked copy: a preview has no series to keep a place in.
-  const saver = usePositionSaver(ownSeriesId ?? null);
+  /*
+   * Reading something you do not follow is still reading it.
+   *
+   * Opening a chapter here used to record nothing at all — no history, no place
+   * kept — so dipping into something and coming back a week later meant finding
+   * it again and remembering where you were. The reader asks the server for a
+   * record the first time a chapter is opened, and from then on this behaves
+   * exactly like a followed series: the same save route, the same read route,
+   * the same History.
+   *
+   * Asked for when the reader opens, not when this card does. Looking at a
+   * cover is not reading it.
+   */
+  const [glimpseId, setGlimpseId] = useState<string | null>(null);
+  const recordId = ownSeriesId ?? glimpseId;
+  const saver = usePositionSaver(recordId ?? null);
   const [resume, setResume] = useState<{ page: number; offset: number } | null>(null);
   /**
    * Where the reader last said you were. Held in a ref while reading — it
@@ -117,7 +162,7 @@ export function SeriesDetail({
   if (open && page) {
     return (
       <Reader
-        {...(ownSeriesId ? { seriesId: ownSeriesId } : { preview: result.id })}
+        {...(recordId ? { seriesId: recordId } : { preview: result.id })}
         chapter={open}
         backLabel="Details"
         resume={resume}
@@ -134,7 +179,8 @@ export function SeriesDetail({
           setOpen(null);
         }}
         onPosition={
-          ownSeriesId
+          /* Anything with a record to write into — followed, or glimpsed. */
+          recordId
             ? (p) => {
                 const place = { chapter: open.number, chapterId: open.id, chapterName: open.name, ...p };
                 lastPlace.current = place;
@@ -160,11 +206,11 @@ export function SeriesDetail({
               if (!target) return;
               saver.flush();
               lastPlace.current = null;
-              // Nothing is recorded for a series only being previewed — the
-              // same rule `onFinished` here already follows.
-              if (finishing && ownSeriesId) {
+              // Written down for anything with a record, which is now a series
+              // you follow *or* one you have only dipped into.
+              if (finishing && recordId) {
                 for (const n of [open.number, ...skippedBetween(page.chapters, open.number, target.number)]) {
-                  await manga.reader.markRead(ownSeriesId, n).catch(() => undefined);
+                  await manga.reader.markRead(recordId, n).catch(() => undefined);
                 }
               }
               setResume(null);
@@ -176,8 +222,8 @@ export function SeriesDetail({
           saver.flush();
           lastPlace.current = null;
           setResume(null);
-          if (ownSeriesId) {
-            await manga.reader.markRead(ownSeriesId, n).catch(() => undefined);
+          if (recordId) {
+            await manga.reader.markRead(recordId, n).catch(() => undefined);
             // As the server did: read here, and your place moves past it.
             setPage((p) =>
               p
@@ -257,7 +303,7 @@ export function SeriesDetail({
               </button>
             )}
             {first && (
-              <button className="btn" onClick={() => setOpen(first)}>
+              <button className="btn" onClick={() => void openChapter(first)}>
                 Read chapter {chapterText(first.number)}
               </button>
             )}
@@ -344,7 +390,7 @@ export function SeriesDetail({
               className={`manga-chapter-row${c.read ? ' read' : ''}${here ? ' started' : ''}`}
               onClick={() => {
                 setResume(here ? { page: here.page, offset: here.offset } : null);
-                setOpen(c);
+                void openChapter(c);
               }}
             >
               <span className="title truncate">{c.name}</span>

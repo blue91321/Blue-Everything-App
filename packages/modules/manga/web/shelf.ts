@@ -43,8 +43,31 @@ export function toCatchUp(s: SeriesSummary): number {
   return Math.max(1, Math.floor(s.latestNumber!) - Math.floor(reached));
 }
 
-/** Its source failed when last asked — by the sweep, or by opening its chapters. */
-export const notAnswering = (s: SeriesSummary) => s.source !== null && s.error !== null;
+/**
+ * The source answered, and said it has nothing for this id.
+ *
+ * **Not the same as not answering**, and conflating them was costing a real
+ * distinction: a timeout means try again, while this means the link is wrong —
+ * the series was never on that source, or has been taken off it — and the fix
+ * is to find another one. Measured on a library of 698 linked series: eight
+ * broken rows, of which three were this.
+ *
+ * Matched on the message, which is Suwayomi's own words passed through. That
+ * reads as fragile and is the same call the source-comparison route already
+ * makes, with the same reasoning: the alternative is a second field carried
+ * through every layer to say what the message already says, and a message that
+ * changes shows up as a row in the wrong filter rather than as a crash.
+ */
+export const sourceHasNothing = (s: SeriesSummary) =>
+  s.source !== null && s.error !== null && /no chapters/i.test(s.error);
+
+/**
+ * Its source failed when last asked — by the sweep, or by opening its chapters.
+ *
+ * "Had nothing for it" is excluded: that is an *answer*, and a useful one.
+ */
+export const notAnswering = (s: SeriesSummary) =>
+  s.source !== null && s.error !== null && !/no chapters/i.test(s.error);
 
 /** "Asura Scans (EN)" → "Asura Scans": the language is the same on every tile. */
 export function sourceLabel(name: string): string {

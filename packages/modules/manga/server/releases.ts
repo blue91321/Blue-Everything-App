@@ -99,17 +99,51 @@ const RECENT_MS = 30 * DAY;
 const YEAR_MS = 365 * DAY;
 export const RECENT_SLOTS = 8;
 
+/**
+ * Slots kept for asking again about something whose last check failed.
+ *
+ * Making a failed row *eligible* sooner was not enough, and the numbers say why:
+ * on this install the four timed-out rows had **216, 331, 451 and 216 series
+ * queued ahead of them**, all equally due, and the back half of twelve slots
+ * clears about eight an hour. A row 451 deep waits more than two days — which
+ * is exactly how long "source not answering" had been sitting on a series with
+ * nothing wrong with it.
+ *
+ * So they get reserved slots, the same answer `RECENT_SLOTS` gives the series
+ * you are actually reading. Two, not more: a source that is genuinely down
+ * would otherwise spend a sixth of every sweep failing, and these are the rows
+ * least likely to reward one. A handful of broken rows clear within the hour;
+ * hundreds take a few hours, which is still days faster than their turn.
+ */
+export const RETRY_SLOTS = 2;
+
 /** When you last did anything with it: read a chapter, left a place, or followed it. */
 export function lastActive(series: Series, positions: Record<string, ReadingPosition>): number {
   return Math.max(series.addedAt, positions[series.id]?.at ?? 0, ...series.readLog.map((r) => r.at));
 }
 
+/**
+ * How soon a series whose last check *failed* is asked again.
+ *
+ * Its ordinary turn is not good enough. A timeout is usually nothing — Suwayomi
+ * busy, a site slow — but the row says "source not answering" until something
+ * asks again and succeeds, and for a series you have not opened in a year that
+ * is its daily slot behind a queue of hundreds. Measured on this install:
+ * **five of eight broken rows were timeouts, the oldest two days old**, with
+ * nothing wrong by then.
+ *
+ * An hour, not the next sweep. A source that is genuinely down would otherwise
+ * take a slot every half hour forever, and these are the rows least likely to
+ * reward one.
+ */
+const RETRY_FAILED_MS = 60 * 60_000;
+
 /** How long a series may go unasked, from how recently it was active. */
-export function checkEvery(active: number, now: number): number {
+export function checkEvery(active: number, now: number, failed = false): number {
   const age = now - active;
-  if (age <= RECENT_MS) return 0;
-  if (age <= YEAR_MS) return 6 * 60 * 60_000;
-  return DAY;
+  const ordinary = age <= RECENT_MS ? 0 : age <= YEAR_MS ? 6 * 60 * 60_000 : DAY;
+  // Never *less* often because it failed — a recent series is already every sweep.
+  return failed ? Math.min(ordinary, RETRY_FAILED_MS) : ordinary;
 }
 
 /** What this sweep asks about: this month's first, then whatever else is due. */
@@ -120,23 +154,57 @@ export function dueForCheck(
   batch = BATCH
 ): Series[] {
   const recent: Series[] = [];
+  const failed: Series[] = [];
   const rest: Series[] = [];
   for (const s of pollable(store)) {
     const active = lastActive(s, positions);
-    if (now - active <= RECENT_MS) recent.push(s);
-    else if (s.checkedAt === null || now - s.checkedAt >= checkEvery(active, now)) rest.push(s);
+    if (now - active <= RECENT_MS) {
+      // Already asked about every sweep; a retry slot would buy it nothing.
+      recent.push(s);
+      continue;
+    }
+    if (s.checkedAt !== null && now - s.checkedAt < checkEvery(active, now, s.error !== null)) continue;
+    // Due, and the last answer was a failure: ahead of the ordinary queue.
+    if (s.error !== null) failed.push(s);
+    else rest.push(s);
   }
-  // Both already oldest-answer-first, from `pollable`.
+  // All three already oldest-answer-first, from `pollable`.
   const first = recent.slice(0, RECENT_SLOTS);
-  const others = rest.slice(0, batch - first.length);
-  // Unused slots on either side go to the other.
-  return [...first, ...others, ...recent.slice(RECENT_SLOTS)].slice(0, batch);
+  const retry = failed.slice(0, RETRY_SLOTS);
+  const others = rest.slice(0, Math.max(0, batch - first.length - retry.length));
+  /*
+   * Unused slots flow outwards rather than being lost — a library with nothing
+   * broken spends all twelve on reading, and one with nothing read recently
+   * spends them on the backlog. The leftovers of each are appended so a short
+   * batch is still a full one.
+   */
+  return [...first, ...retry, ...others, ...recent.slice(RECENT_SLOTS), ...failed.slice(RETRY_SLOTS)].slice(0, batch);
 }
 
 export type SweepResult = { checked: number; raised: number; failed: number };
 
+/**
+ * The fields this sweep is allowed to change on a series.
+ *
+ * Named, because the commit below copies exactly these onto a freshly read
+ * store and nothing else. A field added to the sweep and not added here would
+ * be computed and then silently dropped — so the list is the contract, and it
+ * is short on purpose: everything here is *what the source said*, which is the
+ * only thing a background check has any business deciding.
+ */
+const SWEPT = [
+  'latestChapter',
+  'sourceChapter',
+  'sourceCheckedAt',
+  'checkedAt',
+  'error',
+  'totalChapters',
+  'status',
+] as const;
+
 export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
   const store = read();
+  const linksBefore = store.links.length;
   const due = dueForCheck(store, now, readPositions());
   const result: SweepResult = { checked: 0, raised: 0, failed: 0 };
   if (due.length === 0) return result;
@@ -326,7 +394,38 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
     }
   }
 
-  write(store);
+  /*
+   * Re-read, merge, write — never write back the store this began with.
+   *
+   * This function holds a store across every network call it makes: a dozen
+   * series, each a request to somebody else's site, which is seconds at best
+   * and the better part of a minute when a source is slow. Writing that store
+   * at the end overwrote **everything done in the app meanwhile** — a series
+   * followed, a chapter marked read, a star, a shelf. Silently, and only
+   * sometimes, which is the worst shape a bug can have.
+   *
+   * Found when two libraries made during the sweep that runs 45s after boot
+   * vanished a moment later. It is not new: this file has written a
+   * minutes-old store since it was written, and `tags.ts` and `matching.ts`
+   * both already re-read immediately before writing — the pattern was here,
+   * this was the one place not following it.
+   *
+   * Only `SWEPT` fields are copied, and only onto series that still exist: one
+   * unfollowed during the sweep stays unfollowed, which is what you asked for.
+   */
+  const fresh = read();
+  for (const row of due) {
+    const target = fresh.series.find((x) => x.id === row.id);
+    if (!target) continue;
+    for (const field of SWEPT) {
+      (target as Record<string, unknown>)[field] = (row as Record<string, unknown>)[field];
+    }
+  }
+  // Appended, not replaced: anything raised meanwhile is somebody else's and
+  // this run's are the ones past where it started.
+  fresh.links.push(...store.links.slice(linksBefore));
+  write(fresh);
+
   if (announce) changes.emitChange('all');
   return result;
 }

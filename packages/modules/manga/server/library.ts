@@ -129,6 +129,18 @@ export type Series = SeriesIds & {
    */
   favourite?: boolean;
   /**
+   * Which libraries this is on, by id.
+   *
+   * **Optional, and absent means none**, like `favourite` — nine hundred series
+   * arrived from an import belonging to no shelf anybody had made, and writing
+   * an empty array onto every one would be a lot of JSON saying nothing.
+   *
+   * Ids nothing answers to are ignored rather than cleaned up, the same rule
+   * `hidden_providers` and the panel ids follow: a library deleted by accident
+   * and recreated with the same id would find its series again.
+   */
+  libraries?: string[];
+  /**
    * Where a series brought in from another app came from: the app, the site it
    * was last read on there (and every site it was read on, newest first), the
    * title it had, and the newest chapter that app knew of. `matching.ts` finds it on an installed source by the site and title;
@@ -210,6 +222,69 @@ const SHELF_SORTS: ShelfSort[] = ['follow', 'read', 'catchup', 'updated', 'title
 /** Anything unrecognised falls back, so a hand-edited file cannot break the card. */
 export function clampShelfSort(value: unknown): ShelfSort {
   return SHELF_SORTS.includes(value as ShelfSort) ? (value as ShelfSort) : 'follow';
+}
+
+/**
+ * A named shelf you put series on.
+ *
+ * **Membership is many-to-many**, which is a choice and not the obvious one. A
+ * series could have belonged to one library like a file to a folder, and that
+ * is simpler to build and to answer "which one is this in". These behave like
+ * tags instead: a series can be in *Reading* and *Korean* and *Favourites* at
+ * once, because that is what somebody sorting nine hundred series actually
+ * wants, and a single field would have made every arrangement exclusive.
+ *
+ * The cost is stated rather than hidden: counts overlap, so the libraries do
+ * not add up to the total, and the screen says so rather than letting the
+ * arithmetic look broken.
+ */
+export interface MangaLibrary {
+  id: string;
+  name: string;
+  /**
+   * Keep what is on it out of *Everything*.
+   *
+   * For the pile you do not want to look at — dropped, finished, saved for
+   * later — without unfollowing it and losing where you were. The shelf is
+   * still there and still one tap away; it simply stops filling the view you
+   * open by default.
+   *
+   * **Hidden wins over every other shelf a series is on.** With many-to-many
+   * membership a series can be on a hidden shelf and a visible one at once,
+   * and the two say opposite things about *Everything* — so the one that
+   * answers "keep this out of my way" takes it, because the other reading
+   * makes hiding unreliable and an unreliable hide is worth nothing. Picking
+   * the shelf itself always shows what is on it.
+   */
+  hidden?: boolean;
+}
+
+/**
+ * Something you read without following it.
+ *
+ * Opening a chapter from Browse used to record nothing at all — no history, no
+ * place kept — so dipping into something and coming back to it a week later
+ * meant finding it again and remembering where you were. These rows exist for
+ * exactly that and nothing else.
+ *
+ * **Deliberately not a `Series` with a flag.** 87 places in this module read
+ * `store.series`, and every one of them — the release sweep, the counts, the
+ * library grid, the matcher, the archive — would have had to learn to skip a
+ * kind of series it had never heard of. A list of its own is a list nothing
+ * reads unless it means to.
+ *
+ * The fields are named to match `Series` where they overlap, which is not
+ * tidiness either: `/api/manga/:id/read` and the two position routes then work
+ * on one of these unchanged, because they only ever touch these fields.
+ */
+export interface Glimpse {
+  id: string;
+  title: string;
+  coverUrl: string | null;
+  source: SeriesSource;
+  readChapters: number[];
+  readLog: ReadRecord[];
+  addedAt: number;
 }
 
 export type Store = {
@@ -354,7 +429,21 @@ export type Store = {
    * name kept so the screen can say which without asking Suwayomi.
    */
   ignoredSources: Array<{ id: string; name: string }>;
+  /**
+   * The shelves, in the order they were made.
+   *
+   * No default is created: an install with none behaves exactly as it did
+   * before they existed, which is one library called "everything you follow".
+   */
+  libraries: MangaLibrary[];
   series: Series[];
+  /**
+   * Read, not followed — see `Glimpse`.
+   *
+   * Never checked for new chapters, never counted, on no shelf. History is the
+   * only place these appear, and following one moves it into `series`.
+   */
+  glimpses: Glimpse[];
   /** Raised-and-linked releases, so a task you deleted is never recreated. */
   links: ReleaseLink[];
 };
@@ -419,6 +508,8 @@ function emptyStore(): Store {
     shelfNewFirst: true,
     releaseNudges: true,
     browseSource: null,
+    libraries: [],
+    glimpses: [],
     ignoredSources: [],
     series: [],
     links: [],
@@ -452,6 +543,20 @@ export function read(): Store {
         typeof parsed.archiveFolder === 'string' && parsed.archiveFolder.trim() ? parsed.archiveFolder : null,
       releaseNudges: parsed.releaseNudges !== false,
       browseSource: typeof parsed.browseSource === 'string' && parsed.browseSource ? parsed.browseSource : null,
+      glimpses: Array.isArray(parsed.glimpses)
+        ? parsed.glimpses.map((g) => ({
+            ...g,
+            readChapters: Array.isArray(g.readChapters) ? g.readChapters : [],
+            readLog: Array.isArray(g.readLog) ? g.readLog : [],
+            coverUrl: g.coverUrl ?? null,
+          }))
+        : [],
+      libraries: Array.isArray(parsed.libraries)
+        ? parsed.libraries.filter(
+            (l: unknown): l is MangaLibrary =>
+              typeof (l as MangaLibrary)?.id === 'string' && typeof (l as MangaLibrary)?.name === 'string'
+          )
+        : [],
       ignoredSources: Array.isArray(parsed.ignoredSources)
         ? parsed.ignoredSources.filter(
             (x): x is { id: string; name: string } =>
@@ -483,6 +588,9 @@ export function read(): Store {
         reviews: Array.isArray(s.reviews) ? s.reviews : [],
         // Only `true` survives, so a stray `"yes"` in a hand-edited file is a no.
         ...(s.favourite === true ? { favourite: true as const } : {}),
+        ...(Array.isArray(s.libraries) && s.libraries.some((l: unknown) => typeof l === 'string')
+          ? { libraries: s.libraries.filter((l: unknown): l is string => typeof l === 'string') }
+          : {}),
       })),
       links: Array.isArray(parsed.links) ? parsed.links : [],
     };

@@ -24,6 +24,28 @@ export interface ReaderPrefs {
   hideOnOpenMs: number | null;
   /** How long they stay up after a tap brings them back; null for until you tap again. */
   hideAfterTapMs: number | null;
+  /**
+   * Show the page's scrollbar while reading.
+   *
+   * It was hidden outright, on the reasoning that a 15px strip down one side is
+   * the last piece of browser left showing and the page counter already says
+   * where you are. The counter says where you are; it is not something you can
+   * *grab*, and a long chapter is exactly where you want to throw yourself two
+   * thirds of the way down. So it is a choice now, and the default is to show
+   * it — a scrollbar is what a page normally has, and its absence was the
+   * surprise.
+   *
+   * Per device like the rest of this: a mouse has a scrollbar to drag and a
+   * phone has never shown one anyway.
+   */
+  scrollbar: boolean;
+  /**
+   * Drag the page with the mouse to scroll it.
+   *
+   * Desktop only by nature — a finger already scrolls by dragging, and binding
+   * this to touch would fight the browser for the same gesture.
+   */
+  dragToScroll: boolean;
 }
 
 export const DEFAULT_PREFS: ReaderPrefs = {
@@ -31,6 +53,8 @@ export const DEFAULT_PREFS: ReaderPrefs = {
   width: 100,
   hideOnOpenMs: 3500,
   hideAfterTapMs: 3500,
+  scrollbar: true,
+  dragToScroll: true,
 };
 
 export const BRIGHTNESS_MIN = 0.2;
@@ -66,6 +90,9 @@ function load(): ReaderPrefs {
       hideOnOpenMs: 'hideOnOpenMs' in raw ? aChoice(raw.hideOnOpenMs, DEFAULT_PREFS.hideOnOpenMs) : DEFAULT_PREFS.hideOnOpenMs,
       hideAfterTapMs:
         'hideAfterTapMs' in raw ? aChoice(raw.hideAfterTapMs, DEFAULT_PREFS.hideAfterTapMs) : DEFAULT_PREFS.hideAfterTapMs,
+      // `!== false`, so a stored file from before these existed gets the default.
+      scrollbar: raw.scrollbar !== false,
+      dragToScroll: raw.dragToScroll !== false,
     };
   } catch {
     return DEFAULT_PREFS;

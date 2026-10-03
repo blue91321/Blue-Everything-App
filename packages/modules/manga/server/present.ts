@@ -33,6 +33,14 @@ export type SeriesSummary = {
   addedAt: number;
   /** Starred — see `Series.favourite`. Always a boolean here, unlike on disk. */
   favourite: boolean;
+  /**
+   * Which shelves it is on — see `Series.libraries`.
+   *
+   * Always an array here, unlike on disk where absent means none. The grid
+   * filters on it, so leaving it off the summary made every shelf look empty
+   * while the counts beside them said otherwise.
+   */
+  libraries: string[];
   /** Present only when there is a cover to fetch, so the screen need not guess. */
   coverPath: string | null;
   /** The MangaUpdates page, which is also where the credit link points. */
@@ -192,6 +200,7 @@ export function seriesSummary(series: Series): SeriesSummary {
     error: series.error,
     addedAt: series.addedAt,
     favourite: series.favourite === true,
+    libraries: series.libraries ?? [],
     coverPath: coverPathOf(series),
     url: series.muId ? seriesUrl(series.muId) : null,
     malId: series.malId,

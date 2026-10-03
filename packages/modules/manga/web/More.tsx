@@ -74,6 +74,126 @@ function Incognito() {
   );
 }
 
+/**
+ * Making, renaming and removing shelves.
+ *
+ * **Removing one keeps every series on it**, which the button says in full
+ * rather than relying on the word "remove" — a file manager's "delete folder"
+ * takes the contents, and nothing here does. The only thing deleted is a name
+ * and a set of memberships.
+ */
+function Shelves({
+  libraries,
+  onChanged,
+}: {
+  libraries: Array<{ id: string; name: string; count: number; hidden?: boolean }>;
+  onChanged: () => void;
+}) {
+  const [adding, setAdding] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+
+  const run = async (what: () => Promise<unknown>) => {
+    setBusy(true);
+    setProblem('');
+    try {
+      await what();
+      onChanged();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'that did not work');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="title">Shelves</div>
+      <div className="meta" style={{ marginTop: 4 }}>
+        Group your library however you like. A series can be on as many shelves as you want — so the counts
+        below overlap and will not add up to your total. <strong>Hide</strong> keeps a shelf's series out of
+        the Everything view; they are still there when you pick that shelf.
+      </div>
+
+      {libraries.map((l) => (
+        <div className="row" key={l.id} style={{ alignItems: 'center', gap: '.4rem', marginTop: 8 }}>
+          <span className="grow">
+            {l.name} <span className="meta">— {l.count === 1 ? '1 series' : `${l.count} series`}</span>
+          </span>
+          <button
+            className="btn subtle"
+            disabled={busy}
+            onClick={() => {
+              const name = prompt('Rename this shelf', l.name);
+              if (name && name.trim() && name.trim() !== l.name)
+                void run(() => manga.libraries.update(l.id, { name: name.trim() }));
+            }}
+          >
+            rename
+          </button>
+          {/*
+            Hiding is a property of the shelf, not of each series on it — put
+            something on the hidden shelf and it is out of the way; take it off
+            and it is back. One switch rather than a flag per series.
+          */}
+          <button
+            className={l.hidden ? 'btn' : 'btn subtle'}
+            disabled={busy}
+            aria-pressed={l.hidden === true}
+            title={
+              l.hidden
+                ? 'Hidden from Everything — only shown when you pick this shelf'
+                : 'Keep what is on this shelf out of the Everything view'
+            }
+            onClick={() => void run(() => manga.libraries.update(l.id, { hidden: !l.hidden }))}
+          >
+            {l.hidden ? '◌ hidden' : 'hide'}
+          </button>
+          <button
+            className="btn subtle"
+            disabled={busy}
+            title="The series stay in your library; only the shelf goes"
+            onClick={() => {
+              if (confirm(`Remove the shelf “${l.name}”? The ${l.count} series on it stay in your library.`)) {
+                void run(() => manga.libraries.remove(l.id));
+              }
+            }}
+          >
+            remove
+          </button>
+        </div>
+      ))}
+
+      <form
+        className="row"
+        style={{ marginTop: 10, gap: '.4rem' }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const name = adding.trim();
+          if (!name) return;
+          void run(async () => {
+            await manga.libraries.create(name);
+            setAdding('');
+          });
+        }}
+      >
+        <input
+          className="grow"
+          value={adding}
+          placeholder="New shelf"
+          aria-label="Name a new shelf"
+          onChange={(e) => setAdding(e.target.value)}
+        />
+        <button className="btn" type="submit" disabled={busy || !adding.trim()}>
+          Add
+        </button>
+      </form>
+
+      {problem && <div className="meta warn" style={{ marginTop: 8 }}>{problem}</div>}
+    </div>
+  );
+}
+
 export function More({
   data,
   local,
@@ -290,6 +410,14 @@ export function More({
             count — and nothing waits on the Dashboard; switching it off clears the ones waiting now.
           </label>
         )}
+        {/*
+          Shelves: made and named here, filled from each series' own menu.
+          Two places for one feature, and deliberately — naming a shelf is
+          something you do once and putting a series on one is something you do
+          while looking at that series, which is not this screen.
+        */}
+        {data?.libraries !== undefined && <Shelves libraries={data.libraries} onChanged={onChanged} />}
+
         {/*
           The Dashboard card. Here rather than on the Settings screen because
           everything it decides is about *manga* — which series, in which order

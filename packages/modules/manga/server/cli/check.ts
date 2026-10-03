@@ -46,7 +46,7 @@ import {
 import { judgeSources, languageName, orderSources, type SourceRow } from '../../web/judge.js';
 import { uploadedAtMs } from '../suwayomi.js';
 import { explainFailure, findJars, portOf } from '../process.js';
-import { dueForCheck, pollable, RECENT_SLOTS, seriesUrl } from '../releases.js';
+import { BATCH, checkEvery, dueForCheck, pollable, RECENT_SLOTS, RETRY_SLOTS, seriesUrl } from '../releases.js';
 import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiChanges } from '../browse.js';
 import { thumbPath } from '../present.js';
 import { PlistError, readBinaryPlist, unarchive } from '../bplist.js';
@@ -733,6 +733,8 @@ const store: Store = {
   shelfNewFirst: true,
   releaseNudges: true,
   browseSource: null,
+  libraries: [],
+  glimpses: [],
   ignoredSources: [],
   series: [
     row({ id: 'recent', checkedAt: 1_000 }),
@@ -1151,5 +1153,75 @@ check(
 );
 
 check('backwards still works', beside(withPoints, 2.1, -1)?.number === 2);
+
+/* ------------------------------------------------------------------ */
+console.log('\na check that failed is asked again sooner\n');
+
+{
+  const now = Date.now();
+  const DAY = 24 * 60 * 60_000;
+  const HOUR = 60 * 60_000;
+  const ago = (days: number) => now - days * DAY;
+
+  /*
+   * A timeout is usually nothing — Suwayomi busy, a site slow — but the row
+   * says "source not answering" until something asks again and succeeds, and
+   * for a series you have not opened in a year that is its daily slot behind a
+   * queue of hundreds. Measured on a real library: five of eight broken rows
+   * were timeouts, the oldest two days old, with nothing wrong by then.
+   */
+  check('untouched for a year, last check fine: once a day', checkEvery(ago(400), now, false) === DAY);
+  check('the same one after a failure: within the hour', checkEvery(ago(400), now, true) === HOUR);
+  check('read this year, fine: every six hours', checkEvery(ago(100), now, false) === 6 * HOUR);
+  check('read this year, failed: within the hour', checkEvery(ago(100), now, true) === HOUR);
+
+  /*
+   * Never *less* often because it failed. A series read this month is already
+   * asked every sweep, and an hour would be a step backwards — which is what
+   * taking the retry interval rather than the smaller of the two would do.
+   */
+  check('read this month: every sweep, failed or not', checkEvery(ago(5), now, true) === 0);
+
+  /*
+   * Eligibility was not enough. On a real library the timed-out rows had 216 to
+   * 451 series queued ahead of them, all equally due, and the back half of
+   * twelve slots clears about eight an hour — so a row 451 deep waited more
+   * than two days, which is how long "source not answering" sat on a series
+   * with nothing wrong with it.
+   */
+  const old = (n: number, error: string | null) =>
+    row({
+      id: `stale-${n}-${error ?? 'ok'}`,
+      addedAt: ago(400),
+      checkedAt: ago(2),
+      error,
+      source: { adapter: 'suwayomi', mangaId: String(n), title: 't', sourceName: 'S' },
+      muId: 1,
+    });
+
+  const haystack = {
+    ...store,
+    series: [...Array.from({ length: 40 }, (_, i) => old(i, null)), old(900, 'Suwayomi did not answer in time')],
+  };
+  const picked = dueForCheck(haystack, now, {});
+  check(
+    'a failed row is picked despite forty queued ahead of it',
+    picked.some((p) => p.error !== null),
+    `${picked.length} picked`
+  );
+  check('and it is near the front, not the back', picked.findIndex((p) => p.error !== null) < RETRY_SLOTS);
+
+  // Bounded: a library where everything is broken must not spend the whole
+  // sweep on it, or nothing you are reading is ever asked about again.
+  const allBroken = {
+    ...store,
+    series: Array.from({ length: 40 }, (_, i) => old(i, 'Suwayomi did not answer in time')),
+  };
+  check(
+    'but never more than its share of the batch',
+    dueForCheck(allBroken, now, {}).length <= BATCH,
+    `${dueForCheck(allBroken, now, {}).length} of ${BATCH}`
+  );
+}
 
 process.exit(failures === 0 ? 0 : 1);

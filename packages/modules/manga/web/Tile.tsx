@@ -17,7 +17,8 @@ import { useContextMenu } from '@app/ContextMenu';
 import type { SeriesSummary } from './manga-api';
 import { Cover } from './Cover';
 import { chapterText } from './judge';
-import { hasNew, notAnswering, sourceLabel, toCatchUp } from './shelf';
+import { hasNew, notAnswering, sourceHasNothing, sourceLabel, toCatchUp } from './shelf';
+import { ageOf } from './manga-api';
 
 export function Tile({
   series: s,
@@ -25,12 +26,18 @@ export function Tile({
   onDetails,
   onCompare,
   onRemove,
+  libraries = [],
+  onShelves,
 }: {
   series: SeriesSummary;
   onOpen: () => void;
   onDetails?: () => void;
   onCompare?: () => void;
   onRemove?: () => void;
+  /** The shelves on offer, for the right-click menu. */
+  libraries?: Array<{ id: string; name: string }>;
+  /** Set the whole set for this series. */
+  onShelves?: (libraries: string[]) => void;
 }) {
   /*
    * The row's old buttons, on a right-click — the desktop affordance the
@@ -41,6 +48,23 @@ export function Tile({
     { label: s.source ? 'Open chapters' : 'Find a source', onSelect: onOpen },
     ...(onDetails ? [{ label: 'Series details', onSelect: onDetails }] : []),
     ...(s.source && onCompare ? [{ label: 'Other sources', onSelect: onCompare }] : []),
+    /*
+      Each shelf is a line that ticks and unticks, rather than a sub-menu or a
+      dialogue. Membership is many-to-many, so the question is never "which
+      one" but "which of these" — and a tick beside a name answers it in one
+      glance and one click, the idiom the sort menu's "New chapters on top"
+      already uses.
+    */
+    ...(onShelves
+      ? libraries.map((l) => {
+          const on = s.libraries?.includes(l.id) === true;
+          return {
+            label: `${on ? '☑' : '☐'} ${l.name}`,
+            onSelect: () =>
+              onShelves(on ? (s.libraries ?? []).filter((x) => x !== l.id) : [...(s.libraries ?? []), l.id]),
+          };
+        })
+      : []),
     ...(onRemove ? [{ label: 'Stop following', onSelect: onRemove, danger: true }] : []),
   ]);
 
@@ -60,7 +84,7 @@ export function Tile({
         aria-label={[
           s.title,
           fresh ? `${catchUp} new chapter${catchUp === 1 ? '' : 's'}` : null,
-          notAnswering(s) ? 'source not answering' : null,
+          sourceHasNothing(s) ? 'the source has no chapters for this' : notAnswering(s) ? 'source not answering' : null,
           latest !== null && latest !== undefined ? `newest chapter ${chapterText(latest)}` : null,
           where ? `read on ${where}` : s.origin ? `no source yet, read on ${s.origin.site} in ${s.origin.app}` : 'no source yet',
           s.error ? `last check failed: ${s.error}` : null,
@@ -71,8 +95,17 @@ export function Tile({
         <span className="manga-lib-cover">
           <Cover path={s.coverPath} title={s.title} fill />
           {fresh && <span className="manga-lib-new">{catchUp > 1 ? `${catchUp} NEW` : 'NEW'}</span>}
+          {/*
+            The time matters as much as the message. "Not answering" reads as a
+            claim about right now, and it is a claim about whenever it was last
+            asked — which for something you have not opened in a while can be a
+            day or two ago.
+          */}
           {s.error && (
-            <span className="manga-lib-warn" title={`Last check failed: ${s.error}`}>
+            <span
+              className="manga-lib-warn"
+              title={`${s.error}${s.checkedAt ? ` — when last asked, ${ageOf(s.checkedAt, Date.now())}` : ''}`}
+            >
               !
             </span>
           )}

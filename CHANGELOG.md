@@ -5,6 +5,45 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.5.4
+
+Shelves, history for things you are not following, and three bugs — one of which
+could quietly lose anything you did while the app was checking for new chapters.
+
+### Fixed
+
+- **Changes made while new chapters were being checked could be lost.** The
+  half-hourly sweep held the library in memory across every request it made —
+  a dozen series, seconds each — then wrote it back over the top. A chapter
+  marked read, a series followed, a star, anything done in that window was
+  overwritten. It merges onto a fresh copy now.
+- **Chapters sometimes did not count as read when reading several in a row.**
+  A chapter whose last page is shorter than the screen could never reach its
+  own last page in the counter, so Next treated it as skipping rather than
+  finishing however far you had scrolled. Deterministic per chapter, which is
+  why it looked random.
+- **"Source not answering" was three different things.** A timeout, and the
+  source answering that it has nothing for that series, are not the same
+  problem and do not have the same fix. They are separate now, and a failed
+  check is retried within the hour instead of waiting days behind the queue.
+
+### Manga
+
+- **Shelves.** Group your library however you like, with a series on as many
+  shelves as you want. Made on the More tab, put on from the chips under a
+  series' title. A shelf can be **hidden**, which keeps what is on it out of
+  Everything without unfollowing anything.
+- **Reading something you do not follow is recorded.** It appears in History
+  with your place kept, marked *not following*, and following it later merges
+  the record rather than leaving two.
+- **Drag the page to scroll**, with a mouse, and **the scrollbar is back** —
+  both switchable in the reader's gear, under More.
+
+### Dashboard
+
+- The two column pickers sit side by side, and reorder by dragging as well as
+  by the arrows — on a phone too.
+
 ## 0.5.3
 
 The Dashboard is yours to arrange, the two background processes say what they

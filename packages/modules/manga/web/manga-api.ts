@@ -26,6 +26,8 @@ export interface SeriesSummary {
   addedAt: number;
   /** Starred. Optional: an older server does not send it. */
   favourite?: boolean;
+  /** Which shelves it is on, by id. Absent means none — see `Series.libraries`. */
+  libraries?: string[];
   coverPath: string | null;
   url: string | null;
   malId: number | null;
@@ -109,6 +111,10 @@ export interface HistoryEntry {
   kind: 'read' | 'reading';
   page: number | null;
   pages: number | null;
+  /** Whether it is in your library. Optional: an older server sends only followed ones. */
+  following?: boolean;
+  /** The source's own id, on a not-following row — enough to open its details card. */
+  sourceMangaId?: string;
 }
 
 /** Your place inside a chapter — see `ReadingPosition` on the server. */
@@ -413,6 +419,8 @@ export interface Library {
   shelfShow?: 'all' | 'favourites';
   shelfSort?: 'follow' | 'read' | 'catchup' | 'updated' | 'title' | 'added';
   shelfNewFirst?: boolean;
+  /** The shelves, with how many series are on each. Counts overlap. */
+  libraries?: Array<{ id: string; name: string; count: number; hidden?: boolean }>;
 }
 
 export interface SweepResult {
@@ -469,6 +477,32 @@ export const manga = {
   checkNow: () => call<SweepResult>('/api/manga/check', { method: 'POST' }),
   setReleaseNudges: (on: boolean) =>
     call<{ releaseNudges: boolean }>('/api/manga/release-nudges', { method: 'PUT', body: JSON.stringify({ on }) }),
+  /**
+   * Start (or find) the record for something being read but not followed.
+   *
+   * Asked for by the reader, not by Browse: looking at a cover is not reading
+   * it, and a history of everything glanced at would be worth less than none.
+   */
+  glimpse: (body: { adapter: string; mangaId: string; sourceName: string; title: string; coverUrl?: string | null }) =>
+    call<{ id: string; following: boolean }>('/api/manga/glimpse', { method: 'POST', body: JSON.stringify(body) }),
+  forgetGlimpse: (id: string) => call<{ ok: true }>(`/api/manga/glimpse/${id}`, { method: 'DELETE' }),
+  libraries: {
+    create: (name: string) =>
+      call<{ id: string; name: string }>('/api/manga/libraries', { method: 'POST', body: JSON.stringify({ name }) }),
+    /** Rename, hide, or both — each field optional, so one leaves the other alone. */
+    update: (id: string, change: { name?: string; hidden?: boolean }) =>
+      call<{ id: string; name: string; hidden?: boolean }>(`/api/manga/libraries/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(change),
+      }),
+    remove: (id: string) => call<{ ok: true; seriesKept: number }>(`/api/manga/libraries/${id}`, { method: 'DELETE' }),
+    /** The whole set for one series, not one added or removed. */
+    set: (seriesId: string, libraries: string[]) =>
+      call<{ libraries: string[] }>(`/api/manga/${seriesId}/libraries`, {
+        method: 'PUT',
+        body: JSON.stringify({ libraries }),
+      }),
+  },
   setFavourite: (id: string, on: boolean) =>
     call<{ favourite: boolean }>(`/api/manga/${id}/favourite`, { method: 'PUT', body: JSON.stringify({ on }) }),
   setShelf: (body: { show?: 'all' | 'favourites'; sort?: string; newFirst?: boolean }) =>

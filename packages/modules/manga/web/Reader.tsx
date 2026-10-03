@@ -455,6 +455,29 @@ export function Reader({
   const where = (): { page: number; offset: number; pages: number } | null => {
     const kids = strip.current?.children;
     if (!kids || kids.length === 0) return null;
+
+    /*
+     * At the foot of the chapter you are on its last page, whatever the
+     * geometry says.
+     *
+     * The loop below takes the first page crossing the read line, which is
+     * right everywhere except the very bottom: a chapter whose **last page is
+     * shorter than the screen** leaves the page before it still crossing the
+     * line at maximum scroll, so the counter stops one short and can never
+     * reach the end. Next then reads as "skipping, not finishing" however far
+     * you scrolled, and the chapter is never marked read.
+     *
+     * Reported as chapters not counting when reading several in a row, which is
+     * exactly when it shows: it is deterministic per chapter, so a run of them
+     * loses the ones with a short final page and keeps the rest. Measured at
+     * 860px with a 120px last page: scrolled fully down, this said page 84 of
+     * 86.
+     */
+    const doc = document.documentElement;
+    if (window.innerHeight + window.scrollY >= doc.scrollHeight - 2) {
+      return { page: kids.length - 1, offset: 1, pages: kids.length };
+    }
+
     for (let i = 0; i < kids.length; i++) {
       const box = (kids[i] as HTMLElement).getBoundingClientRect();
       if (box.bottom > READ_LINE + 1) {
@@ -491,6 +514,50 @@ export function Reader({
    * all there is, and while the gear's panel is open.
    */
   const [prefs, setPrefs] = useReaderPrefs();
+
+  /*
+   * Dragging the page to scroll it, with a mouse.
+   *
+   * Deliberately `pointerType === 'mouse'` only: a finger already scrolls by
+   * dragging, and claiming the same gesture would mean fighting the browser for
+   * it and losing momentum, rubber-banding and every other thing touch
+   * scrolling does better than this could.
+   *
+   * `drag.current` is a ref and not state because none of it is rendered and a
+   * `setState` per `pointermove` would re-render the strip sixty times a
+   * second — the same reason `useEdgeDrawer` keeps its position in one.
+   */
+  const drag = useRef<{ y: number; top: number; moved: boolean } | null>(null);
+  /** Set when a drag ends, so the click it is followed by does not toggle the controls. */
+  const dragged = useRef(false);
+
+  const dragStart = (e: React.PointerEvent) => {
+    if (!prefs.dragToScroll || e.pointerType !== 'mouse' || e.button !== 0) return;
+    // Not from the controls: a drag that begins on a button is somebody missing
+    // the button, and scrolling the page under them is the wrong apology.
+    if ((e.target as HTMLElement).closest('.manga-reader-chrome, button, a, input')) return;
+    drag.current = { y: e.clientY, top: window.scrollY, moved: false };
+  };
+
+  const dragMove = (e: React.PointerEvent) => {
+    const d = drag.current;
+    if (!d) return;
+    const dy = e.clientY - d.y;
+    // A few pixels of slop, so a click with a twitch in it is still a click.
+    if (!d.moved && Math.abs(dy) < 4) return;
+    if (!d.moved) {
+      d.moved = true;
+      // Only once it is a drag: taken on pointerdown it would eat every click.
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    }
+    // Up drags the page up, which is how every hand tool works.
+    window.scrollTo(0, d.top - dy);
+  };
+
+  const dragEnd = () => {
+    dragged.current = drag.current?.moved === true;
+    drag.current = null;
+  };
   const [shown, setShown] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -597,7 +664,29 @@ export function Reader({
   }, [page, visible, total]);
 
   return createPortal(
-    <div className={`manga-reader${visible ? '' : ' chrome-off'}`} ref={top} onClick={onTap}>
+    <div
+      className={[
+        'manga-reader',
+        visible ? '' : 'chrome-off',
+        prefs.scrollbar ? '' : 'no-scrollbar',
+        prefs.dragToScroll ? 'draggable' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      ref={top}
+      onClick={(e) => {
+        // The click that ends a drag is not a tap — see `dragEnd`.
+        if (dragged.current) {
+          dragged.current = false;
+          return;
+        }
+        onTap(e);
+      }}
+      onPointerDown={dragStart}
+      onPointerMove={dragMove}
+      onPointerUp={dragEnd}
+      onPointerCancel={dragEnd}
+    >
       <div
         className="manga-reader-chrome top"
         onPointerDown={touched}
@@ -668,6 +757,21 @@ export function Reader({
               key={index}
               src={url}
               alt={`Page ${index + 1}`}
+              /*
+               * Or the browser drags the picture instead of scrolling.
+               *
+               * An `<img>` is draggable by default, and that native drag starts
+               * on mousedown and swallows everything after it — so pressing on
+               * a page and moving gave a ghost of the image on the cursor and no
+               * scrolling at all, while pressing on the margin beside it worked.
+               * `user-select: none` does not cover this; image dragging is its
+               * own mechanism and needs its own refusal.
+               *
+               * Both halves: the attribute is what Chrome and Firefox read,
+               * `-webkit-user-drag` in the stylesheet is what WebKit reads, and
+               * the reader is used on an iPhone.
+               */
+              draggable={false}
               // Lazy pages above a place being returned or jumped to would load
               // only as they scroll into view, pushing it down afterwards — so up
               // to there they load now, and the move can finish.

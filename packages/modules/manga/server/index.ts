@@ -27,6 +27,7 @@
  * puts it with minting a device token and installing a package.
  */
 import type { FastifyInstance } from 'fastify';
+import { randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, nudges, changes } from '@everything/server/module-api';
 import { chapterValue } from './identity.js';
@@ -42,6 +43,7 @@ import {
   readPositions,
   writePosition,
   type ReadingPosition,
+  type Glimpse,
   type Series,
   type Store,
 } from './library.js';
@@ -265,6 +267,22 @@ export async function routes(app: FastifyInstance): Promise<void> {
       shelfShow: store.shelfShow,
       shelfSort: store.shelfSort,
       shelfNewFirst: store.shelfNewFirst,
+      /**
+       * The shelves, with how many series are on each.
+       *
+       * Counted here rather than in the browser because the browser is handed
+       * a page of sixty tiles, not the whole library — a count taken there
+       * would be a count of what happens to be on screen.
+       *
+       * They overlap: a series on two shelves is counted by both, so these do
+       * not add up to the total. That is what many-to-many membership means
+       * and the screen says so rather than letting the arithmetic look broken.
+       */
+      libraries: store.libraries.map((l) => ({
+        ...l,
+        hidden: l.hidden === true,
+        count: store.series.filter((x) => x.libraries?.includes(l.id)).length,
+      })),
     };
   });
 
@@ -291,6 +309,16 @@ export async function routes(app: FastifyInstance): Promise<void> {
       kind: 'read' | 'reading';
       page: number | null;
       pages: number | null;
+      /** Read without following it — see `Glimpse`. The row offers to follow it. */
+      following: boolean;
+      /**
+       * The source's own id for it, on a not-following row only.
+       *
+       * Enough to rebuild a browse result and open the details card, which is
+       * where Continue and Follow already are — so getting back to something
+       * you dipped into needs no new screen.
+       */
+      sourceMangaId?: string;
     }> = [];
     for (const s of store.series) {
       const summary = seriesSummary(s);
@@ -306,6 +334,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
           kind: 'read',
           page: null,
           pages: null,
+          following: true,
         });
       }
       const place = positions[s.id];
@@ -321,9 +350,59 @@ export async function routes(app: FastifyInstance): Promise<void> {
           kind: 'reading',
           page: place.page,
           pages: place.pages,
+          following: true,
         });
       }
     }
+
+    /*
+     * And the things read without following them.
+     *
+     * Same shape, same list, sorted together — history is when you read
+     * something, not whether you decided to keep it. The only difference the
+     * screen draws is a note and a Follow button, which is the one thing you
+     * might want to do about a row like this.
+     *
+     * No cover route exists for these: nothing is stored for them, so the
+     * source's own thumbnail is handed over as a URL and the tile falls back to
+     * the title when there is none, as an unlinked import does.
+     */
+    for (const g of store.glimpses) {
+      for (const r of g.readLog) {
+        entries.push({
+          seriesId: g.id,
+          title: g.title,
+          coverPath: g.coverUrl,
+          chapter: r.chapter,
+          chapterName: null,
+          source: r.source,
+          at: r.at,
+          kind: 'read',
+          page: null,
+          pages: null,
+          following: false,
+          sourceMangaId: g.source.mangaId,
+        });
+      }
+      const place = positions[g.id];
+      if (place) {
+        entries.push({
+          seriesId: g.id,
+          title: g.title,
+          coverPath: g.coverUrl,
+          chapter: place.chapter,
+          chapterName: place.chapterName,
+          source: place.source,
+          at: place.at,
+          kind: 'reading',
+          page: place.page,
+          pages: place.pages,
+          following: false,
+          sourceMangaId: g.source.mangaId,
+        });
+      }
+    }
+
     return { entries: entries.sort((a, b) => b.at - a.at).slice(0, 300) };
   });
 
@@ -398,6 +477,189 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
     write(store);
     return { shelfShow: store.shelfShow, shelfSort: store.shelfSort, shelfNewFirst: store.shelfNewFirst };
+  });
+
+  /**
+   * Start keeping history for something you are reading but not following.
+   *
+   * Find-or-create on the source and its id for the series, so opening the same
+   * thing again carries on the same record rather than starting a second.
+   *
+   * It is the *reader* that asks for this, when it is opened on something with
+   * no series of its own — not Browse, and not opening a details page. Looking
+   * at a cover is not reading it, and a history of everything you glanced at on
+   * a browse page would be worth less than no history at all.
+   */
+  app.post('/api/manga/glimpse', async (request, reply) => {
+    const body = request.body as {
+      adapter?: unknown;
+      mangaId?: unknown;
+      sourceName?: unknown;
+      title?: unknown;
+      coverUrl?: unknown;
+    } | null;
+    const adapter = typeof body?.adapter === 'string' ? body.adapter : '';
+    const mangaId = typeof body?.mangaId === 'string' ? body.mangaId : '';
+    const title = typeof body?.title === 'string' ? body.title.trim().slice(0, 300) : '';
+    if (!adapter || !mangaId || !title) return reply.code(400).send({ error: 'needs a source, an id and a title' });
+
+    const store = read();
+
+    /*
+     * Already following it? Then that is the record, and this returns it. The
+     * reader only asks when it has no series id of its own, but Browse can
+     * reach a series you already follow by another route, and two records of
+     * one thing is the failure this is meant to avoid.
+     */
+    const followed = store.series.find((x) => x.source?.adapter === adapter && x.source?.mangaId === mangaId);
+    if (followed) return { id: followed.id, following: true };
+
+    const had = store.glimpses.find((g) => g.source.adapter === adapter && g.source.mangaId === mangaId);
+    if (had) return { id: had.id, following: false };
+
+    const made = {
+      id: randomUUID(),
+      title,
+      coverUrl: typeof body?.coverUrl === 'string' ? body.coverUrl : null,
+      source: {
+        adapter,
+        mangaId,
+        title,
+        sourceName: typeof body?.sourceName === 'string' ? body.sourceName : adapter,
+      },
+      readChapters: [],
+      readLog: [],
+      addedAt: Date.now(),
+    };
+    store.glimpses.push(made);
+    write(store);
+    return { id: made.id, following: false };
+  });
+
+  /** Forget one entirely — the row, its read log and its place. */
+  app.delete('/api/manga/glimpse/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const store = read();
+    if (!store.glimpses.some((g) => g.id === id)) return reply.code(404).send({ error: 'nothing to forget' });
+    store.glimpses = store.glimpses.filter((g) => g.id !== id);
+    write(store);
+    writePosition(id, null);
+    return { ok: true };
+  });
+
+  /**
+   * Make a shelf.
+   *
+   * The name is the whole of it. Nothing else is stored, because a library here
+   * is a label on a set of series rather than a thing with settings of its own —
+   * the moment one gains a sort or a filter it stops being a shelf and starts
+   * being a saved search, which is a different feature with different rules.
+   */
+  app.post('/api/manga/libraries', async (request, reply) => {
+    const body = request.body as { name?: unknown } | null;
+    const name = typeof body?.name === 'string' ? body.name.trim() : '';
+    if (!name) return reply.code(400).send({ error: 'give it a name' });
+    if (name.length > 60) return reply.code(400).send({ error: 'that name is too long' });
+
+    const store = read();
+    // Case-insensitively, since two shelves called "Reading" and "reading" are
+    // a mistake rather than a plan, and the picker would show them identically.
+    if (store.libraries.some((l) => l.name.toLowerCase() === name.toLowerCase())) {
+      return reply.code(409).send({ error: 'you already have one called that' });
+    }
+    const made = { id: randomUUID(), name };
+    store.libraries.push(made);
+    write(store);
+    return made;
+  });
+
+  /**
+   * Rename one, or hide it from *Everything*.
+   *
+   * Both on one route and both optional, because they are two fields of one
+   * shelf and a screen changing either nearly always wants the other left
+   * alone — which an optional field says better than two endpoints would.
+   */
+  app.patch('/api/manga/libraries/:id', async (request, reply) => {
+    const body = request.body as { name?: unknown; hidden?: unknown } | null;
+    const { id } = request.params as { id: string };
+
+    const store = read();
+    const library = store.libraries.find((l) => l.id === id);
+    if (!library) return reply.code(404).send({ error: 'no such library' });
+
+    if (body?.name !== undefined) {
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!name) return reply.code(400).send({ error: 'give it a name' });
+      if (name.length > 60) return reply.code(400).send({ error: 'that name is too long' });
+      if (store.libraries.some((l) => l.id !== id && l.name.toLowerCase() === name.toLowerCase())) {
+        return reply.code(409).send({ error: 'you already have one called that' });
+      }
+      library.name = name;
+    }
+
+    if (body?.hidden !== undefined) {
+      if (typeof body.hidden !== 'boolean') return reply.code(400).send({ error: 'hidden is true or false' });
+      // Only `true` is stored, like every other optional flag in this file.
+      if (body.hidden) library.hidden = true;
+      else delete library.hidden;
+    }
+
+    write(store);
+    return library;
+  });
+
+  /**
+   * Remove a shelf. The series on it are untouched — only the label goes.
+   *
+   * Worth being explicit about, because "delete library" is the same words a
+   * file manager uses for something that takes the contents with it. Nothing is
+   * deleted here but a name and a set of memberships.
+   */
+  app.delete('/api/manga/libraries/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const store = read();
+    if (!store.libraries.some((l) => l.id === id)) return reply.code(404).send({ error: 'no such library' });
+
+    store.libraries = store.libraries.filter((l) => l.id !== id);
+    let cleared = 0;
+    for (const series of store.series) {
+      if (!series.libraries?.includes(id)) continue;
+      const left = series.libraries.filter((x) => x !== id);
+      if (left.length > 0) series.libraries = left;
+      else delete series.libraries;
+      cleared += 1;
+    }
+    write(store);
+    return { ok: true, seriesKept: cleared };
+  });
+
+  /**
+   * Which shelves a series is on — the whole set, not one added or removed.
+   *
+   * A whole-list write, like the Dashboard's block order and the Habits screen's
+   * reordering: the screen holds a set of checkboxes and sends what they say,
+   * so there is no question of two half-applied changes crossing.
+   */
+  app.put('/api/manga/:id/libraries', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { libraries?: unknown } | null;
+    if (!Array.isArray(body?.libraries) || body.libraries.some((l) => typeof l !== 'string')) {
+      return reply.code(400).send({ error: 'send libraries: a list of ids' });
+    }
+
+    const store = read();
+    const series = store.series.find((x) => x.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+
+    // Only ids that exist, and each once: an unknown id would sit there
+    // forever, since nothing else ever prunes this list.
+    const known = new Set(store.libraries.map((l) => l.id));
+    const chosen = [...new Set(body.libraries as string[])].filter((l) => known.has(l));
+    if (chosen.length > 0) series.libraries = chosen;
+    else delete series.libraries;
+    write(store);
+    return { libraries: series.libraries ?? [] };
   });
 
   /**
@@ -1589,6 +1851,40 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * Already following that series by name, without a source? Then this links
    * the source to it rather than making a second row for the same thing.
    */
+  /**
+   * Hand a glimpse's history over to the series that now covers it.
+   *
+   * Following something you had only dipped into must not leave two records of
+   * it — History would list the same chapters twice, once as "not following"
+   * and once not, and neither would be wrong. So the read log moves across and
+   * the glimpse goes.
+   *
+   * Only chapters the series does not already know about: following something
+   * you had *also* read elsewhere should not duplicate a chapter inside one
+   * log. The place moves too, unless the series already has a newer one.
+   */
+  function absorbGlimpse(store: Store, series: Series, mangaId: string): void {
+    const glimpse = store.glimpses.find((g) => g.source.mangaId === mangaId);
+    if (!glimpse) return;
+
+    const known = new Set(series.readChapters);
+    for (const chapter of glimpse.readChapters) known.add(chapter);
+    series.readChapters = [...known].sort((a, b) => a - b);
+
+    const logged = new Set(series.readLog.map((r) => r.chapter));
+    for (const record of glimpse.readLog) {
+      if (!logged.has(record.chapter)) series.readLog.push(record);
+    }
+    series.readLog.sort((a, b) => a.chapter - b.chapter);
+
+    const place = readPositions()[glimpse.id];
+    const already = readPositions()[series.id];
+    if (place && (!already || already.at < place.at)) writePosition(series.id, place);
+    writePosition(glimpse.id, null);
+
+    store.glimpses = store.glimpses.filter((g) => g.id !== glimpse.id);
+  }
+
   app.post('/api/manga/follow-source', async (request, reply) => {
     const body = request.body as { mangaId?: unknown; title?: unknown; sourceName?: unknown } | null;
     if (typeof body?.mangaId !== 'string' || !/^\d{1,20}$/.test(body.mangaId)) {
@@ -1618,6 +1914,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       target.sourceChapter = null;
       target.sourceCheckedAt = null;
       target.checkedAt = null;
+      absorbGlimpse(store, target, body.mangaId);
       write(store);
       return { series: seriesSummary(target), matchedOn: 'existing' };
     }
@@ -1653,6 +1950,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       existing.sourceChapter = null;
       existing.sourceCheckedAt = null;
       existing.checkedAt = null;
+      absorbGlimpse(store, existing, body.mangaId);
       write(store);
       return { series: seriesSummary(existing), matchedOn: 'existing' };
     }
@@ -1677,6 +1975,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       }
     }
     store.series.push(series);
+    absorbGlimpse(store, series, body.mangaId);
     write(store);
     return { series: seriesSummary(series), matchedOn: best ? 'mangadex' : null };
   });
@@ -1800,7 +2099,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
    */
   type ReaderContext =
     | { error: string; code: 400 | 404 | 502 }
-    | { store: Store; series: Series; adapter: SuwayomiAdapter; url: string };
+    /*
+     * `Series | Glimpse`, because this resolves either — and widening it here
+     * rather than casting is what made the compiler name the one caller that
+     * genuinely needs a followed series. It was one, out of ten.
+     */
+    | { store: Store; series: Series | Glimpse; adapter: SuwayomiAdapter; url: string };
 
   /*
    * Annotated rather than inferred. Without it TypeScript widens the two return
@@ -1809,7 +2113,16 @@ export async function routes(app: FastifyInstance): Promise<void> {
    */
   async function reader(seriesId: string): Promise<ReaderContext> {
     const store = read();
-    const series = store.series.find((s) => s.id === seriesId);
+    /*
+     * A followed series, or something read without following it.
+     *
+     * Both carry the `source` this needs and nothing else here touches the
+     * difference. Without the second the reader could not fetch a *page* for a
+     * glimpse — it asks this route by id, got "no such series", and the whole
+     * feature failed with a message about the one thing it was meant to avoid
+     * needing. Reported as "it says no such series but works after I add it".
+     */
+    const series = store.series.find((s) => s.id === seriesId) ?? store.glimpses.find((g) => g.id === seriesId);
     if (!series) return { error: 'no such series', code: 404 as const };
     if (!series.source) return { error: 'this series is not linked to a source', code: 400 as const };
 
@@ -1864,7 +2177,16 @@ export async function routes(app: FastifyInstance): Promise<void> {
         }
         throw error;
       }
-      if (ctx.series.error !== null) {
+      /*
+       * The bookkeeping below is a *followed* series' — clearing the failure
+       * flag the library grid shows, and taking a baseline so the sweep has
+       * something to compare against. A glimpse has neither: nothing watches it
+       * for new chapters and nothing draws it in the grid, so there is nothing
+       * to record and `followed` is undefined.
+       */
+      const followed = 'muId' in ctx.series ? ctx.series : undefined;
+
+      if (followed && followed.error !== null) {
         const store = read();
         const row = store.series.find((s) => s.id === id);
         if (row && row.error !== null) {
@@ -1878,7 +2200,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
        * until the next sweep. Only when nothing is recorded: a baseline is the
        * sweep's silent first reading, and doing it here raises nothing either.
        */
-      if (ctx.series.latestChapter === null && ctx.series.sourceChapter === null) {
+      if (followed && followed.latestChapter === null && followed.sourceChapter === null) {
         const numbers = chapters.map((c) => c.number).filter((n) => Number.isFinite(n));
         if (numbers.length > 0) {
           const store = read();
@@ -2317,7 +2639,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const at = happenedAt(body?.at);
 
     const store = read();
-    const series = store.series.find((s) => s.id === id);
+    // A glimpse too — the fields below are the ones it shares with a series.
+    const series = store.series.find((s) => s.id === id) ?? store.glimpses.find((g) => g.id === id);
     if (!series) return reply.code(404).send({ error: 'no such series' });
 
     const marked = new Set(series.readChapters);
@@ -2417,7 +2740,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: 'that is not a place in a chapter' });
     }
 
-    const series = read().series.find((s) => s.id === id);
+    /*
+     * A followed series or something you only glanced at — see `Glimpse`. Both
+     * carry an `id` and a `source` and this route touches nothing else, which
+     * is why the two can share it rather than there being a second copy of the
+     * same validation under another name.
+     */
+    const here = read();
+    const series = here.series.find((s) => s.id === id) ?? here.glimpses.find((g) => g.id === id);
     if (!series) return reply.code(404).send({ error: 'no such series' });
     if (!series.source) return reply.code(400).send({ error: 'this series is not linked to a source' });
 
