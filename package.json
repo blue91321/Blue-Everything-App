@@ -1,7 +1,7 @@
 {
   "name": "blue-everything",
   "private": true,
-  "version": "0.5.4",
+  "version": "0.5.5",
   "license": "MIT",
   "workspaces": [
     "packages/*"
