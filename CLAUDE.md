@@ -6952,7 +6952,10 @@ Now it is one of two:
 - **Play**: `PUT /me/player/play` with the first song, then the rest through
   the queue (`POST /me/player/queue`, one track per request). Spotify's own
   shuffle is switched off, or it would reshuffle the queue its own way.
-- **Add to queue**: the same, behind whatever is already playing.
+- **There is no "Add to queue".** It did nearly the same: songs in Spotify's
+  queue play before the album underneath, so both began the shuffle after the
+  song on, and the one difference (the album resuming after Stop) was not worth a
+  second button. Voice commands saved as `queue` play.
 
 **Two orders, from `shuffle-rules.ts`** (no imports, so they are checked
 directly):
@@ -7007,8 +7010,7 @@ server-side because the session that reads it is). In Random it is never
 fewer than the repeat gap, and it is never more than the songs in the chosen
 lists (one each), since past that it can only queue repeats. The gap is held
 one below that count, or nothing would be allowed to play. The card keeps the
-number you typed and applies the limit, and the server clamps again. Add to queue does the same
-behind whatever is on. Spotify never says when a song ends, so a session asks
+number you typed and applies the limit, and the server clamps again. Spotify never says when a song ends, so a session asks
 `GET /me/player` every 45s and tops up when fewer than N of its songs are
 ahead. `dealer` in `shuffle-rules.ts` hands out the next song on demand, so the
 gap and the deck carry across top-ups: a reshuffled deck never starts with the

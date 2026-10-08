@@ -340,11 +340,6 @@ export function Shuffle() {
   return (
     <div className="card">
       <div className="title">Shuffle properly</div>
-      <div className="meta" style={{ marginTop: 2 }}>
-        Spotify's shuffle keeps coming back to the same few songs, and picks its order back up on another device. This
-        picks the order here and has Spotify play it through the queue, topped up as it goes. No playlist is made, and
-        a song in several lists counts once.
-      </div>
 
       {!canPlay && (
         <div className="meta" style={{ marginTop: '.5rem', color: 'var(--danger)' }}>
@@ -354,23 +349,15 @@ export function Shuffle() {
       )}
 
       <div style={{ display: 'flex', gap: '.75rem', alignItems: 'center', marginTop: '.75rem', flexWrap: 'wrap' }}>
+        {/*
+          One button. There was an "Add to queue" beside it, and it did nearly
+          the same: songs in Spotify's queue play before the album underneath,
+          so both started the shuffle after the song on. The one difference —
+          the album coming back after Stop — was not worth a second button.
+        */}
         <button className="btn primary" disabled={busy || !canPlay || chosen.length === 0} onClick={() => void deal('play')}>
           {busy ? 'Working…' : order === 'random' ? 'Play random' : 'Play shuffled'}
         </button>
-        <button className="btn" disabled={busy || !canPlay || chosen.length === 0} onClick={() => void deal('queue')}>
-          Add to queue
-        </button>
-      </div>
-
-      {/*
-        Neither button cuts off the song that is on. There was a choice to, and
-        it went: Spotify will not let an app empty a queue, so everything here
-        is adding to it, and interrupting the song bought nothing but a skip.
-      */}
-      <div className="meta" style={{ marginTop: '.4rem' }}>
-        <b>Play</b> lets the song on finish and plays the shuffle after it, in place of the rest of its album or
-        playlist. <b>Add to queue</b> puts it after everything already lined up. Songs already in your Spotify queue
-        play first either way: Spotify doesn't let apps remove them.
       </div>
 
       {session.active ? (
@@ -394,7 +381,7 @@ export function Shuffle() {
             <button className="btn primary" onClick={() => void stop(true)}>
               Stop
             </button>
-            <button className="btn" onClick={() => void stop(false)} title="End it but let the queued songs play on">
+            <button className="btn" onClick={() => void stop(false)}>
               Stop adding songs
             </button>
           </span>
@@ -406,7 +393,7 @@ export function Shuffle() {
       ) : (
         done && (
           <div className="meta" style={{ marginTop: '.5rem' }}>
-            {done.mode === 'play' ? `Started on ${done.device}.` : `Queued on ${done.device}.`}
+            Started on {done.device}.
           </div>
         )
       )}
@@ -417,15 +404,24 @@ export function Shuffle() {
       )}
 
       {/*
-        * Everything that is set rather than pressed, folded under one line that
-        * says what it is set to — so the card is two buttons and a sentence,
-        * and nothing has to be opened to know what Play will do.
+        * Everything that is set rather than pressed — and the explanation of
+        * what Play does — folded under one line that says what it is set to,
+        * so the card is a button and a sentence until you open it.
         */}
       <details className="shuffle-settings">
         <summary>
           <b>Settings</b>
           <div className="meta">{summary}</div>
         </summary>
+
+        <div className="meta shuffle-how">
+          Spotify's own shuffle keeps coming back to the same few songs and carries its order between devices. Play
+          picks the order here instead, with every song in the ticked lists counted once, and has Spotify play it: the
+          song on finishes, then the shuffle, in place of the rest of its album or playlist. Spotify's shuffle is
+          turned off so it keeps this order. About {ahead} songs sit in your Spotify queue and more are added as they
+          play, on whichever device is playing. Songs already in your queue play first: Spotify doesn't let apps
+          remove them. <b>Stop</b> pauses the music; <b>Stop adding songs</b> lets the queued songs play out.
+        </div>
 
         <div className="shuffle-section">
           <div className="shuffle-label">Play from</div>

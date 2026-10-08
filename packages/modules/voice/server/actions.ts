@@ -529,8 +529,8 @@ export async function labelFor(command: LoadedCommand): Promise<string> {
 const MUSIC_LABEL: Record<string, string> = {
   shuffle: 'play shuffled music',
   random: 'play random music',
-  queue: 'add shuffled music to the queue',
-  stop: 'stop topping up the music queue',
+  queue: 'play shuffled music',
+  stop: 'stop adding songs to the music queue',
 };
 
 /**
@@ -694,7 +694,9 @@ export async function runCommand(
         what === 'stop'
           ? await musicRequest('/api/integrations/spotify/shuffle/stop', {})
           : await musicRequest('/api/integrations/spotify/shuffle', {
-              mode: what === 'queue' ? 'queue' : 'play',
+              // "queue" was its own choice once; it now plays, as the card's one
+              // button does, so commands saved with it still work.
+              mode: 'play',
               order: what === 'random' ? 'random' : 'shuffle',
             });
       if (!done.ok) return { outcome: 'no-match', text, say: done.why };
@@ -703,10 +705,8 @@ export async function runCommand(
         text,
         say:
           what === 'stop'
-            ? 'Stopped topping up the queue'
-            : what === 'queue'
-              ? 'Added shuffled songs to the queue'
-              : what === 'random'
+            ? 'Stopped adding songs'
+            : what === 'random'
                 ? 'Playing random music'
                 : 'Playing shuffled music',
       };

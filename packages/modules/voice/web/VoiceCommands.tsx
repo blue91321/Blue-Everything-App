@@ -31,8 +31,7 @@ const SELECTABLE_KINDS: VoiceCommandKind[] = ['habit', 'note', 'url', 'hotkey', 
 const MUSIC_LABEL: Record<string, string> = {
   shuffle: 'Play shuffled',
   random: 'Play random',
-  queue: 'Add to the queue',
-  stop: 'Stop topping up the queue',
+  stop: 'Stop adding songs',
 };
 
 /**
@@ -81,7 +80,11 @@ function describeKind(command: VoiceCommand): string {
     return `Control media · ${MEDIA_LABEL[command.target ?? ''] ?? 'unknown control'}`;
   }
   if (command.kind === 'launch') return `Start a game or app · ${command.target ?? 'nothing chosen'}`;
-  if (command.kind === 'music') return `Play music · ${MUSIC_LABEL[command.target ?? ''] ?? 'nothing chosen'}`;
+  // `queue` was a choice once and now plays shuffled; a command saved with it still says what it does.
+  if (command.kind === 'music') {
+    const label = MUSIC_LABEL[command.target === 'queue' ? 'shuffle' : (command.target ?? '')];
+    return `Play music · ${label ?? 'nothing chosen'}`;
+  }
   if (command.kind === 'cancel') return 'Stop listening · just this sentence';
   if (command.kind === 'pause') {
     return command.pauseMinutes

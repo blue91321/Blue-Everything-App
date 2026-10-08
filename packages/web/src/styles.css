@@ -5065,3 +5065,7 @@ html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+
+.shuffle-how {
+  margin-top: 0.6rem;
+}
