@@ -68,3 +68,49 @@ export function skippedBetween<T extends Numbered>(list: readonly T[], from: num
     (a, b) => a - b
   );
 }
+
+/**
+ * Whether you have reached the end of a chapter, so that Next finishes it.
+ *
+ * This was the page counter's answer — "is the counter on the last page" — and
+ * that was the wrong question, which cost roughly one chapter in three when
+ * reading several in a row. The counter names the page crossing a line 8px
+ * from the **top** of the screen, so the last page only counts once the page
+ * before it has scrolled entirely off the top. On a phone you read the last
+ * page while the end of the one above is still showing, tap Next, and it was
+ * taken as skipping: nothing marked, nothing sent. The server's log showed it
+ * plainly — chapter 3 opened with no "chapter 2 read" before it, at 5:07 on a
+ * Saturday, after five minutes in chapter 2.
+ *
+ * So it is asked of the **bottom** of the screen, which is where your eyes
+ * are by the end of a chapter, in two ways — either is enough:
+ *
+ *   - the last page has come a fifth of the way up the screen, which is to say
+ *     every page before it has been scrolled past; or
+ *   - what is left below the screen is under a tenth of the chapter *and*
+ *     under two and a half screens of it, which covers the chapter whose last
+ *     page or two are credits and somebody's Discord — the pages people do
+ *     not scroll through.
+ *
+ * Both halves of the second rule are needed. A tenth alone was the first
+ * version, and on a chapter cut into 127 short strips a tenth is eleven
+ * screens: it called the chapter finished well before the story was. Measured
+ * in the browser at phone size, which is how it was caught.
+ *
+ * Asked only once every page has loaded. A strip of placeholders is short, and
+ * nine tenths of a short strip is on screen the moment a chapter opens.
+ *
+ * No imports, so `manga-check` asserts it directly.
+ */
+export function reachedTheEnd(g: {
+  viewportHeight: number;
+  stripTop: number;
+  stripHeight: number;
+  lastPageTop: number;
+  allLoaded: boolean;
+}): boolean {
+  if (!g.allLoaded || g.stripHeight <= 0) return false;
+  if (g.lastPageTop <= g.viewportHeight * 0.8) return true;
+  const left = g.stripTop + g.stripHeight - g.viewportHeight;
+  return left <= g.stripHeight * 0.1 && left <= g.viewportHeight * 2.5;
+}

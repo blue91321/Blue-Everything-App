@@ -132,8 +132,11 @@ import { Icon } from './Icons';
 import { chapterText } from './judge';
 import { ReaderSettings } from './ReaderSettings';
 import { useReaderPrefs } from './reader-prefs';
+import { reachedTheEnd } from './chapter-nav';
 
 const IN_FLIGHT = 3;
+/** How long the reader waits before giving the pages that failed a second go. */
+const SECOND_GO_MS = 3_000;
 
 /** The line across the screen that counts as "where you are" — just under the top. */
 const READ_LINE = 8;
@@ -153,6 +156,8 @@ export function Reader({
   chapter,
   onClose,
   onFinished,
+  onLeftAtEnd,
+  lastLabel,
   resume = null,
   onPosition,
   backLabel = 'Chapters',
@@ -161,6 +166,7 @@ export function Reader({
   skipTo = null,
   hasPrevious = false,
   hasNext = false,
+  nextNumber = null,
 }: {
   /** A followed series. */
   seriesId?: string;
@@ -173,6 +179,18 @@ export function Reader({
   chapter: { id: string; number: number; name: string };
   onClose: () => void;
   onFinished: (chapterNumber: number) => void;
+  /**
+   * Leaving from the end of the chapter — Back, the swipe, or closing to pick
+   * another from the list — which is finishing it, recorded without moving on.
+   * Absent where there is nothing to record into (a preview).
+   */
+  onLeftAtEnd?: (chapterNumber: number) => void;
+  /**
+   * What the end button says when there is no next chapter. The offline shelf
+   * only knows what is saved on the device, so its last chapter is the last one
+   * *here* rather than the last one there is — and must not claim otherwise.
+   */
+  lastLabel?: string;
   /** Where to start, when continuing: a page and how far down it. */
   resume?: { page: number; offset: number } | null;
   /** Told where you are as you scroll — see `usePositionSaver`, which decides how often to save it. */
@@ -195,6 +213,8 @@ export function Reader({
   /** Whether there is a chapter that way, for the arrows' disabled state. */
   hasPrevious?: boolean;
   hasNext?: boolean;
+  /** The number Next would open, so a jump over missing chapters can be questioned. */
+  nextNumber?: number | null;
 }) {
   /*
    * Back closes the reader and puts you back on the chapter list.
@@ -213,7 +233,46 @@ export function Reader({
   // `consumeOnUnmount`: the reader covers the whole app, so nothing can
   // navigate away from it — every unmount is a close, including the one that
   // happens when Next runs out of chapters. See the note in `view-history.ts`.
-  const close = useBackStep(onClose, { consumeOnUnmount: true });
+  /*
+   * Leaving from the end of a chapter is finishing it. Next was the only way a
+   * chapter counted, so reading to the end, going back to the list and tapping
+   * the next one by hand recorded nothing — the same lost chapter by another
+   * door. Asked fresh at the moment of leaving, like Next is.
+   */
+  const leave = () => {
+    // Measured before closing, while the strip is still there to measure.
+    const finished = onLeftAtEnd !== undefined && finishedNow();
+    /*
+     * Closed first, then recorded — and the order matters. Closing saves the
+     * place you left; recording the read then clears it, both on the server
+     * (the read is the later of the two) and on the page the host draws. The
+     * other way round, the close put the place back afterwards and the button
+     * offered to "continue" the chapter just finished.
+     */
+    onClose();
+    if (finished) onLeftAtEnd!(chapter.number);
+  };
+  const close = useBackStep(leave, { consumeOnUnmount: true });
+
+  /**
+   * Whether going to the next chapter is all right, asking first when it would
+   * jump over whole chapters this source does not have.
+   *
+   * Next goes by chapter number, so a source with a hole in it — or one that
+   * numbers a chapter wrongly — sends it as far as the next number it has. A
+   * friend's reader went from about chapter 9 to about 126 that way with one
+   * press, and nothing said so until the story made no sense. A gap of a whole
+   * chapter or more is worth one question; 9 → 9.5 → 10 is not.
+   */
+  const nextIsOk = (): boolean => {
+    if (nextNumber === null || Math.floor(nextNumber) <= Math.floor(chapter.number) + 1) return true;
+    const missing = Math.floor(nextNumber) - Math.floor(chapter.number) - 1;
+    return window.confirm(
+      `The next chapter on this source is ${nextNumber} — ${missing} chapter${missing === 1 ? '' : 's'} after ${chapter.number} ` +
+        `${missing === 1 ? 'is' : 'are'} missing or numbered oddly here. Go to ${nextNumber} anyway?\n\n` +
+        `(Cancel, then ⋯ → Other sources on the chapter list, to find one that has them.)`
+    );
+  };
   const [urls, setUrls] = useState<(string | null)[]>([]);
   /**
    * The source's own page paths, kept so one page can be asked for again.
@@ -248,6 +307,14 @@ export function Reader({
 
   /** The page crossing the read line — what the counter says. */
   const [page, setPage] = useState(resume?.page ?? 0);
+  /**
+   * Whether this chapter has been read to its end — see `reachedTheEnd`, which
+   * is what Next asks now instead of the counter. Latched: scrolling back up
+   * to look at a panel again does not un-finish it.
+   */
+  const [atEnd, setAtEnd] = useState(false);
+  /** The same, readable from handlers made on an earlier render. */
+  const atEndRef = useRef(false);
   const top = useRef<HTMLDivElement>(null);
   const strip = useRef<HTMLDivElement>(null);
   /**
@@ -286,8 +353,10 @@ export function Reader({
     if (!path || retrying.has(index)) return;
     setRetrying((had) => new Set(had).add(index));
     try {
-      // The same call the loader makes: only the page *list* differs in preview.
-      const url = await manga.reader.page(path);
+      // The same call the loader makes — only the page *list* differs in
+      // preview — but fresh: past any saved copy here or on the PC, which may
+      // be the very thing that would not draw.
+      const url = await manga.reader.page(path, { fresh: true });
       setUrls((current) => {
         const copy = [...current];
         copy[index] = url;
@@ -309,6 +378,15 @@ export function Reader({
     }
   };
 
+  /**
+   * Every page that failed, again — one at a time, in reading order. Offered
+   * once more than one has failed, because tapping each gap in turn is the
+   * chore a flaky evening on a Cloudflare-fronted source turns into.
+   */
+  const retryAll = async () => {
+    for (const index of [...failed].sort((a, b) => a - b)) await retryPage(index);
+  };
+
   useEffect(() => {
     let alive = true;
     const made: string[] = [];
@@ -328,6 +406,16 @@ export function Reader({
         setFailed(new Set());
 
         let next = 0;
+        /** Pages that failed on the first pass, given one more go at the end. */
+        const later: number[] = [];
+        const show = (index: number, url: string) => {
+          made.push(url);
+          setUrls((current) => {
+            const copy = [...current];
+            copy[index] = url;
+            return copy;
+          });
+        };
         const worker = async () => {
           while (alive) {
             const index = next++;
@@ -338,22 +426,44 @@ export function Reader({
                 URL.revokeObjectURL(url);
                 return;
               }
-              made.push(url);
-              setUrls((current) => {
-                const copy = [...current];
-                copy[index] = url;
-                return copy;
-              });
+              show(index, url);
             } catch {
               // One page failing must not stop the rest: a strip with a gap is
-              // readable, a blank screen is not. The slot stays null — and is
-              // now *marked* as failed, so the gap can say what it is and offer
-              // to try again rather than looking like a slow connection.
-              if (alive) setFailed((had) => new Set(had).add(index));
+              // readable, a blank screen is not. Kept for a second go below.
+              later.push(index);
             }
           }
         };
         await Promise.all(Array.from({ length: Math.min(IN_FLIGHT, pages.length) }, worker));
+
+        /*
+         * The second go, once the rest of the chapter is in. Most pages that
+         * fail are refused rather than slow — a Cloudflare challenge on the
+         * source's image server, which comes and goes — and the server has
+         * already asked three times by now, so this waits a little longer and
+         * asks again, one page at a time and past any saved copy, before
+         * anything is marked. Only what fails this too gets the "tap to try
+         * again" button; that used to be every first-pass miss, which on a
+         * flaky evening meant tapping the same page several times.
+         */
+        if (later.length > 0 && alive) {
+          await new Promise((r) => setTimeout(r, SECOND_GO_MS));
+          for (const index of later.sort((a, b) => a - b)) {
+            if (!alive) return;
+            try {
+              const url = await manga.reader.page(pages[index], { fresh: true });
+              if (!alive) {
+                URL.revokeObjectURL(url);
+                return;
+              }
+              show(index, url);
+            } catch {
+              // Marked now, so the gap says what it is and offers to try again
+              // rather than looking like a slow connection.
+              if (alive) setFailed((had) => new Set(had).add(index));
+            }
+          }
+        }
       } catch (error) {
         if (!alive) return;
         setProblem(
@@ -381,6 +491,8 @@ export function Reader({
     setHeading(resume ? { page: resume.page, why: 'resume' } : null);
     setEagerTo(resume ? resume.page + 1 : -1);
     setPage(resume?.page ?? 0);
+    setAtEnd(false);
+    atEndRef.current = false;
     if (!resume) top.current?.scrollIntoView({ block: 'start' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter.id]);
@@ -488,6 +600,35 @@ export function Reader({
     return { page: kids.length - 1, offset: 1, pages: kids.length };
   };
 
+  /**
+   * Whether this chapter is finished, asked *now* rather than taken from the
+   * last measurement. Next and leaving both ask this at the moment they are
+   * pressed: the measurement is throttled and paused while a jump settles, and
+   * a press that lands in either gap was a chapter lost — the counter's answer
+   * was simply out of date.
+   */
+  const finishedNow = (): boolean => {
+    if (atEndRef.current || endInSight()) return true;
+    const here = where();
+    return here !== null && here.page === here.pages - 1;
+  };
+
+  /** The geometry `reachedTheEnd` decides from, read off the strip as it is now. */
+  const endInSight = (): boolean => {
+    const box = strip.current;
+    const kids = box?.children;
+    if (!box || !kids || kids.length === 0) return false;
+    const last = (kids[kids.length - 1] as HTMLElement).getBoundingClientRect();
+    const whole = box.getBoundingClientRect();
+    return reachedTheEnd({
+      viewportHeight: window.innerHeight,
+      stripTop: whole.top,
+      stripHeight: whole.height,
+      lastPageTop: last.top,
+      allLoaded: [...kids].every((k) => k instanceof HTMLImageElement && k.complete && k.naturalHeight > 0),
+    });
+  };
+
   useEffect(() => {
     let waiting: ReturnType<typeof setTimeout> | null = null;
     const measure = () => {
@@ -496,6 +637,10 @@ export function Reader({
       const place = where();
       if (!place) return;
       setPage(place.page);
+      if (place.page === place.pages - 1 || endInSight()) {
+        atEndRef.current = true;
+        setAtEnd(true);
+      }
       report.current?.(place);
     };
     const onScroll = () => {
@@ -781,14 +926,18 @@ export function Reader({
               }}
             />
           ) : failed.has(index) ? (
-            <button
-              key={index}
-              className="manga-page-waiting manga-page-failed"
-              onClick={() => void retryPage(index)}
-              disabled={retrying.has(index)}
-            >
-              {retrying.has(index) ? `Page ${index + 1} — fetching…` : `Page ${index + 1} did not load — tap to try again`}
-            </button>
+            // One element per page, whatever is inside it: the strip's children
+            // are counted as pages by the counter and by every jump.
+            <div key={index} className="manga-page-waiting manga-page-failed">
+              <button className="manga-page-retry" onClick={() => void retryPage(index)} disabled={retrying.has(index)}>
+                {retrying.has(index) ? `Page ${index + 1} — fetching…` : `Page ${index + 1} did not load — tap to try again`}
+              </button>
+              {failed.size > 1 && (
+                <button className="btn" onClick={() => void retryAll()} disabled={retrying.size > 0}>
+                  Try all {failed.size} again
+                </button>
+              )}
+            </div>
           ) : (
             <div key={index} className="manga-page-waiting">
               {index + 1}
@@ -808,8 +957,24 @@ export function Reader({
             * wrong here either loses your place or marks something you skimmed
             * past as finished.
             */}
-          <button className="btn primary" onClick={() => onFinished(chapter.number)}>
-            {preview ? 'Next chapter' : 'Finished — next chapter'}
+          {/*
+            * On the newest chapter there is no next one, and the button said
+            * so only by where it took you. It says it now, in its own colour,
+            * so reaching the end of what exists reads as an arrival rather
+            * than as the reader dropping you on the list.
+            */}
+          <button
+            className={hasNext ? 'btn primary' : 'btn manga-last-chapter'}
+            onClick={() => {
+              if (hasNext && !nextIsOk()) return;
+              onFinished(chapter.number);
+            }}
+          >
+            {hasNext
+              ? preview
+                ? 'Next chapter'
+                : 'Finished — next chapter'
+              : (lastLabel ?? (preview ? 'Last chapter — back' : 'Last chapter finished ✓'))}
           </button>
           {/*
             * The second destination, and only when there is one — see
@@ -879,18 +1044,28 @@ export function Reader({
                   className="manga-reader-skip"
                   aria-label={`Skip to chapter ${skipTo}`}
                   title={`Skip to chapter ${skipTo}, past the point chapters`}
-                  onClick={() => onSkip(page >= total - 1)}
+                  onClick={() => onSkip(atEnd || page >= total - 1 || finishedNow())}
                 >
                   {skipTo}
                 </button>
               )}
+              {/*
+                * At the end this is finishing; from anywhere else, skipping —
+                * and it says which, because the difference is whether the
+                * chapter is marked read. In the accent once it will finish it,
+                * so a Next that would skip a chapter you think you read is
+                * visibly the plain one.
+                */}
               <button
-                className="manga-reader-arrow"
-                aria-label="Next chapter"
-                title="Next chapter"
+                className={`manga-reader-arrow${atEnd || page >= total - 1 ? ' finishing' : ''}`}
+                aria-label={atEnd || page >= total - 1 ? 'Finish, and next chapter' : 'Next chapter, without marking this one read'}
+                title={atEnd || page >= total - 1 ? 'Finished — next chapter' : 'Next chapter (not marked read)'}
                 disabled={!onGo || !hasNext}
-                // From the last page this is finishing; from anywhere else, skipping.
-                onClick={() => (page >= total - 1 ? onFinished(chapter.number) : onGo?.(1))}
+                onClick={() => {
+                  if (!nextIsOk()) return;
+                  if (atEnd || page >= total - 1 || finishedNow()) onFinished(chapter.number);
+                  else onGo?.(1);
+                }}
               >
                 <Icon.next />
               </button>

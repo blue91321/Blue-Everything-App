@@ -16,10 +16,11 @@ import type { OfflineViewProps } from '@app/features/index';
 import { Cover } from './Cover';
 import { Reader } from './Reader';
 import { chapterText } from './judge';
-import { manga } from './manga-api';
 import { sizeText, updateSnapshot, useOffline, type SavedChapter, type SavedSeries } from './offline-store';
-import { enqueue, pendingCount } from './sync-queue';
+import { pendingCount } from './sync-queue';
+import { logRead, unsentCount } from './reading-log';
 import { usePositionSaver } from './usePositionSaver';
+import { isIncognito } from './incognito';
 import { beside, skippedBetween, skipTarget } from './chapter-nav.js';
 import { NEEDS, NOT_YET_SENT, WHILE_REACHABLE } from './device-text';
 
@@ -32,7 +33,8 @@ export default function MangaOffline({ onClose }: OfflineViewProps) {
 
   if (series) return <OfflineSeries series={series} onBack={() => setSeriesId(null)} />;
 
-  const waiting = pendingCount();
+  // Places waiting in the old queue, and reads the log has not delivered yet.
+  const waiting = pendingCount() + unsentCount();
   return (
     <div className="card">
       <div className="row between">
@@ -96,6 +98,12 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
         seriesId={series.seriesId}
         chapter={{ id: open.chapterId, number: open.number, name: open.name }}
         resume={resume}
+        onLeftAtEnd={(n) => {
+          if (isIncognito()) return;
+          void logRead(series.seriesId, [n], series.title);
+          void updateSnapshot(series.seriesId, { read: n, ...(place && place.chapter <= n ? { position: null } : {}) });
+        }}
+        lastLabel="Finished — last one saved here"
         onClose={() => {
           saver.flush();
           if (lastPlace.current) void updateSnapshot(series.seriesId, { position: lastPlace.current });
@@ -119,6 +127,7 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
         }}
         hasPrevious={beside(chapters, open.number, -1) !== undefined}
         hasNext={beside(chapters, open.number, 1) !== undefined}
+        nextNumber={beside(chapters, open.number, 1)?.number ?? null}
         {...(() => {
           /*
            * Only what is saved on this device can be opened here, so the skip
@@ -133,13 +142,7 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
               saver.flush();
               lastPlace.current = null;
               if (finishing) {
-                for (const n of [open.number, ...skippedBetween(chapters, open.number, target.number)]) {
-                  try {
-                    await manga.reader.markRead(series.seriesId, n);
-                  } catch {
-                    enqueue({ kind: 'read', seriesId: series.seriesId, chapter: n, at: Date.now() });
-                  }
-                }
+                await logRead(series.seriesId, [open.number, ...skippedBetween(chapters, open.number, target.number)], series.title);
                 const highest = Math.max(open.number, ...skippedBetween(chapters, open.number, target.number));
                 await updateSnapshot(series.seriesId, {
                   read: highest,
@@ -154,11 +157,7 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
         onFinished={async (n) => {
           saver.flush();
           lastPlace.current = null;
-          try {
-            await manga.reader.markRead(series.seriesId, n);
-          } catch {
-            enqueue({ kind: 'read', seriesId: series.seriesId, chapter: n, at: Date.now() });
-          }
+          await logRead(series.seriesId, [n], series.title);
           // As the server will: finishing it, or a later one, settles the place.
           await updateSnapshot(series.seriesId, { read: n, ...(place && place.chapter <= n ? { position: null } : {}) });
           // The next saved one up — only what is on this device can be opened here.

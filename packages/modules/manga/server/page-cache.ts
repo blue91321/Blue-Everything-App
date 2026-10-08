@@ -28,6 +28,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataDir } from '@everything/server/module-api';
+import { isWholeImage } from '../web/image-bytes.js';
+import { fetchPage } from './page-fetch.js';
 
 export const KEEP_CHAPTERS = 10;
 
@@ -146,6 +148,9 @@ export function keepPage(seriesId: string, path: string, body: Buffer, type: str
   const e = index.chapters.find((c) => c.seriesId === seriesId && c.pages.includes(path));
   const file = e ? fileOf(e, path) : null;
   if (!e || !file) return;
+  // A damaged page is passed through but never kept: kept, it would be served
+  // in place of the source every time that chapter was opened again.
+  if (!isWholeImage(body.subarray(0, 32), body.subarray(Math.max(0, body.length - 1024)), body.length)) return;
   mkdirSync(folderOf(e), { recursive: true });
   writeFileSync(file, body);
   e.stored[path] = type;
@@ -157,19 +162,31 @@ const filling = new Set<string>();
 /**
  * Fetch the pages of a remembered chapter that are not on disk yet, one at a
  * time. Stops if the chapter is pushed out meanwhile.
+ *
+ * A page that will not come is passed over rather than ending the whole fill —
+ * it used to stop at the first refusal, so one Cloudflare blip left the rest
+ * of the chapter to be fetched while you read it. Three in a row means the
+ * source is down rather than flaky, and it stops then.
  */
 export async function fillChapter(baseUrl: string, seriesId: string, chapterId: string): Promise<void> {
   const key = `${seriesId}:${chapterId}`;
   if (filling.has(key)) return;
   filling.add(key);
   try {
+    const passed = new Set<string>();
+    let failedInARow = 0;
     for (;;) {
       const e = readIndex().chapters.find((c) => c.seriesId === seriesId && c.chapterId === chapterId);
-      const next = e?.pages.find((p) => !(p in e.stored));
+      const next = e?.pages.find((p) => !(p in e.stored) && !passed.has(p));
       if (!e || !next) return;
-      const response = await fetch(`${baseUrl}${next}`, { signal: AbortSignal.timeout(60_000) });
-      if (!response.ok) return;
-      keepPage(seriesId, next, Buffer.from(await response.arrayBuffer()), response.headers.get('content-type') ?? 'image/jpeg');
+      try {
+        const { body, type } = await fetchPage(`${baseUrl}${next}`);
+        keepPage(seriesId, next, body, type);
+        failedInARow = 0;
+      } catch {
+        passed.add(next);
+        if (++failedInARow >= 3) return;
+      }
     }
   } catch {
     // The rest is fetched as the reader asks for it, and kept then.

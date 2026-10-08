@@ -26,6 +26,7 @@
  */
 import { useEffect, useState } from 'react';
 import { getToken } from '@app/api';
+import { blobIsWholeImage, isWholeImage } from './image-bytes';
 
 import {
   permission as folderPermission,
@@ -33,6 +34,7 @@ import {
   removeChapterFolder,
   removeSeriesFolder,
   writePage as writeFolderPage,
+  rewritePage as rewriteFolderPage,
 } from './folder-store';
 
 const CACHE = 'everything-manga-offline-v1';
@@ -210,6 +212,33 @@ export async function cachedResponse(url: string): Promise<Response | undefined>
   }
 }
 
+/**
+ * Put a good copy of a page where a damaged saved one was.
+ *
+ * Only ever *replaces*: a page this device never saved stays unsaved, since
+ * reading a chapter is not asking to keep it. Called by the reader whenever it
+ * had to fetch a page that was meant to be here — a saved copy that would not
+ * draw, or "tap to try again" — so a chapter that went bad on the device mends
+ * itself the next time it is read with a connection, rather than staying broken
+ * on the train for good.
+ */
+export async function replaceSavedPage(url: string, body: ArrayBuffer, type: string): Promise<void> {
+  const path = inFolder.get(url);
+  if (path) {
+    await rewriteFolderPage(path, body);
+    return;
+  }
+  if (!offlineSupported) return;
+  try {
+    const cache = await caches.open(CACHE);
+    if (await cache.match(url, { ignoreVary: true })) {
+      await cache.put(url, new Response(body, { headers: { 'content-type': type } }));
+    }
+  } catch {
+    // Storage refused. The page still shows; it is simply not mended here.
+  }
+}
+
 /* ---- saving to it ---- */
 
 export type SeriesInfo = {
@@ -305,12 +334,24 @@ async function run(): Promise<void> {
             const url = list[at]!;
             try {
               const have = toFolder ? undefined : await cache.match(url);
-              if (have) {
-                bytes += (await have.clone().blob()).size;
+              // A copy already here counts only if it is a whole picture — one
+              // left damaged by an earlier attempt is fetched again, not kept.
+              const haveBlob = have ? await have.clone().blob() : null;
+              if (haveBlob && (await blobIsWholeImage(haveBlob))) {
+                bytes += haveBlob.size;
               } else {
                 const response = await fetch(url, { headers: { authorization: `Bearer ${getToken()}` } });
                 if (!response.ok) throw new Error(String(response.status));
                 const body = await response.arrayBuffer();
+                /*
+                 * Checked before it is kept. A page that arrived cut off, or as
+                 * an error message, is a missing page — counted as one and
+                 * offered again — rather than a saved page that draws as a gap
+                 * on the train, which is the one place nothing can fetch it.
+                 */
+                if (!isWholeImage(new Uint8Array(body, 0, Math.min(32, body.byteLength)), new Uint8Array(body, Math.max(0, body.byteLength - 1024)), body.byteLength)) {
+                  throw new Error('damaged');
+                }
                 const type = response.headers.get('content-type') ?? 'image/jpeg';
                 bytes += body.byteLength;
                 if (toFolder) {

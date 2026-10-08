@@ -36,6 +36,8 @@ import { Library } from './Library';
 import { More } from './More';
 import { failing, needsSetup } from './SourceCard';
 import { flushQueue } from './sync-queue';
+import { resendRecent } from './reading-log';
+import { openAtLoad } from './open-chapter';
 import { manga, type SeriesSummary } from './manga-api';
 
 type Tab = 'browse' | 'library' | 'history' | 'downloads' | 'more';
@@ -68,7 +70,9 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
   const [filter, setFilter] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   /** Which series' chapters are open, if any. The reader lives inside it. */
-  const [reading, setReading] = useState<string | null>(null);
+  /** A chapter open when the page was reloaded, reopened once — see `open-chapter.ts`. */
+  const [reopen, setReopen] = useState(openAtLoad);
+  const [reading, setReading] = useState<string | null>(() => reopen?.seriesId ?? null);
   /** Opened with Continue, so the chapter list goes straight back into the reader. */
   const [continuing, setContinuing] = useState(false);
   const [managingExtensions, setManagingExtensions] = useState(false);
@@ -130,6 +134,10 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
     void flushQueue().then((sent) => {
       if (sent > 0) library.reload();
     });
+    // And this device's reading log: anything not yet delivered, plus the last
+    // month again so a read the PC lost is put back — see `reading-log.ts`.
+    // A restored read announces itself, which reloads the library on its own.
+    resendRecent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -243,9 +251,11 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
         coverPath={current?.coverPath ?? null}
         libraries={data?.libraries ?? []}
         continueOnOpen={continuing}
+        reopenChapterId={reopen?.seriesId === reading ? reopen.chapterId : undefined}
         onClose={() => {
           setReading(null);
           setContinuing(false);
+          setReopen(null);
           // The place was saved without announcing itself; this list should know.
           library.reload();
         }}

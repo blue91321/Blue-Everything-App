@@ -41,9 +41,10 @@ import {
   updateSnapshot,
   useOffline,
 } from './offline-store';
-import { enqueue } from './sync-queue';
+import { logRead } from './reading-log';
 import { useConnectivity } from '@app/offline-sync';
 import { NEEDS } from './device-text';
+import { rememberOpen } from './open-chapter';
 
 /** How many "Next" saves ahead of where you are. — and see `saveAll` for the rest. */
 const SAVE_AHEAD = [5, 10] as const;
@@ -115,6 +116,7 @@ export function Chapters({
   onDetails,
   onChanged,
   continueOnOpen = false,
+  reopenChapterId,
   coverPath = null,
 }: {
   seriesId: string;
@@ -133,6 +135,8 @@ export function Chapters({
   onCompare: () => void;
   /** Go straight back into the chapter you were reading — the library's Continue. */
   continueOnOpen?: boolean;
+  /** The chapter that was open when the page was reloaded: straight back into it. */
+  reopenChapterId?: string;
 }) {
   /*
    * Back closes the chapter list and returns to whichever tab opened it.
@@ -143,6 +147,8 @@ export function Chapters({
    */
   const close = useBackStep(onClose);
   const list = useAsync(() => manga.reader.chapters(seriesId), [seriesId]);
+  /** What the device's reading log calls this series — a name, so the exported file is readable. */
+  const logTitle = series?.title ?? list.data?.seriesTitle ?? '';
   const [open, setOpen] = useState<SourceChapter | null>(null);
   const [resume, setResume] = useState<{ page: number; offset: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -275,6 +281,25 @@ export function Chapters({
     if (!placeChapter || !place) return;
     read(placeChapter, sameCopy ? { page: place.page, offset: place.offset } : null);
   }
+
+  // A reload mid-chapter: back into that chapter, at the saved place when the
+  // place is in it. Every page is fetched again on the way, which is often why
+  // somebody reloaded.
+  useEffect(() => {
+    if (!reopenChapterId || continued.current || !data) return;
+    const chapter = data.chapters.find((c) => c.id === reopenChapterId);
+    if (!chapter) return;
+    continued.current = true;
+    const here = sameCopy && place && place.chapterId === chapter.id;
+    read(chapter, here ? { page: place.page, offset: place.offset } : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reopenChapterId, data]);
+
+  // Kept across a reload of the page — see `open-chapter.ts`.
+  useEffect(() => {
+    rememberOpen(open ? { seriesId, chapterId: open.id } : null);
+  }, [seriesId, open?.id]);
+  useEffect(() => () => rememberOpen(null), []);
 
   // The library's Continue: straight into the chapter once the list is here.
   useEffect(() => {
@@ -479,13 +504,7 @@ export function Chapters({
 
     if (finishing && !isIncognito()) {
       // This one and everything between, nearest first — see `skippedBetween`.
-      for (const n of [open.number, ...skippedBetween(all, open.number, target.number)]) {
-        try {
-          await manga.reader.markRead(seriesId, n);
-        } catch {
-          enqueue({ kind: 'read', seriesId, chapter: n, at: Date.now() });
-        }
-      }
+      await logRead(seriesId, [open.number, ...skippedBetween(all, open.number, target.number)], logTitle);
       void updateSnapshot(seriesId, { read: Math.max(open.number, ...skippedBetween(all, open.number, target.number)) });
       list.reload();
     }
@@ -509,12 +528,8 @@ export function Chapters({
      * version of it.
      */
     if (!isIncognito()) {
-      try {
-        await manga.reader.markRead(seriesId, chapterNumber);
-      } catch {
-        // The connection dropped mid-chapter: queued, and sent when it is back.
-        enqueue({ kind: 'read', seriesId, chapter: chapterNumber, at: Date.now() });
-      }
+      // Written down on this device first, then sent — see `reading-log.ts`.
+      await logRead(seriesId, [chapterNumber], logTitle);
       void updateSnapshot(seriesId, { read: chapterNumber });
     }
     const all = list.data?.chapters ?? [];
@@ -545,11 +560,17 @@ export function Chapters({
           setTimeout(() => list.reload(), 400);
         }}
         onFinished={(n) => void finished(n)}
+        onLeftAtEnd={(n) => {
+          if (isIncognito()) return;
+          void updateSnapshot(seriesId, { read: n });
+          void logRead(seriesId, [n], logTitle).then(() => list.reload());
+        }}
         onGo={go}
         onSkip={(finishing) => void skip(finishing)}
         skipTo={skipTarget(list.data?.chapters ?? [], open.number)?.number ?? null}
         hasPrevious={beside(list.data?.chapters ?? [], open.number, -1) !== undefined}
         hasNext={beside(list.data?.chapters ?? [], open.number, 1) !== undefined}
+        nextNumber={beside(list.data?.chapters ?? [], open.number, 1)?.number ?? null}
         onPosition={(p) =>
           saver.note({ chapter: open.number, chapterId: open.id, chapterName: open.name, ...p })
         }

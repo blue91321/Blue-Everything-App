@@ -666,12 +666,14 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
   /**
    * Say that two accounts are the same person.
    *
-   * Local-only like every other write here. The pairing is a claim about people
-   * you know, and it is the sort of thing that should not be editable from a
-   * phone left on a table.
+   * Not local-only, unlike connecting a service. It was, on the reasoning
+   * that a pairing is a claim about people you know — but it touches nothing
+   * outside this app, comes apart in one tap, and the suggestion card offering
+   * it showed on the phone and did nothing when pressed. Linking, unlinking
+   * and choosing a creator's main account are tidying a list, which is what
+   * the phone is for; a bearer token still guards them like any other write.
    */
   app.post('/api/integrations/friends/link', async (request) => {
-    localOnly(request);
     const { a, b } = linkFriendsSchema.parse(request.body);
     const personId = await linkFriends(a, b);
     changes.emitChange('integrations');
@@ -687,7 +689,6 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * second exists because a group is not always a pair.
    */
   app.post('/api/integrations/friends/unlink', async (request) => {
-    localOnly(request);
     const body = z
       .object({ id: z.string().min(1).optional(), personId: z.string().min(1).optional() })
       .refine((v) => v.id || v.personId, { message: 'give an id or a personId' })
@@ -711,7 +712,6 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * commonest case. Sharing the schema would have invited sharing the rule.
    */
   app.post('/api/integrations/follows/link', async (request) => {
-    localOnly(request);
     const { a, b } = z.object({ a: z.string().min(1), b: z.string().min(1) }).parse(request.body);
     const groupId = await linkFollows(a, b);
     changes.emitChange('integrations');
@@ -720,7 +720,6 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
 
   /** Which of a group's accounts the merged row wears. */
   app.post('/api/integrations/follows/primary', async (request) => {
-    localOnly(request);
     const { id } = z.object({ id: z.string().min(1) }).parse(request.body);
     await setPrimaryFollow(id);
     changes.emitChange('integrations');
@@ -736,7 +735,6 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * pair, where the two are the same action.
    */
   app.post('/api/integrations/follows/unlink', async (request) => {
-    localOnly(request);
     const { id } = z.object({ id: z.string().min(1) }).parse(request.body);
     await unlinkFollow(id);
     changes.emitChange('integrations');

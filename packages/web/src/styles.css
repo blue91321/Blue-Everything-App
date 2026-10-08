@@ -2918,19 +2918,28 @@ a.btn {
 .manga-page-failed {
   border: 1px dashed var(--border);
   color: var(--muted);
-  font: inherit;
-  cursor: pointer;
   padding: 1.5rem 1rem;
   text-align: center;
+  /* The slot now holds the page's own button and, past one failure, "Try all". */
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-.manga-page-failed:hover:not(:disabled),
-.manga-page-failed:focus-visible {
-  border-color: var(--accent);
+.manga-page-retry {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0.25rem;
+}
+
+.manga-page-retry:hover:not(:disabled),
+.manga-page-retry:focus-visible {
   color: var(--text);
 }
 
-.manga-page-failed:disabled {
+.manga-page-retry:disabled {
   cursor: default;
 }
 
@@ -4563,6 +4572,28 @@ html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
 .manga-reader-arrow:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/*
+ * The end button on the newest chapter: "Last chapter finished ✓", in the
+ * green that means done rather than the accent that means go on. Tinted rather
+ * than filled, because the dark-theme green is too light to carry text.
+ */
+.btn.manga-last-chapter {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  font-weight: 600;
+}
+
+/*
+ * Next will mark this chapter read. The accent rather than a second icon: the
+ * same control doing the same thing, with the one difference that matters —
+ * whether the chapter counts — visible before you press it.
+ */
+.manga-reader-arrow.finishing:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /*

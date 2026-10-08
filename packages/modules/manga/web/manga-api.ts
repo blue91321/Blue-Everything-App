@@ -8,7 +8,8 @@
  * is no sense keeping a second copy of where it is stored.
  */
 import { apiRequest, getToken } from '@app/api';
-import { cachedResponse, savedPages } from './offline-store';
+import { cachedResponse, replaceSavedPage, savedPages } from './offline-store';
+import { blobIsWholeImage } from './image-bytes';
 import { keptBlob } from '@app/offline-sync';
 
 export type SeriesStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
@@ -370,10 +371,12 @@ export interface SeriesDetailPage {
   coverPath: string | null;
   following: string | null;
   unlinked?: boolean;
-  /** Newest first, with your read marks when you follow the series. */
+  /** Newest first, with your read marks when you follow the series or have read it. */
   chapters: Array<Omit<SourceChapter, 'read'> & { read?: boolean }>;
-  /** Your place, when you follow it and it was measured on this copy. */
+  /** Your place, when you follow it or have read it, and it was measured on this copy. */
   position?: ReadingPosition | null;
+  /** Your record of it when you read it without following — see `Glimpse`. */
+  glimpseId?: string | null;
   profile: ChapterProfile;
   chaptersProblem: string | null;
 }
@@ -685,14 +688,32 @@ export const manga = {
      * them on unmount. A cache would turn reading into a memory leak measured in
      * chapters.
      */
-    page: async (path: string): Promise<string> => {
-      // Saved on this device first: that is what makes a downloaded chapter
-      // read on the train, and read faster at home.
-      const saved = await cachedResponse(path);
-      if (saved) return URL.createObjectURL(await saved.blob());
-      const response = await fetch(path, { headers: { authorization: `Bearer ${getToken()}` } });
+    page: async (path: string, options: { fresh?: boolean } = {}): Promise<string> => {
+      /*
+       * Saved on this device first: that is what makes a downloaded chapter
+       * read on the train, and read faster at home — but only a saved copy
+       * that is a whole picture. A damaged one falls through to the server as
+       * though it were not saved, and `fresh` (tap to try again) skips the
+       * saved copy outright, since retrying the thing that just failed would
+       * fail the same way forever.
+       */
+      if (!options.fresh) {
+        const saved = await cachedResponse(path);
+        if (saved) {
+          const blob = await saved.blob();
+          if (await blobIsWholeImage(blob)) return URL.createObjectURL(blob);
+        }
+      }
+      // `fresh` reaches the server too: its own page cache could hold the bad copy.
+      const response = await fetch(options.fresh ? `${path}&fresh=1` : path, {
+        headers: { authorization: `Bearer ${getToken()}` },
+      });
       if (!response.ok) throw new Error(`page failed (${response.status})`);
-      return URL.createObjectURL(await response.blob());
+      const blob = await response.blob();
+      if (!(await blobIsWholeImage(blob))) throw new Error('the page arrived damaged');
+      // Mend a saved chapter with the good copy, if this page was one.
+      void replaceSavedPage(path, await blob.arrayBuffer(), blob.type || 'image/jpeg');
+      return URL.createObjectURL(blob);
     },
   },
 };

@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Cover } from './Cover';
 import { Archive } from './Archive';
 import { isIncognito, setIncognito } from './incognito';
+import { logCsv, logSize, syncLog, unsentCount } from './reading-log';
 import { ImportCard } from './Import';
 import { SourceCard } from './SourceCard';
 import { manga, type Candidate, type Library, type SeriesSummary } from './manga-api';
@@ -70,6 +71,66 @@ function Incognito() {
         Saving a chapter for offline still writes it to this device: a file is a file whatever this switch says. It is
         per device, so turning it on here leaves your phone as it was.
       </p>
+    </div>
+  );
+}
+
+/**
+ * This device's reading log — see `reading-log.ts`.
+ *
+ * Here so the log is something you can see rather than something you take on
+ * trust: how many reads it holds, how many the PC has not acknowledged, a way
+ * to send them now, and the file itself. The download is a plain CSV, which is
+ * what was asked for and what a spreadsheet opens without being told how.
+ */
+function ReadingLog() {
+  const [, bump] = useState(0);
+  const [note, setNote] = useState('');
+  const rows = logSize();
+  const unsent = unsentCount();
+
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([logCsv()], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `reading-log-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    // Revoked a moment later rather than at once: some browsers start the
+    // download asynchronously and find a revoked URL.
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+
+  return (
+    <div className="card">
+      <h3>Reading log</h3>
+      <p className="meta">
+        Every chapter finished on this device is written down here first and then sent to the PC, so a read is not
+        lost to a dropped connection or to the app being closed. The last month is sent again whenever Manga opens,
+        which puts back anything the PC lost.
+      </p>
+      <p className="meta">
+        {rows === 0
+          ? 'Nothing logged on this device yet.'
+          : `${rows} ${rows === 1 ? 'entry' : 'entries'} · ${unsent === 0 ? 'all on the PC' : `${unsent} not sent yet`}`}
+      </p>
+      <div className="row wrap" style={{ gap: '.35rem' }}>
+        <button
+          className="btn subtle"
+          disabled={rows === 0}
+          onClick={async () => {
+            setNote('Sending…');
+            const { sent } = await syncLog({ resend: true });
+            bump((n) => n + 1);
+            setNote(unsentCount() === 0 ? `Sent ${sent}.` : 'Could not reach the PC — it will go when it can.');
+          }}
+        >
+          {unsent > 0 ? 'Send now' : 'Send again'}
+        </button>
+        <button className="btn subtle" disabled={rows === 0} onClick={download}>
+          Download as CSV
+        </button>
+      </div>
+      {note && <p className="meta">{note}</p>}
     </div>
   );
 }
@@ -362,6 +423,7 @@ export function More({
       <Archive />
 
       <Incognito />
+      <ReadingLog />
 
       <div className="card">
         <div className="row between">

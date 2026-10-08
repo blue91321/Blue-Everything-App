@@ -263,6 +263,29 @@ export async function writePage(
   return [...parts, file].join('/');
 }
 
+/**
+ * Write over a page already in the folder, at the path the manifest has for it.
+ *
+ * For a saved page that turned out damaged and was fetched again: the manifest
+ * keeps pointing at the same file, so nothing else has to learn it changed.
+ */
+export async function rewritePage(path: string, body: ArrayBuffer): Promise<boolean> {
+  const parts = path.split('/');
+  const file = parts.pop();
+  if (!file) return false;
+  const dir = await dirFor(parts, false);
+  if (!dir) return false;
+  try {
+    const handle = await dir.getFileHandle(file);
+    const writable = await handle.createWritable();
+    await writable.write(body);
+    await writable.close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** A page back out of the folder, as the reader's `cachedResponse` wants it. */
 export async function readPage(path: string): Promise<Response | undefined> {
   const parts = path.split('/');

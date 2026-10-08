@@ -31,6 +31,9 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, nudges, changes } from '@everything/server/module-api';
 import { chapterValue } from './identity.js';
+import { applyReadMark, placeIsAtEnd } from './read-marks.js';
+import { isWholeImage } from '../web/image-bytes.js';
+import { fetchPage } from './page-fetch.js';
 import { search, fetchCover, MangaDexError, type Candidate } from './mangadex.js';
 import { CREDIT, readSeries } from './mangaupdates.js';
 import {
@@ -1357,11 +1360,29 @@ export async function routes(app: FastifyInstance): Promise<void> {
      * nicety and the link is the thing you asked for.
      */
     if (series.muId !== null && series.totalChapters === null) {
+      let total: number | null = null;
       try {
-        series.totalChapters = (await readSeries(series.muId)).totalChapters;
+        total = (await readSeries(series.muId)).totalChapters;
       } catch {
         // Left null. The row simply says less.
       }
+      /*
+       * The store is read again after that request rather than written as it
+       * was before it: anything done in the app during the round trip — a
+       * chapter finished on the phone — would otherwise be overwritten by a
+       * copy from before it happened. The sweep's lesson, applied here.
+       */
+      const fresh = read();
+      const row = fresh.series.find((s) => s.id === id);
+      if (!row) return reply.code(404).send({ error: 'no such series' });
+      row.source = series.source;
+      row.latestChapter = null;
+      row.sourceChapter = null;
+      row.sourceCheckedAt = null;
+      row.checkedAt = null;
+      row.totalChapters = total;
+      write(fresh);
+      return seriesSummary(row);
     }
 
     write(store);
@@ -1938,7 +1959,28 @@ export async function routes(app: FastifyInstance): Promise<void> {
       // through its source either way; it just arrives without the extra ids.
     }
 
-    const existing = best ? findExisting(store, best) : undefined;
+    let totalChapters: number | null = null;
+    if (best?.muId) {
+      // One MangaUpdates read for the "N written" context, as linking does —
+      // after this the series is watched through its source.
+      try {
+        totalChapters = (await readSeries(best.muId)).totalChapters;
+      } catch {
+        // Left null. The row simply says less.
+      }
+    }
+
+    /*
+     * Read again now that the slow part is over, so what is written is the
+     * store as it is rather than as it was before two network requests — a
+     * chapter marked read meanwhile would otherwise be lost. And the duplicate
+     * check is asked again of it, since the answer may have changed too.
+     */
+    const store2 = read();
+    if (store2.series.some((s) => s.source?.mangaId === body.mangaId && s.source?.sourceName === sourceName)) {
+      return reply.code(409).send({ error: `already following ${title}` });
+    }
+    const existing = best ? findExisting(store2, best) : undefined;
     if (existing) {
       if (existing.source) {
         return reply
@@ -1950,8 +1992,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
       existing.sourceChapter = null;
       existing.sourceCheckedAt = null;
       existing.checkedAt = null;
-      absorbGlimpse(store, existing, body.mangaId);
-      write(store);
+      absorbGlimpse(store2, existing, body.mangaId);
+      write(store2);
       return { series: seriesSummary(existing), matchedOn: 'existing' };
     }
 
@@ -1965,18 +2007,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
       status: best?.status ?? 'unknown',
     });
     series.source = link;
-    // One MangaUpdates read for the "N written" context, as linking does —
-    // after this the series is watched through its source.
-    if (series.muId !== null) {
-      try {
-        series.totalChapters = (await readSeries(series.muId)).totalChapters;
-      } catch {
-        // Left null. The row simply says less.
-      }
-    }
-    store.series.push(series);
-    absorbGlimpse(store, series, body.mangaId);
-    write(store);
+    series.totalChapters = totalChapters;
+    store2.series.push(series);
+    absorbGlimpse(store2, series, body.mangaId);
+    write(store2);
     return { series: seriesSummary(series), matchedOn: best ? 'mangadex' : null };
   });
 
@@ -2021,9 +2055,19 @@ export async function routes(app: FastifyInstance): Promise<void> {
        * was measured on, since another source's page 12 is somewhere else.
        */
       const own = following ? ctx.store.series.find((s) => s.id === following) : undefined;
-      const readSet = new Set(own?.readChapters ?? []);
-      const readOn = new Map((own?.readLog ?? []).map((r) => [r.chapter, r.source]));
-      const place = following ? readPositions()[following] ?? null : null;
+      /*
+       * Or your reading of it when you do *not* follow it. A glimpse carries the
+       * same read log and place, and leaving it out meant a series you were
+       * twenty chapters into offered "Read chapter 1" and drew every chapter
+       * unread — its history was in History and nowhere on its own page.
+       */
+      const glimpse = own
+        ? undefined
+        : ctx.store.glimpses.find((g) => g.source.mangaId === mangaId && g.source.sourceName === details.sourceName);
+      const record = own ?? glimpse;
+      const readSet = new Set(record?.readChapters ?? []);
+      const readOn = new Map((record?.readLog ?? []).map((r) => [r.chapter, r.source]));
+      const place = record ? readPositions()[record.id] ?? null : null;
 
       return {
         ...details,
@@ -2032,6 +2076,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
         coverPath: thumbPath(details.thumbnailUrl),
         following,
         unlinked,
+        // So the page writes into the record it already has from its first chapter.
+        glimpseId: glimpse?.id ?? null,
         position: place && place.mangaId === mangaId ? place : null,
         chapters: [...chapters]
           .sort((a, b) => b.number - a.number)
@@ -2077,14 +2123,11 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const ctx = await ready();
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
     try {
-      const response = await fetch(`${ctx.url}${p}`, { signal: AbortSignal.timeout(30_000) });
-      if (!response.ok) return reply.code(502).send({ error: `the source answered ${response.status}` });
-      return reply
-        .header('content-type', response.headers.get('content-type') ?? 'image/jpeg')
-        .header('cache-control', 'private, max-age=604800')
-        .send(Buffer.from(await response.arrayBuffer()));
-    } catch {
-      return reply.code(502).send({ error: 'could not fetch the page' });
+      // Asked again on a refusal before giving up — see `page-fetch.ts`.
+      const { body, type } = await fetchPage(`${ctx.url}${p}`);
+      return reply.header('content-type', type).header('cache-control', 'private, max-age=604800').send(body);
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'could not fetch the page' });
     }
   });
 
@@ -2587,19 +2630,28 @@ export async function routes(app: FastifyInstance): Promise<void> {
    */
   app.get('/api/manga/:id/page', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { p } = request.query as { p?: string };
+    const { p, fresh } = request.query as { p?: string; fresh?: string };
     if (!p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
       return reply.code(400).send({ error: 'not a page' });
     }
+    /*
+     * `fresh=1` is "tap to try again": the copy that would not draw may be one
+     * of these two, so both are passed over and the source asked. The answer
+     * replaces the cached copy, through `keepPage`, if it is a whole picture.
+     */
+    const skipKept = fresh === '1';
 
     // Kept for good, and preferred over everything: see the chapter route above.
-    const saved = archivedPage(id, p);
-    if (saved) {
+    // Either kept copy is used only while it is still a whole picture — one
+    // damaged on disk falls through to the source rather than being served.
+    const whole = (b: Buffer) => isWholeImage(b.subarray(0, 32), b.subarray(Math.max(0, b.length - 1024)), b.length);
+    const saved = skipKept ? undefined : archivedPage(id, p);
+    if (saved && whole(saved.body)) {
       return reply.header('content-type', saved.type).header('cache-control', 'private, max-age=604800').send(saved.body);
     }
 
-    const kept = cachedPage(id, p);
-    if (kept) {
+    const kept = skipKept ? undefined : cachedPage(id, p);
+    if (kept && whole(kept.body)) {
       return reply.header('content-type', kept.type).header('cache-control', 'private, max-age=604800').send(kept.body);
     }
 
@@ -2607,10 +2659,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
 
     try {
-      const response = await fetch(`${ctx.url}${p}`, { signal: AbortSignal.timeout(30_000) });
-      if (!response.ok) return reply.code(502).send({ error: `the source answered ${response.status}` });
-      const type = response.headers.get('content-type') ?? 'image/jpeg';
-      const body = Buffer.from(await response.arrayBuffer());
+      // Asked again on a refusal before giving up — see `page-fetch.ts`.
+      const { body, type } = await fetchPage(`${ctx.url}${p}`);
       // Kept if its chapter is one of the last ten; ignored otherwise.
       keepPage(id, p, body, type);
       return reply
@@ -2619,8 +2669,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
         // every revisit — so this is the one image here worth caching hard.
         .header('cache-control', 'private, max-age=604800')
         .send(body);
-    } catch {
-      return reply.code(502).send({ error: 'could not fetch the page' });
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'could not fetch the page' });
     }
   });
 
@@ -2643,55 +2693,111 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const series = store.series.find((s) => s.id === id) ?? store.glimpses.find((g) => g.id === id);
     if (!series) return reply.code(404).send({ error: 'no such series' });
 
-    const marked = new Set(series.readChapters);
-    if (body?.read === false) marked.delete(chapter);
-    else marked.add(chapter);
-    series.readChapters = [...marked].sort((a, b) => a - b);
-
-    /*
-     * Which source it was read on is the source the series reads from now — the
-     * reader only ever serves the linked one, so there is nothing to take from
-     * the caller. Re-reading replaces the record rather than adding a second.
-     */
-    series.readLog = series.readLog.filter((r) => r.chapter !== chapter);
-    if (body?.read !== false) {
-      series.readLog.push({
-        chapter,
-        source: series.source?.sourceName ?? null,
-        mangaId: series.source?.mangaId ?? null,
-        at,
-      });
-      series.readLog.sort((a, b) => a.chapter - b.chapter);
-    }
+    const read_ = body?.read !== false;
+    applyReadMark(series, chapter, read_, at);
     write(store);
+    if (read_) await settleAfterRead(store, id, chapter, at);
 
-    // Finishing the chapter you were partway through, or a later one, settles
-    // the place: "continue" would otherwise point back into something done.
-    // Unless that place is newer than the read — a chapter finished offline on
-    // Tuesday does not clear a place you left in the next one on Wednesday.
+    return { readChapters: series.readChapters };
+  });
+
+  /**
+   * What finishing a chapter settles besides the mark itself.
+   *
+   * Finishing the chapter you were partway through, or a later one, clears the
+   * place: "continue" would otherwise point back into something done. Unless
+   * that place is newer than the read — a chapter finished offline on Tuesday
+   * does not clear a place you left in the next one on Wednesday.
+   *
+   * And it answers the nudge about it. With a task, ticking the task off did
+   * this through `freshenForDelivery`; with tasks switched off this is the only
+   * route, so a chapter read on the phone mid-match is not announced at the
+   * next stopping point. Only a nudge still waiting — `expired` is what
+   * happened to it, the state freshening uses too.
+   */
+  async function settleAfterRead(store: Store, id: string, chapter: number, at: number): Promise<void> {
     const place = readPositions()[id];
-    if (body?.read !== false && place && place.chapter <= chapter && place.at <= at) writePosition(id, null);
-
-    /*
-     * Reading a chapter answers the nudge about it. With a task, ticking the
-     * task off did this through `freshenForDelivery`; with tasks switched off
-     * this is the only route, so a chapter read on the phone mid-match is not
-     * announced at the next stopping point. Only a nudge still waiting —
-     * `expired` is what happened to it, the state freshening uses too.
-     */
-    if (body?.read !== false) {
-      const waiting = store.links
-        .filter((l) => l.seriesId === id && l.nudgeId && chapterValue(l.chapter) !== null && chapterValue(l.chapter)! <= chapter)
-        .map((l) => l.nudgeId!);
-      if (waiting.length > 0) {
-        await db
-          .update(nudges)
-          .set({ state: 'expired' })
-          .where(and(inArray(nudges.id, waiting), eq(nudges.state, 'pending')));
+    if (place && place.chapter <= chapter && place.at <= at) {
+      writePosition(id, null);
+      // Finishing a later chapter from the end of an earlier one: that one was
+      // read too, and this place was the last record of it — see `placeIsAtEnd`.
+      if (place.chapter < chapter && placeIsAtEnd(place)) {
+        const row = store.series.find((s) => s.id === id) ?? store.glimpses.find((g) => g.id === id);
+        if (row && applyReadMark(row, place.chapter, true, place.at)) write(store);
       }
     }
 
-    return { readChapters: series.readChapters };
+    const waiting = store.links
+      .filter((l) => l.seriesId === id && l.nudgeId && chapterValue(l.chapter) !== null && chapterValue(l.chapter)! <= chapter)
+      .map((l) => l.nudgeId!);
+    if (waiting.length > 0) {
+      await db
+        .update(nudges)
+        .set({ state: 'expired' })
+        .where(and(inArray(nudges.id, waiting), eq(nudges.state, 'pending')));
+    }
+  }
+
+  /**
+   * A device's reading log, or the recent part of it again.
+   *
+   * Every read is written down on the device before anything is sent (see
+   * `reading-log.ts`), and this is where that log arrives — the first time,
+   * and then again for the last few weeks whenever the Manga screen opens, so a
+   * read that never made it here, or was lost after it did, is put back. Which
+   * is only safe because `applyReadMark` makes a repeated claim harmless and an
+   * older one powerless against a newer.
+   *
+   * **Quiet unless something changed.** A re-send nearly always changes
+   * nothing, and announcing it anyway would reload every open screen on every
+   * device each time the Manga tab opened.
+   *
+   * One read of the store and one write, done without an `await` between —
+   * the sweep's lesson about holding a store across anything slow.
+   */
+  app.post('/api/manga/journal', { config: { announce: false } }, async (request, reply) => {
+    const body = request.body as { entries?: unknown } | null;
+    if (!Array.isArray(body?.entries) || body.entries.length > 5000) {
+      return reply.code(400).send({ error: 'that is not a reading log' });
+    }
+    const now = Date.now();
+    const store = read();
+    const unknown = new Set<string>();
+    const settle: { id: string; chapter: number; at: number }[] = [];
+    let changed = 0;
+    for (const raw of body.entries as unknown[]) {
+      const e = raw as { seriesId?: unknown; chapter?: unknown; read?: unknown; at?: unknown } | null;
+      if (
+        typeof e?.seriesId !== 'string' ||
+        typeof e.chapter !== 'number' || !Number.isFinite(e.chapter) ||
+        typeof e.read !== 'boolean' ||
+        typeof e.at !== 'number' || !Number.isFinite(e.at)
+      ) {
+        continue;
+      }
+      /*
+       * Not clamped to "now" when old, unlike `happenedAt`: a re-sent claim
+       * stamped with the time it *arrived* would beat every genuine claim made
+       * since, which is the opposite of the point. Too old is simply ignored —
+       * the device only re-sends a month — and the future is refused outright.
+       */
+      if (e.at > now + 60_000 || e.at < now - 45 * 24 * 60 * 60_000) continue;
+      const row = store.series.find((s) => s.id === e.seriesId) ?? store.glimpses.find((g) => g.id === e.seriesId);
+      if (!row) {
+        unknown.add(e.seriesId);
+        continue;
+      }
+      if (applyReadMark(row, e.chapter, e.read, e.at)) {
+        changed += 1;
+        if (e.read) settle.push({ id: row.id, chapter: e.chapter, at: e.at });
+      }
+    }
+    if (changed > 0) {
+      write(store);
+      for (const s of settle) await settleAfterRead(store, s.id, s.chapter, s.at);
+      changes.emitChange('all');
+    }
+    return { changed, unknown: [...unknown] };
   });
 
   /**
@@ -2766,7 +2872,31 @@ export async function routes(app: FastifyInstance): Promise<void> {
     // made since, on this device or another.
     const current = readPositions()[id];
     if (current && current.at > position.at) return { position: current, kept: 'newer' };
+    /*
+     * And a place older than finishing that chapter, or a later one, is not a
+     * place any more. Leaving the end of a chapter sends both — the last place
+     * and the read — at the same instant, and if the place lands second it
+     * would sit in a chapter you have finished, with Continue pointing back
+     * into it. The read clearing the place only works if the place cannot come
+     * back afterwards.
+     */
+    if (series.readLog.some((r) => r.chapter >= position.chapter && r.at >= position.at)) {
+      return { position: null, kept: 'finished' };
+    }
     const before = writePosition(id, position);
+    /*
+     * Opening a later chapter replaces the place in the earlier one, and if
+     * that place was at its end, the earlier chapter was finished without the
+     * read ever arriving. Recorded now, at the time the place was saved, rather
+     * than lost with it — see `placeIsAtEnd`. One store read, no await before
+     * this write.
+     */
+    if (before && before.chapter < position.chapter && placeIsAtEnd(before)) {
+      if (applyReadMark(series, before.chapter, true, before.at)) {
+        write(here);
+        changes.emitChange('all');
+      }
+    }
     if (!before || before.chapter !== position.chapter || before.mangaId !== position.mangaId) {
       changes.emitChange('all');
     }

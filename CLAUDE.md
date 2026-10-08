@@ -732,6 +732,16 @@ shows and takes a baseline for the sweep. A glimpse has neither, so that block
 is guarded and the rest of the route — title, source, read log, position — works
 on either.
 
+**And the series' own page reads it too**, which it did not: the details page
+looked up read marks and the saved place only for a *followed* series, so a
+series twenty-three chapters in drew every chapter unread and offered **"Read
+chapter 1"**. `GET /api/manga/browse/manga/:mangaId` now finds the glimpse by
+source and id, returns its marks and place, and hands back `glimpseId` so the
+page writes into the record it has rather than asking for one. The top button is
+a choice in order — *Continue ch. N* at your page, else *Next: ch. N* after the
+furthest read, else *Read ch. N again* on the newest, else chapter 1 — because
+always-chapter-1 was a button for the one place you were sure not to want.
+
 **Deliberately a list of its own, not a `Series` with a flag.** 87 places in
 this module read `store.series` — the sweep, the counts, the grid, the matcher,
 the archive — and every one would have had to learn to skip a kind of series it
@@ -989,9 +999,11 @@ position taken during the reader's first render, before the page shrank.
 
 - **The arrows go between chapters, not pages.** Scrolling and the thumbnail
   strip already move between pages; the arrows were the one way to leave a
-  chapter without scrolling to its end. Next from the **last page** marks the
-  chapter read, as the button at the end does; from partway through it only
-  moves on, since skipping is not finishing. Each screen that opens the reader
+  chapter without scrolling to its end. Next from **the end of the chapter**
+  marks it read, as the button at the end does; from partway through it only
+  moves on, since skipping is not finishing — and it is drawn in the accent
+  when it will finish, so which of the two a press will do is visible before
+  it is pressed. What "the end" means is the next bullet but three. Each screen that opens the reader
   answers "the chapter beside this one" from its own list, by number, so a
   source listing two editions of chapter 50 does not stop the arrow at the
   second.
@@ -1076,6 +1088,30 @@ position taken during the reader's first render, before the page shrank.
   ones with a short final page and keeps the rest — which is why the read log
   had gaps like 16→19 and 20→22 inside otherwise clean sessions. Measured at
   860px with a 120px last page: fully scrolled, the counter said page 84 of 86.
+- **And "the end" is no longer the counter's answer at all**, because that fix
+  covered one shape of a wider mistake. The counter names the page crossing a
+  line 8px from the *top* of the screen, so the last page counted only once
+  the page before it had scrolled entirely off the top — and on a phone you
+  read the last page while the end of the one above is still showing, then
+  tap Next. Roughly one chapter in three was lost that way in a run, and the
+  server's request log showed it plainly: chapter 3's pages asked for at 5:07,
+  after five minutes in chapter 2, with no "chapter 2 read" anywhere before
+  them.
+
+  `reachedTheEnd` in `chapter-nav.ts` asks the *bottom* of the screen instead,
+  which is where your eyes are by the end: finished once the last page is a
+  fifth of the way up the screen, or once what is left below is under a tenth
+  of the chapter **and** under two and a half screens — the second for
+  chapters whose last page or two are credits nobody scrolls through. Both
+  halves of that are needed: a tenth alone called a chapter cut into 127 short
+  strips finished eleven screens early, which measuring at phone size caught.
+  Asked only once every page has loaded, since a strip of placeholders is
+  short and wholly on screen the moment a chapter opens; latched per chapter,
+  so scrolling back up to look again does not un-finish it.
+
+  Measured at 390×800 on a real 131-page chapter: the arrow switched to
+  finishing with 1,800px left and not at 2,100, at a counter reading 127 of
+  131 — which the old rule called a skip.
 - **Jumping to a page is returning to one.** Pages above a target load now
   rather than lazily and the scroll is re-applied as each lands, the same
   machinery `resume` uses. Verified: a thumbnail put page 5's top on the read
@@ -1087,6 +1123,179 @@ position taken during the reader's first render, before the page shrank.
 - **The thumbnail strip listens for the wheel, not for scroll.** The code that
   keeps the current page centred scrolls it too, and a scroll handler took that
   for a touch and held the controls up for as long as you read.
+
+#### Leaving from the end is finishing, and Next asks at the moment it is pressed
+
+Two more doors the same lost chapter came through, found when chapter 1 of a
+not-followed series went unrecorded with every later one counted. The server's
+log was decisive about *what* happened — no read was ever written on the
+device — and silent about which of two ways it happened, and neither could be
+reproduced. So both are closed rather than one guessed at:
+
+- **Next and the skip ask `finishedNow()` when pressed**, rather than reading
+  the latched state. That state comes from a measurement throttled to 300ms and
+  paused while a jump settles, so a press inside either gap read an answer that
+  was out of date.
+- **Leaving a chapter from its end records it** through `onLeftAtEnd` — Back,
+  the swipe, or closing to tap the next chapter in the list. Next was the only
+  way a chapter counted, which made reading to the end and choosing the next
+  one by hand a way to lose it. Measured before the reader closes, while the
+  strip is still there to measure.
+
+**The order inside `leave` matters, and the first version had it backwards.**
+Closing saves the place you left; recording the read clears it. Recorded first,
+the close then put the place back, and the page offered to *continue* the
+chapter just finished — caught by driving it in the browser with the outgoing
+requests intercepted, so nothing reached the real library. The server holds the
+same line from its side: `PUT /position` refuses a place older than a read of
+that chapter or a later one, because the two are sent in the same instant and
+can arrive in either order.
+
+**And moving on from a place at the end is finishing too.** A place left on
+the last page of a chapter, or the one before it (`placeIsAtEnd`), counts as
+read once you move past it: when opening a later chapter replaces that place
+(`PUT /position`), or finishing a later one clears it (`settleAfterRead`). It's
+recorded at the time the place was saved. Before this, both routes simply
+dropped the place, and with it the only record that the chapter had been
+finished. Chapter 38 of Master Swordsman's Stream went that way: read to the
+end on 10/4, before leaving counted, and left with Back. On 10/7, opening 39
+replaced its place, and 38 showed as unread. It looked like a chapter being
+unmarked, but it had never been marked.
+
+**Next asks before it jumps over whole chapters.** It goes by number, so a
+source with a hole, or one wrongly numbered chapter, sends it to the next number
+there is, however far. One press took a friend's reader from about chapter 9 to
+about 126 (his server log: source position 17 straight to 252, with no read in
+between), and nothing said so. `nextIsOk` asks with a `confirm()` when the next
+number is more than one whole chapter on. A point chapter such as 9 → 9.5 isn't
+asked about. Each screen passes `nextNumber` from the same `beside` it uses for
+`hasNext`.
+
+**The newest chapter's end button says so**: *Last chapter finished ✓*, tinted
+in `--ok` rather than the accent, because there is nothing to go on to. The
+offline shelf passes `lastLabel` — its last chapter is the last one *saved*,
+and it must not claim to be the end of the series.
+
+#### Saved pages that will not draw are fetched again, and mended
+
+"Tap to try again" asked `manga.reader.page` for the page — which returns the
+saved copy first — so a downloaded page that would not draw failed the same way
+on every retry, for good, and on the train where nothing else can fetch it.
+Reported as a worry rather than a failure, and it was a real one.
+
+- **`{ fresh: true }` skips the saved copy**, and sends `&fresh=1` so the
+  server skips its archive and page cache too: either could be the bad copy.
+- **What comes back replaces the saved copy** (`replaceSavedPage`, which only
+  ever replaces — reading a chapter is not asking to keep it), so a chapter
+  mends itself the next time it is read with a connection.
+- **Every saved copy is checked on the way in and on the way out**:
+  `image-bytes.ts` looks at the two ends of the file — the type from the first
+  bytes, and for JPEG, PNG and GIF the end marker, for WebP its declared length.
+  A download that arrived cut off or as an error message is a missing page,
+  counted and retried, rather than a saved page with a gap in it. The server's
+  page cache and archive refuse the same files.
+
+Only the ends, deliberately: a full decode per page is the 48MB the thumbnails
+already avoid, to catch what the markers catch. Before trusting it, it was run
+over all 445 pages in the PC's cache and three pages from each of nine working
+sources — JPEG, WebP and PNG — and accepted every one, while refusing
+TopManhua's error messages. A check that refused real pages would have emptied
+every chapter, which is why that was measured rather than assumed.
+
+#### A page that fails is asked for again before you are
+
+Most pages that fail are **refused, not slow**. MangaFire's image server now
+and then answers with a Cloudflare challenge, Suwayomi has no bypass set up,
+and it gives up in under a second: "Cloudflare bypass currently disabled" was
+52 of the 74 page failures in one evening's log, and only 3 were timeouts. The
+challenge comes and goes, which is why tapping "try again" a few times worked.
+So that tapping is now done for you, in two places:
+
+- **The server asks three times** (`page-fetch.ts`), pausing 1.5s then 4s, on
+  no answer, a 5xx or a body that isn't a whole picture. A 4xx is not retried.
+  Each try now waits 45s rather than 30.
+- **The reader gives what still failed a second go** once the rest of the
+  chapter is in: 3s later, one page at a time, past any saved copy. Only what
+  fails that too gets the button.
+
+The background fill (`fillChapter`) used to stop at its first failure, so one
+blip left the rest of the chapter to be fetched while you read. Now it passes
+over a page that won't come, and stops only after three failures in a row.
+
+The real cure for a Cloudflare-fronted source is FlareSolverr, which Suwayomi
+can use. It isn't set up here: it's another program to install and keep
+running.
+
+**And a reload reopens the chapter.** The URL already brings you back to the
+Manga screen, but the reader is state inside it, so reloading mid-chapter landed
+on the library. That was the obvious thing to try when pages would not draw.
+`open-chapter.ts` keeps the open chapter in `sessionStorage`, written by the
+chapter list and cleared when the reader or the list closes. It is read once, at
+module load, so the list writing "nothing open" on its first render can't clear
+it before it's used. The chapter reopens at the saved place, and every page is
+asked for again. `sessionStorage` because this is about this tab: a chapter left
+open last week should not spring open the next time the app starts. Only chapters
+opened from a followed series' list come back this way. Once more than one page
+has failed, every failed slot also offers **Try all N again**.
+
+#### What you read is written down on the device first
+
+`reading-log.ts`. A read was one request, sent once: finish a chapter, PUT it,
+and if the request never arrived — a tunnel, a sleeping PC, iOS killing the app
+the moment it is swiped away — the read was gone with nothing anywhere to say
+it happened. The order is reversed now. Every read goes into a log on the
+device first, synchronously, and is sent from there: at once when the server
+answers, and whenever it next does when not.
+
+**The last month of it is sent again** each time the Manga screen opens, at
+most twice an hour. That is what makes it work *regardless* rather than merely
+eventually: a read the server had and then lost — the sweep that overwrote the
+store, a restore from a backup, anything nobody has found yet — is put back by
+the device that did the reading. A re-send that changes nothing writes nothing
+and announces nothing, so this costs one small request.
+
+**Repeating everything is only safe because of `read-marks.ts`**, which is the
+part worth understanding before touching any of it. Every claim carries when it
+happened, and the later one wins: re-sending a read is harmless, an older read
+never moves a record backwards, and marking something unread leaves a
+tombstone (`unreadAt`) so a phone re-sending last week's read cannot quietly
+undo it. A read *newer* than the tombstone is a re-read and counts. Without the
+tombstone the re-send would be a machine for resurrecting what you took back.
+`PUT /api/manga/:id/read` goes through the same function, so the two routes
+cannot disagree about what a read is.
+
+`POST /api/manga/journal` takes a batch. Too old (45 days) is ignored rather
+than stamped "now" the way `happenedAt` does for a single queued change: a
+re-sent claim wearing its arrival time would beat every genuine claim made
+since, which is exactly backwards.
+
+**It is a CSV, because it was asked for as one** and because a record of what
+you read should be readable. One row per claim — when, which series, which
+chapter, read or unread, whether the PC has it, and the title — stored as that
+text in `localStorage`, and handed over as a file by More → Reading log. Not a
+real file on disk: a browser will not let a web app write one unprompted, and
+this has to be written in the instant a chapter ends. The codec is `log-csv.ts`
+with no imports, so `manga-check` round-trips a title with a comma and quotes
+in it — the row a hand-rolled CSV gets wrong.
+
+**Incognito is enforced in `logRead` itself**, the one place every reader
+writes through. It had been checked by the chapter list and not by a series'
+details page or the offline shelf, so two of the four ways into the reader
+recorded what that switch said they would not.
+
+The old queue (`sync-queue.ts`) still carries saved *places*, which are
+last-writer-wins on their own and have no history worth keeping.
+
+**Three smaller windows closed alongside**, the sweep's lesson applied where it
+had not been: linking a source and following from a source each held the store
+across a MangaUpdates or MangaDex request and wrote it afterwards, so a chapter
+marked read during that round trip was overwritten. Both re-read the store
+after the request now.
+
+**`start.ps1` truncates `logs/server.log` on every start.** Copy it before
+restarting when investigating anything — the request timeline that proved the
+cause above was lost to a restart minutes after it was read, and the missing
+chapters had to be refilled from notes taken before it.
 
 #### Getting down a long chapter
 

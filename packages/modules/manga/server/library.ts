@@ -141,6 +141,14 @@ export type Series = SeriesIds & {
    */
   libraries?: string[];
   /**
+   * When each chapter was last marked *un*read, keyed by its number.
+   *
+   * A tombstone, so a device re-sending an older read cannot quietly undo
+   * taking it back — see `read-marks.ts`. Optional and absent for nearly every
+   * series, since almost nobody un-reads anything.
+   */
+  unreadAt?: Record<string, number>;
+  /**
    * Where a series brought in from another app came from: the app, the site it
    * was last read on there (and every site it was read on, newest first), the
    * title it had, and the newest chapter that app knew of. `matching.ts` finds it on an installed source by the site and title;
@@ -284,6 +292,8 @@ export interface Glimpse {
   source: SeriesSource;
   readChapters: number[];
   readLog: ReadRecord[];
+  /** As on `Series` — see `read-marks.ts`. */
+  unreadAt?: Record<string, number>;
   addedAt: number;
 }
 

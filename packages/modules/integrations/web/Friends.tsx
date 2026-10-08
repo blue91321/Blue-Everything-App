@@ -771,6 +771,9 @@ function LinkPicker({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
  */
 function Suggestions({ onLinked }: { onLinked: () => void }) {
   const [dismissed, setDismissed] = useState<string[]>([]);
+  // A refused link used to vanish without a word, which is how the phone's
+  // 403 read as a button that did nothing.
+  const [failed, setFailed] = useState<string | null>(null);
   const view = useAsync(() => api.integrations.linkSuggestions(), [], ['integrations']);
 
   const shown = (view.data?.suggestions ?? []).filter((s) => !dismissed.includes(s.a.id));
@@ -783,6 +786,7 @@ function Suggestions({ onLinked }: { onLinked: () => void }) {
         Matched on name only — Discord does not publish its friends' other accounts, so this is a guess
         worth checking. Linking one lets a Discord friend show their Steam status.
       </div>
+      {failed && <div className="meta" style={{ marginTop: '.5rem', color: 'var(--danger)' }}>{failed}</div>}
 
       {shown.map((suggestion) => (
         <div key={suggestion.a.id} className="row" style={{ alignItems: 'center', gap: '.5rem', marginTop: '.5rem' }}>
@@ -795,7 +799,13 @@ function Suggestions({ onLinked }: { onLinked: () => void }) {
           </div>
           <button
             className="btn primary"
-            onClick={() => void api.integrations.linkFriends(suggestion.a.id, suggestion.b.id).then(onLinked)}
+            onClick={() => {
+              setFailed(null);
+              api.integrations
+                .linkFriends(suggestion.a.id, suggestion.b.id)
+                .then(onLinked)
+                .catch((e: unknown) => setFailed(`Could not link them — ${e instanceof Error ? e.message : String(e)}`));
+            }}
           >
             Same person
           </button>

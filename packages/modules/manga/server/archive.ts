@@ -78,6 +78,7 @@ import {
 import { isAbsolute, join } from 'node:path';
 import { dataDir } from '@everything/server/module-api';
 import { read } from './library.js';
+import { isWholeImage } from '../web/image-bytes.js';
 
 /** Where an archive goes when nothing else has been chosen. */
 export const DEFAULT_ARCHIVE_ROOT = join(dataDir, 'manga-archive');
@@ -644,6 +645,9 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
     const type = response.headers.get('content-type') ?? 'image/jpeg';
     const body = Buffer.from(await response.arrayBuffer());
     if (body.length === 0) throw new Error('the source sent an empty page');
+    // Kept for good, so checked before it is: a cut-off page archived is a gap
+    // that would be served in preference to the source forever.
+    if (!isWholeImage(body.subarray(0, 32), body.subarray(Math.max(0, body.length - 1024)), body.length)) throw new Error('the page arrived damaged');
 
     /*
      * Numbered from the source's own page path rather than from the loop, so a

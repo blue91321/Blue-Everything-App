@@ -29,6 +29,7 @@ import {
   type SavedSeries,
 } from './offline-store';
 import { flushQueue, pendingCount } from './sync-queue';
+import { syncLog, unsentCount } from './reading-log';
 import { COULD_NOT_SEND, keepingNote, keepOpenNote, NOT_YET_SENT, whereKeptNote, WHILE_REACHABLE } from './device-text';
 import {
   chooseFolder,
@@ -165,13 +166,13 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
   // Manga reading only: tasks, habits and notes waiting to sync are on the
   // banner at the top of every screen, and counting them here as "changes to
   // your reading" said something untrue.
-  const waiting = pendingCount();
+  const waiting = pendingCount() + unsentCount();
 
   async function syncNow() {
     setSyncNote('Sending…');
-    const sent = await flushQueue();
+    const sent = (await flushQueue()) + (await syncLog()).sent;
     bump((n) => n + 1);
-    setSyncNote(pendingCount() === 0 ? `Sent ${sent}.` : COULD_NOT_SEND);
+    setSyncNote(pendingCount() + unsentCount() === 0 ? `Sent ${sent}.` : COULD_NOT_SEND);
   }
 
   return (

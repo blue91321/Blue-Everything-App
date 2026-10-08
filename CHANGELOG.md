@@ -5,6 +5,46 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.5.5
+
+- Next in the manga reader asks before jumping over missing chapters. A source with a hole in its numbering, or a wrongly numbered chapter, sent one reader from about chapter 9 to about 126 in one press.
+
+- Reloading the page in the middle of a manga chapter reopens that chapter at your place, and every page is fetched again. When more than one page fails, each gap also offers "Try all N again".
+
+- A chapter left at its end now counts as read once you move on to a later one, instead of losing the saved place that was the only record of it.
+
+- Manga pages that fail to load are retried automatically: three tries on the PC with pauses, then one more from the reader once the chapter is in, before "tap to try again" appears. Each try waits 45s instead of 30. Most failures were MangaFire's Cloudflare challenge, which comes and goes.
+- Linking friends and followed accounts ("Same person", Link, Unlink) works from the phone, and a failed link now says why.
+
+### Fixed
+
+- **Chapters still went missing when reading several in a row** — about one in
+  three. Next decided whether you had finished from the page counter, which only
+  reaches the last page once the page before it has scrolled off the *top* of
+  the screen. On a phone you read the last page with the one above still showing
+  and tap Next, and it counted as skipping. It now asks whether the end is on
+  screen, and the arrow turns the accent colour when pressing it will mark the
+  chapter read.
+
+- **The first chapter of something you do not follow could go unrecorded.**
+  Next now checks where you are when pressed, and leaving a chapter from its
+  end — Back, or picking the next one from the list — counts as finishing it.
+- **A series you read without following showed no progress on its own page**,
+  and its button always said "Read chapter 1". It now continues where you are.
+- **A saved page that would not load could never be fixed** — "tap to try
+  again" asked for the same broken copy. It now fetches a fresh one and puts it
+  in place of the broken one, and downloads check every page is complete before
+  keeping it.
+
+### Manga
+
+- **The newest chapter's button says "Last chapter finished ✓"**, in green.
+- **Every read is written down on the device first**, then sent to the PC — so a
+  read survives a dropped connection or the app being closed mid-request. The
+  last month is sent again whenever Manga opens, which puts back anything the PC
+  lost; marking something unread is respected rather than undone by the re-send.
+  More → Reading log shows what is waiting and downloads the log as a CSV.
+
 ## 0.5.4
 
 Shelves, history for things you are not following, and three bugs — one of which

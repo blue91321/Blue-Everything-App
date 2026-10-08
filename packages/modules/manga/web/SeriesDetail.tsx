@@ -19,7 +19,9 @@ import { Reader } from './Reader';
 import { beside, skippedBetween, skipTarget } from './chapter-nav.js';
 import { chapterText } from './judge';
 import { manga, type BrowseResult, type SeriesDetailPage } from './manga-api';
+import { logRead } from './reading-log';
 import { usePositionSaver } from './usePositionSaver';
+import { isIncognito } from './incognito';
 
 const STATUS_LABEL: Record<SeriesDetailPage['status'], string> = {
   ongoing: 'Ongoing',
@@ -148,7 +150,12 @@ export function SeriesDetail({
     setProblem(null);
     setOpen(null);
     manga.browse.detail(result.id).then(
-      (p) => alive && setPage(p),
+      (p) => {
+        if (!alive) return;
+        setPage(p);
+        // Read before: write into that record rather than asking for one.
+        if (p.glimpseId) setGlimpseId(p.glimpseId);
+      },
       (e: unknown) => alive && setProblem(e instanceof Error ? e.message : 'the source did not answer')
     );
     return () => {
@@ -169,7 +176,7 @@ export function SeriesDetail({
         onClose={() => {
           saver.flush();
           const place = lastPlace.current;
-          if (ownSeriesId && place) {
+          if (recordId && place) {
             setPage((p) =>
               p ? { ...p, position: { ...place, source: result.sourceName, mangaId: result.id, at: Date.now() } } : p
             );
@@ -198,6 +205,7 @@ export function SeriesDetail({
         }}
         hasPrevious={beside(page.chapters, open.number, -1) !== undefined}
         hasNext={beside(page.chapters, open.number, 1) !== undefined}
+        nextNumber={beside(page.chapters, open.number, 1)?.number ?? null}
         {...(() => {
           const target = skipTarget(page.chapters, open.number);
           return {
@@ -209,21 +217,37 @@ export function SeriesDetail({
               // Written down for anything with a record, which is now a series
               // you follow *or* one you have only dipped into.
               if (finishing && recordId) {
-                for (const n of [open.number, ...skippedBetween(page.chapters, open.number, target.number)]) {
-                  await manga.reader.markRead(recordId, n).catch(() => undefined);
-                }
+                await logRead(recordId, [open.number, ...skippedBetween(page.chapters, open.number, target.number)], result.title);
               }
               setResume(null);
               setOpen(target);
             },
           };
         })()}
+        onLeftAtEnd={
+          recordId
+            ? (n) => {
+                if (isIncognito()) return;
+                void logRead(recordId, [n], result.title);
+                setPage((p) =>
+                  p
+                    ? {
+                        ...p,
+                        position: p.position && p.position.chapter <= n ? null : p.position,
+                        chapters: p.chapters.map((c) => (c.number === n ? { ...c, read: true, readOn: result.sourceName } : c)),
+                      }
+                    : p
+                );
+              }
+            : undefined
+        }
         onFinished={async (n) => {
           saver.flush();
           lastPlace.current = null;
           setResume(null);
           if (recordId) {
-            await manga.reader.markRead(recordId, n).catch(() => undefined);
+            // Logged on the device, so a failure is sent later rather than lost.
+            await logRead(recordId, [n], result.title);
             // As the server did: read here, and your place moves past it.
             setPage((p) =>
               p
@@ -243,7 +267,33 @@ export function SeriesDetail({
     );
   }
 
-  const first = page ? [...page.chapters].sort((a, b) => a.number - b.number)[0] ?? null : null;
+  /*
+   * Where the top button starts you. It was always chapter 1, which for a
+   * series twenty chapters in was a button for the one place you were sure not
+   * to want. So, in order: the chapter you are partway through, at your page;
+   * else the first unread one after the furthest you have read; else — read up
+   * to the newest — the newest, to look again; else chapter 1.
+   */
+  const inOrder = page ? [...page.chapters].sort((a, b) => a.number - b.number) : [];
+  const placed = page?.position ? inOrder.find((c) => c.id === page.position!.chapterId) ?? null : null;
+  const furthest = Math.max(-Infinity, ...inOrder.filter((c) => c.read).map((c) => c.number));
+  const start: { chapter: Chapter; label: string; resume: { page: number; offset: number } | null } | null = placed
+    ? {
+        chapter: placed,
+        label: `Continue ch. ${chapterText(placed.number)}`,
+        resume: { page: page!.position!.page, offset: page!.position!.offset },
+      }
+    : Number.isFinite(furthest)
+      ? (() => {
+          const next = inOrder.find((c) => c.number > furthest);
+          const newest = inOrder[inOrder.length - 1]!;
+          return next
+            ? { chapter: next, label: `Next: ch. ${chapterText(next.number)}`, resume: null }
+            : { chapter: newest, label: `Read ch. ${chapterText(newest.number)} again`, resume: null };
+        })()
+      : inOrder[0]
+        ? { chapter: inOrder[0], label: `Read chapter ${chapterText(inOrder[0].number)}`, resume: null }
+        : null;
   const blurb = page?.description ?? null;
   const long = blurb !== null && blurb.length > BLURB_CLAMP;
   // Sites put the artist among the authors as often as not ("Ye Xiao, Wuer
@@ -302,9 +352,15 @@ export function SeriesDetail({
                 {following_ ? 'Following…' : `${result.unlinked ? 'Read' : 'Follow'} from ${result.sourceName}`}
               </button>
             )}
-            {first && (
-              <button className="btn" onClick={() => void openChapter(first)}>
-                Read chapter {chapterText(first.number)}
+            {start && (
+              <button
+                className="btn"
+                onClick={() => {
+                  setResume(start.resume);
+                  void openChapter(start.chapter);
+                }}
+              >
+                {start.label}
               </button>
             )}
             {page?.url && (

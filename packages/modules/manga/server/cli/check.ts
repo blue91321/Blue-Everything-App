@@ -31,7 +31,10 @@ import {
 } from '../identity.js';
 import { alreadyRaised, clampReadAhead, MAX_READ_AHEAD, type ReadingPosition, type Store } from '../library.js';
 import { KEEP_CHAPTERS, readAheadAt } from '../page-cache.js';
-import { beside, skippedBetween, skipTarget } from '../../web/chapter-nav.js';
+import { beside, reachedTheEnd, skippedBetween, skipTarget } from '../../web/chapter-nav.js';
+import { fromLine, toLine } from '../../web/log-csv.js';
+import { isWholeImage } from '../../web/image-bytes.js';
+import { applyReadMark, placeIsAtEnd, type Readable } from '../read-marks.js';
 import { totalChaptersFrom } from '../mangaupdates.js';
 import {
   readableChapter,
@@ -1222,6 +1225,109 @@ console.log('\na check that failed is asked again sooner\n');
     dueForCheck(allBroken, now, {}).length <= BATCH,
     `${dueForCheck(allBroken, now, {}).length} of ${BATCH}`
   );
+}
+
+/* ---- reads that arrive twice, late, or out of order ---- */
+{
+  console.log('\nreading marks');
+  const fresh = (): Readable => ({ readChapters: [], readLog: [], source: null });
+
+  // Moving on from a place at the end of a chapter counts it read.
+  check('the last page is the end', placeIsAtEnd({ page: 39, pages: 40 }));
+  check('so is the page before it (a short last page)', placeIsAtEnd({ page: 38, pages: 40 }));
+  check('two pages short is not', !placeIsAtEnd({ page: 37, pages: 40 }));
+  check('a two-page chapter needs its last page', !placeIsAtEnd({ page: 0, pages: 2 }) && placeIsAtEnd({ page: 1, pages: 2 }));
+  check('a one-page chapter at its only page is the end', placeIsAtEnd({ page: 0, pages: 1 }));
+
+  const a = fresh();
+  check('a read is recorded', applyReadMark(a, 5, true, 100) && a.readChapters.includes(5));
+  check('the same read again changes nothing', applyReadMark(a, 5, true, 100) === false);
+  check('an older re-send changes nothing either', applyReadMark(a, 5, true, 50) === false && a.readLog[0]!.at === 100);
+  check('a later read moves the record forward', applyReadMark(a, 5, true, 200) && a.readLog[0]!.at === 200);
+
+  const b = fresh();
+  applyReadMark(b, 7, true, 100);
+  applyReadMark(b, 7, false, 200);
+  check('taking it back removes it', !b.readChapters.includes(7) && b.unreadAt?.['7'] === 200);
+  check(
+    'and the phone re-sending its older read cannot undo that',
+    applyReadMark(b, 7, true, 100) === false && !b.readChapters.includes(7)
+  );
+  check('but reading it again afterwards does count', applyReadMark(b, 7, true, 300) && b.readChapters.includes(7));
+  check('and clears the tombstone', b.unreadAt === undefined);
+  check(
+    'an unread from before that read is too late to undo it',
+    applyReadMark(b, 7, false, 250) === false && b.readChapters.includes(7)
+  );
+
+  // The real case: a read lost on the server, put back by the device's log.
+  const c = fresh();
+  for (const n of [1, 3, 4]) applyReadMark(c, n, true, n * 10);
+  for (const n of [1, 2, 3, 4, 5]) applyReadMark(c, n, true, n * 10);
+  check('a re-sent log fills the gaps and nothing else', JSON.stringify(c.readChapters) === '[1,2,3,4,5]', JSON.stringify(c.readChapters));
+}
+
+/* ---- when Next finishes a chapter ---- */
+{
+  console.log('\nreaching the end');
+  const phone = 800;
+  // Thirty 1000px pages; the strip starts at the top of the document.
+  const at = (scrollY: number, allLoaded = true) =>
+    reachedTheEnd({ viewportHeight: phone, stripTop: -scrollY, stripHeight: 30_000, lastPageTop: 29_000 - scrollY, allLoaded });
+  // The case that lost chapters: last page in full view, the one above still
+  // at the top of the screen — the counter said 29 of 30.
+  check('the last page on screen, the one above still showing: finished', at(28_700));
+  check('the opening pages: not finished', !at(0));
+  check('halfway: not finished', !at(15_000));
+  check('two pages of credits still to come: finished', at(27_200));
+  check('three pages still to come: not', !at(26_000));
+  // 127 short strips, the shape that caught the first version out: a tenth of
+  // this is eleven screens, and finishing there is finishing early.
+  const strips = (scrollY: number) =>
+    reachedTheEnd({ viewportHeight: phone, stripTop: -scrollY, stripHeight: 94_000, lastPageTop: 93_260 - scrollY, allLoaded: true });
+  check('a sliced chapter eleven screens from the end: not finished', !strips(84_400));
+  check('two screens from the end: finished', strips(91_400));
+  check('pages still loading: never, however it measures', !at(28_700, false));
+  // A strip of placeholders is short and entirely on screen at once.
+  check(
+    'a strip of placeholders does not count as read',
+    !reachedTheEnd({ viewportHeight: phone, stripTop: 0, stripHeight: 600, lastPageTop: 580, allLoaded: false })
+  );
+}
+
+/* ---- the device's reading log, as CSV ---- */
+{
+  console.log('\nreading log');
+  const row = { at: Date.parse('2026-10-03T21:07:33.000Z'), seriesId: 'ed99-x', chapter: 9.2, read: true, sent: false, title: 'Buy 2, get 1 "free" (Official)' };
+  const back = fromLine(toLine(row));
+  check('a title with a comma and quotes survives', JSON.stringify(back) === JSON.stringify(row), toLine(row));
+  check('an unread survives', fromLine(toLine({ ...row, read: false, sent: true }))?.read === false);
+  check('a line that is not a row is ignored', fromLine('nonsense') === null && fromLine('') === null);
+  check('a title on two lines stays on one', !toLine({ ...row, title: 'a\nb' }).includes('\n'));
+}
+
+/* ---- a saved page is a whole picture, or it is fetched again ---- */
+{
+  console.log(String.fromCharCode(10) + 'damaged pages');
+  const bytes = (...parts: (number[] | string)[]) =>
+    Uint8Array.from(parts.flatMap((p) => (typeof p === 'string' ? [...p].map((c) => c.charCodeAt(0)) : p)));
+  const pad = (n: number) => new Array<number>(n).fill(0);
+  const whole = (b: Uint8Array) => isWholeImage(b.subarray(0, 32), b.subarray(Math.max(0, b.length - 1024)), b.length);
+
+  const jpeg = bytes([0xff, 0xd8, 0xff, 0xe0], pad(200), [0xff, 0xd9]);
+  check('a JPEG that ends on its marker is whole', whole(jpeg));
+  check('the same JPEG cut off is not', !whole(jpeg.subarray(0, 150)));
+  check('a JPEG with padding after the marker is still whole', whole(bytes([0xff, 0xd8, 0xff, 0xe0], pad(200), [0xff, 0xd9], pad(40))));
+  const png = bytes([0x89], 'PNG', [0x0d, 0x0a, 0x1a, 0x0a], pad(100), 'IEND', [0xae, 0x42, 0x60, 0x82]);
+  check('a PNG with its IEND is whole', whole(png));
+  check('a PNG without it is not', !whole(png.subarray(0, 90)));
+  const webp = (declared: number, length: number) =>
+    bytes('RIFF', [declared & 255, (declared >> 8) & 255, 0, 0], 'WEBP', pad(length - 12));
+  check('a WebP as long as it says is whole', whole(webp(292, 300)));
+  check('a WebP shorter than it says is not', !whole(webp(5000, 300)));
+  check('an error page is not a picture', !whole(bytes('<!DOCTYPE html><html><body>502 Bad Gateway</body></html>', pad(20))));
+  check('a JSON message is not a picture', !whole(bytes('{"error":"could not fetch the page"}', pad(20))));
+  check('nothing at all is not a picture', !whole(new Uint8Array(0)));
 }
 
 process.exit(failures === 0 ? 0 : 1);
