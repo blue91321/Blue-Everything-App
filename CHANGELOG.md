@@ -5,6 +5,61 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.5.6
+
+- Spotify requests stay within a budget (60 per 30 seconds) and wait rather than being refused; a refusal pauses every Spotify request for as long as Spotify asks. Liked Songs is only re-read when it has changed, the sync before Play runs at most every ten minutes, and the queue size is capped at 100.
+- Spotify's setup steps follow the developer dashboard in order (Web API, redirect URI, Client ID), and the Music tab says Premium is needed before you start.
+
+- Fixed: adding a song to Spotify's queue by hand mid-shuffle ended the shuffle. It now plays as an interlude, and the shuffle steps aside only once its own songs have left the queue.
+- Fixed: a slow top-up could overlap the next check, and both added songs.
+
+- Fixed: the first song of a new shuffle could be one already waiting in the queue, so it played twice close together.
+- Fixed: two Play presses at once (a double tap, or phone and PC together) ran two shuffles into one queue. The second now waits its turn.
+- Fixed: if adding songs failed partway through starting, the whole start was thrown away, leaving music playing with nothing to follow. What was queued is now kept, and the next check tops it up.
+
+- Fixed: the song playing when you press Play counts as just heard. Spotify's recently-played list only has finished songs, so Random could deal the song still on as the second song, inside the repeat gap.
+
+- "Keep N songs queued ahead" can't go above the number of songs in the ticked lists (a song in several counted once), and Random's repeat gap is held one below it. The typed gap is kept, so ticking more lists brings it back.
+
+- Shuffle reads Spotify's queue. Songs a previous shuffle left waiting are taken over instead of being added again, and no song already in the queue is dealt again. That was the cause of duplicates a few places apart after pressing Play more than once.
+
+- A running shuffle survives a restart (an update, the tray's Restart): it is saved as it changes and picked up again at start, carrying on through the songs not yet played.
+- Fixed: pressing Stop during a top-up no longer lets that top-up keep adding songs.
+- Fixed: in Random with a repeat gap shorter than the queue, the same song queued twice could make the queue over-fill by up to the queue size.
+- Fixed: Play no longer fails when the pre-play sync does; it plays from what is stored. "Add to queue" with nothing playing says to press Play instead of showing Spotify's error.
+- The "Shuffle is on" bar says which lists it is playing from, so the phone and PC agree on what is playing even when their Settings differ.
+- The menu's Music dot and Home tile ask a small status route, and only on Spotify changes, instead of downloading every song on every change anywhere in the app.
+- The menu no longer leaves a section highlighted after Back.
+
+- A playlist ticked as ignored (Music → Playlists) is left out of Shuffle: not listed in its settings, its songs not played, and its artists not counted in Boosts.
+
+- **Play never cuts off the song that's on.** It lets it finish and plays the shuffle after it, in place of the rest of its album or playlist. (A setting to cut it off was tried and removed: Spotify won't let apps empty a queue, so it's all adding to one anyway.) Voice works the same way.
+
+- Shuffle follows the music when you switch devices in Spotify (PC to phone, or back): it keeps topping up the queue on whichever device is playing, and the bar names that device.
+
+- While shuffle is on, the Music card shows a green **Shuffle is on** bar (device, songs played and queued, updating as songs finish), with **Stop**, which also pauses the music, and **Stop adding songs**, which lets the queue play on. A green dot marks Music in the menu and on its Home tile.
+
+- **Music in the menu and on Home.** Connections → Music is listed under Connections in the menu, and becomes a Home tile once Spotify is set up. Any Connections tab can be added to either.
+- **Settings → General → Home screen and menu**: choose which tiles are on Home and which sections are in the menu, per device, with a reset to the defaults.
+- **Setting up Spotify from the Music tab.** Until Spotify is connected and allowed to play, the Music tab is the setup: three steps and the Spotify card itself, opened. From a phone it says to finish on the PC.
+- **Voice can play music**: a new "Play music" command on the Voice tab, to play shuffled, play random, add to the queue, or stop topping up.
+
+- Random can weight songs by when they last played: less likely if heard in the last X songs, more likely if not heard in the last Y. It counts the 50 songs Spotify remembers from before you pressed Play. Saved playlists are no longer listed, and a note explains how to use one.
+
+- The Shuffle card is two buttons and a status line, with every setting folded under **Settings**, whose summary says what Play will do. Lists are chips grouped as **Yours** (Liked Songs and your playlists) with all/none, and a note that saved playlists can't be used.
+
+- Shuffle properly keeps the Spotify queue topped up while you listen. Set how many songs stay queued ahead (default 20, no upper limit; in Random never fewer than the repeat gap). It stops when you press Stop, play something else, or nothing plays for half an hour.
+
+- The Music tab's breakdown is by artist instead of genre, folded away by default. Spotify stopped giving out genres, so every Spotify song read "uncategorized". The same artist on Spotify and YouTube is one row, and a song saved on Spotify with its video on YouTube counts once.
+
+- Shuffle properly counts a song once even when it's listed twice: in two playlists, or as both the single and the album version.
+- **Random** order: songs can come back, but not until a number of others have played (you choose how many), and songs or artists can be boosted ×1.5 to ×10, lowered to ×0.5, ×0.25 or ×0.1, or set to never. Boosts are picked from a scrolling list of the artists (most songs first) or songs in the ticked lists, with a filter box.
+
+- **Shuffle properly** (Connections → Music): plays your Liked Songs and playlists in an evenly shuffled order on Spotify, or adds 50 to the queue, without making a playlist. Spotify's own shuffle keeps returning to the same few songs and resumes its order on another device. Needs Spotify connected once more, to allow controlling playback.
+- Spotify playlists synced for the first time now get their songs. They were stored with a count and no songs, and fill themselves on the next sync.
+
+- Spotify syncs again. Its 2026 API changes turned three requests into a bare 403 "Forbidden". Playlist contents moved from `/tracks` to `/items`. The batch artist and track lookups were removed, and artists no longer carry genres, so tracks are now filed as "unknown". Followed playlists you don't own can't be read by a Development Mode app at all: they are skipped and counted instead of failing the sync.
+
 ## 0.5.5
 
 - Next in the manga reader asks before jumping over missing chapters. A source with a hole in its numbering, or a wrongly numbered chapter, sent one reader from about chapter 9 to about 126 in one press.

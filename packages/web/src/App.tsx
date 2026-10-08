@@ -19,6 +19,7 @@ import { Home } from './Home';
 import { onDataChange } from './live';
 import { onNavigate } from './nav';
 import { onPopView, pushView, startHistory, viewFromUrl } from './view-history';
+import { inMenu, onHome, publishEntries, useMenuEntries, type MenuEntry } from './menu-prefs';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
@@ -126,6 +127,61 @@ export function App() {
    * render or two.
    */
   const [focus, setFocus] = useState<string | null>(null);
+  /*
+   * Which section of the current screen was opened from the menu, so it can be
+   * marked there. Separate from `focus`, which the screen clears once it has
+   * acted on it.
+   */
+  const [section, setSection] = useState<string | null>(null);
+  /*
+   * Whether each section that asks is set up — what decides a tile appearing on
+   * Home by default. Asked of every feature's sections up front, here above the
+   * early returns, and again whenever anything changes; a feature that is off
+   * answers by failing, which counts as not set up.
+   */
+  const [sectionsReady, setSectionsReady] = useState<Record<string, boolean>>({});
+  // Which sections are doing something now — a dot beside them. See `SectionMeta.live`.
+  const [sectionsLive, setSectionsLive] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    let alive = true;
+    const ask = async () => {
+      const pairs = await Promise.all(
+        webFeatures.flatMap((f) =>
+          (f.sections ?? [])
+            .filter((s) => s.ready)
+            .map(async (s) => [`${f.id}#${s.id}`, await s.ready!().catch(() => false)] as const)
+        )
+      );
+      const live = await Promise.all(
+        webFeatures.flatMap((f) =>
+          (f.sections ?? [])
+            .filter((s) => s.live)
+            .map(async (s) => [`${f.id}#${s.id}`, await s.live!().catch(() => false)] as const)
+        )
+      );
+      if (alive) {
+        setSectionsReady(Object.fromEntries(pairs));
+        setSectionsLive(Object.fromEntries(live));
+      }
+    };
+    void ask();
+    /*
+     * Asked again on the changes the sections say they care about. A section
+     * that names none is asked on every change; `all` (the server saying it
+     * does not know what changed) reaches every listener regardless.
+     */
+    const sections = webFeatures.flatMap((f) => f.sections ?? []).filter((s) => s.ready || s.live);
+    const watch = sections.every((s) => s.watch)
+      ? [...new Set(sections.flatMap((s) => s.watch ?? []))]
+      : undefined;
+    const off = onDataChange(() => void ask(), watch as Parameters<typeof onDataChange>[1]);
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+  // Re-render when the choices in Settings change.
+  useMenuEntries();
   /** Text for the destination's search box — see `NavRequest.search`. */
   const [search, setSearch] = useState<string | null>(null);
   /**
@@ -325,6 +381,7 @@ export function App() {
         if (!items.some((item) => item.id === wanted)) return;
         setView(wanted as NavId);
         pushView(wanted);
+        setSection(null);
         setFocus(wantedFocus ?? null);
         setSearch(wantedSearch ?? null);
         if (!wide) setDrawerOpen(false);
@@ -383,6 +440,9 @@ export function App() {
         setView(wanted as NavId);
         setFocus(null);
         setSearch(null);
+        // Back is not a section: leaving it marked would highlight Music while
+        // Connections showed whatever tab it was on.
+        setSection(null);
       }),
     []
   );
@@ -451,6 +511,25 @@ export function App() {
       })),
   ].sort((a, b) => a.order - b.order);
 
+  /*
+   * The menu's and Home's entries: every screen, and under each feature its
+   * sections. Published for Settings, which lists them with a switch each.
+   */
+  const entries: MenuEntry[] = nav.flatMap((item) => {
+    const own: MenuEntry = { id: item.id, label: item.label, glyph: item.glyph, defaultMenu: true, defaultHome: item.id !== 'home' };
+    const f = webFeatures.find((w) => w.id === item.id);
+    const sections: MenuEntry[] = (f?.sections ?? []).map((s) => ({
+      id: `${item.id}#${s.id}`,
+      label: s.label,
+      glyph: s.glyph,
+      parent: item.id,
+      defaultMenu: s.inMenu ?? false,
+      defaultHome: s.onHome ?? false,
+    }));
+    return [own, ...sections];
+  });
+  publishEntries(entries, sectionsReady);
+
   // Whatever was open may have just been switched off from another device —
   // the SSE stream reloads every client, so this can change under a live page.
   const current = nav.find((n) => n.id === view) ?? nav[0];
@@ -479,7 +558,11 @@ export function App() {
         transition: drawer.dragX === null ? undefined : 'none',
       };
 
-  function go(id: NavId) {
+  function go(target: NavId) {
+    // A section is its screen opened with the section as `focus`.
+    const [id, part] = target.split('#') as [string, string | undefined];
+    setSection(part ?? null);
+    if (part) setFocus(part);
     setView(id);
     // One entry per screen you actually asked for. `pushView` ignores a repeat
     // of the screen already showing, so tapping the current tab does not leave
@@ -514,19 +597,28 @@ export function App() {
           <span>Blue Everything</span>
         </div>
         <nav>
-          {nav.map(({ id, label, glyph, pinned }) => (
-            <button
-              key={id}
-              className={pinned ? 'pinned' : undefined}
-              aria-current={current.id === id}
-              onClick={() => go(id)}
-            >
-              <span className="glyph" aria-hidden="true">
-                {glyph}
-              </span>
-              {label}
-            </button>
-          ))}
+          {entries
+            .filter(inMenu)
+            .map((e) => {
+              const pinned = nav.find((n) => n.id === e.id)?.pinned;
+              const here = e.parent
+                ? current.id === e.parent && section === e.id.split('#')[1]
+                : current.id === e.id && !(section && entries.some((x) => x.parent === e.id && inMenu(x) && x.id.endsWith(`#${section}`)));
+              return (
+                <button
+                  key={e.id}
+                  className={[pinned ? 'pinned' : '', e.parent ? 'sub' : ''].filter(Boolean).join(' ') || undefined}
+                  aria-current={here}
+                  onClick={() => go(e.id)}
+                >
+                  <span className="glyph" aria-hidden="true">
+                    {e.glyph}
+                  </span>
+                  {e.label}
+                  {sectionsLive[e.id] && <span className="live-dot" title="On now" aria-label="on now" />}
+                </button>
+              );
+            })}
         </nav>
         <div className="drawer-foot">{session.local ? 'This PC' : 'Connected device'}</div>
       </aside>
@@ -575,7 +667,11 @@ export function App() {
         <ConnectivityBanner />
 
         {current.id === 'home' && (
-          <Home items={nav.filter((n) => n.id !== 'home')} onOpen={(id) => go(id)} logo={logo} />
+          <Home
+            items={entries.filter((e) => e.id !== 'home' && onHome(e)).map((e) => ({ ...e, live: sectionsLive[e.id] === true }))}
+            onOpen={(id) => go(id)}
+            logo={logo}
+          />
         )}
         {current.id === 'dashboard' && <Dashboard />}
         {current.id === 'tasks' && <Tasks focus={focus} onFocused={clearFocus} />}

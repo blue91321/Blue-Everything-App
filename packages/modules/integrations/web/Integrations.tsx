@@ -48,15 +48,25 @@ const TABS: Array<{ id: Tab; label: string }> = [
 export function Integrations({
   local,
   search,
+  focus,
   onFocused,
 }: {
   local: boolean;
   /** A name to look up, sent by the Dashboard panel. */
   search?: string | null;
+  /** A tab to open — the menu's and Home's sections (`meta.ts`). */
+  focus?: string | null;
   onFocused?: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>('friends');
+  const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.id === focus) ? (focus as Tab) : 'friends'));
   const [seeded, setSeeded] = useState<string | null>(null);
+
+  // Opened from the menu or a Home tile: that section, every time.
+  useEffect(() => {
+    if (!focus || !TABS.some((t) => t.id === focus)) return;
+    setTab(focus as Tab);
+    onFocused?.();
+  }, [focus, onFocused]);
 
   /*
    * Arrived here from "find this person".

@@ -129,6 +129,34 @@ under the fixed ☰, so it keeps the row the heading held.
 applies `:hover` to whatever was last tapped and leaves it there, so the tile
 you just came back from would stay lit.
 
+### Sections: a screen's parts in the menu and on Home
+
+A feature's `meta.ts` can declare `sections`: parts of its screen worth
+reaching directly. Connections declares its five tabs. Each is listed under its
+screen in the menu (indented, `button.sub`) and offered as a Home tile.
+Opening one opens the screen with the section id as `focus`, which the screen
+reads as "show this", the same opaque `focus` the right-click menu uses. App
+also keeps which section was opened, so the menu can mark it.
+
+**On Home "once it is set up".** A section's `onHome` can be `'ready'`, with a
+`ready()` App asks on load and on every change announcement. Music is ready
+when Spotify is connected and allowed to play. Before that its tile would only
+open a setup screen, which is not worth a place on the first screen.
+
+**Your choices are overrides, per device** (`menu-prefs.ts`, `localStorage`):
+the menu is mostly the PC's, and which tiles fit on a phone's first screen is a
+fact about that phone. Only overrides are stored, so a section added later
+follows its default instead of being invisible for not being in a saved list.
+A screen is always in the menu: one reachable only by a tile you might hide
+would be lost. App publishes its entries to `menu-prefs`, which is how Settings
+lists them without knowing anything about navigation.
+
+**The Music tab is its own setup.** Until Spotify is connected and has the
+playback permission, it shows three steps and the Spotify card from Services,
+exported as `ProviderCard` and opened (`startOpen`). It is the same card, not a
+copy. "Go to the Services tab and find Spotify" was a second errand before the
+first.
+
 ### Both columns are chosen side by side
 
 The two pickers sit as two columns of equal width on the Settings screen,
@@ -5159,6 +5187,14 @@ sources of truth would only ever disagree.
 | `pause` | closes the microphone, for N minutes or until switched back on | — |
 | `cancel` | drops the sentence in progress; the microphone stays on | — |
 
+**`music` starts Spotify from the server, not by pressing keys**: shuffle,
+random, queue, or stop topping up, as Connections → Music does. Voice and
+integrations are separate packages and either can be deleted, so voice may not
+import the shuffle. It POSTs to that package's own route on loopback instead,
+which local trust lets through without a token. A 404 becomes "Music isn't
+installed". Which lists and the repeat gap are chosen per device, so voice uses
+every list and a gap of 50; boosts and the queue size are server-side and apply.
+
 **The division of labour is deliberate.** Anything touching *data* happens on
 the server, which owns the database. Anything touching *this machine* — a
 browser, a keystroke — comes back as an instruction for the agent to carry out,
@@ -5837,6 +5873,21 @@ GetPlayerSummaries` — and linking those would invent a URL.
 and troubleshooting*. Hiding it on success removed the links at exactly the
 moment they became useful: "Steam returned no friends" is nearly always the
 privacy setting, and the link that fixes it is in that list.
+
+**Spotify's 2026 changes broke the sync three ways, all as a bare 403
+"Forbidden"** with no hint of which request. Probed one at a time with the
+stored token:
+
+- `/playlists/{id}/tracks` refuses even your own playlists. It is
+  `/playlists/{id}/items` now, each entry's song is under `item` rather than
+  `track`, and the playlist's count is `items.total`.
+- **A playlist you follow but don't own refuses both.** A Development Mode app
+  reads only playlists you own or collaborate on, so those are skipped and
+  counted on the sync's note.
+- `/artists?ids=` and `/tracks?ids=` are gone. `/artists/{id}` still answers,
+  but with no `genres` field at all. So `ArtistGenres` makes no requests: every
+  track's genres are empty, and the categoriser says `unknown`. Paying a request
+  per artist for the same nothing would be worse.
 
 The four that hurt, and why they are stated rather than worked around:
 
@@ -6882,6 +6933,166 @@ instructions were each one rejected login waiting to happen.
 Spotify and Google both stopped accepting `http://localhost` while continuing to
 accept `http://127.0.0.1`. They are the same machine and not the same string,
 and the error message says neither.
+
+### Shuffle properly
+
+`providers/spotify-shuffle.ts`, and a card at the top of the Music tab.
+Spotify's shuffle is weighted, so on a playlist of a thousand songs it keeps
+returning to the same fifty or so. It also carries its order across devices,
+so switching from the phone to the PC picks the same sequence back up. Both go
+away if the shuffling is done **here, once, uniformly** (Fisher–Yates over
+`crypto.randomInt`), and Spotify is told to play the result **in order**.
+Measured over 20,000 deals of 1,000 songs: every song landed in the first 50
+between 886 and 1,115 times, against an expected 1,000.
+
+**No playlist is made.** The first version wrote one called "Shuffled", which
+was the thing not wanted: a new playlist in the library to avoid making one.
+Now it is one of two:
+
+- **Play**: `PUT /me/player/play` with the first song, then the rest through
+  the queue (`POST /me/player/queue`, one track per request). Spotify's own
+  shuffle is switched off, or it would reshuffle the queue its own way.
+- **Add to queue**: the same, behind whatever is already playing.
+
+**Two orders, from `shuffle-rules.ts`** (no imports, so they are checked
+directly):
+
+- **Shuffle**: every song once, evenly.
+- **Random**: drawn afresh for every slot, so a song can come back, but not
+  within `repeatAfter` songs of its last play. That gap is capped at one less
+  than the number of songs, or a short list runs out. Boosts apply here only:
+  a song's own weight times its artists' strongest boost up and strongest
+  boost down, not every artist's multiplied, or a collaboration between two
+  boosted artists would outrank both of their solo songs. Boosts go down as
+  well as up (×0.5, ×0.25, ×0.1), and 0 is "never". An artist set to never
+  keeps out every song they are on, duets included. The card lists only the
+  songs in the ticked lists and counts artists from those, so `songsIn`
+  returns each song's `lists`. Measured: an artist at ×5 played 4.8 times as often
+  as an unboosted one over 20,000 draws, and no song returned inside a gap of
+  10 in 2,000.
+
+**Random can also weigh when a song last played** (`Recency` in
+`shuffle-rules.ts`). A song heard within the last X songs is multiplied down,
+and one not heard within the last Y, or not at all, is multiplied up. Both are
+nudges, not rules, unlike the gap. What played before Play is pressed is
+included: the last 50 from `GET /me/player/recently-played`, seeded at slots
+−1, −2, … so the gap and recency see them exactly as they will see what plays
+next. **The song playing when Play is pressed is added at the head**:
+recently-played lists only finished songs, so without it Random dealt the song
+still on as the second one, inside a gap of five. Measured on 40 songs: repeats within 15 fell from 32% to 5.5% at ×0.1,
+and with 20 heard and ×5 for unheard, an unheard song came first 85% of the
+time against an expected 83%.
+
+**One song, however Spotify lists it.** The same track id in two playlists is
+the easy case. The other is a song released twice, on the single and the album
+or as "Remastered 2011", which Spotify gives two ids. `songKey` is the title
+with anything in brackets or after " - " removed, plus the first artist. Your
+library: 93 listings, 80 songs.
+
+Boosts are in `data/spotify-weights.json` (a package cannot add a table), keyed
+by track URI and artist id. They are the same on every device, while which
+lists, which order and the gap are per device.
+
+**It keeps the queue topped up, and that is the one timer in this module
+besides coursework.** Play starts the first song and queues the next N behind
+it, where N is the setting (`spotify-shuffle.json`, default 20, no upper limit,
+server-side because the session that reads it is). In Random it is never
+fewer than the repeat gap, and it is never more than the songs in the chosen
+lists (one each), since past that it can only queue repeats. The gap is held
+one below that count, or nothing would be allowed to play. The card keeps the
+number you typed and applies the limit, and the server clamps again. Add to queue does the same
+behind whatever is on. Spotify never says when a song ends, so a session asks
+`GET /me/player` every 45s and tops up when fewer than N of its songs are
+ahead. `dealer` in `shuffle-rules.ts` hands out the next song on demand, so the
+gap and the deck carry across top-ups: a reshuffled deck never starts with the
+song just played. It follows the music across devices: each check reads the device from
+`GET /me/player` and adopts it when it changes. Spotify carries the queue over
+when you switch from the PC to the phone, but top-ups addressed to the old
+device would fail once it is idle, or pull playback back to it. The session is
+held in memory and ends itself when something
+not from it plays (after its first song has), when nothing has played for 30
+minutes, or on Stop. A restart does **not** end it: the session is saved to
+`spotify-shuffle-session.json` whenever it changes (a song finished, a top-up,
+a device switch), and `resumeSession` picks it up five seconds after boot,
+rebuilding the dealer with what was sent as its history so the gap and the
+deck carry on. Only a session saved within the last half hour is resumed. Stop
+deletes the file; the server closing only pauses it. `stopped` on the session
+stops a top-up already under way, so Stop does not keep adding songs. Those are the conditions that keep it from polling an empty room.
+
+**"Something else started" is decided by the queue, not by the song.** A song
+you added by hand mid-shuffle plays, and is not one of the session's, but
+Spotify still plays the session's queued songs after it. So an unknown song
+ends the session only once none of the session's songs are still waiting in
+`GET /me/player/queue`; until then it is an interlude. Checks never overlap
+(`checking`), or a slow top-up and the next check would both add songs.
+
+**It reads the queue, because Spotify keeps app-queued songs like hand-queued
+ones.** A second Play while the first's songs still waited put the same songs
+in again, a few places apart: two shuffles that knew nothing of each other.
+`GET /me/player/queue` is read on Play and before every top-up. On Play, waiting
+songs from the chosen lists are **adopted** into the session: counted as
+queued, not dealt again, and followed as they play. Anything else waiting is
+`foreign`, and meeting it is waiting, not "something else started". The dealer
+takes an `avoid` set: Random skips those songs, and Shuffle takes the next card
+not in it, keeping the skipped one for later. Spotify shows only the next 20 or
+so, so adoption beyond that is not possible.
+
+**Where playback is, is searched forward from where it was.** In Random with a
+gap shorter than the queue, one song can be queued twice; searching back from
+the end found the later copy, read the session as further on than it was, and
+over-filled the queue. `lastIndexOf` is only the fallback, for a skip back.
+
+**The menu's dot asks `/spotify/status`**, three booleans, and only on
+`integrations` changes (`SectionMeta.watch`). It had asked the card's full
+route, every song and artist, on every change anywhere in the app.
+
+**Play lets the song on finish, always. There was a setting to cut it off,
+and it was removed:** nothing here can empty a queue, so it is all adding to
+one, and interrupting the song bought only a skip. **It is a workaround,
+because the API cannot empty a queue.** The song playing is started again as the only thing playing, with
+`position_ms` at the point it had reached, and the shuffle is queued behind it.
+What was coming next (the rest of an album or playlist) goes, the song carries
+on with at most a blip, and the session waits until the first of its own songs
+plays. Songs queued by hand in Spotify cannot be removed by any app, and stay.
+
+It needs a device. The active one if there is one, else the first Spotify
+lists, so a phone with the app open but idle works. With none, it says to open
+Spotify, because the API cannot start the app. It needs
+`user-modify-playback-state` and `user-read-playback-state`, which older
+connections lack, and it says "press Connect once" rather than surfacing a
+bare 403. Not local-only: pressing it on the phone before music is the point.
+
+A sync runs first, and a song in several lists appears once. Lists with nothing
+stored are not offered: a playlist you follow but don't own never has any.
+
+**That turned up a sync bug.** `upsertCollection` wrote the incoming
+`snapshot_id` on insert, so a brand-new playlist compared equal to itself and
+its songs were never fetched. Three playlists here had a count and no songs,
+which is what "those playlists have no songs" was. It inserts null now, and the
+sync skips only when `syncedAt` is set too, so rows already stuck fill
+themselves on the next sync.
+
+`apiSend` sits beside `apiGet` in `oauth.ts`, so writes get the same refresh on
+a 401 and `Retry-After` handling. An empty body is sent as `''`, not
+`"null"`: a PUT without a length is refused with a 411.
+
+### The Music tab counts artists, not genres
+
+Spotify's 2026 changes left every Spotify song "uncategorized", so the genre
+breakdown was one bar saying nothing. `artistBreakdown` replaced it on screen,
+folded away by default: how many tracks each artist is on, in the playlists you
+haven't left out. A song counts toward every artist credited on it, the
+Shuffle card's rule, and a video counts under its channel. Within a service the
+id decides; across services, the same name is one row, because CG5 on Spotify
+and CG5's channel on YouTube are one artist to anybody reading the list. **Songs are counted, not rows.** A song saved on Spotify and its video on
+YouTube were two rows, and CG5 read 10 for five songs. `songName` reduces a
+title to the song: the first part of a Spotify title ("GOT IT MAID - CG5
+VERSION"), the last real part of a video's ("CG5 - Inspector Royale (Official
+Music Video)"), with brackets, quotes, "w/ @…", "Lyric Video" and the credited
+names taken out. Each artist counts a set of those. Titles that still differ
+after that are counted twice, which is the safer mistake than folding two songs
+into one. The
+categoriser below still runs and still files YouTube; it simply isn't shown.
 
 ### Categorising, and what it honestly is
 

@@ -4830,3 +4830,238 @@ html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
     transition: none;
   }
 }
+
+/*
+ * The Shuffle card's boost browser (Connections → Music). A scrolling box of
+ * rows, each a name that gives way and a picker that keeps its size: the first
+ * version was a flex row with nothing stopping a long name, which ran under
+ * the picker on a phone.
+ */
+.shuffle-list {
+  display: grid;
+  gap: 0.15rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.25rem;
+}
+
+.shuffle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0.4rem;
+}
+
+.shuffle-row:nth-child(even) {
+  background: var(--surface-raised);
+}
+
+.shuffle-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shuffle-boosts > summary {
+  cursor: pointer;
+  padding: 0.4rem 0;
+}
+
+/* The Shuffle card's settings: one folded line, then sections. */
+.shuffle-settings {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.shuffle-settings > summary {
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.shuffle-section {
+  margin-top: 0.9rem;
+}
+
+.shuffle-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.shuffle-group + .shuffle-group {
+  margin-top: 0.6rem;
+}
+
+.shuffle-group-head {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin-bottom: 0.3rem;
+}
+
+.shuffle-group-all {
+  font-size: 0.85rem;
+}
+
+.shuffle-group-all button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+
+/* A list as a chip you tap: on in the accent, off as an outline. */
+.shuffle-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.shuffle-chip {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.shuffle-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.shuffle-chip.on .meta {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.shuffle-chip.off {
+  opacity: 0.45;
+  cursor: default;
+  border-style: dashed;
+}
+
+.shuffle-recency {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+/*
+ * A section under its screen in the menu (Connections → Music): indented and a
+ * little smaller, so it reads as part of the screen above rather than as a
+ * screen of its own.
+ */
+.drawer nav button.sub {
+  padding-left: 2.1rem;
+  font-size: 0.92em;
+}
+
+/* Settings → Home screen and menu: a name and two switch columns. */
+.menu-prefs {
+  margin-top: 0.75rem;
+}
+
+.menu-prefs-head,
+.menu-prefs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 3.5rem 3.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+}
+
+.menu-prefs-head {
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.menu-prefs-row > input,
+.menu-prefs-row > .meta {
+  justify-self: center;
+}
+
+.menu-prefs-row.sub .menu-prefs-name {
+  padding-left: 1.5rem;
+}
+
+.menu-prefs-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Something running now: Music while shuffle is on. Green, the colour "on"
+ * already is for a friend online, rather than the accent, which means
+ * "selected" here and would read as the current screen.
+ */
+.live-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  box-shadow: 0 0 0 0.15rem color-mix(in srgb, var(--ok) 25%, transparent);
+}
+
+.home-tile {
+  position: relative;
+}
+
+.home-live {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  margin: 0;
+}
+
+/* The Music card's "Shuffle is on" bar. */
+.shuffle-on {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+}
+
+.shuffle-on-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+
+.shuffle-on-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.shuffle-on-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}

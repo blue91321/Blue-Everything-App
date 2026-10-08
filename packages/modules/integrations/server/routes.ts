@@ -59,12 +59,29 @@ import * as canvas from './providers/canvas.js';
 import { localStatusOf, recordLocalPresence } from './providers/local.js';
 import * as spotify from './providers/spotify.js';
 import * as steam from './providers/steam.js';
+import {
+  readWeights,
+  sessionStatus,
+  setQueueAhead,
+  setWeight,
+  shuffleSources,
+  shuffleOnSpotify,
+  songsIn,
+  pauseSession,
+  resumeSession,
+  stopAndPause,
+  stopSession,
+  QUEUE_AHEAD_MAX,
+  QUEUE_AHEAD_MIN,
+  SHUFFLE_SCOPES,
+} from './providers/spotify-shuffle.js';
 import * as youtube from './providers/youtube.js';
 import {
   allFollows,
   allFriends,
   allLive,
   categoryBreakdown,
+  artistBreakdown,
   collectionsFor,
   forgetAccount,
   forgetTaskLinks,
@@ -479,6 +496,111 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     const { replaceFriends } = await import('./store.js');
     await replaceFriends(provider, []);
     return reply.code(204).send();
+  });
+
+  /* ---- an evenly shuffled Spotify playlist ------------------------ */
+
+  /**
+   * What the Shuffle card needs: which collections can feed it, and whether
+   * the connection carries the permission to control playback.
+   *
+   * Not local-only, like reading: pressing the button on the phone before
+   * putting music on is the point of it, and all it does is start your own music.
+   */
+  /**
+   * Just the three facts the menu's dot and the Home tile need. The full route
+   * below carries every song and artist for the card, and the dot was asking
+   * it — on every change announced anywhere in the app, from every open screen.
+   * About 100 KB a time on a library of a thousand songs, for two booleans.
+   */
+  app.get('/api/integrations/spotify/status', async () => {
+    const account = await getAccount('spotify');
+    return {
+      connected: Boolean(account?.accessToken),
+      canPlay: SHUFFLE_SCOPES.every((s) => grantedScopes(account).includes(s)),
+      active: sessionStatus().active,
+    };
+  });
+
+  app.get('/api/integrations/spotify/shuffle', async () => {
+    const account = await getAccount('spotify');
+    const sources = account ? await shuffleSources() : [];
+    /*
+     * The songs and artists you can boost, from every list — a few thousand
+     * short rows at most, and the card searches them as you type. An artist's
+     * name is read off the song's credit, which lists names in the same order
+     * as the ids.
+     */
+    const songs = await songsIn(sources.map((s) => s.id));
+    return {
+      connected: Boolean(account?.accessToken),
+      canPlay: SHUFFLE_SCOPES.every((s) => grantedScopes(account).includes(s)),
+      sources,
+      // Artists are counted on the card, from the songs in the ticked lists.
+      songs: songs.map((s) => ({ uri: s.uri, title: s.title, artist: s.artist, artistIds: s.artistIds, lists: s.lists })),
+      weights: readWeights(),
+      session: sessionStatus(),
+    };
+  });
+
+  /** Stop keeping the queue topped up. What is already queued plays on. */
+  app.post('/api/integrations/spotify/shuffle/stop', async (request) => {
+    // `pause: true` is the card's Stop; without it the music plays on (voice's
+    // "stop topping up", and the card's "Stop adding songs").
+    const body = z.object({ pause: z.boolean().default(false) }).parse(request.body ?? {});
+    if (body.pause) await stopAndPause();
+    else stopSession('stopped from the app');
+    return sessionStatus();
+  });
+
+  /** How many songs to keep queued ahead while a session runs. */
+  app.put('/api/integrations/spotify/shuffle/settings', async (request) => {
+    const body = z.object({ queueAhead: z.number().int().min(QUEUE_AHEAD_MIN).max(QUEUE_AHEAD_MAX) }).parse(request.body);
+    const result = setQueueAhead(body.queueAhead);
+    changes.emitChange('integrations');
+    return result;
+  });
+
+  // A session's timer must not hold a closing server open. Paused, not ended:
+  // its file stays, and the next start picks it up (`resumeSession`).
+  app.addHook('onClose', async () => pauseSession());
+  // Picked up a little after boot, once Suwayomi and the sweep have had their moment.
+  setTimeout(() => void resumeSession().catch(() => undefined), 5_000).unref?.();
+
+  /** Boost a song or an artist for the random order; 1 is no boost and removes it. */
+  app.put('/api/integrations/spotify/weights', async (request) => {
+    const body = z
+      .object({ kind: z.enum(['song', 'artist']), id: z.string().min(1).max(200), weight: z.number().min(0).max(10) })
+      .parse(request.body);
+    const weights = setWeight(body.kind, body.id, body.weight);
+    changes.emitChange('integrations');
+    return weights;
+  });
+
+  app.post('/api/integrations/spotify/shuffle', async (request, reply) => {
+    const body = z
+      .object({
+        mode: z.enum(['play', 'queue']).default('play'),
+        order: z.enum(['shuffle', 'random']).default('shuffle'),
+        repeatAfter: z.number().int().min(0).max(100_000).default(50),
+        collectionIds: z.array(z.string().min(1)).max(500).optional(),
+        recent: z.object({ within: z.number().int().min(0).max(100_000), factor: z.number().min(0).max(1) }).optional(),
+        fresh: z.object({ after: z.number().int().min(0).max(100_000), factor: z.number().min(1).max(100) }).optional(),
+        // Play never cuts the song on off any more; kept so an older card's
+        // `false` is still accepted (and ignored).
+        keepCurrent: z.boolean().optional(),
+      })
+      .parse(request.body ?? {});
+    try {
+      const result = await shuffleOnSpotify(body.mode, body.collectionIds, body.order, body.repeatAfter, {
+        recent: body.recent,
+        fresh: body.fresh,
+      });
+      changes.emitChange('integrations');
+      return result;
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'the shuffle failed' });
+    }
   });
 
   /* ---- syncing --------------------------------------------------- */
@@ -997,7 +1119,7 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
    * window. That went with history itself. What is left is the library, which
    * is the part that was ever a fact rather than an inference.
    */
-  app.get('/api/integrations/music', async () => ({ breakdown: await categoryBreakdown() }));
+  app.get('/api/integrations/music', async () => ({ breakdown: await categoryBreakdown(), byArtist: await artistBreakdown() }));
 
   /* ---- the one thing here on a timer ----------------------------- */
 

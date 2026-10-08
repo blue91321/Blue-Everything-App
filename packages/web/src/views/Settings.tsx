@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { inMenu, isReady, onHome, resetShown, setShown, useMenuEntries } from '../menu-prefs';
 import { api, type AppSettings, type Device, type Session, type UpdateCheck } from '../api';
 import { InstalledPackages } from './InstalledPackages';
 import { GamesTab } from './GamesTab';
@@ -128,6 +129,69 @@ function MenuDrawer() {
             </span>
           </span>
         </label>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * What the menu and Home show — see `menu-prefs.ts`.
+ *
+ * One row per screen, with each screen's sections under it. Home is a switch
+ * on every row; the menu is a switch only on sections, because a screen with
+ * no way to reach it but a tile you might also hide is a screen lost.
+ *
+ * Per device: the phone's first screen and the PC's menu are separate choices.
+ */
+function MenuAndHome() {
+  const entries = useMenuEntries().filter((e) => e.id !== 'home' && e.id !== 'settings');
+  return (
+    <section id="menu-home">
+      <h2>Home screen and menu</h2>
+      <div className="card">
+        <div className="meta">
+          Which tiles are on Home, and which sections are listed under their screen in the menu. Chosen on this device
+          only.
+        </div>
+        <div className="menu-prefs">
+          <div className="menu-prefs-head" aria-hidden="true">
+            <span />
+            <span>Home</span>
+            <span>Menu</span>
+          </div>
+          {entries.map((e) => {
+            const ready = isReady(e.id);
+            return (
+              <div key={e.id} className={e.parent ? 'menu-prefs-row sub' : 'menu-prefs-row'}>
+                <span className="menu-prefs-name">
+                  <span aria-hidden="true">{e.glyph}</span> {e.label}
+                  {ready === false && <span className="meta"> · not set up yet</span>}
+                </span>
+                <input
+                  type="checkbox"
+                  aria-label={`${e.label} on Home`}
+                  checked={onHome(e)}
+                  onChange={(ev) => setShown('home', e.id, ev.target.checked)}
+                />
+                {e.parent ? (
+                  <input
+                    type="checkbox"
+                    aria-label={`${e.label} in the menu`}
+                    checked={inMenu(e)}
+                    onChange={(ev) => setShown('menu', e.id, ev.target.checked)}
+                  />
+                ) : (
+                  <span className="meta" title="A screen is always in the menu">
+                    always
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <button className="btn" style={{ marginTop: '.75rem' }} onClick={resetShown}>
+          Back to the defaults
+        </button>
       </div>
     </section>
   );
@@ -592,6 +656,7 @@ const SECTION_TAB: Record<string, TabId> = {
   'dashboard-panel': 'general',
   'dashboard-blocks': 'general',
   'menu-drawer': 'general',
+  'menu-home': 'general',
   'desktop-icon': 'devices',
 };
 
@@ -728,6 +793,7 @@ function GeneralTab() {
     <>
       <Appearance />
       <MenuDrawer />
+      <MenuAndHome />
       {/*
         The two columns of the Dashboard, shown as two columns.
         They were stacked, which made the screen read as two unrelated settings

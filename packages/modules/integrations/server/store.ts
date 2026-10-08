@@ -210,7 +210,7 @@ export interface IncomingCollection {
 export async function upsertCollection(
   provider: ProviderId,
   incoming: IncomingCollection
-): Promise<{ id: string; snapshotId: string | null }> {
+): Promise<{ id: string; snapshotId: string | null; syncedAt: number | null }> {
   const [row] = await db
     .insert(mediaCollections)
     .values({
@@ -221,7 +221,11 @@ export async function upsertCollection(
       description: incoming.description ?? null,
       artUrl: incoming.artUrl ?? null,
       itemCount: incoming.itemCount ?? 0,
-      snapshotId: incoming.snapshotId ?? null,
+      // Not the incoming snapshot: that is written by `markCollectionSynced`
+      // once the contents are actually stored. Written here, a brand-new
+      // playlist compared equal to itself and its songs were never fetched —
+      // three playlists sat with a count and no songs that way.
+      snapshotId: null,
       ignored: incoming.ignoredByDefault ? 1 : 0,
     })
     .onConflictDoUpdate({
@@ -238,6 +242,7 @@ export async function upsertCollection(
       id: mediaCollections.id,
       snapshotId: mediaCollections.snapshotId,
       ignored: mediaCollections.ignored,
+      syncedAt: mediaCollections.syncedAt,
     });
 
   return row;
@@ -359,6 +364,90 @@ export async function categoryBreakdown(provider?: ProviderId) {
     .where(provider ? and(eq(mediaItems.provider, provider), inAKeptPlaylist) : inAKeptPlaylist)
     .groupBy(mediaItems.category)
     .orderBy(desc(sql`count(*)`));
+}
+
+/**
+ * The library by artist: how many of its tracks and videos each one is on.
+ *
+ * Replaced the genre breakdown on the Music tab, which Spotify emptied in 2026
+ * by no longer giving out genres. A song counts toward every artist credited
+ * on it — the same rule as the Shuffle card's artist list — so the numbers add
+ * up to more than the songs. A YouTube video's "artist" is its channel.
+ *
+ * Counted in JavaScript rather than SQL because the credits are a JSON array
+ * of ids beside a comma-joined string of names, in the same order; a library
+ * of a few thousand rows is nothing to walk.
+ */
+export async function artistBreakdown(provider?: ProviderId) {
+  const inAKeptPlaylist = sql`exists (
+    select 1
+    from media_collection_items ci
+    join media_collections mc on mc.id = ci.collection_id
+    where ci.item_id = ${mediaItems.id} and mc.ignored = 0
+  )`;
+  const rows = await db
+    .select({
+      provider: mediaItems.provider,
+      title: mediaItems.title,
+      creator: mediaItems.creator,
+      creatorIds: mediaItems.creatorIds,
+    })
+    .from(mediaItems)
+    .where(provider ? and(eq(mediaItems.provider, provider), inAKeptPlaylist) : inAKeptPlaylist);
+
+  /*
+   * Distinct songs per artist, by name: a set of song names rather than a
+   * count of rows. Without that, a song saved on Spotify and its video on
+   * YouTube counted twice — CG5 read 10 for five songs.
+   */
+  const byName = new Map<string, { name: string; songs: Set<string> }>();
+  const distinct = new Set<string>();
+  for (const r of rows) {
+    const names = (r.creator ?? 'Unknown').replace(/ - Topic$/, '').split(', ');
+    const core = songName(r.title, r.provider, names);
+    distinct.add(`${names[0]!.toLowerCase()}|${core}`);
+    for (const name of names) {
+      const key = name.trim().toLowerCase();
+      const had = byName.get(key) ?? byName.set(key, { name: name.trim(), songs: new Set() }).get(key)!;
+      had.songs.add(core);
+    }
+  }
+  return {
+    items: distinct.size,
+    artists: [...byName.values()]
+      .map((a) => ({ name: a.name, count: a.songs.size }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+  };
+}
+
+/**
+ * A title reduced to the song's name, so the Spotify track and the YouTube
+ * video of one song meet.
+ *
+ * Spotify titles carry decorations after the name ("GOT IT MAID - CG5
+ * VERSION", "Poison - From Hazbin Hotel"), so the first part is the name.
+ * Video titles usually put the artist first ("CG5 - Inspector Royale
+ * (Official Music Video)"), so the last part that is not "Lyric Video" or
+ * the like is the name. Brackets, quotes, "w/ @someone" and the credited
+ * names themselves are removed either way. A song whose two titles still
+ * differ after that is counted twice — the honest failure, rather than
+ * folding two songs into one.
+ */
+export function songName(title: string, provider: string, artists: string[]): string {
+  const clean = (s: string) => {
+    let out = s
+      .toLowerCase()
+      .replace(/[[(].*?[\])]/g, ' ')
+      .replace(/\bw\/.*$/, ' ')
+      .replace(/\b(feat|ft)\b\.?.*$/, ' ')
+      .replace(/["“”‘’']/g, '');
+    for (const a of artists) out = out.split(a.toLowerCase()).join(' ');
+    out = out.replace(/\b(official|music|lyrics?|video|audio|visualizer|animation|hd|4k|mv)\b/g, ' ');
+    return out.replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  };
+  const parts = title.split(/\s+[-–—|]\s+/).map(clean).filter(Boolean);
+  if (parts.length === 0) return clean(title);
+  return provider === 'spotify' ? parts[0]! : parts[parts.length - 1]!;
 }
 
 /* ------------------------------------------------------------------ */

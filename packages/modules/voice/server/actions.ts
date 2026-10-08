@@ -29,7 +29,7 @@ import {
   type VoiceCommandKind,
 } from '@everything/shared';
 import { isLaunchUrl } from '@everything/shared/games';
-import { db } from '@everything/server/module-api';
+import { config, db } from '@everything/server/module-api';
 import { games, habits, notes, settings, voiceCommands } from '@everything/server/module-api';
 import { saveNote } from '@everything/server/module-api';
 import { recordHabitDone } from '@everything/server/module-api';
@@ -521,6 +521,46 @@ export async function labelFor(command: LoadedCommand): Promise<string> {
       return command.pauseMinutes ? `stop listening for ${command.pauseMinutes}m` : 'stop listening';
     case 'cancel':
       return 'never mind';
+    case 'music':
+      return MUSIC_LABEL[command.target ?? ''] ?? 'music';
+  }
+}
+
+const MUSIC_LABEL: Record<string, string> = {
+  shuffle: 'play shuffled music',
+  random: 'play random music',
+  queue: 'add shuffled music to the queue',
+  stop: 'stop topping up the music queue',
+};
+
+/**
+ * Ask the Music feature to do it, over HTTP to this same server.
+ *
+ * Voice and integrations are separate packages, either of which can be
+ * deleted, so voice may not import the shuffle. A request to its own route is
+ * the boundary both already respect: with integrations gone it answers 404,
+ * which becomes "Music isn't installed". It goes to loopback by IP with no
+ * forwarding headers, which is what local trust asks for, so no token is
+ * needed. Which lists and the repeat gap are chosen per device on the Music
+ * tab, so voice uses every list and a gap of 50; boosts and the queue size are
+ * the server's and apply as they do from the tab.
+ */
+async function musicRequest(path: string, body: unknown): Promise<{ ok: true } | { ok: false; why: string }> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${config.PORT}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (response.status === 404) return { ok: false, why: "Music isn't installed" };
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, why: data.error ?? `Music answered ${response.status}` };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, why: error instanceof Error ? error.message : 'Music did not answer' };
   }
 }
 
@@ -648,6 +688,30 @@ export async function runCommand(
       };
     }
 
+    case 'music': {
+      const what = command.target ?? '';
+      const done =
+        what === 'stop'
+          ? await musicRequest('/api/integrations/spotify/shuffle/stop', {})
+          : await musicRequest('/api/integrations/spotify/shuffle', {
+              mode: what === 'queue' ? 'queue' : 'play',
+              order: what === 'random' ? 'random' : 'shuffle',
+            });
+      if (!done.ok) return { outcome: 'no-match', text, say: done.why };
+      return {
+        outcome: 'media-sent',
+        text,
+        say:
+          what === 'stop'
+            ? 'Stopped topping up the queue'
+            : what === 'queue'
+              ? 'Added shuffled songs to the queue'
+              : what === 'random'
+                ? 'Playing random music'
+                : 'Playing shuffled music',
+      };
+    }
+
     case 'cancel':
       // Nothing to write: this ends an exchange rather than changing anything.
       // The agent closes the follow-up window and takes the popup away.
@@ -677,5 +741,6 @@ export function targetIsValid(kind: VoiceCommandKind, target: string | null): bo
   if (kind === 'hotkey') return parseHotkey(target ?? '') !== null;
   if (kind === 'habit') return Boolean(target);
   if (kind === 'launch') return isLaunchTarget(target ?? '');
+  if (kind === 'music') return ['shuffle', 'random', 'queue', 'stop'].includes(target ?? '');
   return true;
 }

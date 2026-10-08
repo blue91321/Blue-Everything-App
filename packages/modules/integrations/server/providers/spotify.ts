@@ -15,6 +15,7 @@
  */
 import { apiGet } from '../oauth.js';
 import type { FollowedAccount } from '@everything/shared/integrations';
+import { collectionsFor } from '../store.js';
 import {
   ignoredCollectionKeys,
   markCollectionSynced,
@@ -57,7 +58,14 @@ interface SpotifyPlaylist {
   description: string | null;
   snapshot_id: string;
   images: Array<{ url: string }> | null;
-  tracks: { total: number };
+  /**
+   * `items` since Spotify's 2026 changes; `tracks` before. Read either, so a
+   * response in the old shape (or a rollback) still counts.
+   */
+  items?: { total: number };
+  tracks?: { total: number };
+  owner?: { id: string };
+  collaborative?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -93,33 +101,25 @@ async function pageThrough<T>(firstUrl: string, max = 10_000): Promise<T[]> {
 }
 
 /**
- * Genres, per artist, fetched in batches of fifty and remembered for the run.
+ * Genres, per artist — which Spotify no longer gives out.
  *
- * The cache is per-sync rather than persistent on purpose: a library where the
- * same forty artists account for most of the tracks turns thousands of lookups
- * into a handful of requests, and an artist's genres do drift, so carrying the
- * cache across syncs would freeze a categorisation that the next sync is
- * supposed to be an opportunity to correct.
+ * This fetched `/artists?ids=` fifty at a time. Spotify's 2026 changes removed
+ * the batch lookups (`/artists?ids=` and `/tracks?ids=` both answer a bare 403
+ * "Forbidden", which failed every playlist sync), and the single-artist object
+ * that still works carries no `genres` field at all. So there is nothing to
+ * ask for. It makes no requests now, every track's genres are empty, and the
+ * categoriser files them as `unknown` — which is the honest answer, rather
+ * than one request per artist that returns the same nothing.
+ *
+ * Kept as a class with the same shape so the sync reads unchanged, and so
+ * genres can come back from elsewhere (MusicBrainz, Last.fm) without touching
+ * the callers.
  */
 class ArtistGenres {
   private readonly known = new Map<string, string[]>();
 
-  async load(ids: string[]): Promise<void> {
-    const wanted = [...new Set(ids)].filter((id) => id && !this.known.has(id));
-
-    for (let i = 0; i < wanted.length; i += 50) {
-      const batch = wanted.slice(i, i + 50);
-      const response = await apiGet<{ artists: Array<{ id: string; genres: string[] } | null> }>(
-        'spotify',
-        `${API}/artists?ids=${batch.join(',')}`
-      );
-      for (const artist of response.artists) {
-        if (artist) this.known.set(artist.id, artist.genres ?? []);
-      }
-      // An artist the API declined to return is recorded as having none, so a
-      // later lookup does not refetch it for the whole of this sync.
-      for (const id of batch) if (!this.known.has(id)) this.known.set(id, []);
-    }
+  async load(_ids: string[]): Promise<void> {
+    // Nothing to fetch — see above.
   }
 
   for(track: SpotifyTrack): string[] {
@@ -190,6 +190,23 @@ export async function syncPlaylists(): Promise<SyncResult> {
   if (ignored.has('saved')) {
     notes.push('Liked Songs ignored');
   } else {
+    /*
+     * Re-read only when it has changed. Liked Songs carries no snapshot id the
+     * way a playlist does, so it was read in full on every sync — and a sync
+     * runs before every Play: twenty requests a press for a thousand liked
+     * songs, nearly all of them answering "nothing new". Its count and newest
+     * song, from one page of one, stand in for a snapshot: liking or unliking
+     * anything moves one of them.
+     */
+    const head = await apiGet<{ total: number; items: Array<{ added_at: string; track: { id: string } | null }> }>(
+      'spotify',
+      `${API}/me/tracks?limit=1`
+    );
+    const stamp = `${head.total}:${head.items[0]?.added_at ?? ''}:${head.items[0]?.track?.id ?? ''}`;
+    const known = (await collectionsFor('spotify')).find((c) => c.providerCollectionId === 'saved');
+    if (known && known.syncedAt !== null && known.snapshotId === stamp) {
+      notes.push(`Liked Songs: ${head.total} tracks, unchanged`);
+    } else {
     const saved = await pageThrough<{ added_at: string; track: SpotifyTrack }>(`${API}/me/tracks?limit=50`);
     const savedCollection = await upsertCollection('spotify', {
       providerCollectionId: 'saved',
@@ -206,14 +223,16 @@ export async function syncPlaylists(): Promise<SyncResult> {
       savedIds,
       saved.map((s) => Date.parse(s.added_at) || null)
     );
-    await markCollectionSynced(savedCollection.id, null);
+    await markCollectionSynced(savedCollection.id, stamp);
     notes.push(`Liked Songs: ${savedIds.length} tracks`);
+    }
   }
 
   /* Then the playlists proper. */
   const playlists = await pageThrough<SpotifyPlaylist>(`${API}/me/playlists?limit=50`);
 
   let skipped = 0;
+  const notReadable: string[] = [];
   for (const playlist of playlists) {
     if (ignored.has(playlist.id)) {
       skipped += 1;
@@ -226,7 +245,7 @@ export async function syncPlaylists(): Promise<SyncResult> {
       name: playlist.name,
       description: playlist.description,
       artUrl: playlist.images?.[0]?.url ?? null,
-      itemCount: playlist.tracks.total,
+      itemCount: playlist.items?.total ?? playlist.tracks?.total ?? 0,
       snapshotId: playlist.snapshot_id,
     });
 
@@ -237,14 +256,38 @@ export async function syncPlaylists(): Promise<SyncResult> {
      * that takes a minute and one that takes ten — and it is the reason the
      * column is stored at all.
      */
-    if (collection.snapshotId === playlist.snapshot_id) continue;
+    // Only once its songs have actually been stored (`syncedAt`): a row that
+    // was written with the snapshot and never filled must be filled now.
+    if (collection.syncedAt !== null && collection.snapshotId === playlist.snapshot_id) continue;
 
-    const entries = await pageThrough<{ added_at: string; track: SpotifyTrack | null }>(
-      `${API}/playlists/${playlist.id}/tracks?limit=100`
-    );
-    // Episodes in a music playlist come back as nulls, as do tracks pulled from
-    // the catalogue since they were added.
-    const present = entries.filter((e): e is { added_at: string; track: SpotifyTrack } => e.track !== null);
+    /*
+     * `/items`, not `/tracks`. Spotify renamed it in 2026 and the old path now
+     * answers a bare 403 "Forbidden" — for your own playlists too, which made
+     * the whole sync fail. Each entry's song moved from `track` to `item`.
+     *
+     * A playlist you follow but neither own nor collaborate on refuses both:
+     * a Development Mode app may only read the contents of playlists you own.
+     * That one is skipped and counted rather than failing everything after it.
+     */
+    type Entry = { added_at: string; item?: (SpotifyTrack & { type?: string }) | null; track?: SpotifyTrack | null };
+    let entries: Entry[];
+    try {
+      entries = await pageThrough<Entry>(`${API}/playlists/${playlist.id}/items?limit=100`);
+    } catch (error) {
+      if (error instanceof Error && / returned 403/.test(error.message)) {
+        notReadable.push(playlist.name);
+        continue;
+      }
+      throw error;
+    }
+    // Episodes in a music playlist are skipped, and tracks pulled from the
+    // catalogue since they were added come back as nulls.
+    const present = entries
+      .map((e) => ({ added_at: e.added_at, track: (e.item ?? e.track ?? null) as (SpotifyTrack & { type?: string }) | null }))
+      .filter(
+        (e): e is { added_at: string; track: SpotifyTrack & { type?: string } } =>
+          e.track !== null && (e.track.type === undefined || e.track.type === 'track')
+      );
 
     const ids = await storeTracks(
       present.map((e) => e.track),
@@ -258,7 +301,12 @@ export async function syncPlaylists(): Promise<SyncResult> {
     await markCollectionSynced(collection.id, playlist.snapshot_id);
   }
 
-  notes.push(`${playlists.length - skipped} playlists${skipped > 0 ? `, ${skipped} ignored` : ''}`);
+  notes.push(
+    `${playlists.length - skipped - notReadable.length} playlists${skipped > 0 ? `, ${skipped} ignored` : ''}` +
+      (notReadable.length > 0
+        ? `; ${notReadable.length} followed but not yours, which Spotify will not let this app read (${notReadable.slice(0, 3).join(', ')}${notReadable.length > 3 ? '…' : ''})`
+        : '')
+  );
   return { notes };
 }
 

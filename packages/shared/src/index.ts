@@ -1208,7 +1208,15 @@ export function ticksFor(
  * microphone for minutes or until switched back on. "Never mind" should not
  * cost you the next five minutes of voice.
  */
-export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'media', 'launch', 'pause', 'cancel'] as const;
+export const voiceCommandKinds = ['habit', 'note', 'url', 'hotkey', 'media', 'launch', 'pause', 'cancel', 'music'] as const;
+
+/**
+ * What a `music` command does: Connections → Music's Shuffle card, by voice.
+ * Unlike `media` it does not press keys on this PC; the server starts Spotify
+ * itself, on whatever device has it open, so it works from anywhere.
+ */
+export const musicVoiceActions = ['shuffle', 'random', 'queue', 'stop'] as const;
+export type MusicVoiceAction = (typeof musicVoiceActions)[number];
 export const voiceCommandKindSchema = z.enum(voiceCommandKinds);
 export type VoiceCommandKind = z.infer<typeof voiceCommandKindSchema>;
 
@@ -1389,6 +1397,9 @@ export const createVoiceCommandSchema = z
     }
     if (value.kind === 'launch' && !isLaunchTarget(value.target ?? '')) {
       fail('pick something from the games list — a name like cs2.exe, never a path');
+    }
+    if (value.kind === 'music' && !(musicVoiceActions as readonly string[]).includes(value.target ?? '')) {
+      fail('pick what it should do with the music');
     }
   });
 

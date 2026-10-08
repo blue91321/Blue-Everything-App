@@ -15,7 +15,7 @@
  */
 import { Logo, type LogoShape } from './Logo';
 
-export type HomeItem = { id: string; label: string; glyph: string };
+export type HomeItem = { id: string; label: string; glyph: string; live?: boolean };
 
 function greeting(now: Date): string {
   const h = now.getHours();
@@ -50,6 +50,7 @@ export function Home({
               {item.glyph}
             </span>
             <span className="home-label">{item.label}</span>
+            {item.live && <span className="live-dot home-live" title="On now" aria-label="on now" />}
           </button>
         ))}
       </nav>

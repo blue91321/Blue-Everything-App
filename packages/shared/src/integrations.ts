@@ -325,6 +325,12 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
         // carries the scopes it was issued with, and nothing can widen it after
         // the fact. The screen reports what was granted, so this shows up.
         'user-follow-read',
+        // Playing an evenly shuffled list (Music → Shuffle properly): start
+        // playback with a list of tracks, or queue them, and find a device to
+        // do it on. Asked for since the shuffle arrived, so an older
+        // connection has to press Connect once more, which the card says.
+        'user-modify-playback-state',
+        'user-read-playback-state',
       ],
       pkce: true,
     },
@@ -353,16 +359,16 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
       taste: {
         status: 'partial',
         why:
-          'Categories come from the genres Spotify assigns each artist. The endpoints that ' +
-          'measured a track — audio-features, audio-analysis and recommendations — were withdrawn ' +
-          'on 27 November 2024 and return 403 to any app registered since, so nothing here infers ' +
-          'energy, tempo or mood.',
+          'Spotify gives no genres any more: since its 2026 changes an artist comes back with a ' +
+          'name and pictures only, so Spotify songs are uncategorized and the Music tab counts ' +
+          'artists instead. The endpoints that measured a track (audio-features, audio-analysis, ' +
+          'recommendations) were withdrawn in November 2024, so nothing here infers energy, tempo or mood.',
         source: 'developer.spotify.com/blog/2024-11-27-changes-to-the-web-api',
         sourceUrl: 'https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api',
       },
       follows: {
         status: 'works',
-        why: 'Every artist you follow, with the genres Spotify gives them.',
+        why: 'Every artist you follow.',
         source: 'GET /v1/me/following?type=artist',
       },
       /*
@@ -375,15 +381,24 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
        * following — is answered by `follows` above.
        */
     },
+    /*
+     * In the order the dashboard asks, because the friend setting this up was
+     * the reason the Music tab now opens on these steps: the API to tick and
+     * where the Client ID sits are the two places people stall.
+     */
     setup: [
       {
-        text: 'Create an app in the Spotify developer dashboard.',
+        text: 'Sign in to the Spotify developer dashboard with your Spotify account (it needs Premium) and press Create app. Any name and description will do.',
         link: { url: 'https://developer.spotify.com/dashboard', label: 'developer.spotify.com/dashboard' },
       },
       {
-        text: 'Add the redirect URI shown below as a redirect/callback URL, exactly as it appears — a trailing slash is a rejected login.',
+        text: 'Under Redirect URIs, paste the address shown below exactly as it appears, and press Add. A trailing slash, or a blank row left in the list, gets the login rejected.',
       },
-      { text: 'Paste the Client ID into the box below. There is no secret to store — this uses PKCE.' },
+      { text: 'Under "Which API/SDKs are you planning to use?", tick Web API. Agree to the terms and Save.' },
+      {
+        text: 'Open the app’s Settings and copy its Client ID into the box below, then Save. There is no secret to store: this uses PKCE.',
+      },
+      { text: 'Press Connect, and allow everything Spotify asks: reading your playlists, and controlling playback for Music.' },
     ],
   },
 

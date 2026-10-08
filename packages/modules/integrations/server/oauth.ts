@@ -402,6 +402,63 @@ async function refresh(provider: ProviderId, account: Account): Promise<string> 
   return token.access_token;
 }
 
+/* ---- staying under a provider's rate limit ---------------------------- */
+
+/**
+ * How many requests a provider is sent per window, at most.
+ *
+ * Spotify counts requests over a rolling thirty seconds and answers 429 past a
+ * limit it does not publish, lower for an app in Development Mode. The Music
+ * tab can want a burst — a first sync of a large library, a Play queueing
+ * twenty songs one request each, a top-up — and several at once was enough to
+ * be refused. So requests past the budget **wait** for room rather than being
+ * sent and refused: a Play that takes a few seconds longer is better than one
+ * that fails half-way.
+ *
+ * Sixty in thirty seconds is well under what Spotify allows a normal app and
+ * still about two a second, which nothing here needs to beat.
+ */
+const BUDGET: Partial<Record<ProviderId, { requests: number; perMs: number }>> = {
+  spotify: { requests: 60, perMs: 30_000 },
+};
+const recent = new Map<ProviderId, number[]>();
+/** Set from a 429's `Retry-After`: every request to that provider waits until then. */
+const pausedUntil = new Map<ProviderId, number>();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Wait until a request to this provider is within its budget, then count it. */
+async function gate(provider: ProviderId): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    const pause = pausedUntil.get(provider) ?? 0;
+    if (pause > now) {
+      await sleep(pause - now);
+      continue;
+    }
+    const budget = BUDGET[provider];
+    if (!budget) return;
+    const sent = (recent.get(provider) ?? []).filter((at) => now - at < budget.perMs);
+    if (sent.length < budget.requests) {
+      sent.push(now);
+      recent.set(provider, sent);
+      return;
+    }
+    recent.set(provider, sent);
+    await sleep(budget.perMs - (now - sent[0]!) + 10);
+  }
+}
+
+/**
+ * A 429: wait as long as the provider asked — capped, so a mistaken header
+ * cannot stall the app for an hour — and hold every other request to it for
+ * the same time, rather than each finding the limit for itself.
+ */
+function backOff(provider: ProviderId, response: Response): number {
+  const wait = Math.min(Number(response.headers.get('retry-after') ?? 5) * 1000 || 5_000, 30_000);
+  pausedUntil.set(provider, Math.max(pausedUntil.get(provider) ?? 0, Date.now() + wait));
+  return wait;
+}
+
 /**
  * A GET against a provider's API with the token attached, refreshing once on a
  * 401.
@@ -424,10 +481,12 @@ export async function apiGet<T>(
    */
   extraHeaders: Record<string, string> = {}
 ): Promise<T> {
-  const attempt = async (token: string) =>
-    fetch(url, {
+  const attempt = async (token: string) => {
+    await gate(provider);
+    return fetch(url, {
       headers: { authorization: `Bearer ${token}`, accept: 'application/json', ...extraHeaders },
     });
+  };
 
   let response = await attempt(await accessTokenFor(provider));
 
@@ -446,8 +505,8 @@ export async function apiGet<T>(
    * fail visibly and be started again, not sit silently holding a request open.
    */
   if (response.status === 429) {
-    const wait = Math.min(Number(response.headers.get('retry-after') ?? 5) * 1000, 30_000);
-    await new Promise((r) => setTimeout(r, wait));
+    // `attempt` waits on the pause `backOff` sets, for this and every other request.
+    backOff(provider, response);
     response = await attempt(await accessTokenFor(provider));
   }
 
@@ -456,7 +515,57 @@ export async function apiGet<T>(
     throw new Error(`${PROVIDERS[provider].label} returned ${response.status}: ${body.slice(0, 300)}`);
   }
 
+  // "Nothing to report": Spotify's player answers 204 with no body when
+  // nothing is playing, which is an answer rather than a failure.
+  if (response.status === 204) return null as T;
   return (await response.json()) as T;
+}
+
+/**
+ * A write — POST, PUT or DELETE with a JSON body — with the same token refresh
+ * and rate-limit handling as `apiGet`. Separate rather than a flag on that one,
+ * because nearly every caller only reads and a write should look like a write
+ * where it is made. Answers null for an empty body (a 201 or 204 often has none).
+ */
+export async function apiSend<T>(
+  provider: ProviderId,
+  method: 'POST' | 'PUT' | 'DELETE',
+  url: string,
+  body: unknown
+): Promise<T | null> {
+  const attempt = async (token: string) => {
+    await gate(provider);
+    return fetch(url, {
+      method,
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json', 'content-type': 'application/json' },
+      // No body is an empty one rather than none: a PUT without a length is
+      // refused by some APIs (Spotify answers 411), and "null" is not nothing.
+      body: body == null ? '' : JSON.stringify(body),
+    });
+  };
+
+  let response = await attempt(await accessTokenFor(provider));
+  if (response.status === 401) {
+    const account = await getAccount(provider);
+    if (account?.refreshToken) response = await attempt(await refresh(provider, account));
+  }
+  if (response.status === 429) {
+    backOff(provider, response);
+    response = await attempt(await accessTokenFor(provider));
+  }
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${PROVIDERS[provider].label} returned ${response.status}: ${text.slice(0, 300)}`);
+  /*
+   * Not every success is JSON. Spotify's player endpoints answer 200 with a
+   * bare id in plain text ("syL2JAKYAr…"), and parsing it threw *after* the
+   * music had already started — so a request that worked reported failure.
+   */
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
 }
 
 /** Which scopes the provider actually granted, which is not what we asked for. */

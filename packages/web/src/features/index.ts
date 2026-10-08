@@ -54,6 +54,40 @@ export interface FeatureMeta {
   glyph: string;
   /** Where it sits in the drawer. Core items occupy 10–40. */
   order: number;
+  /**
+   * Parts of the screen worth reaching directly: listed under it in the menu
+   * and offered as tiles of their own on Home. Opening one opens the screen
+   * with the section's id as `focus`, which the screen reads as "show this".
+   */
+  sections?: SectionMeta[];
+}
+
+export interface SectionMeta {
+  /** What the screen receives as `focus`. */
+  id: string;
+  label: string;
+  glyph: string;
+  /** Listed in the menu unless you switch it off in Settings. */
+  inMenu?: boolean;
+  /**
+   * Whether it is on Home by default: always, never, or once `ready` says it
+   * is set up — a tile that only opens a setup screen is not worth a place on
+   * the first screen until it is.
+   */
+  onHome?: boolean | 'ready';
+  /** Whether it is set up. Asked when the app loads and whenever its feature changes. */
+  ready?: () => Promise<boolean>;
+  /**
+   * Whether it is doing something right now — Music while shuffle is on —
+   * shown as a dot beside it in the menu and on its Home tile. Asked at the
+   * same moments as `ready`.
+   */
+  live?: () => Promise<boolean>;
+  /**
+   * Which change announcements ask `ready` and `live` again. Without it, every
+   * change anywhere does — a habit ticked would re-ask whether Spotify is set up.
+   */
+  watch?: string[];
 }
 
 export interface WebFeature extends FeatureMeta {

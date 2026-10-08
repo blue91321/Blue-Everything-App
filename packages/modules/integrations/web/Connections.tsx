@@ -211,14 +211,17 @@ function LeaveOut({
   );
 }
 
-function ProviderCard({
+export function ProviderCard({
   provider,
   local,
   reload,
+  startOpen = false,
 }: {
   provider: ProviderInfo;
   local: boolean;
   reload: () => void;
+  /** Open rather than folded — the Music tab's setup shows one card, and it is the point. */
+  startOpen?: boolean;
 }) {
   const [busy, setBusy] = useState('');
   const [outcomes, setOutcomes] = useState<SyncOutcome[]>([]);
@@ -329,7 +332,7 @@ function ProviderCard({
       : 'not connected';
 
   return (
-    <details className="card provider">
+    <details className="card provider" open={startOpen || undefined}>
       {/*
         Collapsed by default. Five providers with their full capability list,
         citations, credential form and setup steps is several screens of text to

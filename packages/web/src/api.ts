@@ -600,7 +600,7 @@ export interface VoiceStatus {
   }[];
 }
 
-export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'media' | 'launch' | 'pause' | 'cancel';
+export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'media' | 'launch' | 'pause' | 'cancel' | 'music';
 
 export interface VoiceCommand {
   id: string;
@@ -1288,6 +1288,8 @@ export interface FollowsView {
 
 export interface MusicView {
   breakdown: Array<{ category: string; count: number }>;
+  /** Per credited artist (a video's channel), most first; counts add up to more than `items`. */
+  byArtist?: { items: number; artists: Array<{ name: string; count: number }> };
 }
 
 export const api = {
@@ -1830,6 +1832,55 @@ export const api = {
     /** Dissolve a whole group, which is what a merged row comes apart into. */
     unlinkPerson: (personId: string) => post<{ ok: boolean }>('/api/integrations/friends/unlink', { personId }),
     collections: () => request<MediaCollection[]>('/api/integrations/collections'),
+    /** The Shuffle card: lists, the songs and artists you can boost, the boosts, and whether playback is allowed. */
+    shuffleSources: () =>
+      request<{
+        connected: boolean;
+        canPlay: boolean;
+        sources: Array<{ id: string; name: string; itemCount: number; kind: string; readable: boolean }>;
+        songs: Array<{ uri: string; title: string; artist: string; artistIds: string[]; lists: string[] }>;
+        weights: { songs: Record<string, number>; artists: Record<string, number> };
+        session: {
+          active: boolean;
+          order: 'shuffle' | 'random' | null;
+          device: string | null;
+          played: number;
+          queued: number;
+          lists: string[];
+          repeatAfter: number | null;
+          queueAhead: number;
+          ended: { at: number; why: string } | null;
+        };
+      }>('/api/integrations/spotify/shuffle'),
+    /** Whether Spotify is set up for Music, and whether shuffle is on — for the menu's dot. */
+    spotifyStatus: () =>
+      request<{ connected: boolean; canPlay: boolean; active: boolean }>('/api/integrations/spotify/status'),
+    /** Stop keeping the queue topped up; what is queued plays on. */
+    stopShuffle: (pause = false) => post<unknown>('/api/integrations/spotify/shuffle/stop', { pause }),
+    /** How many songs to keep queued ahead while a session runs. */
+    setQueueAhead: (queueAhead: number) =>
+      request<{ queueAhead: number }>('/api/integrations/spotify/shuffle/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ queueAhead }),
+      }),
+    /** Play, or queue, these collections' songs in an even shuffle or a weighted random order. */
+    shuffle: (
+      mode: 'play' | 'queue',
+      collectionIds: string[] | undefined,
+      order: 'shuffle' | 'random',
+      repeatAfter: number,
+      recency: { recent?: { within: number; factor: number }; fresh?: { after: number; factor: number } } = {}
+    ) =>
+      post<{ songs: number; of: number; mode: 'play' | 'queue'; device: string }>('/api/integrations/spotify/shuffle', {
+        mode,
+        order,
+        repeatAfter,
+        collectionIds,
+        ...recency,
+      }),
+    /** Boost a song (by URI) or an artist (by id) for the random order; 1 removes the boost. */
+    setShuffleWeight: (kind: 'song' | 'artist', id: string, weight: number) =>
+      request<unknown>('/api/integrations/spotify/weights', { method: 'PUT', body: JSON.stringify({ kind, id, weight }) }),
     /** Tick or untick one playlist. */
     setCollectionIgnored: (id: string, ignored: boolean) =>
       patch<{ id: string; ignored: boolean }>(`/api/integrations/collections/${id}`, { ignored }),

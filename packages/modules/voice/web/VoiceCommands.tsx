@@ -15,6 +15,7 @@ const KIND_LABEL: Record<VoiceCommandKind, string> = {
   // of the ways to stop listening, because that is what it is from where you
   // is sitting; only the *duration* differs.
   cancel: 'Stop listening',
+  music: 'Play music',
 };
 
 /**
@@ -24,7 +25,15 @@ const KIND_LABEL: Record<VoiceCommandKind, string> = {
  * than a sixth thing to choose between — offering both side by side made two
  * near-identical entries and left you guessing which one meant "never mind".
  */
-const SELECTABLE_KINDS: VoiceCommandKind[] = ['habit', 'note', 'url', 'hotkey', 'media', 'launch', 'pause'];
+const SELECTABLE_KINDS: VoiceCommandKind[] = ['habit', 'note', 'url', 'hotkey', 'media', 'music', 'launch', 'pause'];
+
+/** What a music command does — Connections → Music's Shuffle card. Display copy only. */
+const MUSIC_LABEL: Record<string, string> = {
+  shuffle: 'Play shuffled',
+  random: 'Play random',
+  queue: 'Add to the queue',
+  stop: 'Stop topping up the queue',
+};
 
 /**
  * The media controls, duplicated from `MEDIA_LABEL` in @everything/shared.
@@ -72,6 +81,7 @@ function describeKind(command: VoiceCommand): string {
     return `Control media · ${MEDIA_LABEL[command.target ?? ''] ?? 'unknown control'}`;
   }
   if (command.kind === 'launch') return `Start a game or app · ${command.target ?? 'nothing chosen'}`;
+  if (command.kind === 'music') return `Play music · ${MUSIC_LABEL[command.target ?? ''] ?? 'nothing chosen'}`;
   if (command.kind === 'cancel') return 'Stop listening · just this sentence';
   if (command.kind === 'pause') {
     return command.pauseMinutes
@@ -92,6 +102,8 @@ const KIND_HELP: Record<VoiceCommandKind, string> = {
     'Only things on the Games list, which fills itself in as you use this PC. What it starts is whatever that row says, so a mis-heard phrase can only ever open something you have already run yourself.',
   pause: 'Closes the microphone — for a moment, for a few minutes, or until you turn it back on.',
   cancel: 'Closes the microphone.',
+  music:
+    'Starts Spotify the way Connections → Music does, on whichever phone or PC has it open. It plays from all your lists with your boosts and queue size; which lists you ticked and the repeat gap are chosen per device on that tab, so voice uses all of them and a gap of 50.',
 };
 
 /**
@@ -113,6 +125,7 @@ const GROUPS: { id: string; label: string; kinds: VoiceCommandKind[] }[] = [
   { id: 'url', label: 'Websites', kinds: ['url'] },
   { id: 'hotkey', label: 'Hotkeys', kinds: ['hotkey'] },
   { id: 'media', label: 'Media', kinds: ['media'] },
+  { id: 'music', label: 'Music', kinds: ['music'] },
   { id: 'launch', label: 'Games and apps', kinds: ['launch'] },
   { id: 'stop', label: 'Stop listening', kinds: ['pause', 'cancel'] },
 ];
@@ -470,6 +483,22 @@ function CommandEditor({
         >
           <option value="">choose a control…</option>
           {Object.entries(MEDIA_LABEL).map(([value, text]) => (
+            <option key={value} value={value}>
+              {text}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {kind === 'music' && (
+        <select
+          style={{ marginTop: 10 }}
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          aria-label="What it does with the music"
+        >
+          <option value="">choose what it does…</option>
+          {Object.entries(MUSIC_LABEL).map(([value, text]) => (
             <option key={value} value={value}>
               {text}
             </option>
