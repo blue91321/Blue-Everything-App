@@ -541,9 +541,9 @@ const MUSIC_LABEL: Record<string, string> = {
  * the boundary both already respect: with integrations gone it answers 404,
  * which becomes "Music isn't installed". It goes to loopback by IP with no
  * forwarding headers, which is what local trust asks for, so no token is
- * needed. Which lists and the repeat gap are chosen per device on the Music
- * tab, so voice uses every list and a gap of 50; boosts and the queue size are
- * the server's and apply as they do from the tab.
+ * needed. The lists, gap, recency, boosts and queue size are the Music tab's
+ * own, kept on the server, so voice plays exactly what the tab would; only
+ * Shuffle or Random comes from the command.
  */
 async function musicRequest(path: string, body: unknown): Promise<{ ok: true } | { ok: false; why: string }> {
   try {

@@ -14,19 +14,14 @@
  * A song listed twice — in two playlists, or as both the single and the album
  * version — counts once.
  *
- * Which lists, which order and the gap are remembered per device, like the
- * Library's sort. Boosts are on the server, so they are the same everywhere.
+ * Everything set here is on the server and shared by every device — there is
+ * one queue, so there is one set of choices. Voice plays with them too.
  */
-import { useMemo, useState } from 'react';
-import { api } from '@app/api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api, type ShuffleSettings } from '@app/api';
 import { useAsync } from '@app/useAsync';
 import { isMobile } from '@app/device';
 
-const PICKS = 'spotify-shuffle-picks';
-const ORDER = 'spotify-shuffle-order';
-const GAP = 'spotify-shuffle-gap';
-const RECENT = 'spotify-shuffle-recent';
-const FRESH = 'spotify-shuffle-fresh';
 
 function stored<T>(key: string, fallback: T, valid: (v: unknown) => v is T): T {
   try {
@@ -37,15 +32,6 @@ function stored<T>(key: string, fallback: T, valid: (v: unknown) => v is T): T {
     return fallback;
   }
 }
-function keep(key: string, value: unknown) {
-  try {
-    if (value === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Remembered for this visit only.
-  }
-}
-
 /** Up for more often, down for less; 0 leaves it out of Random altogether. */
 const BOOSTS = [10, 5, 3, 2, 1.5];
 const DAMPS = [0.5, 0.25, 0.1];
@@ -54,24 +40,24 @@ export function Shuffle() {
   const info = useAsync(() => api.integrations.shuffleSources(), [], ['integrations']);
   // Null means "every list", so a playlist made later is in without ticking it.
   const [picks, setPicks] = useState<string[] | null>(() =>
-    stored(PICKS, null, (v): v is string[] | null => v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string')))
+    stored('spotify-shuffle-picks', null, (v): v is string[] | null => v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string')))
   );
   const [order, setOrder] = useState<'shuffle' | 'random'>(() =>
-    stored(ORDER, 'shuffle', (v): v is 'shuffle' | 'random' => v === 'shuffle' || v === 'random')
+    stored('spotify-shuffle-order', 'shuffle', (v): v is 'shuffle' | 'random' => v === 'shuffle' || v === 'random')
   );
-  const [gap, setGap] = useState<number>(() => stored(GAP, 50, (v): v is number => typeof v === 'number' && v >= 0));
+  const [gap, setGap] = useState<number>(() => stored('spotify-shuffle-gap', 50, (v): v is number => typeof v === 'number' && v >= 0));
   /*
    * Random's recency settings: songs heard within `within` songs weighted down
    * by `factor`, songs not heard within `after` songs weighted up by theirs.
-   * A count of 0 is off. Per device, like the gap.
+   * A count of 0 is off.
    */
   const [recent, setRecent] = useState<{ within: number; factor: number }>(() =>
-    stored(RECENT, { within: 0, factor: 0.5 }, (v): v is { within: number; factor: number } =>
+    stored('spotify-shuffle-recent', { within: 0, factor: 0.5 }, (v): v is { within: number; factor: number } =>
       typeof v === 'object' && v !== null && typeof (v as { within?: unknown }).within === 'number'
     )
   );
   const [fresh, setFresh] = useState<{ after: number; factor: number }>(() =>
-    stored(FRESH, { after: 0, factor: 2 }, (v): v is { after: number; factor: number } =>
+    stored('spotify-shuffle-fresh', { after: 0, factor: 2 }, (v): v is { after: number; factor: number } =>
       typeof v === 'object' && v !== null && typeof (v as { after?: unknown }).after === 'number'
     )
   );
@@ -80,6 +66,69 @@ export function Shuffle() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ songs: number; of: number; mode: 'play' | 'queue'; device: string } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+
+  /*
+   * The settings live on the PC and every device shows the same ones — there
+   * is one queue, so two copies of "what to play" only meant the phone's card
+   * describing choices the PC was not using. The state above starts from what
+   * this device had, so the first paint is not a flash of defaults, and is
+   * replaced by the server's copy as soon as it arrives, and on every change
+   * announced after that (the other device saving, say).
+   *
+   * Not while a save of ours is waiting or under way: the reload a save causes
+   * can land after the next keystroke, and taking it then would type over you.
+   */
+  const pending = useRef(0);
+  const outgoing = useRef<Partial<ShuffleSettings>>({});
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handedOver = useRef(false);
+
+  useEffect(() => {
+    const s = info.data?.settings;
+    if (!s || pending.current > 0) return;
+    /*
+     * The first device to open this after the move hands over what it had
+     * kept in its browser, so nobody's choices are lost to the defaults. Once:
+     * after that the server's copy is the only one.
+     */
+    if (!s.saved && !handedOver.current) {
+      handedOver.current = true;
+      const mine: Partial<ShuffleSettings> = { picks, order, repeatAfter: gap, recent, fresh };
+      save(mine, 0);
+      try {
+        for (const k of ['spotify-shuffle-picks', 'spotify-shuffle-order', 'spotify-shuffle-gap', 'spotify-shuffle-recent', 'spotify-shuffle-fresh']) {
+          localStorage.removeItem(k);
+        }
+      } catch {
+        // Nothing stored, or storage refused: either way nothing to clean.
+      }
+      return;
+    }
+    setPicks(s.picks);
+    setOrder(s.order);
+    setGap(s.repeatAfter);
+    setRecent(s.recent);
+    setFresh(s.fresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [info.data]);
+
+  /** Send a change to the server — at once, or after `delayMs` for typing. */
+  function save(part: Partial<ShuffleSettings>, delayMs = 0) {
+    outgoing.current = { ...outgoing.current, ...part };
+    if (timer.current) clearTimeout(timer.current);
+    else pending.current += 1;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      const send = outgoing.current;
+      outgoing.current = {};
+      void api.integrations
+        .setShuffleSettings(send)
+        .catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)))
+        .finally(() => {
+          pending.current -= 1;
+        });
+    }, delayMs);
+  }
   // The queue-ahead box while it is being typed in; null shows the saved number.
   const [aheadDraft, setAheadDraft] = useState<string | null>(null);
 
@@ -140,7 +189,7 @@ export function Shuffle() {
     const kept = readable.filter((s) => ids.includes(s.id)).map((s) => s.id);
     const next = kept.length === readable.length ? null : kept;
     setPicks(next);
-    keep(PICKS, next);
+    save({ picks: next });
   };
   const toggle = (id: string) => choose(isOn(id) ? chosen.map((s) => s.id).filter((x) => x !== id) : [...chosen.map((s) => s.id), id]);
   const setGroup = (group: typeof readable, on: boolean) => {
@@ -181,8 +230,7 @@ export function Shuffle() {
     setAheadDraft(null);
     if (!aheadDraft || n === session.queueAhead) return;
     try {
-      await api.integrations.setQueueAhead(Math.min(maxAhead, Math.max(minAhead, n)));
-      info.reload();
+      save({ queueAhead: Math.min(maxAhead, Math.max(minAhead, n)) });
     } catch (error) {
       setProblem(error instanceof Error ? error.message : String(error));
     }
@@ -397,7 +445,7 @@ export function Shuffle() {
                 checked={order === 'shuffle'}
                 onChange={() => {
                   setOrder('shuffle');
-                  keep(ORDER, 'shuffle');
+                  save({ order: 'shuffle' });
                 }}
               />
               Shuffle <span className="meta">every song once</span>
@@ -408,7 +456,7 @@ export function Shuffle() {
                 checked={order === 'random'}
                 onChange={() => {
                   setOrder('random');
-                  keep(ORDER, 'random');
+                  save({ order: 'random' });
                 }}
               />
               Random <span className="meta">songs can come back, boosts count</span>
@@ -424,7 +472,7 @@ export function Shuffle() {
                 onChange={(e) => {
                   const n = Math.max(0, Number(e.target.value.replace(/\D/g, '')) || 0);
                   setGap(n);
-                  keep(GAP, n);
+                  save({ repeatAfter: n }, 500);
                 }}
               />
               other songs
@@ -452,7 +500,7 @@ export function Shuffle() {
                   onChange={(e) => {
                     const v = { ...recent, within: Number(e.target.value.replace(/\D/g, '')) || 0 };
                     setRecent(v);
-                    keep(RECENT, v);
+                    save({ recent: v }, 500);
                   }}
                 />
                 songs:
@@ -461,7 +509,7 @@ export function Shuffle() {
                   onChange={(e) => {
                     const v = { ...recent, factor: Number(e.target.value) };
                     setRecent(v);
-                    keep(RECENT, v);
+                    save({ recent: v }, 500);
                   }}
                 >
                   {[0.75, 0.5, 0.25, 0.1].map((f) => (
@@ -481,7 +529,7 @@ export function Shuffle() {
                   onChange={(e) => {
                     const v = { ...fresh, after: Number(e.target.value.replace(/\D/g, '')) || 0 };
                     setFresh(v);
-                    keep(FRESH, v);
+                    save({ fresh: v }, 500);
                   }}
                 />
                 songs:
@@ -490,7 +538,7 @@ export function Shuffle() {
                   onChange={(e) => {
                     const v = { ...fresh, factor: Number(e.target.value) };
                     setFresh(v);
-                    keep(FRESH, v);
+                    save({ fresh: v }, 500);
                   }}
                 >
                   {[1.5, 2, 3, 5].map((f) => (

@@ -1286,6 +1286,18 @@ export interface FollowsView {
   hiddenCount?: number;
 }
 
+/** The Shuffle card's settings, held on the PC so every device shares them. */
+export interface ShuffleSettings {
+  queueAhead: number;
+  picks: string[] | null;
+  order: 'shuffle' | 'random';
+  repeatAfter: number;
+  recent: { within: number; factor: number };
+  fresh: { after: number; factor: number };
+  /** False until anything has been saved — see the card's hand-over. */
+  saved: boolean;
+}
+
 export interface MusicView {
   breakdown: Array<{ category: string; count: number }>;
   /** Per credited artist (a video's channel), most first; counts add up to more than `items`. */
@@ -1851,7 +1863,14 @@ export const api = {
           queueAhead: number;
           ended: { at: number; why: string } | null;
         };
+        settings: ShuffleSettings;
       }>('/api/integrations/spotify/shuffle'),
+    /** Change any of the Shuffle card's settings; shared by every device. */
+    setShuffleSettings: (part: Partial<Omit<ShuffleSettings, 'saved'>>) =>
+      request<ShuffleSettings>('/api/integrations/spotify/shuffle/settings', {
+        method: 'PUT',
+        body: JSON.stringify(part),
+      }),
     /** Whether Spotify is set up for Music, and whether shuffle is on — for the menu's dot. */
     spotifyStatus: () =>
       request<{ connected: boolean; canPlay: boolean; active: boolean }>('/api/integrations/spotify/status'),

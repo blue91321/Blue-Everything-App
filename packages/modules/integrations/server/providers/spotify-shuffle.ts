@@ -829,20 +829,76 @@ export const QUEUE_AHEAD_MIN = 1;
 export const QUEUE_AHEAD_MAX = 100;
 const QUEUE_AHEAD_DEFAULT = 20;
 
-export function readShuffleSettings(): { queueAhead: number } {
+/**
+ * Everything the Shuffle card sets, in one place on the server.
+ *
+ * Which lists, the order, the gap and the recency settings were kept per
+ * device, in the browser, on the reasoning the Library's sort is: sorting the
+ * phone's shelf should not reorder the PC's. That reasoning does not hold
+ * here. There is one queue and one session, shared by the phone and the PC, so
+ * two copies of "what to play" only meant the phone's card describing choices
+ * the PC was not using. Kept with the queue size, so voice uses them too.
+ *
+ * `saved` is false until anything has been written, which is how the first
+ * device to open the card after this moved hands over the choices it had.
+ */
+export type ShuffleSettings = {
+  queueAhead: number;
+  /** Collection ids; null is "every list", so a playlist made later is included. */
+  picks: string[] | null;
+  order: ShuffleOrder;
+  repeatAfter: number;
+  recent: { within: number; factor: number };
+  fresh: { after: number; factor: number };
+  saved: boolean;
+};
+
+const DEFAULTS: ShuffleSettings = {
+  queueAhead: QUEUE_AHEAD_DEFAULT,
+  picks: null,
+  order: 'shuffle',
+  repeatAfter: 50,
+  recent: { within: 0, factor: 0.5 },
+  fresh: { after: 0, factor: 2 },
+  saved: false,
+};
+
+const num = (v: unknown, lo: number, hi: number, fallback: number) =>
+  typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback;
+
+/** Read back defensively: a hand-edited or half-written file falls back field by field. */
+export function readShuffleSettings(): ShuffleSettings {
+  let v: Record<string, unknown> = {};
   try {
-    const v = JSON.parse(readFileSync(SETTINGS, 'utf8').replace(/^\uFEFF/, '')) as { queueAhead?: unknown };
-    const n = typeof v.queueAhead === 'number' ? Math.round(v.queueAhead) : QUEUE_AHEAD_DEFAULT;
-    return { queueAhead: Math.min(QUEUE_AHEAD_MAX, Math.max(QUEUE_AHEAD_MIN, n)) };
+    v = JSON.parse(readFileSync(SETTINGS, 'utf8').replace(/^\uFEFF/, '')) as Record<string, unknown>;
   } catch {
-    return { queueAhead: QUEUE_AHEAD_DEFAULT };
+    return { ...DEFAULTS };
   }
+  const recent = (v.recent ?? {}) as Record<string, unknown>;
+  const fresh = (v.fresh ?? {}) as Record<string, unknown>;
+  return {
+    queueAhead: Math.round(num(v.queueAhead, QUEUE_AHEAD_MIN, QUEUE_AHEAD_MAX, DEFAULTS.queueAhead)),
+    picks: Array.isArray(v.picks) ? v.picks.filter((x): x is string => typeof x === 'string') : null,
+    order: v.order === 'random' ? 'random' : 'shuffle',
+    repeatAfter: Math.round(num(v.repeatAfter, 0, 100_000, DEFAULTS.repeatAfter)),
+    recent: { within: Math.round(num(recent.within, 0, 100_000, 0)), factor: num(recent.factor, 0, 1, 0.5) },
+    fresh: { after: Math.round(num(fresh.after, 0, 100_000, 0)), factor: num(fresh.factor, 1, 100, 2) },
+    // Only the card's own save marks it; a file holding just the queue size,
+    // from before this, has not been handed anybody's choices yet.
+    saved: v.saved === true,
+  };
 }
 
-export function setQueueAhead(n: number): { queueAhead: number } {
-  const queueAhead = Math.min(QUEUE_AHEAD_MAX, Math.max(QUEUE_AHEAD_MIN, Math.round(n)));
+export function saveShuffleSettings(part: Partial<Omit<ShuffleSettings, 'saved'>>): ShuffleSettings {
+  const next = { ...readShuffleSettings(), ...part, saved: true };
+  next.queueAhead = Math.round(Math.min(QUEUE_AHEAD_MAX, Math.max(QUEUE_AHEAD_MIN, next.queueAhead)));
   mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${SETTINGS}.tmp`, JSON.stringify({ queueAhead }, null, 2));
+  writeFileSync(`${SETTINGS}.tmp`, JSON.stringify(next, null, 2));
   renameSync(`${SETTINGS}.tmp`, SETTINGS);
-  return { queueAhead };
+  return next;
+}
+
+/** The queue size alone — kept for the route an older card calls. */
+export function setQueueAhead(n: number): { queueAhead: number } {
+  return { queueAhead: saveShuffleSettings({ queueAhead: n }).queueAhead };
 }

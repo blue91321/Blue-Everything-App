@@ -103,7 +103,7 @@ const KIND_HELP: Record<VoiceCommandKind, string> = {
   pause: 'Closes the microphone — for a moment, for a few minutes, or until you turn it back on.',
   cancel: 'Closes the microphone.',
   music:
-    'Starts Spotify the way Connections → Music does, on whichever phone or PC has it open. It plays from all your lists with your boosts and queue size; which lists you ticked and the repeat gap are chosen per device on that tab, so voice uses all of them and a gap of 50.',
+    'Starts Spotify the way Connections → Music does, on whichever phone or PC has it open, with the lists, gap, boosts and queue size chosen on that tab. Shuffle or Random is the one you pick here.',
 };
 
 /**

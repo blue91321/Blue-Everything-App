@@ -62,7 +62,8 @@ import * as steam from './providers/steam.js';
 import {
   readWeights,
   sessionStatus,
-  setQueueAhead,
+  readShuffleSettings,
+  saveShuffleSettings,
   setWeight,
   shuffleSources,
   shuffleOnSpotify,
@@ -540,6 +541,7 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
       songs: songs.map((s) => ({ uri: s.uri, title: s.title, artist: s.artist, artistIds: s.artistIds, lists: s.lists })),
       weights: readWeights(),
       session: sessionStatus(),
+      settings: readShuffleSettings(),
     };
   });
 
@@ -554,9 +556,24 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** How many songs to keep queued ahead while a session runs. */
+  /**
+   * The Shuffle card's settings, any of them. Shared by every device, so a
+   * change on the phone shows on the PC's card at once (the announcement) and
+   * is what voice plays with.
+   */
   app.put('/api/integrations/spotify/shuffle/settings', async (request) => {
-    const body = z.object({ queueAhead: z.number().int().min(QUEUE_AHEAD_MIN).max(QUEUE_AHEAD_MAX) }).parse(request.body);
-    const result = setQueueAhead(body.queueAhead);
+    const body = z
+      .object({
+        queueAhead: z.number().int().min(QUEUE_AHEAD_MIN).max(QUEUE_AHEAD_MAX).optional(),
+        picks: z.array(z.string().min(1)).max(500).nullable().optional(),
+        order: z.enum(['shuffle', 'random']).optional(),
+        repeatAfter: z.number().int().min(0).max(100_000).optional(),
+        recent: z.object({ within: z.number().int().min(0).max(100_000), factor: z.number().min(0).max(1) }).optional(),
+        fresh: z.object({ after: z.number().int().min(0).max(100_000), factor: z.number().min(1).max(100) }).optional(),
+      })
+      .parse(request.body ?? {});
+    const part = Object.fromEntries(Object.entries(body).filter(([, v]) => v !== undefined));
+    const result = saveShuffleSettings(part);
     changes.emitChange('integrations');
     return result;
   });
@@ -581,8 +598,10 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
     const body = z
       .object({
         mode: z.enum(['play', 'queue']).default('play'),
-        order: z.enum(['shuffle', 'random']).default('shuffle'),
-        repeatAfter: z.number().int().min(0).max(100_000).default(50),
+        // Each falls back to the saved settings: voice sends only the mode and
+        // the order, and plays from the lists and gap the card has chosen.
+        order: z.enum(['shuffle', 'random']).optional(),
+        repeatAfter: z.number().int().min(0).max(100_000).optional(),
         collectionIds: z.array(z.string().min(1)).max(500).optional(),
         recent: z.object({ within: z.number().int().min(0).max(100_000), factor: z.number().min(0).max(1) }).optional(),
         fresh: z.object({ after: z.number().int().min(0).max(100_000), factor: z.number().min(1).max(100) }).optional(),
@@ -593,11 +612,20 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
         from: z.enum(['phone', 'computer']).optional(),
       })
       .parse(request.body ?? {});
+    const saved = readShuffleSettings();
+    const order = body.order ?? saved.order;
     try {
-      const result = await shuffleOnSpotify(body.mode, body.collectionIds, body.order, body.repeatAfter, {
-        recent: body.recent,
-        fresh: body.fresh,
-      }, body.from ?? 'computer');
+      const result = await shuffleOnSpotify(
+        body.mode,
+        body.collectionIds ?? saved.picks ?? undefined,
+        order,
+        body.repeatAfter ?? saved.repeatAfter,
+        {
+          recent: body.recent ?? (saved.recent.within > 0 ? saved.recent : undefined),
+          fresh: body.fresh ?? (saved.fresh.after > 0 ? saved.fresh : undefined),
+        },
+        body.from ?? 'computer'
+      );
       changes.emitChange('integrations');
       return result;
     } catch (error) {

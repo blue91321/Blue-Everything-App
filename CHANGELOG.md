@@ -7,6 +7,8 @@ files `npm version` does not touch.
 
 ## 0.5.6
 
+- Shuffle's settings are shared between the phone and the PC: which lists, Shuffle or Random, the gap, the recency settings and the queue size. A change on one shows on the other at once, and voice plays with them. The first device to open the card after updating keeps the choices it had.
+
 - Fixed: pressing Play on the phone could start the music on the PC, because Spotify calls the last device used "active" even when it's paused. Play now uses the kind of device you pressed it on (phone or computer), unless music is already playing somewhere, which is never moved.
 
 - Spotify requests stay within a budget (60 per 30 seconds) and wait rather than being refused; a refusal pauses every Spotify request for as long as Spotify asks. Liked Songs is only re-read when it has changed, the sync before Play runs at most every ten minutes, and the queue size is capped at 100.

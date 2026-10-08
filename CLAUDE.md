@@ -5192,8 +5192,8 @@ random, queue, or stop topping up, as Connections → Music does. Voice and
 integrations are separate packages and either can be deleted, so voice may not
 import the shuffle. It POSTs to that package's own route on loopback instead,
 which local trust lets through without a token. A 404 becomes "Music isn't
-installed". Which lists and the repeat gap are chosen per device, so voice uses
-every list and a gap of 50; boosts and the queue size are server-side and apply.
+installed". The Music tab's settings are on the server, so voice plays with the same lists,
+gap, recency, boosts and queue size; only Shuffle or Random comes from the command.
 
 **The division of labour is deliberate.** Anything touching *data* happens on
 the server, which owns the database. Anything touching *this machine* — a
@@ -6990,8 +6990,15 @@ with anything in brackets or after " - " removed, plus the first artist. Your
 library: 93 listings, 80 songs.
 
 Boosts are in `data/spotify-weights.json` (a package cannot add a table), keyed
-by track URI and artist id. They are the same on every device, while which
-lists, which order and the gap are per device.
+by track URI and artist id. **Every other setting is in `spotify-shuffle.json`
+and shared too**: which lists, the order, the gap, recency and the queue size.
+They were per device, like the Library's sort, and that was wrong here: there is
+one queue and one session, so the phone's card described choices the PC was not
+using. The card saves each change (number boxes after half a second of no
+typing) and takes the server's copy on every `integrations` announcement, except
+while a save of its own is pending, or the reload would type over you. `saved`
+is false until the first save, and the first device to open the card after this
+landed hands over what its browser had, so nobody's choices went to the defaults.
 
 **It keeps the queue topped up, and that is the one timer in this module
 besides coursework.** Play starts the first song and queues the next N behind
