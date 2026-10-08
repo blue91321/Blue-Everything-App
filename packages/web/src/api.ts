@@ -1869,7 +1869,8 @@ export const api = {
       collectionIds: string[] | undefined,
       order: 'shuffle' | 'random',
       repeatAfter: number,
-      recency: { recent?: { within: number; factor: number }; fresh?: { after: number; factor: number } } = {}
+      recency: { recent?: { within: number; factor: number }; fresh?: { after: number; factor: number } } = {},
+      from: 'phone' | 'computer' = 'computer'
     ) =>
       post<{ songs: number; of: number; mode: 'play' | 'queue'; device: string }>('/api/integrations/spotify/shuffle', {
         mode,
@@ -1877,6 +1878,7 @@ export const api = {
         repeatAfter,
         collectionIds,
         ...recency,
+        from,
       }),
     /** Boost a song (by URI) or an artist (by id) for the random order; 1 removes the boost. */
     setShuffleWeight: (kind: 'song' | 'artist', id: string, weight: number) =>

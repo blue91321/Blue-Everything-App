@@ -7055,6 +7055,14 @@ What was coming next (the rest of an album or playlist) goes, the song carries
 on with at most a blip, and the session waits until the first of its own songs
 plays. Songs queued by hand in Spotify cannot be removed by any app, and stay.
 
+**Which device: where you pressed Play, not Spotify's "active" one.**
+Spotify's active device is the last one that played, paused or not, so Play on
+the phone with the PC paused from earlier started the music on the PC.
+`pickDevice` keeps a device that is **playing**, so music on is never moved.
+Otherwise it uses the kind of device Play came from (the card sends `phone` or
+`computer` from `isMobile()`; voice and older cards count as the PC), and only
+then falls back to active, then first.
+
 It needs a device. The active one if there is one, else the first Spotify
 lists, so a phone with the app open but idle works. With none, it says to open
 Spotify, because the API cannot start the app. It needs

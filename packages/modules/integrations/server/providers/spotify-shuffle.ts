@@ -191,7 +191,9 @@ async function startShuffle(
   collectionIds: string[] | undefined,
   order: ShuffleOrder = 'shuffle',
   repeatAfter = 50,
-  recency: Omit<Recency, 'history'> = {}
+  recency: Omit<Recency, 'history'> = {},
+  /** What kind of device Play was pressed on, so the music starts there — see `pickDevice`. */
+  from: 'phone' | 'computer' | null = null
 ): Promise<ShuffleResult> {
   const account = await getAccount('spotify');
   if (!account) throw new Error('Spotify is not connected.');
@@ -278,9 +280,11 @@ async function startShuffle(
    * nothing playing still works. With none at all there is nothing to do but
    * say so — Spotify cannot start an app on your phone for you.
    */
-  const { devices } = (await apiGet<{ devices: Device[] }>('spotify', `${API}/me/player/devices`)) ?? { devices: [] };
+  const { devices } = (await apiGet<{ devices: (Device & { type?: string })[] }>('spotify', `${API}/me/player/devices`)) ?? {
+    devices: [],
+  };
   const usable = devices.filter((d) => d.id && !d.is_restricted);
-  const device = usable.find((d) => d.is_active) ?? usable[0];
+  const device = pickDevice(usable, player?.is_playing === true, from);
   if (!device?.id) {
     throw new Error('Spotify is not open anywhere. Open it on your phone or PC (it does not have to be playing), then try again.');
   }
@@ -500,6 +504,37 @@ export async function resumeSession(): Promise<void> {
     foreign: new Set(),
     resume: saved.resume,
   });
+}
+
+/**
+ * Where to play.
+ *
+ * Spotify's "active" device is the one that played last, playing or not — so
+ * pressing Play on the phone, with the PC paused from earlier, started the
+ * music on the PC: the phone was listed, just not active. Now:
+ *
+ * 1. Something **playing** keeps its device. Music already on is never moved.
+ * 2. Otherwise the kind of device Play was pressed on: a phone for the phone,
+ *    a computer for the PC. Voice counts as the PC, where the microphone is.
+ * 3. Otherwise Spotify's active device, then the first it lists.
+ */
+export function pickDevice<D extends { is_active: boolean; type?: string }>(
+  usable: D[],
+  playing: boolean,
+  from: 'phone' | 'computer' | null
+): D | undefined {
+  const active = usable.find((d) => d.is_active);
+  if (playing && active) return active;
+  if (from) {
+    const kind = (d: D) => (d.type ?? '').toLowerCase();
+    const same = usable.filter((d) =>
+      from === 'phone' ? ['smartphone', 'tablet'].includes(kind(d)) : kind(d) === 'computer'
+    );
+    // The active one of that kind if there is one, else the first of them.
+    const pick = same.find((d) => d.is_active) ?? same[0];
+    if (pick) return pick;
+  }
+  return active ?? usable[0];
 }
 
 /* ---- keeping the queue topped up ---------------------------------- */

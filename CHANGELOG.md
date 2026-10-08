@@ -7,6 +7,8 @@ files `npm version` does not touch.
 
 ## 0.5.6
 
+- Fixed: pressing Play on the phone could start the music on the PC, because Spotify calls the last device used "active" even when it's paused. Play now uses the kind of device you pressed it on (phone or computer), unless music is already playing somewhere, which is never moved.
+
 - Spotify requests stay within a budget (60 per 30 seconds) and wait rather than being refused; a refusal pauses every Spotify request for as long as Spotify asks. Liked Songs is only re-read when it has changed, the sync before Play runs at most every ten minutes, and the queue size is capped at 100.
 - Spotify's setup steps follow the developer dashboard in order (Web API, redirect URI, Client ID), and the Music tab says Premium is needed before you start.
 

@@ -589,13 +589,15 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
         // Play never cuts the song on off any more; kept so an older card's
         // `false` is still accepted (and ignored).
         keepCurrent: z.boolean().optional(),
+        // The kind of device Play was pressed on; absent (voice, an older card) counts as the PC.
+        from: z.enum(['phone', 'computer']).optional(),
       })
       .parse(request.body ?? {});
     try {
       const result = await shuffleOnSpotify(body.mode, body.collectionIds, body.order, body.repeatAfter, {
         recent: body.recent,
         fresh: body.fresh,
-      });
+      }, body.from ?? 'computer');
       changes.emitChange('integrations');
       return result;
     } catch (error) {

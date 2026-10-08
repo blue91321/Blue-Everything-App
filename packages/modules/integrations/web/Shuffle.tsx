@@ -20,6 +20,7 @@
 import { useMemo, useState } from 'react';
 import { api } from '@app/api';
 import { useAsync } from '@app/useAsync';
+import { isMobile } from '@app/device';
 
 const PICKS = 'spotify-shuffle-picks';
 const ORDER = 'spotify-shuffle-order';
@@ -201,7 +202,7 @@ export function Shuffle() {
         await api.integrations.shuffle(mode, picks ? chosen.map((s) => s.id) : undefined, order, effectiveGap, {
           recent: recent.within > 0 ? recent : undefined,
           fresh: fresh.after > 0 ? fresh : undefined,
-        })
+        }, isMobile() ? 'phone' : 'computer')
       );
       info.reload();
     } catch (error) {
