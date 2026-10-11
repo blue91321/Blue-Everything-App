@@ -5,6 +5,10 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## Unreleased
+
+- Fixed: the desktop window could go white after the app was rebuilt or updated. A window still holding the old page asked for the old build's files, and the server answered with the app's page instead of "not found", so nothing could run and nothing said why. Missing files now get a "not found", the page reloads itself once when its own files fail to load, and the offline copy no longer stands in for a missing file.
+
 ## 0.5.7
 
 - **Read while you wait**, on a series' chapter list: it saves the chapter you're on and the 3 after it to this device, opens each one once every page is saved, and keeps 3 saved ahead of you as you read. A chapter that isn't ready yet shows how far it has got, then opens by itself, so the reader never stops to load. The reader's top bar says whether the next chapter is ready.

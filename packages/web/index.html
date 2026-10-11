@@ -44,6 +44,39 @@
         }
       })();
     </script>
+
+    <!--
+      A page older than the build reloads instead of staying white.
+
+      The app's own script and stylesheet are named by a hash that changes with
+      every build. A copy of this page from before a rebuild asks for names the
+      server no longer has, the script never runs, and the window stays white
+      with nothing on it. `stale-build.ts` covers the screens loaded later, but
+      it is inside that script, so it cannot cover the script itself: this has
+      to be here, before it. Once a minute at most (the same record
+      `stale-build.ts` keeps), so a build that is really missing a file stops
+      rather than reloading forever, and not while offline.
+    -->
+    <script>
+      window.addEventListener(
+        'error',
+        function (event) {
+          var el = event.target;
+          var url = el && (el.src || el.href);
+          if (!url || (el.tagName !== 'SCRIPT' && el.tagName !== 'LINK') || url.indexOf('/assets/') === -1) return;
+          if (navigator.onLine === false) return;
+          try {
+            var last = Number(sessionStorage.getItem('everything-stale-reload')) || 0;
+            if (Date.now() - last < 60000) return;
+            sessionStorage.setItem('everything-stale-reload', String(Date.now()));
+          } catch (e) {
+            return;
+          }
+          location.reload();
+        },
+        true
+      );
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -6,7 +6,12 @@
  * are worse than an honest error.
  */
 const PREFIX = 'everything-shell-';
-const CACHE = `${PREFIX}v1`;
+/*
+ * v2: v1 could hold the app's page saved under a script's name — the server
+ * answered missing scripts with it — which drew a white window offline.
+ * Changing the name is what clears it: `activate` deletes the old shells.
+ */
+const CACHE = `${PREFIX}v2`;
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
@@ -52,7 +57,19 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(request).then((hit) => hit ?? caches.match('/index.html')))
+      /*
+       * Offline: what was saved for this URL, and for a page the shell. Only for
+       * a page: handing the shell back for a missing script or stylesheet is
+       * HTML where code was expected, which runs nothing and leaves the window
+       * white. A missing file is an error the page can see.
+       */
+      .catch(() =>
+        caches.match(request).then((hit) => {
+          if (hit) return hit;
+          if (request.mode !== 'navigate') return Response.error();
+          return caches.match('/').then((page) => page ?? caches.match('/index.html'));
+        })
+      )
   );
 });
 

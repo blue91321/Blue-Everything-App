@@ -176,6 +176,19 @@ async function registerWebApp(app: FastifyInstance): Promise<void> {
     if (request.url.startsWith('/api/')) {
       return reply.code(404).send({ error: 'no such endpoint' });
     }
+    /*
+     * A missing *file* is a 404, never the shell. A window open across a
+     * rebuild asks for the old build's scripts by name, and answering those
+     * with index.html and a 200 was a white screen: the browser will not run
+     * HTML as a script, so nothing failed loudly enough to be caught, and the
+     * service worker saved the HTML under the script's name as well. A 404 is
+     * an error the page can see and reload on. Only extensionless paths are
+     * client-side routes.
+     */
+    const path = request.url.split(/[?#]/)[0] ?? '';
+    if (path.startsWith('/assets/') || /\.[A-Za-z0-9]{1,8}$/.test(path)) {
+      return reply.code(404).type('text/plain').send('not found');
+    }
     return reply.sendFile('index.html');
   });
 }

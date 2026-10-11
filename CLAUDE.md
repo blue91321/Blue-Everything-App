@@ -3229,6 +3229,32 @@ Verified by renaming the shelf card's file in `dist/` under an open window:
 opening the Dashboard reloaded once, and with the file still missing it stopped
 there.
 
+**The window still went white, because the server said yes.** A missing file
+under `/assets/` fell through to the single-page fallback, which answers every
+unknown path with `index.html` and a 200. So the old build's main script came
+back as HTML: the browser refuses to run it, no `vite:preloadError` fires
+because it is not a lazy chunk, and `stale-build.ts` lives inside the very
+script that never ran. The service worker then saved the HTML under the
+script's name. Found in `server.log` on 0.5.7's first morning: at 07:09, as a
+game ended, the window asked for `index-C2EHJ3IR.js` and `index-H441vTLu.css`,
+names from builds earlier that day, without asking for the page first, and got
+the page back for both. A reload at 10:34 fetched the page and was fine.
+
+Three changes, one per layer that got it wrong:
+
+- **The server 404s a missing file** (`app.ts`): anything under `/assets/` or
+  with an extension. Only extensionless paths are client-side routes, which is
+  all this app has, since its views are in the hash.
+- **The page reloads itself when its own script or stylesheet fails** — an
+  inline listener in `index.html`, before the module script, because it has to
+  run without it. Same once-a-minute record as `stale-build.ts`, and not
+  offline. Verified by adding a script for a missing file to an open page: it
+  reloaded and drew; a second within the minute did nothing.
+- **The service worker hands back the shell only for a page** (`sw.js`). Offline
+  it answered a missing script with `index.html` too, the same white window by
+  another road. Its cache is `v2`, so the v1 copy holding HTML under a script's
+  name is deleted on activation.
+
 ### When the server is not running, the window is still there
 
 The service worker caches the shell, so stopping the server leaves the app

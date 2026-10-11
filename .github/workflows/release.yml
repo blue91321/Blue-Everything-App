@@ -20,9 +20,9 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -51,8 +51,8 @@ jobs:
       - name: Build the app
         run: npm run build -w @everything/web
 
-      # The app's own Node, into runtime/node — the same script a git clone runs
-      # on first start — so the zip carries it and needs nothing installed.
+      # The app's own Node, into runtime/node, the same script a git clone runs
+      # on first start, so the zip carries it and needs nothing installed.
       - name: Bundle Node.js
         shell: powershell
         run: . ./scripts/node-runtime.ps1
@@ -61,7 +61,7 @@ jobs:
         run: node scripts/package-release.mjs --bundle
 
       - name: Keep as an artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: blue-everything
           path: dist/release/*.zip
@@ -79,7 +79,7 @@ jobs:
 
           ---
 
-          **Installing:** unzip the folder anywhere (Windows 10 or 11, 64-bit) and double-click `Blue Everything.cmd`. Nothing else needs installing — Node.js is inside. For manga, open Manga and press **Set up manga**.
+          **Installing:** unzip the folder anywhere (Windows 10 or 11, 64-bit) and double-click `Blue Everything.cmd`. Nothing else needs installing: Node.js is inside. For manga, open Manga and press **Set up manga**.
 
           **Updating:** double-click `Update Blue Everything.cmd`, or Settings â†’ Packages â†’ Check for updates. Your data is backed up to `backups\` first and is never replaced.
           EOF
