@@ -5,7 +5,7 @@ workspaces, the browser extension, and the five shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
-## Unreleased
+## 0.5.7
 
 - **Read while you wait**, on a series' chapter list: it saves the chapter you're on and the 3 after it to this device, opens each one once every page is saved, and keeps 3 saved ahead of you as you read. A chapter that isn't ready yet shows how far it has got, then opens by itself, so the reader never stops to load. The reader's top bar says whether the next chapter is ready.
 - Downloads show their progress: a ring on each chapter while it saves, and on the Downloads tab the whole run (chapter 3 of 10, a bar across all of them, the size so far), the chapter saving now with its pages, size, speed and time left, what's waiting in order (each can be moved to the front or cancelled), what failed and why, with Retry all, and what was saved this visit. The Downloads tab shows how many chapters are left to save.
