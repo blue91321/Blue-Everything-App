@@ -29,7 +29,7 @@ import {
   seriesStatus,
   worthPolling,
 } from '../identity.js';
-import { alreadyRaised, clampReadAhead, MAX_READ_AHEAD, type ReadingPosition, type Store } from '../library.js';
+import { alreadyRaised, clampReadAhead, isPutAway, MAX_READ_AHEAD, type ReadingPosition, type Store } from '../library.js';
 import { KEEP_CHAPTERS, readAheadAt } from '../page-cache.js';
 import { beside, reachedTheEnd, skippedBetween, skipTarget } from '../../web/chapter-nav.js';
 import { fromLine, toLine } from '../../web/log-csv.js';
@@ -57,7 +57,8 @@ import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup,
 import { failureReason, fallbackSources, pickMatch, siteKey, sourceForSite } from '../matching.js';
 import { BACKUP, PLAIN } from './mangareader-fixture.js';
 import { normaliseTags } from '../tags.js';
-import { isMature } from '../mature.js';
+import { DEFAULT_HIDDEN_TAGS, hasTag, hiddenBy, tagsForLevel } from '../mature.js';
+import { extensionUsage } from '../extension-usage.js';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -763,6 +764,38 @@ check('a raised chapter is remembered', alreadyRaised(store, 'recent', '12'));
 check('a different chapter is not', !alreadyRaised(store, 'recent', '13'));
 check('nor the same chapter of another series', !alreadyRaised(store, 'stale', '12'));
 
+{
+  // Manage extensions' counts: per source name, summed per extension.
+  const sources = [
+    { id: '1', name: 'MangaFire (EN)', lang: 'en', pkg: 'mf' },
+    { id: '2', name: 'MangaFire (ES)', lang: 'es', pkg: 'mf' },
+    { id: '3', name: 'Asura Scans (EN)', lang: 'en', pkg: 'asura' },
+  ];
+  const usage = extensionUsage(
+    [
+      { source: { sourceName: 'MangaFire (EN)' }, readLog: [{ chapter: 1, source: 'MangaFire (EN)' }, { chapter: 1, source: 'MangaFire (EN)' }, { chapter: 2, source: 'MangaFire (ES)' }] },
+      { source: { sourceName: 'Asura Scans (EN)' }, readLog: [{ chapter: 5, source: 'MangaFire (EN)' }, { chapter: 6, source: null }] },
+      { source: null, readLog: [] },
+    ],
+    [{ source: { sourceName: 'Asura Scans (EN)' }, readLog: [{ chapter: 9, source: 'Asura Scans (EN)' }] }],
+    sources
+  );
+  check('an extension counts the series linked to any of its sources', usage.mf?.series === 1 && usage.asura?.series === 1);
+  check('a re-read chapter counts once', usage.mf?.chapters === 3, String(usage.mf?.chapters));
+  check('a chapter counts where it was read, not where the series is linked now', usage.asura?.chapters === 1);
+  check('a series read but not followed adds chapters, not a series', usage.asura?.series === 1);
+  check('an extension lists its sources', usage.mf?.sources.length === 2);
+}
+
+{
+  // Hidden wins: a series on a hidden shelf and a visible one is put away.
+  const shelves = { libraries: [{ id: 'a', name: 'Dropped', hidden: true }, { id: 'b', name: 'Reading' }] };
+  check('a series on a hidden shelf is put away', isPutAway(shelves, { libraries: ['a'] }));
+  check('hidden wins over a visible shelf it is also on', isPutAway(shelves, { libraries: ['b', 'a'] }));
+  check('a series only on visible shelves is not', !isPutAway(shelves, { libraries: ['b'] }));
+  check('nor one on no shelf at all', !isPutAway(shelves, {}));
+}
+
 /* ------------------------------------------------------------------ */
 console.log('\nwhat a sweep asks about\n');
 
@@ -823,6 +856,22 @@ console.log('\nwhat a sweep asks about\n');
   ).map((s) => s.id);
   check('untouched for a year: once a day, not every sweep', !quiet.includes('ancient-checked-2h') && quiet.includes('ancient-checked-25h'), quiet.join(', '));
   check('read this year: every six hours', !quiet.includes('spring-checked-2h') && quiet.includes('spring-checked-7h'));
+
+  // Suwayomi stopped: what nothing can answer for must not take the slots of what MangaUpdates can.
+  const unaskable = Array.from({ length: 20 }, (_, i) => row({ id: `stuck-${i}`, addedAt: now - DAY, checkedAt: null }));
+  const answerable = Array.from({ length: 5 }, (_, i) => row({ id: `mu-${i}`, addedAt: 0, checkedAt: null }));
+  const whileDown = dueForCheck(
+    { ...store, series: [...unaskable, ...answerable], links: [] },
+    now,
+    {},
+    12,
+    (s) => s.id.startsWith('mu-')
+  ).map((s) => s.id);
+  check(
+    'with the source down, series nothing can answer for are left out before the slots are shared',
+    whileDown.length === 5 && whileDown.every((id) => id.startsWith('mu-')),
+    whileDown.join(', ')
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -1016,11 +1065,23 @@ console.log('\ntags\n');
   check('one spelling per tag, whatever case it came in', tags.filter((t) => t === 'Action').length === 1, tags.join(', '));
   check('the spellings sources get wrong are put right', tags.includes('Manhwa') && tags.includes('Sci-Fi') && tags.includes('Martial Arts'));
   check('shouting and whispering are capitalised', tags.includes('Slice of Life') && tags.includes('Drama'));
-  check('adult genres are caught however a source writes them', ['Ecchi', 'Adult (18+)', 'Smut', 'Mature', 'R-18', 'hentai'].every((g) => isMature([g])));
-  check('and ordinary ones are not', !isMature(['Action', 'Drama', 'Romance', 'Martial Arts', 'Adventure', 'Manhwa']));
+  const defaults = [...DEFAULT_HIDDEN_TAGS];
+  check('Ecchi, Mature and Adult come first, in that order', defaults.join(',') === 'Ecchi,Mature,Adult');
+  check(
+    'adult genres are caught however a source writes them',
+    ['Ecchi', 'Adult (18+)', 'Smut', 'Mature', 'R-18', 'hentai'].every((g) => hiddenBy([g], defaults) !== null)
+  );
+  check('and ordinary ones are not', hiddenBy(['Action', 'Drama', 'Romance', 'Martial Arts', 'Adventure', 'Manhwa'], defaults) === null);
   // MangaFire tags Jujutsu Kaisen "Mature" for its violence.
-  check('the lighter level keeps what is only tagged Mature', !isMature(['Action', 'Mature'], 'adult') && isMature(['Ecchi'], 'adult'));
-  check('the stricter one hides it', isMature(['Action', 'Mature'], 'mature'));
+  check('Mature off keeps what is only tagged Mature', hiddenBy(['Action', 'Mature'], ['Ecchi', 'Adult']) === null);
+  check('and each is its own switch', hiddenBy(['Ecchi'], ['Adult']) === null && hiddenBy(['Smut'], ['Adult']) === 'Adult');
+  check('BL covers its other names', ["Boys' Love", 'Yaoi', 'Shounen Ai', 'BL'].every((g) => hasTag([g], 'BL')));
+  check('GL covers its other names', ["Girls' Love", 'Yuri', 'Shoujo Ai'].every((g) => hasTag([g], 'gl')));
+  check('BL does not catch a word with those letters in it', !hasTag(['Bloody', 'Public Life'], 'BL'));
+  check('any other tag matches as written, ignoring case and hyphens', hasTag(['Slice-of-Life'], 'slice of life') && hasTag(['romance'], 'Romance'));
+  check('and only that tag', !hasTag(['Romantic Comedy'], 'Romance'));
+  check('a hidden title says which tag hid it', hiddenBy(['Action', 'Romance'], ['Ecchi', 'Romance']) === 'Romance');
+  check('an older screen still gets the three it meant', tagsForLevel('mature').length === 3 && tagsForLevel('adult').join() === 'Ecchi,Adult');
   check('and anything that is not a tag is dropped', tags.every((t) => typeof t === 'string' && t.length > 0), String(tags.length));
 }
 
@@ -1142,6 +1203,12 @@ check('nor on the last chapter', skipTarget(withPoints, 4) === undefined);
 
 const trailing = [{ number: 2 }, { number: 2.1 }, { number: 2.2 }];
 check('nor when there is no whole chapter left to reach', skipTarget(trailing, 2) === undefined);
+{
+  // A hole after the point chapters: 2.1, then 8. Skipping is to the next whole chapter only.
+  const holed = [2, 2.1, 8, 9].map((number) => ({ number }));
+  check('no skip from 2.1 to 8', skipTarget(holed, 2.1) === undefined);
+  check('nor from 2 to 8', skipTarget(holed, 2) === undefined);
+}
 
 /*
  * Sources list the same chapter twice — MangaFire carries two editions of most

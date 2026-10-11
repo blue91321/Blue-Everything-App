@@ -29,7 +29,8 @@
  * again — a page list and three images — so it is a button per source, for the
  * one that looks too good rather than for all of them.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { FloatingBack } from '@app/FloatingBack';
 import {
   manga,
   type ChapterProfile,
@@ -193,6 +194,8 @@ export function Compare({
   onLinked: () => void;
 }) {
   const [query, setQuery] = useState(series.title);
+  // Watched by the Back beside the ☰, shown once this one has scrolled away.
+  const backRef = useRef<HTMLButtonElement>(null);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [linking, setLinking] = useState<string | null>(null);
@@ -358,9 +361,10 @@ export function Compare({
   return (
     <div className="card">
       <div className="row between">
-        <button className="btn subtle" onClick={onClose}>
+        <button ref={backRef} className="btn subtle" onClick={onClose}>
           ‹ Back
         </button>
+        <FloatingBack target={backRef} onBack={onClose} />
         <span className="meta">{series.title} across your sources</span>
       </div>
 

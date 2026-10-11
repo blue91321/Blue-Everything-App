@@ -207,10 +207,33 @@ if ($needsBuild) {
 $serverEntry = Join-Path $serverDir 'src\main.ts'
 $agentEntry = Join-Path $agentDir 'src\index.ts'
 
+<#
+  Starting a process here empties its log, so the last run's log is kept as
+  <name>.prev.log first. Twice the evidence for a problem was lost to the
+  restart that followed it: a timeline read minutes before, and an app that
+  "went offline" with nothing left to say why.
+
+  Only a log with something in it is moved, so an empty .err.log never replaces
+  the one that holds the last crash. A log something is still writing to cannot
+  be moved, and is left alone: starting matters more than the copy.
+#>
+function Save-PreviousLog([string]$name) {
+  $path = Join-Path $logDir "$name.log"
+  try {
+    if ((Test-Path $path) -and (Get-Item $path).Length -gt 0) {
+      Move-Item -LiteralPath $path -Destination (Join-Path $logDir "$name.prev.log") -Force -ErrorAction Stop
+    }
+  } catch {
+    # In use, or not ours to move: the new run writes over it as it always did.
+  }
+}
+
 # -AgentOnly starts the agent and not the server. The install and build checks
 # above still run and are nearly free once they have been done once; what is
 # skipped is starting a second server on a port something is already holding.
 if ($AgentOnly) {
+  Save-PreviousLog 'agent'
+  Save-PreviousLog 'agent.err'
   Write-Host 'Starting agent... ' -NoNewline
   $only = Start-Process $script:AgentExe `
     -ArgumentList '--import', 'tsx', "`"$agentEntry`"" `
@@ -234,6 +257,8 @@ if ($AgentOnly) {
 # it is there. Set here, for the server this script starts, and nowhere else.
 $env:EXIT_WITHOUT_AGENT = 'true'
 
+Save-PreviousLog 'server'
+Save-PreviousLog 'server.err'
 Write-Host 'Starting server...' -NoNewline
 $server = Start-Process $script:ServerExe `
   -ArgumentList '--import', 'tsx', "`"$serverEntry`"" `
@@ -282,6 +307,8 @@ if (Test-AgentRunning) {
   exit 0
 }
 
+Save-PreviousLog 'agent'
+Save-PreviousLog 'agent.err'
 Write-Host 'Starting agent... ' -NoNewline
 $agent = Start-Process $script:AgentExe `
   -ArgumentList '--import', 'tsx', "`"$agentEntry`"" `

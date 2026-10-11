@@ -20,6 +20,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '@app/api';
+import { showingSection } from '@app/nav';
 import { Connections } from './Connections';
 import { Following } from './Following';
 import { Friends } from './Friends';
@@ -60,6 +61,15 @@ export function Integrations({
 }) {
   const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.id === focus) ? (focus as Tab) : 'friends'));
   const [seeded, setSeeded] = useState<string | null>(null);
+
+  /*
+   * The tab on screen, told to the menu, so picking Friends here moves the
+   * highlight to Friends. A tab the menu does not list leaves Connections
+   * itself marked; App decides that.
+   */
+  useEffect(() => {
+    showingSection(tab);
+  }, [tab]);
 
   // Opened from the menu or a Home tile: that section, every time.
   useEffect(() => {

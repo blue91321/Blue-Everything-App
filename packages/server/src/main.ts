@@ -8,6 +8,17 @@ await runMigrations();
 
 const app = await buildApp();
 
+/*
+ * A promise that fails with nobody waiting on it — a timer's `void doThing()`
+ * in some package — ends a Node process by default, and only `server.err.log`
+ * would say why, which `start.ps1` empties on the next start. One stray
+ * rejection is not worth the whole app, so it is written to the server log
+ * and the server carries on. A thrown exception still ends it, as it should.
+ */
+process.on('unhandledRejection', (reason) => {
+  app.log.error({ err: reason }, 'a promise failed with nothing handling it — logged, and the server kept running');
+});
+
 // Attention history is the only table that grows on its own. Pruning at boot
 // and daily keeps it bounded without a cron job or a second process.
 const prune = async () => {

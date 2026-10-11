@@ -5,8 +5,10 @@
  * phone has. Four things, in the order you come here for them:
  *
  *   - **Space**: how much is saved, against what the browser allows.
- *   - **In progress**: each download with its pages so far, to cancel; and any
- *     that failed, with why, to retry.
+ *   - **In progress**: the run as a whole (chapter N of M, the bytes so far),
+ *     the chapter saving now with its pages, size, speed and time left, what
+ *     is waiting in the order it will be saved, anything that failed and why,
+ *     and what has just finished.
  *   - **Saved**: every series, opened to its chapters — each removable on its
  *     own, the read ones together, or the whole series.
  *   - **Waiting to sync**: reading done offline that has not reached the PC.
@@ -19,15 +21,22 @@ import { useConnectivity } from '@app/offline-sync';
 import { Cover } from './Cover';
 import {
   cancelDownload,
+  cancelWaiting,
+  moveToFront,
   offlineSupported,
   removeChapter,
   removeSeries,
+  retryAll,
   retryDownload,
   sizeText,
   usage,
   useOffline,
+  type Finished,
+  type Job,
+  type Progress,
   type SavedSeries,
 } from './offline-store';
+import { ProgressRing, remainingText, speedText } from './ProgressRing';
 import { flushQueue, pendingCount } from './sync-queue';
 import { syncLog, unsentCount } from './reading-log';
 import { COULD_NOT_SEND, keepingNote, keepOpenNote, NOT_YET_SENT, whereKeptNote, WHILE_REACHABLE } from './device-text';
@@ -133,7 +142,7 @@ function DownloadFolder() {
 }
 
 export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
-  const { manifest, jobs } = useOffline();
+  const { manifest, jobs, recent, progress } = useOffline();
   const net = useConnectivity();
   const [space, setSpace] = useState<{ saved: number; quota: number | null } | null>(null);
   const [kept, setKept] = useState<boolean | null>(null);
@@ -161,8 +170,6 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
   }
 
   const all = Object.values(manifest?.series ?? {}).sort((a, b) => a.title.localeCompare(b.title));
-  const running = jobs.filter((j) => !j.problem);
-  const broken = jobs.filter((j) => j.problem);
   // Manga reading only: tasks, habits and notes waiting to sync are on the
   // banner at the top of every screen, and counting them here as "changes to
   // your reading" said something untrue.
@@ -208,47 +215,14 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
         )}
       </div>
 
-      {(running.length > 0 || broken.length > 0) && (
-        <div className="card">
-          <h3>{running.length > 0 ? `Saving ${running.length}` : 'Not saved'}</h3>
-          {running.length > 0 && <p className="meta">{keepOpenNote()}</p>}
-          {[...running, ...broken].map((j) => (
-            <div key={j.key} className="manga-download-job">
-              <div className="manga-row-text">
-                <span className="title truncate">
-                  {j.seriesTitle} — {j.name}
-                </span>
-                {j.problem ? (
-                  <span className="meta">{j.problem}</span>
-                ) : (
-                  <span className="meta">{j.total ? `${j.done} of ${j.total} pages` : 'waiting…'}</span>
-                )}
-                {!j.problem && j.total ? (
-                  <div className="manga-space" aria-hidden="true">
-                    <div style={{ width: `${((j.done / j.total) * 100).toFixed(1)}%` }} />
-                  </div>
-                ) : null}
-              </div>
-              <div className="manga-row-actions">
-                {j.problem && (
-                  <button className="btn" disabled={net.offline} onClick={() => retryDownload(j.key)}>
-                    Retry
-                  </button>
-                )}
-                <button className="btn subtle" onClick={() => cancelDownload(j.key)}>
-                  {j.problem ? 'Dismiss' : 'Cancel'}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <SavingCard jobs={jobs} recent={recent} progress={progress} offline={net.offline} />
 
       <div className="card">
         <h3>Saved{all.length > 0 ? ` (${all.length})` : ''}</h3>
         {manifest && all.length === 0 && (
           <p className="empty">
-            Nothing saved yet. Open a series from Library and press ⬇ on a chapter, or Next 5, {WHILE_REACHABLE}.
+            Nothing saved yet. Open a series from Library and press Read while you wait, ⬇ on a chapter, or Next 5,{' '}
+            {WHILE_REACHABLE}.
           </p>
         )}
         {all.map((s) => (
@@ -332,5 +306,197 @@ function SavedSeriesRow({ series, onRead }: { series: SavedSeries; onRead: (seri
         );
       })}
     </details>
+  );
+}
+
+/** "Next", "3rd in line" — where a waiting chapter stands. */
+function inLine(position: number): string {
+  if (position === 1) return 'next';
+  const suffix = position % 10 === 2 && position % 100 !== 12 ? 'nd' : position % 10 === 3 && position % 100 !== 13 ? 'rd' : 'th';
+  return `${position}${suffix} in line`;
+}
+
+/**
+ * What is being saved, said in full.
+ *
+ * The run first — chapter 3 of 10, a bar across all of them, the bytes so far —
+ * because "is it nearly done" is what you come here to ask. Then the chapter
+ * saving now, with its pages, size, speed and an estimate once there is enough
+ * to make one; then the line in the order it will go, each movable to the
+ * front; then failures with their reason; then what has just finished, so a
+ * chapter leaving the list reads as done rather than gone.
+ *
+ * The waiting list is cut at a dozen with a count of the rest: "All" on a long
+ * series is several hundred rows, and a list that long answers nothing.
+ */
+function SavingCard({
+  jobs,
+  recent,
+  progress,
+  offline,
+}: {
+  jobs: Job[];
+  recent: Finished[];
+  progress: Progress;
+  offline: boolean;
+}) {
+  const now = Date.now();
+  const saving = jobs.find((j) => j.state === 'saving') ?? null;
+  const waiting = jobs.filter((j) => j.state === 'waiting');
+  const broken = jobs.filter((j) => j.problem);
+  const shownWaiting = waiting.slice(0, 12);
+  if (!saving && waiting.length === 0 && broken.length === 0 && recent.length === 0) return null;
+
+  const over = progress.finished + progress.failed;
+  const all = over + progress.left;
+  const through = saving?.total ? saving.done / saving.total : 0;
+  const overall = all > 0 ? (over + through) / all : 0;
+  const bytesSoFar = progress.bytes + (saving?.bytes ?? 0);
+
+  return (
+    <div className="card">
+      {progress.left > 0 ? (
+        <>
+          <div className="row between">
+            <h3>
+              Saving {progress.left === 1 && over === 0 ? '1 chapter' : `chapter ${over + 1} of ${all}`}
+            </h3>
+            {waiting.length > 0 && (
+              <button className="btn subtle" onClick={cancelWaiting} title="The chapter saving now finishes; the rest are taken off the list">
+                Cancel the rest
+              </button>
+            )}
+          </div>
+          <div className="manga-space" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(overall * 100)}>
+            <div style={{ width: `${(overall * 100).toFixed(1)}%` }} />
+          </div>
+          <p className="meta">
+            {Math.round(overall * 100)}% · {sizeText(bytesSoFar)} so far
+            {progress.finished > 0 ? ` · ${progress.finished} done` : ''}
+            {progress.failed > 0 ? ` · ${progress.failed} did not save` : ''}
+            {waiting.length > 0 ? ` · ${waiting.length} waiting` : ''}
+          </p>
+          <p className="meta">{keepOpenNote()}</p>
+        </>
+      ) : (
+        <h3>{broken.length > 0 ? 'Not saved' : 'Just saved'}</h3>
+      )}
+
+      {saving && (
+        <div className="manga-download-job now">
+          <ProgressRing
+            value={saving.total ? saving.done / saving.total : null}
+            spin={!saving.total}
+            size={36}
+            label={saving.total ? `${Math.round((saving.done / saving.total) * 100)}%` : 'starting'}
+          />
+          <div className="manga-row-text">
+            <span className="title truncate">
+              {saving.seriesTitle} — {saving.name}
+            </span>
+            <span className="meta">
+              {saving.total
+                ? [
+                    `Saving now · ${saving.done} of ${saving.total} pages`,
+                    sizeText(saving.bytes),
+                    speedText(saving.bytes, now - (saving.startedAt ?? now)),
+                    remainingText(saving.done, saving.total, now - (saving.startedAt ?? now)),
+                    saving.missing > 0 ? `${saving.missing} would not come — it will say which at the end` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : 'Asking the PC for the page list…'}
+            </span>
+            {saving.cancelled && <span className="meta">Stopping after the pages already on their way…</span>}
+          </div>
+          <div className="manga-row-actions">
+            <button className="btn subtle" disabled={saving.cancelled} onClick={() => cancelDownload(saving.key)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {shownWaiting.map((j, i) => (
+        <div key={j.key} className="manga-download-job">
+          <ProgressRing value={null} size={22} label="waiting" />
+          <div className="manga-row-text">
+            <span className="title truncate">
+              {j.seriesTitle} — {j.name}
+            </span>
+            <span className="meta">{inLine(i + 1)}</span>
+          </div>
+          <div className="manga-row-actions">
+            {i > 0 && (
+              <button className="btn subtle" onClick={() => moveToFront([j.key])} title="Save this one next">
+                Next
+              </button>
+            )}
+            <button className="btn subtle" onClick={() => cancelDownload(j.key)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ))}
+      {waiting.length > shownWaiting.length && (
+        <p className="meta">and {waiting.length - shownWaiting.length} more after these</p>
+      )}
+
+      {broken.length > 0 && (
+        <>
+          {broken.length > 1 && (
+            <div className="row between">
+              <span className="meta">{broken.length} could not be saved</span>
+              <button className="btn subtle" disabled={offline} onClick={retryAll}>
+                Retry all
+              </button>
+            </div>
+          )}
+          {broken.map((j) => (
+            <div key={j.key} className="manga-download-job failed">
+              <span className="manga-download-mark" aria-hidden="true">
+                !
+              </span>
+              <div className="manga-row-text">
+                <span className="title truncate">
+                  {j.seriesTitle} — {j.name}
+                </span>
+                <span className="meta">{j.problem}</span>
+              </div>
+              <div className="manga-row-actions">
+                <button className="btn" disabled={offline} onClick={() => retryDownload(j.key)}>
+                  Retry
+                </button>
+                <button className="btn subtle" onClick={() => cancelDownload(j.key)}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {recent.length > 0 && (
+        <details className="manga-download-recent" open={progress.left === 0 && broken.length === 0}>
+          <summary className="meta">Saved this visit ({recent.length})</summary>
+          {recent.map((f) => (
+            <div key={`${f.key}:${f.at}`} className="manga-download-job">
+              <span className="manga-download-mark ok" aria-hidden="true">
+                ✓
+              </span>
+              <div className="manga-row-text">
+                <span className="title truncate">
+                  {f.seriesTitle} — {f.name}
+                </span>
+                <span className="meta">
+                  {f.pages} pages · {sizeText(f.bytes)} · took {Math.max(1, Math.round(f.ms / 1000))}s ·{' '}
+                  {new Date(f.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                </span>
+              </div>
+            </div>
+          ))}
+        </details>
+      )}
+    </div>
   );
 }

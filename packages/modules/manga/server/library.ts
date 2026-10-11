@@ -268,6 +268,17 @@ export interface MangaLibrary {
 }
 
 /**
+ * On a hidden shelf, and so kept out of everything that shows the library
+ * without being asked to: *Everything* on the Library tab, the Dashboard's
+ * shelf card and its "landed lately", and the task and reminder a new chapter
+ * raises. Hidden wins over any visible shelf it is also on — see `hidden`.
+ */
+export function isPutAway(store: { libraries: MangaLibrary[] }, series: { libraries?: string[] }): boolean {
+  if (!series.libraries?.length) return false;
+  return store.libraries.some((l) => l.hidden === true && series.libraries!.includes(l.id));
+}
+
+/**
  * Something you read without following it.
  *
  * Opening a chapter from Browse used to record nothing at all — no history, no

@@ -1,7 +1,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { reloadOnStaleBuild } from './stale-build';
 import './styles.css';
+
+// Before the first render, so a screen opened straight away is covered too.
+reloadOnStaleBuild();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

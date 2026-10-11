@@ -22,7 +22,7 @@ TO START IT
 TO READ MANGA
   1. In the app, open  Manga  (in the menu on the left, or the Home screen).
   2. Press the  Set up manga  button. It downloads the program that finds and
-     serves chapters (Suwayomi) and the Java it needs - about 210 MB, once -
+     serves chapters (Suwayomi) and the Java it needs - about 230 MB, once -
      into this folder. Do not download Suwayomi or Java yourself.
   3. When it says "Next: add sources", press  Manage extensions  and install
      one or two sources (MangaFire, Weeb Central, Asura Scans...).

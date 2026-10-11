@@ -14,6 +14,7 @@
  * Home is in the drawer on both, so it is always one tap back.
  */
 import { Logo, type LogoShape } from './Logo';
+import { tapWordmark, useWordmark } from './wordmark';
 
 export type HomeItem = { id: string; label: string; glyph: string; live?: boolean };
 
@@ -32,17 +33,29 @@ export function Home({
   logo: { shape: LogoShape; version: number };
 }) {
   const now = new Date();
+  const wordmark = useWordmark();
   return (
     <div className="home-screen">
       <div className="home-head">
         <Logo shape={logo.shape} size={34} version={logo.version} />
         <div>
-          <div className="home-title">Blue Everything</div>
+          <div className="home-title wordmark" onClick={tapWordmark}>
+            {wordmark}
+          </div>
           <div className="meta">
             {greeting(now)} · {now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
           </div>
         </div>
       </div>
+      {items.length === 0 && (
+        <p className="empty">
+          Nothing is on Home. Choose what goes here in{' '}
+          <button className="btn subtle" onClick={() => onOpen('settings')}>
+            Settings
+          </button>
+          , or open the menu with ☰.
+        </p>
+      )}
       <nav className="home-grid" aria-label="Parts of the app">
         {items.map((item) => (
           <button key={item.id} className="home-tile" onClick={() => onOpen(item.id)}>

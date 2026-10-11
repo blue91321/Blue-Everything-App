@@ -167,6 +167,7 @@ export function Reader({
   hasPrevious = false,
   hasNext = false,
   nextNumber = null,
+  ahead = null,
 }: {
   /** A followed series. */
   seriesId?: string;
@@ -215,6 +216,12 @@ export function Reader({
   hasNext?: boolean;
   /** The number Next would open, so a jump over missing chapters can be questioned. */
   nextNumber?: number | null;
+  /**
+   * Reading ahead, what is ready after this chapter — "next 3 saved ✓",
+   * "saving 13 · 40%". Shown under the chapter's number, so whether the next
+   * press will open at once or wait is visible before it is pressed.
+   */
+  ahead?: string | null;
 }) {
   /*
    * Back closes the reader and puts you back on the chapter list.
@@ -848,6 +855,7 @@ export function Reader({
               {count} of {total} loaded
             </span>
           )}
+          {ahead && <span className="meta manga-reader-ahead">{ahead}</span>}
         </span>
         <button
           className="manga-icon-btn manga-reader-gear"

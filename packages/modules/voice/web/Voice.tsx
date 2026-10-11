@@ -854,9 +854,9 @@ function TestReadout({ status }: { status: VoiceStatusType }) {
     <div className="diagnostics" style={{ marginTop: 10 }}>
       <div className="meta">
         {status.testing
-          ? 'Say your wake word, then a phrase. Nothing you say during a test is recorded against a habit.'
+          ? 'Say your wake word, then a phrase. Nothing you say during a test is carried out.'
           : status.testSucceeded
-            ? 'That worked, so the test stopped there — nothing was recorded against a habit.'
+            ? 'That worked, so the test stopped there. Nothing was carried out.'
             : 'Test finished.'}
       </div>
 
@@ -892,7 +892,7 @@ function TestReadout({ status }: { status: VoiceStatusType }) {
           <span className="meta">
             {event.speakerScore !== null && `voice match ${Math.round(event.speakerScore * 100)}%`}
             {event.kind === 'command' &&
-              (event.wouldMatch ? ` → would tick off ${event.wouldMatch.habitName}` : event.text ? ' → no habit matches' : '')}
+              (event.wouldMatch ? ` → would run ${event.wouldMatch.habitName ?? `"${event.wouldMatch.phrase}"`}` : event.text ? ' → no command matches' : '')}
           </span>
         </div>
       ))}
@@ -908,7 +908,7 @@ function TestReadout({ status }: { status: VoiceStatusType }) {
  * one habit, and answering it used to mean opening every habit in turn.
  */
 /**
- * Type a sentence and see which habit it would tick off.
+ * Type a sentence and see which command it would run.
  *
  * The failure everyone hits with this kind of matching is a phrase that reads
  * perfectly and never matches. The alternative way to discover that is saying

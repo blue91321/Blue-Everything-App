@@ -436,7 +436,7 @@ export function More({
         {data && (
           <p className="meta">
             {data.watching > 0
-              ? `Watching ${data.watching} for new chapters, about every half hour. Finished series are not checked.`
+              ? `Watching ${data.watching} for new chapters: what you've read this month every half hour, this year's every six hours, and the rest once a day. Finished series are not checked.`
               : 'Nothing is being watched, so no requests are made.'}{' '}
             {/*
               * Only while something still depends on MangaUpdates: with every

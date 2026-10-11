@@ -132,6 +132,20 @@ const KEPT_READ_TIMEOUT_MS = 15_000;
 const SESSION_TIMEOUT_MS = 6_000;
 const CHANGE_TIMEOUT_MS = 15_000;
 
+/**
+ * Is the server there at all? `/health` needs no token and touches nothing, so
+ * it answers in milliseconds from a server that is merely busy with something
+ * else, and not at all from one that is stopped or asleep.
+ */
+async function serverAnswers(): Promise<boolean> {
+  try {
+    const response = await fetch('/health', { signal: AbortSignal.timeout(4_000), cache: 'no-store' });
+    return response.ok && (response.headers.get('content-type') ?? '').includes('application/json');
+  } catch {
+    return false;
+  }
+}
+
 async function send<T>(rawPath: string, init: RequestInit, method: string): Promise<T> {
   // Something created offline and since synced has a real id now; a screen may
   // still hold the temporary one.
@@ -183,6 +197,28 @@ async function send<T>(rawPath: string, init: RequestInit, method: string): Prom
     );
   };
 
+  /*
+   * Timed out, but the server answers a ping: it is there and this one request
+   * is slow. That was being called "offline" — the banner, the outbox — on a
+   * PC that was busy starting the music. So nothing is marked offline and
+   * nothing is queued: a change that timed out may well have happened, and
+   * replaying it later would do it twice. A read with a saved copy shows that.
+   */
+  const slow = async (): Promise<T> => {
+    if (kept) {
+      const saved = await recall(path);
+      if (saved) return saved.data as T;
+    }
+    // The whole app waits on the session, and an ordinary error there would
+    // mean the pairing screen: better the offline screen, which retries.
+    if (path === '/api/session') return unreachable('the server is slow to answer');
+    throw new Error(
+      isRead
+        ? 'The PC is taking too long to answer. It is running; try again in a moment.'
+        : 'The PC is taking too long to answer, so this may or may not have happened. It is running; check, then try again.'
+    );
+  };
+
   const timeout = path === '/api/session' ? SESSION_TIMEOUT_MS : kept ? KEPT_READ_TIMEOUT_MS : !isRead ? CHANGE_TIMEOUT_MS : null;
 
   let response: Response;
@@ -201,6 +237,9 @@ async function send<T>(rawPath: string, init: RequestInit, method: string): Prom
     // `fetch` rejects only when the request never got a reply — the process is
     // down, the machine is asleep, the network is gone. Anything the server
     // answered, however badly, comes back as a response.
+    if (cause instanceof DOMException && cause.name === 'TimeoutError' && (await serverAnswers())) {
+      return slow();
+    }
     return unreachable(cause instanceof Error ? cause.message : 'could not reach the server');
   }
 
@@ -1891,13 +1930,16 @@ export const api = {
       recency: { recent?: { within: number; factor: number }; fresh?: { after: number; factor: number } } = {},
       from: 'phone' | 'computer' = 'computer'
     ) =>
-      post<{ songs: number; of: number; mode: 'play' | 'queue'; device: string }>('/api/integrations/spotify/shuffle', {
-        mode,
-        order,
-        repeatAfter,
-        collectionIds,
-        ...recency,
-        from,
+      request<{ songs: number; of: number; mode: 'play' | 'queue'; device: string }>('/api/integrations/spotify/shuffle', {
+        method: 'POST',
+        body: JSON.stringify({ mode, order, repeatAfter, collectionIds, ...recency, from }),
+        /*
+         * Longer than the 15s every other change gets. Play answers once the
+         * music has started and queues the rest afterwards, so it is quick —
+         * but a refusal from Spotify can hold every request to it for up to 30s,
+         * which is slow, not gone.
+         */
+        signal: AbortSignal.timeout(90_000),
       }),
     /** Boost a song (by URI) or an artist (by id) for the random order; 1 removes the boost. */
     setShuffleWeight: (kind: 'song' | 'artist', id: string, weight: number) =>

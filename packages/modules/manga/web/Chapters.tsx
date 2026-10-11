@@ -20,11 +20,13 @@
  * dropping you in the wrong spot.
  */
 import { useEffect, useRef, useState } from 'react';
+import { FloatingBack } from '@app/FloatingBack';
 import { useAsync } from '@app/useAsync';
 import { beside, skippedBetween, skipTarget } from './chapter-nav.js';
 import { useBackStep } from '@app/view-history';
 import { isIncognito } from './incognito';
 import { useButtonMenu, type MenuItem } from '@app/ContextMenu';
+import { About } from './About';
 import { Cover } from './Cover';
 import { Icon } from './Icons';
 import { chapterText } from './judge';
@@ -34,13 +36,17 @@ import { Reader } from './Reader';
 import { usePositionSaver } from './usePositionSaver';
 import {
   clearProblem,
+  moveToFront,
   offlineSupported,
+  prioritiseFrom,
   queueDownload,
   removeChapter,
   sizeText,
   updateSnapshot,
   useOffline,
 } from './offline-store';
+import { ProgressRing } from './ProgressRing';
+import { WaitForChapter } from './WaitForChapter';
 import { logRead } from './reading-log';
 import { useConnectivity } from '@app/offline-sync';
 import { NEEDS } from './device-text';
@@ -48,6 +54,16 @@ import { rememberOpen } from './open-chapter';
 
 /** How many "Next" saves ahead of where you are. — and see `saveAll` for the rest. */
 const SAVE_AHEAD = [5, 10] as const;
+
+/**
+ * Read while you wait keeps this many chapters saved past the one you are in.
+ *
+ * Three, because a chapter takes about as long to save as it does to read, so
+ * one ahead is enough once it is running and three absorbs a slow source or a
+ * short chapter read quickly — and every one more is a chapter of the phone's
+ * storage spent on a guess.
+ */
+const KEEP_READY = 3;
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
   ongoing: 'ongoing',
@@ -147,10 +163,21 @@ export function Chapters({
    */
   const close = useBackStep(onClose);
   const list = useAsync(() => manga.reader.chapters(seriesId), [seriesId]);
+  // What the source says about it, as the series' page shows before you follow it.
+  const about = useAsync(() => manga.reader.about(seriesId), [seriesId]);
   /** What the device's reading log calls this series — a name, so the exported file is readable. */
   const logTitle = series?.title ?? list.data?.seriesTitle ?? '';
   const [open, setOpen] = useState<SourceChapter | null>(null);
   const [resume, setResume] = useState<{ page: number; offset: number } | null>(null);
+  /*
+   * Read while you wait: on while you are reading from it, off when you close
+   * the reader. While on, a chapter that is not saved yet is waited for rather
+   * than opened, and the next few are kept saving ahead of you.
+   */
+  const [ahead, setAhead] = useState(false);
+  const [waiting, setWaiting] = useState<{ chapter: SourceChapter; at: { page: number; offset: number } | null } | null>(
+    null
+  );
   const [busy, setBusy] = useState(false);
   /**
    * Collapse duplicate chapter numbers to one row.
@@ -166,7 +193,29 @@ export function Chapters({
       return true;
     }
   });
+  /*
+   * Rows or a grid of numbers, per device like the choice above: a grid is for
+   * a phone with four hundred chapters to scan, and the PC may want the dates.
+   */
+  const [grid, setGrid] = useState(() => {
+    try {
+      return localStorage.getItem('everything.manga.chapterGrid') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const chooseGrid = (next: boolean) => {
+    setGrid(next);
+    try {
+      if (next) localStorage.setItem('everything.manga.chapterGrid', '1');
+      else localStorage.removeItem('everything.manga.chapterGrid');
+    } catch {
+      // Honoured while the screen is open, even unremembered.
+    }
+  };
   const saver = usePositionSaver(seriesId);
+  // Watched by the Back beside the ☰, shown once this one has scrolled away.
+  const backRef = useRef<HTMLButtonElement>(null);
   const continued = useRef(false);
   const offline = useOffline();
   const net = useConnectivity();
@@ -184,6 +233,18 @@ export function Chapters({
       : null;
   const { shown: oneEach, duplicates } = pickOnePerNumber(data?.chapters ?? [], place?.chapterId ?? null);
   const listed = oneRow ? oneEach : (data?.chapters ?? []);
+  /**
+   * The copy of a chapter the list shows, when it shows one per number.
+   *
+   * Next goes by number, and `beside` takes the first entry with that number —
+   * which on a source listing two editions is not always the one the row shows.
+   * Then Next opened a different copy from the row, and reading ahead saved one
+   * copy while the list's ✓ looked at the other. So moving by number lands on
+   * the row you would have tapped. With every version showing, the entry
+   * `beside` found is left alone, since there is no one row to agree with.
+   */
+  const shownCopy = (c: SourceChapter): SourceChapter =>
+    oneRow ? (oneEach.find((x) => x.number === c.number) ?? c) : c;
 
   const furthestRead = data ? Math.max(-Infinity, ...data.chapters.filter((c) => c.read).map((c) => c.number)) : -Infinity;
   const nextUp =
@@ -205,7 +266,7 @@ export function Chapters({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
-  function save(chapter: SourceChapter) {
+  function save(chapter: SourceChapter, first = false) {
     if (!data) return;
     queueDownload(
       {
@@ -217,7 +278,8 @@ export function Chapters({
         position: sameCopy && place ? { ...place } : null,
       },
       { id: chapter.id, number: chapter.number, name: chapter.name },
-      async () => (await manga.reader.pages(seriesId, chapter.id)).pages
+      async () => (await manga.reader.pages(seriesId, chapter.id)).pages,
+      { first }
     );
   }
 
@@ -233,7 +295,8 @@ export function Chapters({
     const picked = new Map<number, SourceChapter>();
     for (const c of [...data.chapters].sort((a, b) => a.number - b.number)) {
       if (c.number < from || picked.has(c.number) || (c.read && c.number !== from)) continue;
-      picked.set(c.number, c);
+      // The copy the list shows, so its ✓ is the one that lights.
+      picked.set(c.number, shownCopy(c));
       if (picked.size >= count) break;
     }
     for (const c of picked.values()) if (!saved[c.id]) save(c);
@@ -260,8 +323,10 @@ export function Chapters({
     if (!data) return;
     const picked = new Map<number, SourceChapter>();
     for (const c of [...data.chapters].sort((a, b) => a.number - b.number)) {
-      if (picked.has(c.number) || saved[c.id]) continue;
-      picked.set(c.number, c);
+      if (picked.has(c.number)) continue;
+      const shown = shownCopy(c);
+      if (saved[shown.id]) continue;
+      picked.set(c.number, shown);
     }
     if (picked.size === 0) return;
     if (!confirm(`Save all ${picked.size} remaining chapters to this device?`)) return;
@@ -270,11 +335,99 @@ export function Chapters({
 
   const savedHere = Object.values(saved);
   const savedBytes = savedHere.reduce((sum, c) => sum + c.bytes, 0);
+  const savingNow = [...jobs.values()].find((j) => j.state === 'saving') ?? null;
+  const waitingHere = [...jobs.values()].filter((j) => j.state === 'waiting').length;
+  const failedHere = [...jobs.values()].filter((j) => j.problem).length;
+
+  /**
+   * This chapter and the `count` after it, in the order Next will open them.
+   *
+   * Asked of `beside`, the arrow's own rule, rather than worked out again —
+   * otherwise a source listing two editions of a chapter could have this save
+   * one copy while Next opens the other, and the wait screen would appear in
+   * front of a chapter that had, in a sense, already been saved.
+   */
+  function upcoming(from: SourceChapter, count: number): SourceChapter[] {
+    const all = data?.chapters ?? [];
+    const out = [from];
+    let at = from;
+    while (out.length <= count) {
+      const found = beside(all, at.number, 1);
+      if (!found) break;
+      const next = shownCopy(found);
+      out.push(next);
+      at = next;
+    }
+    return out;
+  }
+
+  /** Save this chapter and the few after it first, ahead of anything else waiting. */
+  function keepReady(from: SourceChapter) {
+    const line = upcoming(from, KEEP_READY);
+    for (const c of line) if (!saved[c.id]) save(c);
+    moveToFront(line.map((c) => `${seriesId}:${c.id}`));
+  }
+
+  /**
+   * Every way into a chapter — a row, Continue, the arrows, the end of one.
+   *
+   * Reading ahead, a chapter not saved yet is waited for instead of opened, so
+   * the reader only ever shows one that is whole on this device. Either way,
+   * whatever is already queued for this series is reordered so the chapters
+   * after this one go next.
+   */
+  function openChapter(
+    chapter: SourceChapter,
+    at: { page: number; offset: number } | null,
+    readingAhead: boolean = ahead
+  ) {
+    prioritiseFrom(seriesId, chapter.number, KEEP_READY + 1);
+    if (readingAhead && offlineSupported) {
+      keepReady(chapter);
+      if (!saved[chapter.id]) {
+        setOpen(null);
+        setWaiting({ chapter, at });
+        return;
+      }
+    }
+    setWaiting(null);
+    setResume(at);
+    setOpen(chapter);
+  }
+
+  /** Start from where you are: the chapter you were in, the next unread, or the first. */
+  function readWhileYouWait() {
+    if (!data || data.chapters.length === 0) return;
+    saver.flush();
+    const first = [...data.chapters].sort((a, b) => a.number - b.number)[0]!;
+    const from = placeChapter ?? shownCopy(nextUp ?? first);
+    setAhead(true);
+    openChapter(from, placeChapter && sameCopy && place ? { page: place.page, offset: place.offset } : null, true);
+  }
+
+  /** What the reader's top bar says about the chapters after this one. */
+  function readyText(from: SourceChapter): string | null {
+    const next = upcoming(from, KEEP_READY).slice(1);
+    const first = next[0];
+    if (!first) return 'last chapter';
+    const ready = next.filter((c) => saved[c.id]).length;
+    const job = jobs.get(first.id);
+    if (saved[first.id]) {
+      return ready === next.length
+        ? `next ${ready === 1 ? 'chapter' : ready} saved ✓`
+        : `next saved ✓ · ${ready} of ${next.length} ready`;
+    }
+    if (job?.problem) return `${chapterText(first.number)} did not save`;
+    if (job?.state === 'saving') {
+      return `saving ${chapterText(first.number)} · ${job.total ? Math.round((job.done / job.total) * 100) : 0}%`;
+    }
+    if (job) return `${chapterText(first.number)} waiting to save`;
+    return null;
+  }
 
   function read(chapter: SourceChapter, at: { page: number; offset: number } | null = null) {
     saver.flush();
-    setResume(at);
-    setOpen(chapter);
+    openChapter(chapter, at);
   }
 
   function carryOn() {
@@ -294,6 +447,15 @@ export function Chapters({
     read(chapter, here ? { page: place.page, offset: place.offset } : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reopenChapterId, data]);
+
+  // Read while you wait: the wait is over the moment the chapter is whole here.
+  const waitedFor = waiting ? saved[waiting.chapter.id] : undefined;
+  useEffect(() => {
+    if (!waiting || !waitedFor) return;
+    setResume(waiting.at);
+    setOpen(waiting.chapter);
+    setWaiting(null);
+  }, [waiting, waitedFor]);
 
   // Kept across a reload of the page — see `open-chapter.ts`.
   useEffect(() => {
@@ -479,8 +641,7 @@ export function Chapters({
     saver.flush();
     const target = beside(list.data?.chapters ?? [], open.number, direction);
     if (!target) return;
-    setResume(null);
-    setOpen(target);
+    openChapter(shownCopy(target), null);
   }
 
   /**
@@ -509,8 +670,7 @@ export function Chapters({
       list.reload();
     }
 
-    setResume(null);
-    setOpen(target);
+    openChapter(shownCopy(target), null);
   }
 
   async function finished(chapterNumber: number) {
@@ -542,8 +702,37 @@ export function Chapters({
       .filter((c) => c.number > chapterNumber)
       .sort((a, b) => a.number - b.number)[0];
     list.reload();
-    setResume(null);
-    setOpen(next ?? null);
+    if (next) openChapter(shownCopy(next), null);
+    else {
+      setResume(null);
+      setOpen(null);
+      setAhead(false);
+    }
+  }
+
+  if (waiting) {
+    return (
+      <WaitForChapter
+        title={data?.seriesTitle ?? series?.title ?? ''}
+        chapter={waiting.chapter}
+        job={jobs.get(waiting.chapter.id)}
+        line={upcoming(waiting.chapter, KEEP_READY)
+          .slice(1)
+          .map((c) => ({ id: c.id, number: c.number, saved: saved[c.id] !== undefined, job: jobs.get(c.id) }))}
+        offline={net.offline}
+        onSave={() => keepReady(waiting.chapter)}
+        onReadNow={() => {
+          // Still reading ahead: the chapters after this one carry on saving.
+          setResume(waiting.at);
+          setOpen(waiting.chapter);
+          setWaiting(null);
+        }}
+        onStop={() => {
+          setWaiting(null);
+          setAhead(false);
+        }}
+      />
+    );
   }
 
   if (open) {
@@ -552,10 +741,13 @@ export function Chapters({
         seriesId={seriesId}
         chapter={open}
         resume={resume}
+        ahead={ahead ? readyText(open) : null}
         onClose={() => {
           saver.flush();
           setOpen(null);
           setResume(null);
+          // Reading ahead is a way of reading, so it ends when the reading does.
+          setAhead(false);
           // So the card and the row say the page you just left, not the one before.
           setTimeout(() => list.reload(), 400);
         }}
@@ -581,9 +773,10 @@ export function Chapters({
   return (
     <div className="card manga-chapters-screen">
       <div className="row between">
-        <button className="btn subtle" onClick={close}>
+        <button ref={backRef} className="btn subtle" onClick={close}>
           ‹ Back
         </button>
+        <FloatingBack target={backRef} onBack={close} />
         <button className="manga-icon-btn" aria-label="More for this series" aria-haspopup="menu" onClick={menu.open}>
           <Icon.more />
         </button>
@@ -666,6 +859,36 @@ export function Chapters({
           )}
         </div>
       </div>
+      {about.data?.description && (
+        <About
+          text={about.data.description}
+          extra={
+            <>
+              {/* Sites list the artist among the authors as often as not, so each name is said once. */}
+              {(() => {
+                const people = [
+                  ...new Set(
+                    [about.data.author, about.data.artist]
+                      .flatMap((n) => (n ?? '').split(','))
+                      .map((n) => n.trim())
+                      .filter(Boolean)
+                  ),
+                ].join(', ');
+                return people ? <p className="meta">By {people}</p> : null;
+              })()}
+              {about.data.genres.length > 0 && (
+                <div className="manga-flags">
+                  {about.data.genres.map((g) => (
+                    <span key={g} className="chip">
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          }
+        />
+      )}
       {problem && <p className="banner">{problem}</p>}
 
       {place && placeChapter && (
@@ -689,7 +912,7 @@ export function Chapters({
             <span className="title">Next: {nextUp.name}</span>
             <span className="meta">the first after chapter {chapterText(furthestRead)}, the furthest you have finished</span>
           </div>
-          <button className="btn primary" onClick={() => read(nextUp)}>
+          <button className="btn primary" onClick={() => read(shownCopy(nextUp))}>
             Read
           </button>
         </div>
@@ -703,6 +926,13 @@ export function Chapters({
             </span>
           ) : offlineSupported ? (
             <>
+              <button
+                className="btn primary"
+                onClick={readWhileYouWait}
+                title={`Saves the chapter you are on and the ${KEEP_READY} after it, opens each once it is whole, and keeps ${KEEP_READY} saved ahead of you as you read`}
+              >
+                Read while you wait
+              </button>
               <span className="meta">Save for offline:</span>
               {SAVE_AHEAD.map((n) => (
                 <button key={n} className="btn subtle" onClick={() => saveAhead(n)}>
@@ -713,9 +943,15 @@ export function Chapters({
                 All
               </button>
               <span className="meta">
-                {jobs.size > 0
-                  ? `saving ${[...jobs.values()].filter((j) => !j.problem).length}…`
-                  : savedHere.length > 0
+                {savingNow
+                  ? `saving ${chapterText(savingNow.number)}${savingNow.total ? ` · ${savingNow.done}/${savingNow.total} pages` : '…'}${
+                      waitingHere > 0 ? ` · ${waitingHere} more waiting` : ''
+                    }`
+                  : waitingHere > 0
+                    ? `${waitingHere} waiting behind another series`
+                    : failedHere > 0
+                      ? `${failedHere} did not save — ↻ to try again`
+                      : savedHere.length > 0
                     ? `${savedHere.length} saved on this device · ${sizeText(savedBytes)}`
                     : 'or ⬇ on any chapter'}
               </span>
@@ -757,8 +993,84 @@ export function Chapters({
         </p>
       )}
 
-      <div className="manga-chapters">
-        {listed.map((c) => {
+      {listed.length > 0 && (
+        <div className="manga-chapter-view" role="group" aria-label="Show chapters as">
+          <button className={`manga-shelf-chip${grid ? '' : ' on'}`} aria-pressed={!grid} onClick={() => chooseGrid(false)}>
+            List
+          </button>
+          <button className={`manga-shelf-chip${grid ? ' on' : ''}`} aria-pressed={grid} onClick={() => chooseGrid(true)}>
+            Grid
+          </button>
+        </div>
+      )}
+
+      {/*
+        * The grid: each chapter its number, and under it where you are, that
+        * it is read, or when it came out. Four across on a phone, more as there
+        * is room. Saving one chapter is the list's ⬇; here a ✓ says it is saved
+        * on this device, and the Save bar above still saves the next few.
+        */}
+      {grid && (
+        <div className="manga-chapter-grid">
+          {listed.map((c) => {
+            const here = placeChapter?.id === c.id;
+            const job = jobs.get(c.id);
+            const isSaved = saved[c.id] !== undefined;
+            const under =
+              here && place
+                ? sameCopy
+                  ? `p. ${place.page + 1}/${place.pages}`
+                  : 'you were here'
+                : c.read
+                  ? 'read'
+                  : c.uploadedAt
+                    ? // "Apr 30", not "4/30", which beside "p. 4/30" reads as a page.
+                      new Date(c.uploadedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })
+                    : '';
+            return (
+              <button
+                key={c.id}
+                className={`manga-chapter-tile${c.read ? ' read' : ''}${here ? ' started' : ''}`}
+                title={[c.name, c.scanlator, job?.problem].filter(Boolean).join(' · ')}
+                onClick={() => read(c, here && sameCopy && place ? { page: place.page, offset: place.offset } : null)}
+              >
+                <span className="manga-chapter-tile-number">{chapterText(c.number)}</span>
+                <span className="meta">{under}</span>
+                {!oneRow && c.scanlator && <span className="meta truncate">{c.scanlator}</span>}
+                {(isSaved || job) && (
+                  <span
+                    className="manga-chapter-tile-saved"
+                    aria-label={
+                      isSaved
+                        ? 'saved on this device'
+                        : job?.problem
+                          ? 'did not save'
+                          : job?.state === 'saving'
+                            ? 'saving'
+                            : 'waiting to save'
+                    }
+                  >
+                    {isSaved ? (
+                      '✓'
+                    ) : job?.problem ? (
+                      '!'
+                    ) : (
+                      <ProgressRing
+                        value={job?.total ? job.done / job.total : null}
+                        spin={job?.state === 'saving' && !job.total}
+                        size={12}
+                      />
+                    )}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="manga-chapters" hidden={grid}>
+        {!grid && listed.map((c) => {
           /*
            * Where you were, even after changing source.
            *
@@ -806,12 +1118,25 @@ export function Chapters({
                 <button
                   className={`manga-chapter-save${isSaved ? ' saved' : ''}${job?.problem ? ' failed' : ''}`}
                   aria-label={
-                    isSaved ? `${c.name} is saved on this device — remove it` : job ? `Saving ${c.name}` : `Save ${c.name} for offline`
+                    isSaved
+                      ? `${c.name} is saved on this device — remove it`
+                      : job?.problem
+                        ? `${c.name} did not save — try again`
+                        : job?.state === 'saving'
+                          ? `Saving ${c.name}${job.total ? `, ${job.done} of ${job.total} pages` : ''}`
+                          : job
+                            ? `${c.name} is waiting to save`
+                            : `Save ${c.name} for offline`
                   }
                   title={
                     isSaved
                       ? `Saved on this device (${sizeText(saved[c.id]!.bytes)}) — tap to remove`
                       : (job?.problem ??
+                        (job?.state === 'saving'
+                          ? `${job.total ? `${job.done} of ${job.total} pages` : 'starting'} · ${sizeText(job.bytes)}`
+                          : job
+                            ? 'Waiting its turn — the Downloads tab shows the line'
+                            : undefined) ??
                         (onThePc.has(c.number)
                           ? 'Kept on the PC. This saves a copy into this device too, so it opens with nothing running.'
                           : undefined))
@@ -825,7 +1150,19 @@ export function Chapters({
                     }
                   }}
                 >
-                  {isSaved ? '✓' : job && !job.problem ? (job.total ? `${job.done}/${job.total}` : '…') : job?.problem ? '↻' : '⬇'}
+                  {isSaved ? (
+                    '✓'
+                  ) : job && !job.problem ? (
+                    <ProgressRing
+                      value={job.total ? job.done / job.total : null}
+                      spin={job.state === 'saving' && !job.total}
+                      size={20}
+                    />
+                  ) : job?.problem ? (
+                    '↻'
+                  ) : (
+                    '⬇'
+                  )}
                 </button>
               )}
             </div>

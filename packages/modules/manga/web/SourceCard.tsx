@@ -209,7 +209,7 @@ export function SourceCard({
           <h3>{needsSetup(data) ? 'Set up manga' : 'Set it up again'}</h3>
           <p className="meta">
             Chapters come from <strong>Suwayomi</strong>, a free program the app runs for you in the background. This
-            downloads it and the Java it needs — about 210 MB, once — into the app's own folder. Nothing else is
+            downloads it and the Java it needs — about 230 MB, once — into the app's own folder. Nothing else is
             installed on the PC, and the Java already on it (if any) is left alone.
           </p>
           {!local ? (
@@ -255,6 +255,37 @@ export function SourceCard({
       {data && !needsSetup(data) && (
         <>
           {managed && <p className={managed.urgent ? 'meta urgent' : 'meta'}>{managed.text}</p>}
+
+          {/*
+            * Updating is setup run again: it fetches the newest Suwayomi when
+            * there is one, keeps a copy of its database, and updates every
+            * extension with an update waiting. Only on the PC, like setup.
+            */}
+          {local && data.manage && !failing(data) && (
+            <div className="row manga-update">
+              {settingUp ? (
+                <span className="meta">{setup!.step}…</span>
+              ) : (
+                <button className="btn" onClick={() => void runSetup()}>
+                  Update Suwayomi and extensions
+                </button>
+              )}
+              {!settingUp && setup?.done && setup.result && <span className="meta">{setup.result}.</span>}
+            </div>
+          )}
+          {data.manage && (
+            <p className="meta">
+              Extensions update themselves once a day while Suwayomi is running
+              {setup?.lastExtensionCheck
+                ? ` · last checked ${new Date(setup.lastExtensionCheck.at).toLocaleString([], {
+                    weekday: 'short',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                  })}: ${setup.lastExtensionCheck.note}`
+                : ''}
+              . Suwayomi itself updates with the button.
+            </p>
+          )}
 
           {/* The log, a click away whenever something has gone wrong. */}
           {failed && (
@@ -345,7 +376,7 @@ export function SourceCard({
               id="manga-jar"
               defaultValue={data.jar ?? ''}
               disabled={!local || busy}
-              placeholder="…\Suwayomi-Server-v2.3.2243.jar"
+              placeholder="…\Suwayomi-Server-v2.4.2366.jar"
               onBlur={(e) => {
                 const next = e.target.value.trim();
                 if (next !== (data.jar ?? '')) void act(() => manga.source.setJar(next));

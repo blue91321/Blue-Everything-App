@@ -104,9 +104,9 @@ const KIND_HELP: Record<VoiceCommandKind, string> = {
   launch:
     'Only things on the Games list, which fills itself in as you use this PC. What it starts is whatever that row says, so a mis-heard phrase can only ever open something you have already run yourself.',
   pause: 'Closes the microphone — for a moment, for a few minutes, or until you turn it back on.',
-  cancel: 'Closes the microphone.',
+  cancel: 'Drops what you were part-way through saying. The microphone stays on.',
   music:
-    'Starts Spotify the way Connections → Music does, on whichever phone or PC has it open, with the lists, gap, boosts and queue size chosen on that tab. Shuffle or Random is the one you pick here.',
+    "Starts Spotify the way Connections → Music does, where music is already playing, or else on this PC's Spotify, with the lists, gap, boosts and queue size chosen on that tab. Shuffle or Random is the one you pick here.",
 };
 
 /**

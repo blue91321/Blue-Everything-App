@@ -1034,8 +1034,13 @@ a.btn {
   align-items: center;
   justify-content: center;
   padding: 0;
-  background: none;
-  border: 0;
+  /*
+   * A background of its own. It had none, so once the page scrolled under it
+   * the three lines sat straight on whatever was there (a chapter's number, a
+   * cover) and read as part of it.
+   */
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
   font-size: 20px;
@@ -1045,6 +1050,35 @@ a.btn {
 
 .menu:hover {
   background: var(--surface-raised);
+}
+
+/*
+ * Back, beside the ☰, while the page's own Back has scrolled away
+ * (FloatingBack.tsx). The same pill on the same line, so the two read as a
+ * pair rather than a second control somewhere else to find.
+ */
+.floating-back {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + var(--menu-top));
+  left: calc(env(safe-area-inset-left) + 10px + 36px + 6px);
+  z-index: 40;
+  height: var(--menu-size);
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .floating-back:hover {
+    background: var(--surface-raised);
+  }
 }
 
 /*
@@ -2968,6 +3002,18 @@ a.btn {
   border-bottom: 0;
 }
 
+.manga-ext-row > .manga-row-text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* Browse and Remove, or Unflag and Install: together, at the end, dropping under on a phone. */
+.manga-ext-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
 /*
  * Suwayomi's own UI, framed.
  *
@@ -3273,6 +3319,124 @@ a.btn {
   font-size: 0.85rem;
   line-height: 1.25;
   min-height: 2.5em;
+}
+
+/*
+ * The chapter list as a grid of numbers (Chapters.tsx). A column is 110px or a
+ * quarter of the row, whichever is smaller, so a phone is four across and a
+ * wide window as many as fit: Browse's own rule, with four for its three.
+ */
+.manga-chapter-view {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  margin: 8px 0 6px;
+}
+
+.manga-chapter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(110px, calc((100% - 3 * 6px) / 4)), 1fr));
+  gap: 6px;
+}
+
+.manga-chapter-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* WebKit gives a button flex-start, which would shrink the lines to their text. */
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.manga-chapter-tile-number {
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.manga-chapter-tile .meta {
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.manga-chapter-tile.read,
+.manga-chapter-tile.started {
+  background: var(--row-read);
+}
+
+.manga-chapter-tile.read .manga-chapter-tile-number {
+  opacity: 0.5;
+}
+
+/* Partway through: the accent, as the row's stripe is. */
+.manga-chapter-tile.started {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.manga-chapter-tile-saved {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+@media (hover: hover) {
+  .manga-chapter-tile:hover {
+    background: var(--row-read-hover);
+  }
+}
+
+/* A series' description, two lines and the rest behind More (About.tsx). */
+.manga-about {
+  margin: 10px 0 4px;
+}
+
+.manga-about-text {
+  margin: 0;
+  white-space: pre-line;
+  line-height: 1.45;
+}
+
+.manga-about-text.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.manga-about-more {
+  padding: 2px 0;
+  margin-top: 2px;
+}
+
+.manga-about .manga-flags {
+  margin-top: 8px;
+}
+
+/*
+ * How many chapters, under the title, where the Follow button was. Holds its
+ * line while the count is still being asked for, so the grid does not jump.
+ */
+.manga-browse-chapters {
+  display: block;
+  width: 100%;
+  min-height: 1.3em;
+  margin-top: -2px;
+  font-size: 0.75rem;
+  line-height: 1.3;
 }
 
 .manga-browse select {
@@ -3596,6 +3760,139 @@ div.manga-chapter-row {
   border-bottom: 1px solid var(--border);
 }
 
+.manga-download-job > .manga-row-text {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.manga-download-job.failed .manga-row-text .meta {
+  color: var(--text);
+}
+
+/* The ✓ and ! beside a finished or failed row, the width of the waiting rings. */
+.manga-download-mark {
+  flex: 0 0 22px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.manga-download-mark.ok {
+  color: var(--accent);
+}
+
+.manga-download-recent > summary {
+  padding: 8px 0 4px;
+  cursor: pointer;
+}
+
+/* ---- Manga: a download's ring (`ProgressRing.tsx`) ---- */
+
+.manga-ring {
+  flex: 0 0 auto;
+  display: block;
+}
+
+.manga-ring-track {
+  stroke: var(--border);
+}
+
+.manga-ring.waiting .manga-ring-track {
+  stroke-dasharray: 2 3;
+  stroke: var(--muted);
+}
+
+.manga-ring-fill {
+  stroke: var(--accent);
+  transition: stroke-dasharray 0.3s ease;
+}
+
+.manga-ring.spin {
+  animation: manga-ring-spin 1s linear infinite;
+}
+
+@keyframes manga-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .manga-ring.spin {
+    animation: none;
+  }
+}
+
+/* A chapter row's ⬇ while it saves: the ring in place of the arrow, centred. */
+.manga-chapter-save .manga-ring {
+  margin: 0 auto;
+}
+
+/* The tab bar's Downloads, while something is saving. */
+.manga-tab-icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.manga-tab-badge {
+  position: absolute;
+  top: -5px;
+  right: -12px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+.manga-tab-badge.failed {
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  line-height: 14px;
+}
+
+/*
+ * Read while you wait: the reader's own dark screen, holding the chapter's
+ * place until it is saved. Under `.manga-reader`, so the app behind it is
+ * hidden by the same rule that hides it for the reader.
+ */
+.manga-wait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap);
+}
+
+.manga-wait-card {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.manga-wait-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.manga-wait-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.manga-reader-ahead {
+  white-space: nowrap;
+}
+
 .manga-download-series {
   border-bottom: 1px solid var(--border);
 }
@@ -3662,6 +3959,13 @@ div.manga-chapter-row {
 
 .shell:not(.desktop) .home-head {
   padding-left: var(--menu-clear);
+}
+
+/* Ten quick taps on the name do something (wordmark.ts); without this they select it. */
+.wordmark {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .home-title {
@@ -4085,13 +4389,42 @@ div.manga-chapter-row {
   align-items: center;
   padding: 4px 8px;
   border: 0;
-  background: none;
   color: var(--muted);
   cursor: pointer;
+  /*
+   * Pinned to the row's right edge. At phone width the three tabs are a little
+   * wider than the row, which scrolls, and this was left half off the edge —
+   * the one way in to the hidden tags. The card's colour lets tabs pass under.
+   */
+  position: sticky;
+  right: 0;
+  background: var(--surface);
 }
 
 .manga-browse-hide.on {
   color: var(--accent);
+}
+
+/* The tags Browse hides, opened from the button above. */
+.manga-hide-tags {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.manga-hide-tags > .meta {
+  margin: 0;
+}
+
+.manga-hide-add {
+  margin-top: 10px;
+  gap: 0.4rem;
+}
+
+.manga-hide-add input {
+  flex: 1;
+  min-width: 0;
 }
 
 .manga-lib-more {
@@ -4976,28 +5309,18 @@ html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
   margin-top: 0.75rem;
 }
 
-.menu-prefs-head,
+/* A section and its switch for the menu. Home is the ordered list above it. */
 .menu-prefs-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 3.5rem 3.5rem;
+  grid-template-columns: minmax(0, 1fr) 2.5rem;
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0;
+  cursor: pointer;
 }
 
-.menu-prefs-head {
-  font-size: 0.8rem;
-  color: var(--muted);
-  text-align: center;
-}
-
-.menu-prefs-row > input,
-.menu-prefs-row > .meta {
+.menu-prefs-row > input {
   justify-self: center;
-}
-
-.menu-prefs-row.sub .menu-prefs-name {
-  padding-left: 1.5rem;
 }
 
 .menu-prefs-name {

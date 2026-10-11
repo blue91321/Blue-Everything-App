@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { inMenu, isReady, onHome, resetShown, setShown, useMenuEntries } from '../menu-prefs';
+import {
+  homeArranged,
+  homeTiles,
+  inMenu,
+  isReady,
+  resetHome,
+  setHomeList,
+  setShown,
+  useMenuEntries,
+} from '../menu-prefs';
 import { api, type AppSettings, type Device, type Session, type UpdateCheck } from '../api';
 import { InstalledPackages } from './InstalledPackages';
 import { GamesTab } from './GamesTab';
@@ -135,64 +144,83 @@ function MenuDrawer() {
 }
 
 /**
- * What the menu and Home show — see `menu-prefs.ts`.
+ * What Home and the menu show — see `menu-prefs.ts`.
  *
- * One row per screen, with each screen's sections under it. Home is a switch
- * on every row; the menu is a switch only on sections, because a screen with
- * no way to reach it but a tile you might also hide is a screen lost.
+ * Home is an ordered list, the Dashboard's own picker: ↑ ↓ and a drag to
+ * order it, remove to take a tile off, and everything else offered underneath
+ * to add. Until it is arranged it shows the defaults; once arranged it shows
+ * exactly the list, so hiding everything but a few is removing the rest.
+ *
+ * The menu keeps its switches, on sections only: a screen is always in the
+ * menu, because one reachable only by a tile you might hide is a screen lost.
  *
  * Per device: the phone's first screen and the PC's menu are separate choices.
  */
 function MenuAndHome() {
-  const entries = useMenuEntries().filter((e) => e.id !== 'home' && e.id !== 'settings');
+  const all = useMenuEntries().filter((e) => e.id !== 'home');
+  const sections = all.filter((e) => e.parent);
+  const arranged = homeArranged();
+  const tiles = homeTiles(all);
+  const choices = all.map((e) => ({
+    id: e.id,
+    label: `${e.glyph} ${e.parent ? `${all.find((p) => p.id === e.parent)?.label ?? ''} › ` : ''}${e.label}`,
+    hint: isReady(e.id) === false ? 'not set up yet' : undefined,
+  }));
   return (
     <section id="menu-home">
       <h2>Home screen and menu</h2>
       <div className="card">
-        <div className="meta">
-          Which tiles are on Home, and which sections are listed under their screen in the menu. Chosen on this device
-          only.
+        <div className="title">Home screen</div>
+        <div className="meta" style={{ marginTop: 2 }}>
+          {arranged
+            ? 'Exactly these tiles, in this order, and nothing else. Something added in a later version is offered below rather than appearing by itself.'
+            : 'Showing the defaults. Reorder, remove or add anything and Home becomes exactly your list.'}{' '}
+          On this device only.
         </div>
-        <div className="menu-prefs">
-          <div className="menu-prefs-head" aria-hidden="true">
-            <span />
-            <span>Home</span>
-            <span>Menu</span>
+        <OrderedPicker
+          chosen={tiles.map((e) => e.id)}
+          choices={choices}
+          saving={false}
+          onChange={setHomeList}
+          missingNote="not in this build"
+        />
+        <div className="row" style={{ marginTop: '.75rem', gap: '.4rem', flexWrap: 'wrap' }}>
+          {/* For "nothing but these": start from an empty Home and add the few. */}
+          <button className="btn" disabled={tiles.length === 0} onClick={() => setHomeList([])}>
+            Remove everything
+          </button>
+          {arranged && (
+            <button className="btn subtle" onClick={resetHome}>
+              Back to the defaults
+            </button>
+          )}
+        </div>
+      </div>
+
+      {sections.length > 0 && (
+        <div className="card">
+          <div className="title">Sections in the menu</div>
+          <div className="meta" style={{ marginTop: 2 }}>
+            Listed under their screen in the menu. A screen itself is always there. On this device only.
           </div>
-          {entries.map((e) => {
-            const ready = isReady(e.id);
-            return (
-              <div key={e.id} className={e.parent ? 'menu-prefs-row sub' : 'menu-prefs-row'}>
+          <div className="menu-prefs">
+            {sections.map((e) => (
+              <label key={e.id} className="menu-prefs-row sub">
                 <span className="menu-prefs-name">
-                  <span aria-hidden="true">{e.glyph}</span> {e.label}
-                  {ready === false && <span className="meta"> · not set up yet</span>}
+                  <span aria-hidden="true">{e.glyph}</span> {all.find((p) => p.id === e.parent)?.label} › {e.label}
+                  {isReady(e.id) === false && <span className="meta"> · not set up yet</span>}
                 </span>
                 <input
                   type="checkbox"
-                  aria-label={`${e.label} on Home`}
-                  checked={onHome(e)}
-                  onChange={(ev) => setShown('home', e.id, ev.target.checked)}
+                  aria-label={`${e.label} in the menu`}
+                  checked={inMenu(e)}
+                  onChange={(ev) => setShown('menu', e.id, ev.target.checked)}
                 />
-                {e.parent ? (
-                  <input
-                    type="checkbox"
-                    aria-label={`${e.label} in the menu`}
-                    checked={inMenu(e)}
-                    onChange={(ev) => setShown('menu', e.id, ev.target.checked)}
-                  />
-                ) : (
-                  <span className="meta" title="A screen is always in the menu">
-                    always
-                  </span>
-                )}
-              </div>
-            );
-          })}
+              </label>
+            ))}
+          </div>
         </div>
-        <button className="btn" style={{ marginTop: '.75rem' }} onClick={resetShown}>
-          Back to the defaults
-        </button>
-      </div>
+      )}
     </section>
   );
 }
@@ -1878,7 +1906,7 @@ function QuietHours() {
             <div className="meta">
               {current.quietNow
                 ? QUIET_EXPLANATION[current.quietReason ?? ''] ?? 'Something is holding reminders.'
-                : 'Still silent during a game, and while you are away from the desk.'}
+                : "Held while you're in a game, unless Games lets that one interrupt, and sent to your phone instead while you're away from the desk, if phone nudges are on."}
             </div>
           </div>
           <button className="btn" disabled={saving} onClick={() => update({ remindersEnabled: !current.remindersEnabled })}>

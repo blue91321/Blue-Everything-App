@@ -17,6 +17,15 @@
  *
  * App publishes the entries it built here, which is how Settings — which
  * knows nothing about navigation — can list them.
+ *
+ * ### Home can be a list of your own
+ *
+ * Home follows the defaults until you arrange it. Once you do (Settings →
+ * Home screen), `homeList` is the whole of it: exactly those tiles, in that
+ * order, and nothing else, so "hide everything except these" is what an
+ * arranged Home *is*. The cost is the one the Dashboard's own order states: a
+ * part added in a later version is not on an arranged Home until you add it,
+ * which Settings says, and it is offered there underneath.
  */
 import { useEffect, useState } from 'react';
 
@@ -33,13 +42,19 @@ export type MenuEntry = {
   defaultHome: boolean | 'ready';
 };
 
-type Prefs = { menu: Record<string, boolean>; home: Record<string, boolean> };
+type Prefs = {
+  menu: Record<string, boolean>;
+  home: Record<string, boolean>;
+  /** Home's tiles, in order, once arranged; absent while it follows the defaults. */
+  homeList?: string[];
+};
 const KEY = 'menu-prefs';
 
 function read(): Prefs {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Prefs>;
-    return { menu: v.menu ?? {}, home: v.home ?? {} };
+    const list = Array.isArray(v.homeList) ? v.homeList.filter((id): id is string => typeof id === 'string') : undefined;
+    return { menu: v.menu ?? {}, home: v.home ?? {}, ...(list ? { homeList: list } : {}) };
   } catch {
     return { menu: {}, home: {} };
   }
@@ -73,6 +88,29 @@ export function onHome(entry: MenuEntry): boolean {
   return entry.defaultHome === 'ready' ? ready[entry.id] === true : entry.defaultHome;
 }
 
+/**
+ * The tiles on Home, in order: your list when you have arranged one (an id
+ * nothing answers to, a switched-off feature, is skipped and kept), else every
+ * entry shown by default, in the menu's order.
+ */
+export function homeTiles(all: readonly MenuEntry[]): MenuEntry[] {
+  if (prefs.homeList) {
+    return prefs.homeList.flatMap((id) => all.find((e) => e.id === id) ?? []);
+  }
+  return all.filter(onHome);
+}
+
+/** Whether Home is your own list rather than the defaults. */
+export function homeArranged(): boolean {
+  return prefs.homeList !== undefined;
+}
+
+/** Home's tiles, exactly these, in this order. */
+export function setHomeList(ids: readonly string[]): void {
+  prefs = { ...prefs, homeList: [...new Set(ids)] };
+  save();
+}
+
 /** Whether a section is set up, for Settings to say so beside it. */
 export function isReady(id: string): boolean | undefined {
   return ready[id];
@@ -80,12 +118,22 @@ export function isReady(id: string): boolean | undefined {
 
 export function setShown(where: 'menu' | 'home', id: string, shown: boolean): void {
   prefs = { ...prefs, [where]: { ...prefs[where], [id]: shown } };
+  save();
+}
+
+function save(): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(prefs));
   } catch {
     // Kept for this visit only.
   }
   announce();
+}
+
+/** Home back to its defaults, leaving the menu's choices alone. */
+export function resetHome(): void {
+  prefs = { menu: prefs.menu, home: {} };
+  save();
 }
 
 /** Back to every default, in one place. */

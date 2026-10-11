@@ -39,7 +39,7 @@
 import { db, tasks, nudges, changes, getSettings } from '@everything/server/module-api';
 import { resolvePush } from '@everything/shared';
 import { isNewerChapter, worthPolling } from './identity.js';
-import { read, readPositions, write, alreadyRaised, type ReadingPosition, type Series, type Store } from './library.js';
+import { read, readPositions, write, alreadyRaised, isPutAway, type ReadingPosition, type Series, type Store } from './library.js';
 import { readSeries, MangaUpdatesError, SPACING_MS } from './mangaupdates.js';
 import { SourceError, effectiveUrl } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL } from './suwayomi.js';
@@ -151,12 +151,20 @@ export function dueForCheck(
   store: Store,
   now: number,
   positions: Record<string, ReadingPosition>,
-  batch = BATCH
+  batch = BATCH,
+  /*
+   * Whether this series can be asked about right now. One that cannot is left
+   * out before the slots are shared, not skipped after: skipped, it kept its
+   * old `checkedAt`, so with Suwayomi stopped it sat at the front of the queue
+   * every sweep and took the slots the series MangaUpdates could answer for.
+   */
+  askable: (s: Series) => boolean = () => true
 ): Series[] {
   const recent: Series[] = [];
   const failed: Series[] = [];
   const rest: Series[] = [];
   for (const s of pollable(store)) {
+    if (!askable(s)) continue;
     const active = lastActive(s, positions);
     if (now - active <= RECENT_MS) {
       // Already asked about every sweep; a retry slot would buy it nothing.
@@ -205,15 +213,17 @@ const SWEPT = [
 export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
   const store = read();
   const linksBefore = store.links.length;
-  const due = dueForCheck(store, now, readPositions());
+  const sourceUrl = effectiveUrl(store, DEFAULT_BASE_URL);
+  const suwayomi = sourceUrl ? new SuwayomiAdapter(sourceUrl) : null;
+  const sourceUp = suwayomiProcess.state.state === 'running' || !store.manageSuwayomi;
+  const askable = (s: Series) =>
+    (s.source !== null && suwayomi !== null && s.source.adapter === suwayomi.id && sourceUp) || Boolean(s.muId);
+  const due = dueForCheck(store, now, readPositions(), BATCH, askable);
   const result: SweepResult = { checked: 0, raised: 0, failed: 0 };
   if (due.length === 0) return result;
 
   const pushDefault = Boolean((await getSettings()).pushDefault);
   let announce = false;
-
-  const sourceUrl = effectiveUrl(store, DEFAULT_BASE_URL);
-  const suwayomi = sourceUrl ? new SuwayomiAdapter(sourceUrl) : null;
   // Counts only the calls that leave this machine, so the first one is not
   // preceded by a pointless pause and a run of linked series costs nothing.
   let remoteCalls = 0;
@@ -244,9 +254,20 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
      * is a stale number rather than a wrong one, and the row says where it came
      * from either way.
      */
-    const sourceUp = suwayomiProcess.state.state === 'running' || !store.manageSuwayomi;
     const viaSource =
       row.source !== null && suwayomi !== null && row.source.adapter === suwayomi.id && sourceUp;
+    const onMangaUpdates = Boolean(series.muId);
+
+    /*
+     * Its source is down and MangaUpdates does not know it: nothing can be
+     * asked, so nothing is recorded and it waits for the next sweep. This went
+     * to MangaUpdates anyway, as `/series/` with no id, and the 405 it got
+     * was written on the row: a series you read an hour ago listed as "source
+     * not answering" because Suwayomi happened to be stopped, which in
+     * on-demand mode it mostly is.
+     */
+    // Already left out by `askable`; kept so the rule holds wherever `due` came from.
+    if (!viaSource && !onMangaUpdates) continue;
 
     // Spacing applies to MangaUpdates only. Their policy asks for it; a
     // localhost GraphQL call does not need it and should not be slowed by it.
@@ -283,11 +304,12 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
            * With no MangaUpdates id there is nothing to fall back *to*, so the
            * error stands and the outer handler records it.
            */
-          if (series.muId === null) throw error;
+          if (!onMangaUpdates) throw error;
           const why = error instanceof SourceError ? error.message : 'the source failed';
 
           remoteCalls += 1;
-          const reading = await readSeries(series.muId);
+          // Known to be there: `onMangaUpdates` was checked just above.
+          const reading = await readSeries(series.muId!);
           row.checkedAt = now;
           row.totalChapters = reading.totalChapters;
           if (reading.completed && row.status === 'ongoing') row.status = 'completed';
@@ -338,7 +360,13 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
       // Belt and braces against a sweep that overlapped itself.
       if (alreadyRaised(store, row.id, fresh)) continue;
 
-      const task = store.releaseTasks
+      /*
+       * Put away on a hidden shelf: the chapter is recorded — the NEW badge and
+       * the catch-up count still know — but no task and no reminder, which
+       * would put it straight back on the Dashboard it was hidden from.
+       */
+      const away = isPutAway(store, row);
+      const task = store.releaseTasks && !away
         ? (
             await db
               .insert(tasks)
@@ -355,7 +383,7 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
         : null;
 
       // Switched off, the chapter is still recorded below — only the nudge is skipped.
-      const nudge = store.releaseNudges
+      const nudge = store.releaseNudges && !away
         ? (
             await db
               .insert(nudges)

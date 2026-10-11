@@ -39,14 +39,25 @@
  * times out.
  *
  * It reports progress through `setupState`, which the card polls while it runs.
+ *
+ * ### Pressed again, it is the update
+ *
+ * Every run asks GitHub for Suwayomi's newest release, so a run on an install
+ * that already works is an update: when the newest jar is not the one in use,
+ * it is downloaded, the running Suwayomi is stopped, its database is copied to
+ * `data/suwayomi/backups/` (the version jump migrates it, and migrations only
+ * go forward), and the new jar is started. Then every installed extension with
+ * an update waiting is updated. `result` says what it did, so "nothing to do"
+ * is visibly an answer rather than a button that seemed to do nothing.
  */
 import { execFileSync } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { changes } from '@everything/server/module-api';
 import { read, write } from './library.js';
+import { dataDir } from '@everything/server/module-api';
 import { RUNTIME_DIR, bundledJava, suwayomiProcess } from './process.js';
 import { DEFAULT_BASE_URL, KEIYOUSHI_REPO, SuwayomiAdapter } from './suwayomi.js';
 
@@ -61,9 +72,11 @@ export type SetupState = {
   total: number | null;
   done: boolean;
   problem: string | null;
+  /** What the last run did, in words: "Suwayomi updated to v2.4.2366 · 3 extensions updated". */
+  result: string | null;
 };
 
-let state: SetupState = { running: false, step: null, received: 0, total: null, done: false, problem: null };
+let state: SetupState = { running: false, step: null, received: 0, total: null, done: false, problem: null, result: null };
 
 export function setupState(): SetupState {
   return state;
@@ -100,7 +113,7 @@ export function startSetup(): SetupState {
     state = { ...state, problem: 'setting up automatically is for Windows; point the card at a Suwayomi jar instead' };
     return state;
   }
-  state = { running: true, step: 'Starting', received: 0, total: null, done: false, problem: null };
+  state = { running: true, step: 'Starting', received: 0, total: null, done: false, problem: null, result: null };
   void run().catch((error) => {
     state = { ...state, running: false, step: null, problem: error instanceof Error ? error.message : 'setup failed' };
     changes.emitChange('all');
@@ -144,12 +157,22 @@ async function run(): Promise<void> {
   const asset = release.assets?.find((a) => /^Suwayomi-Server-v[\d.]+\.jar$/.test(a.name));
   if (!asset) throw new Error('Suwayomi\'s latest release has no .jar to download');
   const jar = join(RUNTIME_DIR, asset.name);
-  if (!existsSync(jar)) {
-    await download(asset.browser_download_url, jar, `Downloading ${asset.name}`);
-    // Older jars go: one version is enough, and each is 166MB.
-    for (const name of readdirSync(RUNTIME_DIR)) {
-      if (/^Suwayomi-Server-.*\.jar$/.test(name) && name !== asset.name) rmSync(join(RUNTIME_DIR, name), { force: true });
-    }
+  if (!existsSync(jar)) await download(asset.browser_download_url, jar, `Downloading ${asset.name}`);
+
+  // ---- a different version from the one in use: stop it and keep its database ----
+  const before = read();
+  const url0 = before.suwayomiUrl ?? DEFAULT_BASE_URL;
+  const versionOf = (path: string | null) => (path ? /v[\d.]+(?=\.jar$)/.exec(basename(path))?.[0] ?? null : null);
+  const was = versionOf(before.suwayomiJar);
+  const now = versionOf(jar);
+  const switching = before.suwayomiJar !== null && before.suwayomiJar !== jar;
+  if (switching) {
+    state = { ...state, step: `Stopping Suwayomi ${was ?? ''}`.trim(), received: 0, total: null };
+    // Ours or not: an update was asked for, and the old one holds the port and the database.
+    suwayomiProcess.stop(undefined, { force: true });
+    await untilQuiet(url0);
+    state = { ...state, step: 'Keeping a copy of its database' };
+    backUpDatabase(was);
   }
 
   // ---- point the app at it, and start it ----
@@ -166,14 +189,164 @@ async function run(): Promise<void> {
     throw new Error(started.state === 'failed' ? started.problem : 'Suwayomi did not start');
   }
 
+  /*
+   * Older jars go: one version is enough, and each is 166MB. Only now, once the
+   * new one is running. They were removed straight after the download, while
+   * the old one was still running from its jar — which Windows may refuse,
+   * failing the whole update — and before anything knew the new one would
+   * start, which left no old version to go back to if it did not.
+   */
+  for (const name of readdirSync(RUNTIME_DIR)) {
+    if (!/^Suwayomi-Server-.*\.jar$/.test(name) || name === asset.name) continue;
+    try {
+      rmSync(join(RUNTIME_DIR, name), { force: true });
+    } catch {
+      // Still held by something: it goes on the next update.
+    }
+  }
+
   // ---- the extension list every install needs ----
   state = { ...state, step: 'Adding the extension list' };
   const adapter = new SuwayomiAdapter(url);
   const repos = await adapter.repos();
   if (!repos.includes(KEIYOUSHI_REPO)) await adapter.setRepos([...repos, KEIYOUSHI_REPO]);
-  // And read it, so Manage extensions opens on a list rather than an empty page.
-  await adapter.extensions(true).catch(() => []);
+  // ---- extensions with an update waiting ----
+  const ext = await updateWaitingExtensions(adapter, (step) => {
+    state = { ...state, step };
+  });
+  noteExtensionCheck(ext);
 
-  state = { running: false, step: null, received: 0, total: null, done: true, problem: null };
+  const said = [
+    switching
+      ? `Suwayomi updated${was ? ` from ${was}` : ''} to ${now ?? 'the newest version'}`
+      : now
+        ? `Suwayomi ${now} is the newest`
+        : 'Suwayomi is the newest',
+    extensionNote(ext),
+  ];
+  state = { running: false, step: null, received: 0, total: null, done: true, problem: null, result: said.join(' · ') };
   changes.emitChange('all');
+}
+
+/* ---- extensions, updated by themselves ---- */
+
+type ExtensionRun = { updated: string[]; failed: string[] };
+
+/**
+ * Re-read the extension list and update every installed extension that has an
+ * update. It reads the list from the repositories, so it is a network fetch;
+ * each update is Suwayomi downloading one small file.
+ */
+async function updateWaitingExtensions(adapter: SuwayomiAdapter, say: (step: string) => void = () => undefined): Promise<ExtensionRun> {
+  // Read fresh, so what is waiting is what the repositories say now.
+  const listed = await adapter.extensions(true).catch(() => []);
+  const waiting = listed.filter((e) => e.installed && e.hasUpdate);
+  const run: ExtensionRun = { updated: [], failed: [] };
+  for (const [i, e] of waiting.entries()) {
+    say(`Updating extensions (${i + 1} of ${waiting.length}): ${e.name}`);
+    try {
+      await adapter.updateExtension(e.pkg);
+      run.updated.push(e.name);
+    } catch {
+      run.failed.push(e.name);
+    }
+  }
+  return run;
+}
+
+function extensionNote(run: ExtensionRun): string {
+  if (run.updated.length === 0 && run.failed.length === 0) return 'extensions are up to date';
+  const n = run.updated.length;
+  return `${n} extension${n === 1 ? '' : 's'} updated${
+    run.failed.length > 0 ? `, ${run.failed.length} would not update (${run.failed.join(', ')})` : ''
+  }`;
+}
+
+/**
+ * When extensions were last checked and what that did, on disk so a restart
+ * does not check again at once. A package cannot add a table, hence the file.
+ */
+const EXTENSIONS_FILE = join(dataDir, 'manga-extensions.json');
+type ExtensionCheck = { at: number; note: string };
+
+function lastExtensionCheck(): ExtensionCheck | null {
+  try {
+    const v = JSON.parse(readFileSync(EXTENSIONS_FILE, 'utf8').replace(/^\uFEFF/, '')) as Partial<ExtensionCheck>;
+    return typeof v.at === 'number' && typeof v.note === 'string' ? { at: v.at, note: v.note } : null;
+  } catch {
+    return null;
+  }
+}
+
+function noteExtensionCheck(run: ExtensionRun): void {
+  try {
+    writeFileSync(EXTENSIONS_FILE, JSON.stringify({ at: Date.now(), note: extensionNote(run) }));
+  } catch {
+    // Not remembered: the next sweep checks again, which costs one list read.
+  }
+}
+
+/** For the card: when extensions last updated themselves, and what happened. */
+export function extensionCheck(): ExtensionCheck | null {
+  return lastExtensionCheck();
+}
+
+const EXTENSIONS_EVERY_MS = 24 * 60 * 60_000;
+
+/**
+ * Extensions update themselves, once a day, while Suwayomi is running.
+ *
+ * Called from the release sweep, which runs every half hour anyway, so this
+ * adds no timer. **Never starts Suwayomi**, the rule the sweep and the tag
+ * fill keep: an on-demand Suwayomi is not woken to update something nobody is
+ * using, and the next day it is up is soon enough. Not during a setup or an
+ * update, which does the same thing itself.
+ *
+ * A source extension that is out of date is the commonest reason a source
+ * stops working: the site changes, the extension is fixed, and the old one
+ * keeps failing until somebody presses update.
+ */
+export async function updateExtensionsIfDue(): Promise<void> {
+  if (state.running) return;
+  const last = lastExtensionCheck();
+  if (last && Date.now() - last.at < EXTENSIONS_EVERY_MS) return;
+  const store = read();
+  const url = store.suwayomiUrl ?? DEFAULT_BASE_URL;
+  if (store.manageSuwayomi && suwayomiProcess.state.state !== 'running') return;
+  const adapter = new SuwayomiAdapter(url);
+  if (!(await adapter.describe()).reachable) return;
+  const run = await updateWaitingExtensions(adapter);
+  noteExtensionCheck(run);
+  if (run.updated.length > 0) changes.emitChange('all');
+}
+
+/** Wait for the old Suwayomi to let go of its port, up to half a minute. */
+async function untilQuiet(url: string): Promise<void> {
+  const adapter = new SuwayomiAdapter(url);
+  for (let i = 0; i < 30; i++) {
+    if (!(await adapter.describe()).reachable) return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error('the old Suwayomi would not stop, so it was left running and nothing was changed');
+}
+
+/**
+ * Suwayomi's database, copied aside before a new version migrates it. Its
+ * migrations only go forward, so this is the way back if the new version
+ * misbehaves. The two newest copies are kept; each is the size of your
+ * library's chapter lists, tens of megabytes.
+ */
+function backUpDatabase(version: string | null): void {
+  const db = join(dataDir, 'suwayomi', 'database.mv.db');
+  if (!existsSync(db)) return;
+  const dir = join(dataDir, 'suwayomi', 'backups');
+  mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  copyFileSync(db, join(dir, `database-${version ?? 'old'}-${stamp}.mv.db`));
+  // Newest by when they were made, not by name: "v2.10" sorts before "v2.4".
+  const copies = readdirSync(dir)
+    .filter((n) => /^database-.*\.mv\.db$/.test(n))
+    .map((n) => ({ n, at: statSync(join(dir, n)).mtimeMs }))
+    .sort((a, b) => a.at - b.at);
+  for (const old of copies.slice(0, -2)) rmSync(join(dir, old.n), { force: true });
 }

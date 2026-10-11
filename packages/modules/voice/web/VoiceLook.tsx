@@ -149,7 +149,7 @@ export function VoiceLook({
         <div className="meta" style={{ marginTop: 4 }}>
           {atCursor
             ? 'Beside the mouse pointer, wherever that is.'
-            : 'Pinned to a corner, so it is always in the same place rather than wherever you last clicked.'}
+            : 'Pinned to one spot, so it is always in the same place rather than wherever you last clicked.'}
         </div>
 
         <div className="row" style={{ marginTop: 10 }}>
@@ -160,7 +160,7 @@ export function VoiceLook({
           >
             At the cursor
           </button>
-          {!atCursor && <span className="meta">or pick a corner below</span>}
+          {!atCursor && <span className="meta">or pick a spot below</span>}
         </div>
 
         <div className="anchors" style={{ marginTop: 10 }}>

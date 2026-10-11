@@ -16,10 +16,11 @@ import { Logo, type LogoShape } from './Logo';
 import { Offline } from './Offline';
 import { ConnectivityBanner } from './ConnectivityBanner';
 import { Home } from './Home';
+import { tapWordmark, useWordmark } from './wordmark';
 import { onDataChange } from './live';
-import { onNavigate } from './nav';
+import { onNavigate, onSectionShown } from './nav';
 import { onPopView, pushView, startHistory, viewFromUrl } from './view-history';
-import { inMenu, onHome, publishEntries, useMenuEntries, type MenuEntry } from './menu-prefs';
+import { homeTiles, inMenu, publishEntries, useMenuEntries, type MenuEntry } from './menu-prefs';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
@@ -217,6 +218,7 @@ export function App() {
    * app opens; this says what you have done since.
    */
   const [collapsed, setCollapsed] = useState(false);
+  const wordmark = useWordmark();
 
   /*
    * Follow the stored default when it changes, without stomping a live toggle.
@@ -379,15 +381,19 @@ export function App() {
         // menu item, and a typo should leave you where you are rather than on a
         // blank screen.
         if (!items.some((item) => item.id === wanted)) return;
+        const same = wanted === viewRef.current;
         setView(wanted as NavId);
         pushView(wanted);
-        setSection(null);
+        setSection((was) => (same && !wantedFocus ? was : null));
         setFocus(wantedFocus ?? null);
         setSearch(wantedSearch ?? null);
         if (!wide) setDrawerOpen(false);
       }),
     []
   );
+
+  // A screen with tabs says which is showing, so the menu marks the tab you are on.
+  useEffect(() => onSectionShown(setSection), []);
 
   /*
    * Tell the browser where we started, once.
@@ -561,7 +567,9 @@ export function App() {
   function go(target: NavId) {
     // A section is its screen opened with the section as `focus`.
     const [id, part] = target.split('#') as [string, string | undefined];
-    setSection(part ?? null);
+    // The screen itself, while already on it, leaves its tab where it is, so the
+    // tab's mark stays too. Another screen says which tab it opens on (`showingSection`).
+    setSection((was) => part ?? (id === view ? was : null));
     if (part) setFocus(part);
     setView(id);
     // One entry per screen you actually asked for. `pushView` ignores a repeat
@@ -594,7 +602,9 @@ export function App() {
       <aside className="drawer" style={drawerStyle} aria-hidden={!shown && !isDesktop}>
         <div className="drawer-head">
           <Logo shape={logo.shape} size={26} version={logo.version} />
-          <span>Blue Everything</span>
+          <span className="wordmark" onClick={tapWordmark}>
+            {wordmark}
+          </span>
         </div>
         <nav>
           {entries
@@ -668,7 +678,7 @@ export function App() {
 
         {current.id === 'home' && (
           <Home
-            items={entries.filter((e) => e.id !== 'home' && onHome(e)).map((e) => ({ ...e, live: sectionsLive[e.id] === true }))}
+            items={homeTiles(entries.filter((e) => e.id !== 'home')).map((e) => ({ ...e, live: sectionsLive[e.id] === true }))}
             onOpen={(id) => go(id)}
             logo={logo}
           />

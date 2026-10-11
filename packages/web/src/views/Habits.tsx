@@ -794,8 +794,8 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
                 ? 'Nags you once it is due, and stops as soon as you do it.'
                 : "Nags you until you've hit the target, then stops for the rest of the " +
                   (cadence === 'daily' ? 'day' : 'week') + '.'}{' '}
-          Ticking it off restarts the clock. Silent during quiet hours and while you're in a game — and a
-          reminder you miss is dropped rather than stacking up.
+          Ticking it off restarts the clock. Silent during quiet hours and while you're in a game (unless
+          Games lets that game interrupt), and a reminder you miss is dropped rather than stacking up.
         </div>
       </div>
 

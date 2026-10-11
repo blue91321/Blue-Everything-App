@@ -43,6 +43,7 @@ import {
   type SourceHealth,
   type SourceMatch,
   type SearchOutcome,
+  distinctChapters,
   rankMatches,
   sourcesToSearch,
 } from './sources.js';
@@ -222,6 +223,16 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     await this.setInstalled(pkg, false);
   }
 
+  /** Install the newer version of an extension that has one waiting. */
+  async updateExtension(pkg: string): Promise<void> {
+    await this.gql(
+      `mutation Update($input: UpdateExtensionInput!) {
+         updateExtension(input: $input) { extension { pkgName versionName hasUpdate } }
+       }`,
+      { input: { id: pkg, patch: { update: true } } }
+    );
+  }
+
   private async setInstalled(pkg: string, install: boolean): Promise<void> {
     await this.gql(
       `mutation Set($input: UpdateExtensionInput!) {
@@ -264,6 +275,16 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
 
   /* ---- browsing ---- */
 
+  /** Every installed source with the extension that provides it, by its package name. */
+  async sourcesWithExtension(): Promise<Array<{ id: string; name: string; lang: string; pkg: string }>> {
+    const data = await this.gql<{
+      sources: { nodes: Array<{ id: string; displayName: string; lang: string; extension: { pkgName: string } | null }> };
+    }>(`query { sources { nodes { id displayName lang extension { pkgName } } } }`);
+    return (data.sources?.nodes ?? []).flatMap((s) =>
+      s.extension?.pkgName ? [{ id: String(s.id), name: s.displayName, lang: s.lang, pkg: s.extension.pkgName }] : []
+    );
+  }
+
   async listSources(): Promise<BrowseSource[]> {
     const data = await this.gql<{
       sources: { nodes: Array<SourceNode & { supportsLatest: boolean }> };
@@ -297,6 +318,30 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       }
     }
     return out;
+  }
+
+  /**
+   * How many chapters Suwayomi has stored for each of these series, by id, in
+   * one local query and with no request to any site. A series it has never
+   * fetched chapters for is left out of the answer rather than counted as 0,
+   * since "not asked yet" and "has none" are different things.
+   */
+  async storedChapterCounts(mangaIds: readonly string[]): Promise<Map<string, number>> {
+    const ids = mangaIds.map((n) => Number.parseInt(n, 10)).filter((n) => Number.isSafeInteger(n));
+    const numbers = new Map<string, number[]>();
+    for (let i = 0; i < ids.length; i += 50) {
+      const data = await this.gql<{ chapters: { nodes: Array<{ mangaId: number; chapterNumber: number }> } }>(
+        `query Counts($ids: [Int!]!) { chapters(filter: { mangaId: { in: $ids } }) { nodes { mangaId chapterNumber } } }`,
+        { ids: ids.slice(i, i + 50) }
+      );
+      for (const node of data.chapters?.nodes ?? []) {
+        const key = String(node.mangaId);
+        const list = numbers.get(key) ?? [];
+        list.push(node.chapterNumber);
+        numbers.set(key, list);
+      }
+    }
+    return new Map([...numbers].map(([id, list]) => [id, distinctChapters(list)]));
   }
 
   /**
@@ -460,23 +505,39 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
    * instead and the page says less rather than failing, because a detail page
    * that errors over a blurb loses the chapters and the Follow button with it.
    */
-  async details(mangaId: string): Promise<SeriesDetails> {
+  async details(mangaId: string, { stored = false }: { stored?: boolean } = {}): Promise<SeriesDetails> {
     const id = Number.parseInt(mangaId, 10);
     if (!Number.isSafeInteger(id)) throw new SourceError('not a Suwayomi manga id');
     const FIELDS = 'id title author artist description genre status thumbnailUrl realUrl source { id displayName lang }';
 
     let manga: Json | null = null;
     let stale = false;
-    try {
-      const data = await this.gql<{ fetchManga: { manga: Json } }>(
-        `mutation Details($id: Int!) { fetchManga(input: { id: $id }) { manga { ${FIELDS} } } }`,
-        { id }
-      );
-      manga = data.fetchManga?.manga ?? null;
-    } catch {
-      const data = await this.gql<{ manga: Json }>(`query Stored($id: Int!) { manga(id: $id) { ${FIELDS} } }`, { id });
-      manga = data.manga ?? null;
-      stale = true;
+    /*
+     * `stored` reads Suwayomi's own copy first, with no request to the site,
+     * and asks the site only when that copy has no description — a followed
+     * series' chapter list shows one, and opening it should not scrape a page
+     * for a blurb Suwayomi already has.
+     */
+    if (stored) {
+      try {
+        const data = await this.gql<{ manga: Json }>(`query Stored($id: Int!) { manga(id: $id) { ${FIELDS} } }`, { id });
+        if (typeof data.manga?.description === 'string' && data.manga.description.trim()) manga = data.manga;
+      } catch {
+        // Not stored: asked of the site below.
+      }
+    }
+    if (!manga) {
+      try {
+        const data = await this.gql<{ fetchManga: { manga: Json } }>(
+          `mutation Details($id: Int!) { fetchManga(input: { id: $id }) { manga { ${FIELDS} } } }`,
+          { id }
+        );
+        manga = data.fetchManga?.manga ?? null;
+      } catch {
+        const data = await this.gql<{ manga: Json }>(`query Stored($id: Int!) { manga(id: $id) { ${FIELDS} } }`, { id });
+        manga = data.manga ?? null;
+        stale = true;
+      }
     }
     if (!manga) throw new SourceError('the source has no such series');
 

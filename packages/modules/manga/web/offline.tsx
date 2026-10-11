@@ -12,6 +12,7 @@
  * device's copy is updated at once, so the rows light up now rather than then.
  */
 import { useRef, useState } from 'react';
+import { FloatingBack } from '@app/FloatingBack';
 import type { OfflineViewProps } from '@app/features/index';
 import { Cover } from './Cover';
 import { Reader } from './Reader';
@@ -27,6 +28,8 @@ import { NEEDS, NOT_YET_SENT, WHILE_REACHABLE } from './device-text';
 export default function MangaOffline({ onClose }: OfflineViewProps) {
   const { manifest } = useOffline();
   const [seriesId, setSeriesId] = useState<string | null>(null);
+  // Watched by the Back beside the ☰, shown once this one has scrolled away.
+  const backRef = useRef<HTMLButtonElement>(null);
 
   const all = Object.values(manifest?.series ?? {}).sort((a, b) => a.title.localeCompare(b.title));
   const series = seriesId ? manifest?.series[seriesId] ?? null : null;
@@ -38,9 +41,10 @@ export default function MangaOffline({ onClose }: OfflineViewProps) {
   return (
     <div className="card">
       <div className="row between">
-        <button className="btn subtle" onClick={onClose}>
+        <button ref={backRef} className="btn subtle" onClick={onClose}>
           ‹ Back
         </button>
+        <FloatingBack target={backRef} onBack={onClose} />
         <span className="meta">Saved on this device</span>
       </div>
       {waiting > 0 && (

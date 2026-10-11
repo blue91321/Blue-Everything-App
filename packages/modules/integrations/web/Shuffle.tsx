@@ -218,6 +218,8 @@ export function Shuffle() {
   // …and never more than a hundred: each song queued is a request of its own,
   // and the server holds the same line to stay under Spotify's rate limit.
   const maxAhead = Math.max(1, Math.min(100, inPlay.songs.length));
+  // What the upper limit is: the songs in the lists, or the hundred it never goes past.
+  const aheadCap = inPlay.songs.length > 100 ? 'the most it keeps queued' : 'the songs in the lists you picked';
   // The gap is held by the list's length, not the queue's: the dealer keeps it
   // whatever the queue holds.
   const effectiveGap = Math.min(gap, Math.max(0, inPlay.songs.length - 1));
@@ -570,8 +572,8 @@ export function Shuffle() {
           </label>
           <div className="meta" style={{ marginTop: '.25rem' }}>
             {order === 'random'
-              ? `Between ${minAhead} (the songs before one can come back) and ${maxAhead} (the songs in the lists you picked).`
-              : `Between 1 and ${maxAhead}, the songs in the lists you picked.`}
+              ? `Between ${minAhead} (the songs before one can come back) and ${maxAhead} (${aheadCap}).`
+              : `Between 1 and ${maxAhead}, ${aheadCap}.`}
           </div>
         </div>
 

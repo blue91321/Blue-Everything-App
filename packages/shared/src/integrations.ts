@@ -307,7 +307,7 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     label: 'Spotify',
     glyph: '🎧',
     blurb:
-      'Your playlists, saved tracks, and the artists you follow. Needs a Spotify Premium account — ' +
+      'Your playlists, saved tracks and the artists you follow, and properly shuffled playback from Music. Needs a Spotify Premium account — ' +
       'since February 2026 a Development Mode app stops working the moment the owner’s Premium lapses.',
     reach: 'web',
     auth: 'oauth2',

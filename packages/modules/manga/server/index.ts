@@ -55,6 +55,7 @@ import { groupKey, groupMatches, isIndexSource, toSuwayomiChanges, type FilterCh
 import { sweepReleases, pollable, SWEEP_EVERY_MS } from './releases.js';
 import {
   SourceError,
+  distinctChapters,
   effectiveUrl,
   supportsExtensions,
   profileChapters,
@@ -84,8 +85,9 @@ import {
 } from './mangareader.js';
 import { matchingState, startMatching, unmatchedCount } from './matching.js';
 import { fillTags } from './tags.js';
-import { withoutMature } from './mature.js';
-import { setupState, startSetup } from './setup.js';
+import { tagsForLevel, withoutTags } from './mature.js';
+import { extensionUsage, readFlags, setFlag, type ExtensionUsage } from './extension-usage.js';
+import { extensionCheck, setupState, startSetup, updateExtensionsIfDue } from './setup.js';
 import {
   cachedPage,
   cachedPageList,
@@ -987,7 +989,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return startSetup();
   });
 
-  app.get('/api/manga/source/setup', async () => setupState());
+  // With when extensions last updated themselves, for the card to say so.
+  app.get('/api/manga/source/setup', async () => ({ ...setupState(), lastExtensionCheck: extensionCheck() }));
 
   /**
    * The end of Suwayomi's log, for the card to show when it will not start —
@@ -1529,9 +1532,24 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
     try {
       const [extensions, repos] = await Promise.all([ctx.adapter.extensions(refresh === '1'), ctx.adapter.repos()]);
+      /*
+       * How much each installed one is used, and its sources, for the list to
+       * sort by and to open Browse on. A detail: if Suwayomi will not say which
+       * source is whose, the list is drawn without the counts.
+       */
+      let usage: Record<string, ExtensionUsage> = {};
+      try {
+        const sources = await new SuwayomiAdapter(effectiveUrl(ctx.store, DEFAULT_BASE_URL)!).sourcesWithExtension();
+        usage = extensionUsage(ctx.store.series, ctx.store.glimpses, sources);
+      } catch {
+        // Drawn without them.
+      }
       return {
         extensions,
         repos,
+        usage,
+        flagged: readFlags(),
+        readLanguages: ctx.store.readLanguages,
         /*
          * Offered by name, because a fresh Suwayomi ships with no repositories
          * and finds nothing — which is the commonest confusing first experience
@@ -1546,6 +1564,19 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  /**
+   * Flag one to install later, or unflag it. **Not local-only**, unlike
+   * installing: a flag is a note on a list and runs nothing, which is what lets
+   * a phone, where installing is refused, still ask for a source.
+   */
+  app.put('/api/manga/extensions/:pkg/flag', async (request, reply) => {
+    const { pkg } = request.params as { pkg: string };
+    const body = request.body as { flagged?: unknown } | null;
+    if (!/^[A-Za-z0-9._-]{1,200}$/.test(pkg)) return reply.code(400).send({ error: 'not an extension' });
+    if (typeof body?.flagged !== 'boolean') return reply.code(400).send({ error: 'flagged is true or false' });
+    return { flagged: setFlag(pkg, body.flagged) };
+  });
+
   /** Install one, or remove it. Local-only, like everything that runs code here. */
   app.put('/api/manga/extensions/:pkg', async (request, reply) => {
     localOnly(request as unknown as { isLocal: boolean });
@@ -1556,7 +1587,11 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
     try {
       if (body?.install === false) await ctx.adapter.uninstallExtension(pkg);
-      else await ctx.adapter.installExtension(pkg);
+      else {
+        await ctx.adapter.installExtension(pkg);
+        // Flagged on the phone and now installed: the note has done its job.
+        if (readFlags().includes(pkg)) setFlag(pkg, false);
+      }
       // Answered with the fresh list so the row updates from its own response
       // rather than a second request.
       return { extensions: await ctx.adapter.extensions(false) };
@@ -1661,6 +1696,22 @@ export async function routes(app: FastifyInstance): Promise<void> {
   }
 
   /**
+   * Each result with how many chapters it has, from what Suwayomi has stored —
+   * one local query, nothing asked of any site. `null` is "not known yet": the
+   * screen asks `/browse/chapters` for those after drawing the page, so a page
+   * is as quick as before and the counts fill in.
+   */
+  async function withChapterCounts<T extends SourceMatch>(adapter: SuwayomiAdapter, results: T[]) {
+    let counts = new Map<string, number>();
+    try {
+      counts = await adapter.storedChapterCounts(results.map((r) => r.id));
+    } catch {
+      // Unknown, all of them: the screen asks for each.
+    }
+    return results.map((r) => ({ ...r, chapters: counts.get(r.id) ?? null }));
+  }
+
+  /**
    * The sources Browse can list from — the languages you read, like search —
    * and which one it lists from now.
    */
@@ -1696,7 +1747,13 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
   /** One page of a source's popular list or its newest releases. */
   app.get('/api/manga/browse/list', async (request, reply) => {
-    const { source, type, page, safe } = request.query as { source?: string; type?: string; page?: string; safe?: string };
+    const { source, type, page, safe, hide } = request.query as {
+      source?: string;
+      type?: string;
+      page?: string;
+      safe?: string;
+      hide?: string | string[];
+    };
     if (!source || !SOURCE_ID.test(source)) return reply.code(400).send({ error: 'which source?' });
     if (type !== 'popular' && type !== 'latest') return reply.code(400).send({ error: 'popular or latest' });
     const n = Number.parseInt(page ?? '1', 10);
@@ -1715,14 +1772,25 @@ export async function routes(app: FastifyInstance): Promise<void> {
         type === 'popular' ? 'POPULAR' : 'LATEST',
         n
       );
-      // `safe` leaves adult titles out — see `mature.ts` for the two levels and how they are found.
-      const level = safe === 'adult' ? 'adult' : safe === 'mature' || safe === '1' ? 'mature' : null;
-      const filtered = level ? await withoutMature(ctx.adapter, got.matches, level) : null;
+      /*
+       * `hide` names the tags to leave out, once per tag — see `mature.ts` for
+       * how they are matched and found. `safe` is what a screen from before
+       * tags sends, and means the same three it used to.
+       */
+      const tags = (hide === undefined ? tagsForLevel(safe) : Array.isArray(hide) ? hide : [hide])
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0 && t.length <= 40)
+        .slice(0, 50);
+      const filtered = tags.length > 0 ? await withoutTags(ctx.adapter, got.matches, tags) : null;
       return {
-        results: (filtered?.matches ?? got.matches).map((m) => present(ctx.store, m)),
+        results: await withChapterCounts(
+          ctx.adapter,
+          (filtered?.matches ?? got.matches).map((m) => present(ctx.store, m))
+        ),
         hasNextPage: got.hasNextPage,
         page: n,
         hidden: filtered?.hidden ?? 0,
+        hiddenBy: filtered?.hiddenBy ?? {},
         unchecked: filtered?.unchecked ?? 0,
       };
     } catch (error) {
@@ -1754,6 +1822,42 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * have nothing to be asked — and the answer says so rather than presenting
    * one source's results as everyone's.
    */
+  /**
+   * How many chapters each of these has, for the Browse results whose count
+   * was not stored. A dozen at most per request, three at a time: each one not
+   * stored is a request to the site, and the screen asks in small batches so
+   * counts appear as they come rather than all at the end. Suwayomi keeps what
+   * it fetched, so the next look is free.
+   *
+   * A count that could not be found is `null`, and the tile shows nothing for
+   * it rather than an error: it is a detail, not the point of the page.
+   */
+  app.post('/api/manga/browse/chapters', async (request, reply) => {
+    const body = request.body as { ids?: unknown } | null;
+    const ids = Array.isArray(body?.ids)
+      ? body.ids.filter((x): x is string => typeof x === 'string' && /^\d{1,12}$/.test(x)).slice(0, 12)
+      : [];
+    if (ids.length === 0) return reply.code(400).send({ error: 'which series?' });
+    const ctx = await ready();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    const counts: Record<string, number | null> = {};
+    let next = 0;
+    const worker = async () => {
+      while (next < ids.length) {
+        const id = ids[next++]!;
+        try {
+          // Suwayomi's copy when it has one, else the site once, which it keeps.
+          counts[id] = distinctChapters((await ctx.adapter.chapters(id, false)).map((c) => c.number));
+        } catch {
+          counts[id] = null;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, ids.length) }, worker));
+    return { counts };
+  });
+
   app.post('/api/manga/browse/search', async (request, reply) => {
     const body = request.body as {
       query?: unknown;
@@ -1813,7 +1917,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
       const [mine, rest] = await Promise.all([preferred, others]);
       const ranked = query ? rankMatches(query, [...mine, ...(rest?.matches ?? [])]) : mine.map((m) => ({ ...m, score: 0 }));
       const groups = groupMatches(
-        ranked.map((m) => present(ctx.store, m)),
+        await withChapterCounts(
+          ctx.adapter,
+          ranked.map((m) => present(ctx.store, m))
+        ),
         meta?.id ?? null
       ).map((g) => ({ ...g, following: g.entries.find((e) => e.following)?.following ?? null }));
 
@@ -2193,6 +2300,25 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * list should not scrape a website — that is seconds of latency and a request
    * to somebody else's server for a screen you may only be glancing at.
    */
+  /**
+   * What the source says about a series you follow or have read: its
+   * description, who made it and its genres, for the chapter list's head — the
+   * same facts the series' page shows before you follow it. Suwayomi's stored
+   * copy first, the site only when that has no description. A detail, so a
+   * failure answers with nothing rather than an error over the chapter list.
+   */
+  app.get('/api/manga/:id/about', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const ctx = await reader(id);
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    try {
+      const d = await ctx.adapter.details(ctx.series.source!.mangaId, { stored: true });
+      return { description: d.description, author: d.author, artist: d.artist, genres: d.genres, url: d.url };
+    } catch {
+      return { description: null, author: null, artist: null, genres: [], url: null };
+    }
+  });
+
   app.get('/api/manga/:id/chapters', async (request, reply) => {
     const { id } = request.params as { id: string };
     const { refresh } = request.query as { refresh?: string };
@@ -2943,6 +3069,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
       await sweepReleases();
       // A few series' genres each sweep, only while Suwayomi is up — see `tags.ts`.
       await fillTags(TAGS_PER_SWEEP);
+      // Extensions, once a day, only while Suwayomi is up — see `updateExtensionsIfDue`.
+      await updateExtensionsIfDue().catch(() => undefined);
       /*
        * And anything new for an archived series, queued and then fetched.
        *

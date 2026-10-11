@@ -17,10 +17,10 @@
  * declares rather than a fixed form, so a new extension's filters appear without
  * this file changing.
  */
-import { useEffect, useRef, useState } from 'react';
-import { useButtonMenu } from '@app/ContextMenu';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Cover } from './Cover';
 import { Icon } from './Icons';
+import { COMMON_TAGS, FIRST_TAGS, isFirstTag, loadHiddenTags, saveHiddenTags } from './hidden-tags';
 import { SeriesDetail } from './SeriesDetail';
 import { languageName } from './judge';
 import {
@@ -41,6 +41,8 @@ export function Browse({
   onFollowed,
   onRead,
   search,
+  pick,
+  onExtensions,
 }: {
   onFollowed: () => void;
   onRead: (seriesId: string) => void;
@@ -49,29 +51,20 @@ export function Browse({
    * no source yet. `at` makes asking twice for the same title a second request.
    */
   search?: { query: string; at: number } | null;
+  /** A source to show, from Manage extensions' Browse. */
+  pick?: { source: string; at: number } | null;
+  /** Open Manage extensions, from beside the source picker. */
+  onExtensions?: () => void;
 }) {
   const [state, setState] = useState<BrowseState | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [sub, setSub] = useState<Sub>('popular');
-  // Strict unless changed, and per device: what is fine on the PC may not be on the phone.
-  const [hideMature, setHideMature] = useState<Hide>(() => {
-    try {
-      const v = localStorage.getItem(HIDE_MATURE_KEY);
-      return v === 'none' || v === 'adult' ? v : 'mature';
-    } catch {
-      return 'mature';
-    }
-  });
-  // A small button at the end of the tab row rather than a sentence above the
-  // grid: set once and left, so it should not take a line of every visit.
-  // Up here with the other hooks: below the early returns it would run on some
-  // renders and not others, which is React error #310 and a blank screen.
-  const hideMenu = useButtonMenu(() =>
-    (Object.keys(HIDE_LABEL) as Hide[]).map((level) => ({
-      label: `${level === hideMature ? '✓ ' : '\u2003'}${HIDE_LABEL[level]}`,
-      onSelect: () => chooseHide(level),
-    }))
-  );
+  // Ecchi, Mature and Adult unless changed, and per device: what is fine on the
+  // PC may not be on the phone. See `hidden-tags.ts`.
+  const [hide, setHide] = useState<string[]>(loadHiddenTags);
+  // A small button at the end of the tab row opens the tags, rather than a row
+  // of them above every grid: set once and left, so not a line of every visit.
+  const [hideOpen, setHideOpen] = useState(false);
 
   /** Series followed from this screen since it opened, by result key, so buttons change at once. */
   const [followed, setFollowed] = useState<Record<string, string>>({});
@@ -146,6 +139,15 @@ export function Browse({
    */
   const followingOf = (r: BrowseResult) => followed[keyOf(r)] ?? (needsSource(r) ? null : r.following);
 
+  // Opened on a source from Manage extensions: that source, on Popular, at the list.
+  useEffect(() => {
+    if (!pick || !state || !state.sources.some((s) => s.id === pick.source)) return;
+    setDetail(null);
+    setSub('popular');
+    void choose(pick.source);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pick?.at, state === null]);
+
   useEffect(() => {
     if (!search) return;
     setDetail(null);
@@ -157,21 +159,21 @@ export function Browse({
   if (state.sources.length === 0) {
     return (
       <p className="empty">
-        No sources in the languages you read. Install an extension under Library → Where chapters come from, or widen
-        your languages.
+        No sources in the languages you read. Install an extension, or widen your languages.{' '}
+        {onExtensions && (
+          <button className="btn subtle" onClick={onExtensions}>
+            Manage extensions
+          </button>
+        )}
       </p>
     );
   }
 
   const subs: Sub[] = ['popular', ...(source?.supportsLatest ? (['latest'] as const) : []), 'search'];
 
-  function chooseHide(level: Hide) {
-    setHideMature(level);
-    try {
-      localStorage.setItem(HIDE_MATURE_KEY, level);
-    } catch {
-      // Kept for this visit only.
-    }
+  function chooseHide(next: string[]) {
+    setHide(next);
+    saveHiddenTags(next);
   }
 
   return (
@@ -205,6 +207,12 @@ export function Browse({
             </option>
           ))}
         </select>
+        {/* Beside the list of sources, which is where you notice you want another. */}
+        {onExtensions && (
+          <button className="btn subtle" onClick={onExtensions}>
+            Manage extensions
+          </button>
+        )}
       </div>
 
       <div className="tabs" role="tablist">
@@ -215,33 +223,30 @@ export function Browse({
         ))}
         {sub !== 'search' && (
           <button
-            className={`manga-browse-hide${hideMature !== 'none' ? ' on' : ''}`}
-            onClick={hideMenu.open}
-            aria-haspopup="menu"
-            aria-label={`Hiding: ${HIDE_LABEL[hideMature]}`}
-            // The surprising part, where somebody wondering about it will hover.
-            title={`${HIDE_LABEL[hideMature]}. Some sources tag violent series Mature too, such as Jujutsu Kaisen and Berserk.`}
+            className={`manga-browse-hide${hide.length > 0 ? ' on' : ''}`}
+            onClick={() => setHideOpen((o) => !o)}
+            aria-expanded={hideOpen}
+            aria-label={hide.length > 0 ? `Hidden tags: ${hide.join(', ')}` : 'Hide tags'}
+            title={hide.length > 0 ? `Hiding ${hide.join(', ')}` : 'Hide tags you don\u2019t want to see'}
           >
             <Icon.filter />
           </button>
         )}
       </div>
-      {hideMenu.menu}
+      {hideOpen && sub !== 'search' && <HideTags hide={hide} onChange={chooseHide} />}
 
       {source && sub !== 'search' && (
         <SourceList
-          key={`${source.id}:${sub}:${hideMature}`}
+          key={`${source.id}:${sub}:${hide.join('|')}`}
           sourceId={source.id}
           type={sub}
-          hideMature={hideMature}
+          hide={hide}
           following={followingOf}
-          onFollow={follow}
-          onRead={onRead}
           onOpen={open}
         />
       )}
       {sub === 'search' && (
-        <Search state={state} following={followingOf} onFollow={follow} onRead={onRead} onOpen={open} asked={search ?? null} />
+        <Search state={state} following={followingOf} onOpen={open} asked={search ?? null} />
       )}
       </div>
     </div>
@@ -250,33 +255,116 @@ export function Browse({
 
 const keyOf = (r: { sourceName: string; id: string }) => `${r.sourceName}:${r.id}`;
 
-const HIDE_MATURE_KEY = 'manga.browse-hide';
+/** " (Adult 3, BL 2)", or nothing from a server that does not say. */
+function byTag(counts: Record<string, number>): string {
+  const parts = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([tag, n]) => `${tag} ${n}`);
+  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+}
 
-type Hide = 'mature' | 'adult' | 'none';
+/* ---- Tags to hide ---- */
 
-const HIDE_LABEL: Record<Hide, string> = {
-  mature: 'Hide mature, ecchi and adult',
-  adult: 'Hide ecchi and adult only',
-  none: 'Show everything',
-};
+/**
+ * Ecchi, Mature and Adult first, as switches that stay in place; then any other
+ * tag hidden, tapped to show it again; then quick picks, your library's own
+ * tags and the common ones, tapped to hide; and a box for anything else.
+ */
+function HideTags({ hide, onChange }: { hide: string[]; onChange: (next: string[]) => void }) {
+  const [draft, setDraft] = useState('');
+  const [libraryTags, setLibraryTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    // The tags your library's series carry, most common first, as suggestions.
+    manga.list().then(
+      (lib) => {
+        const counts = new Map<string, number>();
+        for (const s of lib.series) for (const tag of s.tags ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+        setLibraryTags([...counts.entries()].sort((a, b) => b[1] - a[1]).map(([tag]) => tag));
+      },
+      () => undefined
+    );
+  }, []);
+
+  const on = (tag: string) => hide.some((h) => h.toLowerCase() === tag.toLowerCase());
+  const toggle = (tag: string) => onChange(on(tag) ? hide.filter((h) => h.toLowerCase() !== tag.toLowerCase()) : [...hide, tag]);
+  const others = hide.filter((t) => !isFirstTag(t));
+  const picks: string[] = [];
+  for (const tag of [...COMMON_TAGS, ...libraryTags]) {
+    if (!on(tag) && !isFirstTag(tag) && !picks.some((p) => p.toLowerCase() === tag.toLowerCase())) picks.push(tag);
+  }
+
+  function add(event: FormEvent) {
+    event.preventDefault();
+    const typed = draft.replace(/\s+/g, ' ').trim();
+    // "romance" typed is the Romance on offer, spelled as sources spell it.
+    const tag = picks.find((p) => p.toLowerCase() === typed.toLowerCase()) ?? typed;
+    if (tag && !on(tag)) onChange([...hide, tag]);
+    setDraft('');
+  }
+
+  return (
+    <div className="manga-hide-tags">
+      <p className="meta">
+        Hidden from Popular and Latest on this device. Some sources tag violent series Mature too, such as Jujutsu
+        Kaisen and Berserk.
+      </p>
+      <div className="manga-shelf-chips">
+        {FIRST_TAGS.map((tag) => (
+          <button key={tag} className={`manga-shelf-chip${on(tag) ? ' on' : ''}`} aria-pressed={on(tag)} onClick={() => toggle(tag)}>
+            {tag}
+          </button>
+        ))}
+        {others.map((tag) => (
+          <button key={tag} className="manga-shelf-chip on" aria-pressed onClick={() => toggle(tag)} title={`Show ${tag} again`}>
+            {tag} ×
+          </button>
+        ))}
+      </div>
+      {picks.length > 0 && (
+        <div className="manga-shelf-chips">
+          {picks.slice(0, 14).map((tag) => (
+            <button key={tag} className="manga-shelf-chip" aria-pressed={false} onClick={() => toggle(tag)} title={`Hide ${tag}`}>
+              + {tag}
+            </button>
+          ))}
+        </div>
+      )}
+      <form className="row manga-hide-add" onSubmit={add}>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          list="manga-hide-suggest"
+          placeholder="Another tag to hide"
+          aria-label="Another tag to hide"
+          maxLength={40}
+        />
+        <button className="btn subtle" disabled={!draft.trim()}>
+          Hide
+        </button>
+        <datalist id="manga-hide-suggest">
+          {picks.map((tag) => (
+            <option key={tag} value={tag} />
+          ))}
+        </datalist>
+      </form>
+    </div>
+  );
+}
 
 /* ---- Popular and Recently released ---- */
 
 function SourceList({
   sourceId,
   type,
-  hideMature,
+  hide,
   following,
-  onFollow,
-  onRead,
   onOpen,
 }: {
   sourceId: string;
   type: 'popular' | 'latest';
-  hideMature: Hide;
+  hide: string[];
   following: (r: BrowseResult) => string | null;
-  onFollow: (r: BrowseResult) => Promise<void>;
-  onRead: (id: string) => void;
   onOpen: (r: BrowseResult) => void;
 }) {
   const [results, setResults] = useState<BrowseResult[]>([]);
@@ -285,14 +373,21 @@ function SourceList({
   const [loading, setLoading] = useState(true);
   const [problem, setProblem] = useState<string | null>(null);
   const [hidden, setHidden] = useState(0);
+  const [hiddenBy, setHiddenBy] = useState<Record<string, number>>({});
   const [unchecked, setUnchecked] = useState(0);
+  const { countOf: chaptersOf, seen } = useChapterCounts(results);
 
   async function load(next: number) {
     setLoading(true);
     setProblem(null);
     try {
-      const got = await manga.browse.list(sourceId, type, next, hideMature === 'none' ? null : hideMature);
+      const got = await manga.browse.list(sourceId, type, next, hide);
       setHidden((n) => n + (got.hidden ?? 0));
+      setHiddenBy((was) => {
+        const sum = { ...was };
+        for (const [tag, n] of Object.entries(got.hiddenBy ?? {})) sum[tag] = (sum[tag] ?? 0) + n;
+        return sum;
+      });
       // Only the latest page's: an earlier page's unknowns are known by now.
       setUnchecked(got.unchecked ?? 0);
       // A source's next page often repeats the tail of the last; shown once.
@@ -321,12 +416,12 @@ function SourceList({
       {results.length === 0 && loading && <p className="empty">Loading…</p>}
       {results.length === 0 && !loading && !problem && (
         <p className="empty">
-          {hidden > 0 ? 'Everything on this page was an adult title.' : 'This source listed nothing.'}
+          {hidden > 0 ? 'Everything on this page had a tag you hide.' : 'This source listed nothing.'}
         </p>
       )}
-      {hideMature !== 'none' && (hidden > 0 || unchecked > 0) && (
+      {hide.length > 0 && (hidden > 0 || unchecked > 0) && (
         <p className="meta">
-          {hidden > 0 ? `${hidden} adult title${hidden === 1 ? '' : 's'} hidden.` : ''}
+          {hidden > 0 ? `${hidden} hidden${byTag(hiddenBy)}.` : ''}
           {unchecked > 0
             ? ` ${unchecked} could not be checked in time and are shown; they will be checked next time.`
             : ''}
@@ -334,7 +429,15 @@ function SourceList({
       )}
       <div className="manga-browse-grid">
         {results.map((r) => (
-          <Tile key={keyOf(r)} result={r} following={following(r)} onFollow={onFollow} onRead={onRead} onOpen={onOpen} />
+          <Tile
+            key={keyOf(r)}
+            result={r}
+            title={r.title}
+            chapters={chaptersOf(r)}
+            following={following(r) !== null}
+            onOpen={() => onOpen(r)}
+            seen={seen}
+          />
         ))}
       </div>
       {more && (results.length > 0 || hidden > 0) && (
@@ -346,47 +449,124 @@ function SourceList({
   );
 }
 
+/**
+ * A cover, its title, and how many chapters it has: what a result is, in every
+ * tab. There is no Follow button. Following is done from the series' page,
+ * after looking at it, which is where you find out whether it is the right one
+ * and whether you want to read it at all.
+ */
 function Tile({
   result,
+  title,
+  chapters,
   following,
-  onFollow,
-  onRead,
   onOpen,
+  seen,
 }: {
   result: BrowseResult;
-  following: string | null;
-  onFollow: (r: BrowseResult) => Promise<void>;
-  onRead: (id: string) => void;
-  onOpen: (r: BrowseResult) => void;
+  title: string;
+  /** A count, null when it could not be found, undefined while it is being asked for. */
+  chapters: number | null | undefined;
+  following: boolean;
+  onOpen: () => void;
+  /** Watches the tile, so its count is asked for once it is on screen. */
+  seen: (el: HTMLElement | null) => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  const count =
+    chapters === undefined ? '\u2026' : chapters === null ? '' : chapters === 1 ? '1 chapter' : `${chapters} chapters`;
   return (
-    <div className="manga-browse-tile">
-      {/* The cover and title are one button: a real one, so it takes Enter and is announced as something to press. */}
-      <button className="manga-browse-open" onClick={() => onOpen(result)} title={result.title}>
+    <div className="manga-browse-tile" ref={seen} data-id={result.id}>
+      {/* One button: a real one, so it takes Enter and is announced as something to press. */}
+      <button className="manga-browse-open" onClick={onOpen} title={title}>
         {/* As wide as its column, so the columns set the spacing rather than a fixed-size cover inside them. */}
-        <Cover path={result.coverPath} title={result.title} fill />
-        <span className="title manga-browse-title">{result.title}</span>
+        <Cover path={result.coverPath} title={title} fill />
+        <span className="title manga-browse-title">{title}</span>
+        <span className="meta manga-browse-chapters">
+          {count}
+          {following && <span className="manga-flag good">{count ? ' · ' : ''}following</span>}
+        </span>
       </button>
-      {following ? (
-        <button className="btn subtle" onClick={() => onRead(following)}>
-          Following · Read
-        </button>
-      ) : (
-        <button
-          className="btn"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            await onFollow(result);
-            setBusy(false);
-          }}
-        >
-          {busy ? 'Following…' : result.unlinked ? 'Read from here' : 'Follow'}
-        </button>
-      )}
     </div>
   );
+}
+
+/**
+ * Chapter counts for a list of results: what the server had stored comes with
+ * them, and the rest are asked for after the page is drawn, six at a time, one
+ * request in flight, so they fill in rather than holding the page up.
+ */
+function useChapterCounts(results: readonly BrowseResult[]) {
+  const [found, setFound] = useState<Record<string, number | null>>({});
+  /*
+   * Only for tiles that have been on screen. A search can return two hundred
+   * results, and a count not stored is a request to that series' site: asking
+   * for all of them is two hundred requests for one search, which is how a
+   * source starts refusing. Popular's forty-odd are seen as you scroll.
+   */
+  const [seenIds, setSeenIds] = useState<ReadonlySet<string>>(new Set());
+  const observer = useRef<IntersectionObserver | null>(null);
+  if (observer.current === null && typeof IntersectionObserver !== 'undefined') {
+    observer.current = new IntersectionObserver(
+      (entries) => {
+        const ids = entries.filter((e) => e.isIntersecting).map((e) => (e.target as HTMLElement).dataset.id ?? '');
+        if (ids.length === 0) return;
+        for (const e of entries) if (e.isIntersecting) observer.current?.unobserve(e.target);
+        // A new set only when something new was seen, or each report would re-render.
+        setSeenIds((s) => (ids.every((id) => s.has(id)) ? s : new Set([...s, ...ids])));
+      },
+      // A screen's worth ahead, so a count is usually there by the time its tile is.
+      { rootMargin: '0px 0px 100% 0px' }
+    );
+  }
+  useEffect(() => () => observer.current?.disconnect(), []);
+  // Without an observer at all, every tile counts as seen: a count late is better than none.
+  // Stable, so React does not detach and re-attach it on every render.
+  const seen = useCallback((el: HTMLElement | null) => {
+    if (el) observer.current?.observe(el);
+  }, []);
+  const isSeen = (id: string) => observer.current === null || seenIds.has(id);
+  const asked = useRef(new Set<string>());
+  const running = useRef(false);
+  const alive = useRef(true);
+  // Read by the loop each time round, so results added by "More" while it runs are counted too.
+  const latest = useRef(results);
+  latest.current = results;
+  const isSeenNow = useRef(isSeen);
+  isSeenNow.current = isSeen;
+  useEffect(() => () => {
+    alive.current = false;
+  }, []);
+
+  useEffect(() => {
+    if (running.current) return;
+    const todo = () =>
+      latest.current
+        .filter((r) => r.chapters == null && /^\d+$/.test(r.id) && !asked.current.has(r.id) && isSeenNow.current(r.id))
+        .map((r) => r.id);
+    if (todo().length === 0) return;
+    running.current = true;
+    void (async () => {
+      for (let batch = todo().slice(0, 6); batch.length > 0 && alive.current; batch = todo().slice(0, 6)) {
+        batch.forEach((id) => asked.current.add(id));
+        try {
+          const { counts } = await manga.browse.chapters(batch);
+          if (alive.current) setFound((f) => ({ ...f, ...counts }));
+        } catch {
+          // An older server, or Suwayomi stopped: those stay blank.
+          if (alive.current) setFound((f) => ({ ...f, ...Object.fromEntries(batch.map((id) => [id, null])) }));
+        }
+      }
+      running.current = false;
+    })();
+  }, [results, seenIds]);
+
+  const countOf = (r: BrowseResult): number | null | undefined => {
+    if (typeof r.chapters === 'number') return r.chapters;
+    if (r.id in found) return found[r.id];
+    // An older server sends no field at all; nothing is coming for those.
+    return r.chapters === undefined || !/^\d+$/.test(r.id) ? null : undefined;
+  };
+  return { countOf, seen };
 }
 
 /* ---- Search ---- */
@@ -397,15 +577,11 @@ const slot = (position: number, inner?: number) => (inner === undefined ? `${pos
 function Search({
   state,
   following,
-  onFollow,
-  onRead,
   onOpen,
   asked,
 }: {
   state: BrowseState;
   following: (r: BrowseResult) => string | null;
-  onFollow: (r: BrowseResult) => Promise<void>;
-  onRead: (id: string) => void;
   onOpen: (r: BrowseResult, others: BrowseResult[]) => void;
   asked: { query: string; at: number } | null;
 }) {
@@ -497,6 +673,9 @@ function Search({
     (g) => !hideFollowed || !g.entries.map(following).find(Boolean)
   );
   const hidden = (result?.groups.length ?? 0) - groups.length;
+  // Counted for each group's first entry, which is the copy its tile opens.
+  const leads = useMemo(() => groups.map((g) => g.entries[0]!), [result, hideFollowed]);
+  const { countOf: chaptersOf, seen } = useChapterCounts(leads);
   const active = changeList.length + leftOut.size + (allLanguages ? 1 : 0) + (hideFollowed ? 1 : 0);
 
   return (
@@ -599,62 +778,32 @@ function Search({
       )}
       {result && groups.length === 0 && <p className="empty">Nothing matched.</p>}
 
-      {groups.map((g) => {
-        const lead = g.entries[0];
-        // From the entries, not the group's own field: `following` here already
-        // knows that a followed series with no source is not followed *here*.
-        const followingId = g.entries.map(following).find(Boolean) ?? null;
-        // One site often lists a series more than once — the original and an
-        // "(Official)" or colour edition — so sources are counted once each.
-        // The editions themselves are all under "a different source".
-        const sources = [...new Set(g.entries.map((e) => e.sourceName))];
-        return (
-          <div className="manga-row" key={g.key}>
-            <button className="manga-browse-open" onClick={() => onOpen(lead, g.entries.slice(1))} aria-label={`About ${g.title}`}>
-              <Cover path={lead.coverPath} title={g.title} size={48} />
-            </button>
-            <div className="manga-row-text">
-              <button className="manga-browse-open title truncate" onClick={() => onOpen(lead, g.entries.slice(1))}>
-                {g.title}
-                {followingId && <span className="manga-flag good"> · following</span>}
-                {!followingId && lead.unlinked && <span className="meta"> · in your list, with no source yet</span>}
-              </button>
-              <span className="meta">
-                {g.preferred ? '' : `not on ${chosen?.name ?? 'the chosen source'} · `}
-                on {sources.length} source{sources.length === 1 ? '' : 's'}: {sources.join(', ')}
-              </span>
-              {g.entries.length > 1 && !followingId && (
-                <details className="manga-compare-other">
-                  <summary>
-                    {sources.length > 1 ? `${lead.unlinked ? 'Read' : 'Follow'} from a different source` : `Other editions on ${lead.sourceName}`}
-                  </summary>
-                  {g.entries.slice(1).map((e) => (
-                    <div className="row between" key={keyOf(e)}>
-                      <span className="meta truncate">
-                        {e.sourceName} — {e.title}
-                      </span>
-                      <button className="btn subtle" onClick={() => void onFollow(e)}>
-                        {e.unlinked ? 'Read' : 'Follow'} from here
-                      </button>
-                    </div>
-                  ))}
-                </details>
-              )}
-            </div>
-            <div className="manga-row-actions">
-              {followingId ? (
-                <button className="btn subtle" onClick={() => onRead(followingId)}>
-                  Read
-                </button>
-              ) : (
-                <button className="btn" onClick={() => void onFollow(lead)}>
-                  {lead.unlinked ? 'Read' : 'Follow'} from {lead.sourceName}
-                </button>
-              )}
-            </div>
-          </div>
-        );
-      })}
+      {/*
+        * The same tiles as Popular and Latest: cover, title, chapter count.
+        * Which sources have it, the other editions and following are all on
+        * the series' page, which a tap opens with the other copies beside it.
+        */}
+      {groups.length > 0 && (
+        <div className="manga-browse-grid">
+          {groups.map((g) => {
+            const lead = g.entries[0]!;
+            // From the entries, not the group's own field: `following` here already
+            // knows that a followed series with no source is not followed *here*.
+            const followingId = g.entries.map(following).find(Boolean) ?? null;
+            return (
+              <Tile
+                key={g.key}
+                result={lead}
+                title={g.title}
+                chapters={chaptersOf(lead)}
+                following={followingId !== null}
+                onOpen={() => onOpen(lead, g.entries.slice(1))}
+                seen={seen}
+              />
+            );
+          })}
+        </div>
+      )}
     </>
   );
 }

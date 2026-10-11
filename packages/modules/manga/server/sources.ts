@@ -60,6 +60,16 @@ export type SourceMatch = {
   thumbnailUrl: string | null;
 };
 
+/**
+ * How many chapters a list holds: distinct numbers, not entries. MangaFire
+ * lists two editions of most chapters, and counting entries read "864
+ * chapters" for a series at 419. Suwayomi writes -1 for a chapter it could not
+ * number, which is left out rather than counted as one more.
+ */
+export function distinctChapters(numbers: readonly number[]): number {
+  return new Set(numbers.filter((n) => Number.isFinite(n) && n >= 0)).size;
+}
+
 export type SourceChapter = {
   id: string;
   /** As the source numbers it. Float, because `220.5` is a real chapter. */

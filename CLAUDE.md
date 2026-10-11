@@ -151,6 +151,21 @@ A screen is always in the menu: one reachable only by a tile you might hide
 would be lost. App publishes its entries to `menu-prefs`, which is how Settings
 lists them without knowing anything about navigation.
 
+**A screen with tabs says which is showing** (`showingSection` in `nav.ts`),
+so the menu's mark follows the tab: picking Friends on Connections left Music
+marked, because the menu only knew what it had itself opened. App marks the
+section when the menu lists it and the screen's own entry when it does not, and
+clicking the screen's entry while already on it leaves the tab's mark alone,
+since the tab stays where it was.
+
+**Home can be your own list** (`homeList`). Until arranged it shows the defaults;
+once arranged in Settings → Home screen, which is the Dashboard's
+`OrderedPicker`, it shows exactly that list in that order. So hiding everything
+but a few is what an arranged Home is, and *Remove everything* starts from
+nothing. The cost is the Dashboard order's: a section added later is not on an
+arranged Home until you add it, and Settings offers it underneath and says so.
+The menu's section switches are a card of their own.
+
 **The Music tab is its own setup.** Until Spotify is connected and has the
 playback permission, it shows three steps and the Spotify card from Services,
 exported as `ProviderCard` and opened (`startOpen`). It is the same card, not a
@@ -620,6 +635,25 @@ The server resolves what the grid needs onto each series in `/api/manga`:
 comparison is done in the browser, since it is a comparison of two numbers the
 server already decided.
 
+**A Browse result is a cover, a title and a chapter count, in every tab.**
+Search drew rows with every source that had the series, other editions and a
+Follow button per row; Popular and Latest drew covers with a Follow button.
+Following belongs on the series' page, after looking at it, which is where you
+find out whether it is the right series and whether you want it at all. So
+Search is the same grid, a tap opens the page with the other copies beside it,
+and "· following" marks what you already follow.
+
+The count is distinct chapter numbers (`distinctChapters`), not entries:
+MangaFire lists two editions of most chapters. What Suwayomi has stored comes
+with the results in one local query; the rest are asked for with
+`/browse/chapters`, six at a time and **only for tiles that have come on
+screen**, because a search can return two hundred results and a count not stored
+is a request to that site: asking for all of them would be two hundred requests
+for one search, which is how a source starts refusing. Measured: 8 asked for
+on the first screen of a 198-result search. The observer is the same
+`IntersectionObserver` the Library uses, so in a pane that is not drawing,
+nothing is asked for until it is.
+
 **Browse is at least three across too.** A column is 130px or a third of the
 row, whichever is smaller (`minmax(min(130px, calc((100% - 16px) / 3)), 1fr)`),
 and the covers fill their columns. It had been `minmax(130px, 1fr)` with a
@@ -708,7 +742,10 @@ findable, which it was not. The chips are visible rather than behind the ⋯ bes
 them for the same reason: a menu is where you put what somebody already knows to
 look for. The menu keeps its ticked lines, which are quicker once you know.
 
-**A shelf can be hidden**, which keeps what is on it out of *Everything* — for
+**A shelf can be hidden**, which keeps what is on it out of *Everything*,
+and off the Dashboard: the shelf card and "landed lately" leave it out, and a
+new chapter of one is recorded without a task or a reminder (`isPutAway` in
+`library.ts`, asked by both). That is for
 the pile you do not want to look at, without unfollowing it and losing where you
 were. It is still one tap away, and the row marks it with a ◌.
 
@@ -896,20 +933,29 @@ NEW badge, the catch-up count and "last updated" carry on; only the nudge is
 skipped. Switching off also expires the ones already waiting, because "I don't
 want these" said while four sit on the Dashboard means those four as well.
 
-**Browse hides adult titles** in Popular and Latest, per device and on unless
-switched off (`mature.ts`). Two levels, because sources tag violence and seinen
-"Mature" as well as sex — MangaFire's popular page had it on Kingdom, Jujutsu
-Kaisen, Berserk and Tokyo Ghoul — so the lighter one hides only the sexual
-genres, and the default hides Mature too. The choice is a small button at the
-end of the tab row, in the accent while something is hidden, rather than a line
-above the grid: it is set once and left. Neither obvious signal works: Suwayomi marks nearly
-every source installed here NSFW because each *can* carry adult titles, and a
-listing rarely carries genres (3 of 50 on MangaFire's popular page). So each
-title's genres are looked up — Suwayomi's stored copy first, then the site, six
-at a time inside an eight-second budget — and Suwayomi keeps what it fetched,
-so a page is slow once and immediate after. A title still unknown when the
-budget runs out is **shown and counted**, because hiding every unknown would
-empty a first visit to a slow source.
+**Browse hides tags you choose** in Popular and Latest, per device
+(`hidden-tags.ts`). **Ecchi, Mature and Adult** always come first and are on
+unless switched off; any other tag (BL, Romance) is added from quick picks, your
+library's own tags, or typed. They were two levels, "adult" and "adult plus
+mature", because sources tag violence and seinen "Mature" as well as sex
+(MangaFire's popular page had it on Kingdom, Jujutsu Kaisen, Berserk and Tokyo
+Ghoul); three switches say that more plainly. A hidden tag is matched as a
+family where sources disagree (`mature.ts`): Adult covers smut, hentai, 18+,
+R-18 and the rest; BL covers Boys' Love, Yaoi and Shounen Ai; GL covers Girls'
+Love, Yuri and Shoujo Ai. Any other tag matches as written, ignoring case,
+spaces and hyphens, and only whole tags, so Romance does not hide Romantic
+Comedy. The line under the tabs says how many each tag hid. The old
+`manga.browse-hide` value carries over once, and the server still takes an
+older screen's `safe=` as the three it meant.
+
+Neither obvious signal works: Suwayomi marks nearly every source installed here
+NSFW because each *can* carry adult titles, and a listing rarely carries genres
+(3 of 50 on MangaFire's popular page). So each title's genres are looked up —
+Suwayomi's stored copy first, then the site, six at a time inside an
+eight-second budget — and Suwayomi keeps what it fetched, so a page is slow once
+and immediate after. A title still unknown when the budget runs out is **shown
+and counted**, because hiding every unknown would empty a first visit to a slow
+source.
 
 **Opening a series fetches its chapters the first time.** The chapter list is
 read from Suwayomi's stored copy so opening one does not scrape a site — and a
@@ -954,6 +1000,24 @@ and these are the rows least likely to reward one. Verified on the real library:
 **two sweeps took it from two to zero**, and the three that genuinely have
 nothing stayed, which is correct.
 
+**A series nothing can be asked about is skipped, not failed.** With its source
+down (Suwayomi stopped, which in on-demand mode is most of the time) the sweep
+falls back to MangaUpdates, and a series with no MangaUpdates id has nothing
+there: it was asked anyway, as `/series/` with no id, and the 405 was written on
+the row. Recently read series filled "source not answering" with it. Such a row
+is now passed over without a record and checked when the source is back.
+
+**Passed over before the slots are shared, not after.** The first version
+skipped it inside the sweep, after `dueForCheck` had picked the twelve.
+Skipped, it kept its old `checkedAt`, so with Suwayomi stopped it was at the
+front of the queue again next sweep, and the next: the slots went to series
+nothing could answer for, and the ones MangaUpdates could check waited behind
+them for as long as Suwayomi stayed off. `dueForCheck` takes an `askable` test
+now, and `manga-check` asserts twenty unaskable series leave all the slots to
+five that can be asked. Found
+after Suwayomi was stopped for a few minutes: 11 rows, 10 of them fine the
+moment their chapter lists were opened.
+
 **Eligibility and priority are different things**, and that is the part worth
 keeping: a queue where everything is due is a queue where "sooner" means
 nothing.
@@ -977,6 +1041,22 @@ tidied to one spelling each, because sources disagree about case and one writes
 "Manwha". The tag is not remembered: coming back to a shelf silently narrowed
 to one genre would read as series gone missing.
 
+**Manage extensions says what each is worth** (`extension-usage.ts`): the series
+linked to its sources and the chapters finished there, distinct by series and
+number, and is sorted by that, so one nothing reads from sorts last. Sources
+are mapped to extensions by Suwayomi (`sources { extension { pkgName } }`), and
+a chapter counts where it was read, not where its series is linked now; reads
+from before the log recorded a source count nowhere, which is why imported
+libraries show few. Each installed one has **Browse**, opening the Browse tab on
+its source in a language you read (`pick`, which works on a Browse already
+open), and Browse has a **Manage extensions** button back. What there is to add
+can be scrolled in your languages, forty at a time, without typing.
+
+**A phone flags; the PC installs.** Installing runs code here and stays
+local-only. A flag is a note (`data/manga-extension-flags.json`, its route not
+local-only, since it runs nothing): the PC shows flagged ones first with Install,
+and installing clears the flag.
+
 **Ignored sources** (More, under the import card) are left out of searching,
 browsing and finding imports, by id. Mangakakalot went there first: every
 search answered "Cloudflare bypass currently disabled". A series already linked
@@ -988,6 +1068,23 @@ holding what the library row's four buttons did: details, other sources, check
 the site, unlink, stop following. Nothing was lost; it moved one tap in. A
 series with no source yet has no chapter list, so its cover opens the
 comparison that finds one. Right-click on a cover offers the same on the PC.
+
+The head also has the series' **description**, two lines of it, with **More**
+for the rest and who made it and its genres (`About.tsx`, `/api/manga/:id/about`).
+It is the same component the series' page uses before you follow, so the two
+screens about one series read alike. Suwayomi's stored copy is read first and the
+site only when that has no description, so opening a chapter list does not
+scrape a page for a blurb. Two lines rather than a character count, measured, so
+it is two lines at any width.
+
+**The chapters can be a grid** (*List | Grid* above them, per device in
+`localStorage` like *One row per chapter*): each tile the chapter's number, and
+under it your page, "read", or the upload date as "Apr 30", since "4/30" beside
+"p. 4/30" reads as a page. A column is 110px or a quarter of the row, whichever
+is smaller, so a phone is four across (77px tiles at 375) and a 1280px window
+with the menu docked is ten. Saving one chapter stays on the list's ⬇; the grid
+shows ✓ for a saved one and the Save bar still saves ahead. The read and
+started colours are the rows', so the two views mark the same things alike.
 
 The head counts **distinct chapter numbers**, not entries. MangaFire lists two
 editions of most chapters, and the first version read "864 chapters" for a
@@ -1051,7 +1148,10 @@ position taken during the reader's first render, before the page shrank.
 
   **Offered only when it does something different**: not when the next chapter
   is already whole, not on the last chapter, and not when there is no whole
-  chapter ahead at all. A control on every chapter that did the same as the
+  chapter ahead at all. Nor when the next whole chapter is not the next
+  whole *number*: from 2 or 2.1 it goes to 3 and no further. A source with a hole
+  after the point chapters (2.1, then 8) turned it into a six-chapter jump
+  labelled as skipping the extras; Next still goes there, and asks first. A control on every chapter that did the same as the
   arrow beside it is one nobody could learn. On Eleceed it appears on 40 of 461
   chapters.
 
@@ -1266,6 +1366,67 @@ open last week should not spring open the next time the app starts. Only chapter
 opened from a followed series' list come back this way. Once more than one page
 has failed, every failed slot also offers **Try all N again**.
 
+#### Saving to the device: one line, said in full, and reading while it fills
+
+`offline-store.ts` saves one chapter at a time, three pages at a time, as it
+always has. What changed is how much of that you can see and steer.
+
+**The queue is `current` plus a line**, not one array whose head happened to be
+running. With the head doubling as "the one saving now", reordering the line
+meant special-casing index 0 everywhere; now moving something to the front is a
+splice of the line, and the chapter saving now always finishes. Stopping it
+halfway would throw away what it had fetched.
+
+**`useOffline().jobs` is in the order they will be saved**: saving, then the
+line, then failures. So "next" and "3rd in line" are a position, and a screen
+does not work them out again. `useDownloadCount` is the same without the
+manifest, for the tab bar's badge: it redraws on every page saved, and the
+Manga screen around it holds sixty covers with no reason to redraw.
+
+**A chapter that fails still counts in the run.** "Chapter 3 of 10" is
+finished plus failed plus what is left, so a failure does not make the total
+shrink under you, and the line says how many did not save.
+
+**Opening a chapter reorders what is already queued** (`prioritiseFrom`): Next
+10 asked for from chapter 2 and then reading chapter 6 would otherwise spend the
+next minutes on 3, 4 and 5. Only what is waiting moves, so this never saves
+anything nobody asked for.
+
+**A page is fetched once however many ask** (`fetchPage`). Reading a chapter
+while it saves had the reader and the download each fetching every page, the
+same picture over the same tunnel twice. It is a coalescer, not a cache: an
+entry goes when its request settles. `fresh` (tap to try again) skips it, since
+sharing the request that just failed would fail the same way.
+
+**Read while you wait** is a mode of the chapter list, on until the reader
+closes. While on, every way into a chapter goes through `openChapter`: it saves
+that chapter and the `KEEP_READY` (3) after it, at the front of the line, and if
+the chapter is not saved yet it shows `WaitForChapter` instead of the reader.
+That screen is drawn into `body` with the reader's own class, so going from the
+end of one chapter to it and on to the next never flashes the list in between.
+It opens the chapter the moment the manifest has it.
+
+Three is a chapter's saving time against a chapter's reading time, with room for
+a slow source or a short chapter read quickly. Every one more is a chapter of
+the phone's storage spent on a guess.
+
+**"Next" had to agree with the list first.** `beside` takes the first entry with
+the next number, and on a source listing two editions that is not always the
+copy `pickOnePerNumber` shows. Saving ahead then saved one copy while the row's
+✓ looked at the other: on the first real run the list read "2 saved" with every
+row still showing ⬇, and Next 5 saved nothing at all, because the copy it picked
+was the one already saved. `shownCopy` maps a number to the row's copy whenever
+the list shows one per number, and Next, Previous, skip, the end of a chapter,
+Next 5 and All all go through it. With every version showing, there is no one
+row to agree with, so `beside`'s answer stands.
+
+**Testing it in the browser pane marks chapters read.** The pane lays out no
+pages while it isn't drawing, so the strip measures as already at its end, and
+closing the reader counts as finishing the chapter. A write blocked with a fake
+`ok` answer is then recorded in the reading log as *sent*, and the log re-sends
+the last month on its own later. So block writes before opening the reader,
+and remove any row it added to `manga-reading-log` afterwards.
+
 #### What you read is written down on the device first
 
 `reading-log.ts`. A read was one request, sent once: finish a chapter, PUT it,
@@ -1320,8 +1481,11 @@ across a MangaUpdates or MangaDex request and wrote it afterwards, so a chapter
 marked read during that round trip was overwritten. Both re-read the store
 after the request now.
 
-**`start.ps1` truncates `logs/server.log` on every start.** Copy it before
-restarting when investigating anything — the request timeline that proved the
+**`start.ps1` empties `logs/server.log` on every start**, after moving the
+last run's to `server.prev.log` (and the agent's to `agent.prev.log`; an
+`.err.log` only when it has something in it, so the last crash survives an
+empty run). One run back is all that is kept, so still copy it before
+restarting twice when investigating anything — the request timeline that proved the
 cause above was lost to a restart minutes after it was read, and the missing
 chapters had to be refilled from notes taken before it.
 
@@ -2093,6 +2257,20 @@ down because the first two were both reasonable and both wrong.
 It is the behaviour every browser and YouTube have, and the reason is that a
 menu button is hit without looking. A fixed hit target costs a little layout
 work; a moving one costs a search every single time.
+
+**It has a background of its own** (`--surface`, with a border). It had none,
+so once a page scrolled under it the three lines sat on a chapter's number or a
+cover and read as part of it.
+
+**And a Back can sit beside it** (`FloatingBack.tsx`): a screen with a ‹ Back at
+its top passes that button's ref, and once it has scrolled above the ☰'s line a
+second Back appears next to the ☰, in the same pill on the same line, and goes
+when the real one is back. A chapter list four hundred chapters long was a
+scroll to the top to leave. Measured on scroll and resize rather than by an
+`IntersectionObserver`, and drawn into `#root` rather than `body`, so the
+reader, which hides `#root`, hides it too. Used by the chapter list, a series'
+page, other sources, extensions and the offline shelf. A pane that is not
+drawing delivers no scroll events, so testing it there needs one dispatched.
 
 **Two things have to clear it**, and three custom properties are what keep them
 honest: `--menu-clear`, `--menu-top` and `--menu-size`.
@@ -2994,6 +3172,16 @@ packages are deliberately not.
 - **A change the PC refuses on replay is listed on the banner**, not dropped
   quietly — it did not happen, and you should know.
 
+**A request that times out is not yet "offline".** `send` asks `/health`
+first, which needs no token and answers in milliseconds from a server that is
+merely busy. If it answers, the request was slow, not lost: nothing is marked
+offline, and a change is **not** queued, because one that timed out may well
+have happened and replaying it would do it twice. A read with a saved copy shows
+that copy; anything else says the PC is taking too long. The session is the
+exception and still goes to the offline screen, since an ordinary error there
+would mean the pairing screen. This was a slow Play being reported as the PC
+being gone.
+
 **Coming back is noticed twice**: the live stream reconnecting, and a probe
 every twenty seconds while offline *and on screen*. Either flushes the queue and
 refetches every screen. The probe does nothing in a hidden pane, which is why a
@@ -3015,6 +3203,31 @@ own offline behaviour is proven on the phone, not there.
 
 **What it costs**: about 4KB gzipped on the main bundle (94.8 → 98.8), for the
 cache, the outbox, the effects and the banner.
+
+### A window older than the build reloads itself
+
+`stale-build.ts`. Screens and Dashboard cards are separate files fetched the
+first time they are shown, named by a hash that changes every build, so a window
+open across a rebuild asks for names the server no longer has. The failed import
+took the whole page down: a blank window, which is also exactly what an app that
+has broken looks like. Found by opening the Dashboard in a window left open
+through a restart.
+
+Vite raises `vite:preloadError` for a failed import, and cancelling it stops the
+error, so the page cancels it and reloads, which picks up the new build because
+the service worker fetches the page network-first. Three guards:
+
+- **Cancelled only when reloading.** Cancelled and not reloaded, the import
+  resolves to nothing and React fails on that instead, worse than the error.
+- **Once a minute at most** (`sessionStorage`), so a build that is genuinely
+  missing a file shows its error rather than reloading forever. If storage
+  refuses the record, it does not reload at all, for the same reason.
+- **Not while offline**, where a reload would trade what is on screen for the
+  cached shell and still could not fetch the part being opened.
+
+Verified by renaming the shelf card's file in `dist/` under an open window:
+opening the Dashboard reloaded once, and with the file still missing it stopped
+there.
 
 ### When the server is not running, the window is still there
 
@@ -3089,7 +3302,65 @@ now impossible rather than explained.
   `suwayomi-runtime/java/`. Found by running the jar by hand on throwaway data
   folders, varying one thing at a time, after the JDK "fixed" it in one test
   and not in the next.
-- **The start timeout counts silence, not time.** A fresh Suwayomi downloads its
+- **Suwayomi stopping took the server down, until it didn't.** Its two outputs
+were piped into one log file, and a pipe closes its destination when its source
+ends; the exit handler then wrote "exited" into the closed file, an `error`
+event with no listener, and Node ended the process. It stops by itself after
+fifteen idle minutes in on-demand mode, so the app went offline while nobody
+was using it. The pipes now leave the file open (`end: false`), it is closed on
+`close` once both have finished, and a failed write to it is ignored. Found in
+`server.err.log`, which `start.ps1` now keeps a run back as `server.err.prev.log`.
+
+**Suwayomi listens on 127.0.0.1 only** (`server.ip`, passed at launch). Its
+default is every interface with `authMode = NONE`, and the firewall rule Windows
+made for the app's Java allows Private networks, which home Wi-Fi and Tailscale
+both are: anything on either that reached port 4567 had all of Suwayomi,
+extension installs included, which is code running on this PC. Found in an
+audit, verified by a refused connection to the PC's Wi-Fi address afterwards.
+Nothing here talks to it from anywhere else, and the phone's way to its web
+interface is `/manga/ui`, which checks the session cookie. A property rather
+than an edit to `server.conf`, so a fresh data folder or a hand-edited one gets
+it too.
+
+**And one start, however many ask at once.** `ensureRunning` set `starting` only
+once the launch began, after awaiting the check for one already answering, so
+every request in that moment spawned its own JVM: six in a second after a
+restart with Browse open, all but one quitting for the port. The check is now
+inside the shared start. Verified: six simultaneous requests, one start.
+
+**Extensions update themselves once a day** (`updateExtensionsIfDue`), from
+the release sweep rather than a timer of their own, and only while Suwayomi is
+already running: it is never woken for this. When it last ran and what it did is
+in `data/manga-extensions.json`, so a restart does not check again at once, and
+the card shows it. An out-of-date extension is the commonest reason a source
+stops working, which is why this one is automatic and Suwayomi itself is not:
+a Suwayomi version jump migrates its database and is worth choosing.
+
+**Updating is setup run again** (the card's *Update Suwayomi and extensions*).
+Every run asks GitHub for the newest release, so on a working install it is the
+update: a newer jar is downloaded beside the runtime, the running Suwayomi is
+stopped (forced, since an update was asked for and it holds the port and the
+database), `database.mv.db` is copied to `data/suwayomi/backups/` because the
+version jump migrates it and migrations only go forward (two copies kept), and
+the new jar is started. **The old jar is removed only after the new one
+answers**: removed straight after the download, it was still the running
+Suwayomi's jar, which Windows may refuse to delete (failing the whole update),
+and a new version that would not start left nothing to go back to. The two
+newest backups are kept by when they were made, not by name, since `v2.10`
+sorts before `v2.4`. Then every installed extension with `hasUpdate` gets
+`updateExtension(patch: { update })`. `result` says what was done, so "already
+up to date" is an answer rather than a button that seemed to do nothing. First
+run here: v2.3.2243 to v2.4.2366 and 7 extensions, with Browse, search and
+chapter lists checked against it afterwards.
+
+**Its temp folder is cleared of what only grows**, each time the app launches its
+own Suwayomi: `Tachidesk/manga-cache` (its copy of every page it served, 6.2GB
+in 25,283 files here) and a `tachidesk_network_cache…`, `jna-…` and `zstd-kmp…`
+per launch. `thumbnails` stays, since clearing it would fetch every cover again.
+Each entry is removed on its own: one `rmSync` of the whole folder stopped at the
+first locked file and removed nothing. 6.5GB to 260MB.
+
+**The start timeout counts silence, not time.** A fresh Suwayomi downloads its
   web interface and a 260MB browser component before it answers, which on an
   ordinary connection is past 90 seconds, and the launcher killed it mid-download.
   Now it fails only after 90 seconds with no output. Its temp files go to
@@ -7079,7 +7350,15 @@ Spotify, because the API cannot start the app. It needs
 connections lack, and it says "press Connect once" rather than surfacing a
 bare 403. Not local-only: pressing it on the phone before music is the point.
 
-A sync runs first, and a song in several lists appears once. Lists with nothing
+A sync runs first (at most every ten minutes, and waited on for five seconds
+at most; past that it finishes in the background), and a song in several lists
+appears once. **Play answers once the music has started**: the
+song playing and the first of the shuffle in place. The rest of the queue is
+added afterwards (`fill`), marked as a check in progress so the 45-second check
+does not top up alongside it. It used to queue everything first, one request a
+song under the rate limit, and after a while away that passed the 15s the app
+gives a change: the app said "offline" while the server was starting the music.
+It is given 90s anyway, since a 429 can hold every Spotify request for 30. Lists with nothing
 stored are not offered: a playlist you follow but don't own never has any.
 
 **That turned up a sync bug.** `upsertCollection` wrote the incoming

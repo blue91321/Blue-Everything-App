@@ -65,3 +65,27 @@ export function onNavigate(fn: (request: NavRequest) => void): () => void {
 export function goTo(view: string, options: Omit<NavRequest, 'view'> = {}): void {
   listener?.({ view, ...options });
 }
+
+/*
+ * Which of a screen's sections is on screen, said by the screen.
+ *
+ * The menu marks the section you opened, but a screen with tabs changes
+ * section without the menu: picking Friends on the Connections screen left
+ * Music highlighted. So the screen says which one it is showing. The menu
+ * marks that section when it lists it, and the screen's own entry when it
+ * does not, which App decides; this only carries the id. One listener, for
+ * the reason `onNavigate` has one.
+ */
+let sectionListener: ((section: string | null) => void) | null = null;
+
+export function onSectionShown(fn: (section: string | null) => void): () => void {
+  sectionListener = fn;
+  return () => {
+    if (sectionListener === fn) sectionListener = null;
+  };
+}
+
+/** The section of the current screen now showing, by the id its `meta.ts` declares. */
+export function showingSection(section: string | null): void {
+  sectionListener?.(section);
+}

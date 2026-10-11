@@ -91,12 +91,47 @@ export type Job = {
   seriesId: string;
   seriesTitle: string;
   chapterId: string;
+  number: number;
   name: string;
+  /** Pages dealt with so far, saved or not — what the bar fills by. */
   done: number;
   total: number | null;
+  /** Bytes of the pages saved so far, for the size and the speed on screen. */
+  bytes: number;
+  /** Pages that would not come, so far. Shown while it runs, not only at the end. */
+  missing: number;
   problem: string | null;
+  /** Saving now, waiting its turn, or stopped with a problem. */
+  state: 'saving' | 'waiting' | 'failed';
+  startedAt: number | null;
   /** Asked to stop; the pages it had already saved are removed again. */
   cancelled?: boolean;
+};
+
+/** A chapter finished this visit — the Downloads tab's "just saved". */
+export type Finished = {
+  key: string;
+  seriesId: string;
+  chapterId: string;
+  seriesTitle: string;
+  name: string;
+  pages: number;
+  bytes: number;
+  /** How long it took, from its first page to its last. */
+  ms: number;
+  at: number;
+};
+
+/** The queue as a whole: how far through the run of chapters asked for together. */
+export type Progress = {
+  /** Chapters finished since the queue was last empty. */
+  finished: number;
+  /** Chapters that stopped with a problem in that time — still part of the run's count. */
+  failed: number;
+  /** Chapters still to go, the one saving now included. */
+  left: number;
+  /** Bytes saved since the queue was last empty. */
+  bytes: number;
 };
 
 export const offlineSupported = typeof window !== 'undefined' && 'caches' in window;
@@ -141,8 +176,14 @@ async function saveManifest(next: Manifest): Promise<void> {
   }
 }
 
-/** The manifest and the downloads in progress, kept current. */
-export function useOffline(): { manifest: Manifest | null; jobs: Job[] } {
+/**
+ * The manifest and the downloads, kept current.
+ *
+ * `jobs` is in the order they will be saved — the one saving now first, then
+ * the queue, then anything that stopped with a problem — so a screen can say
+ * "next" and "third in line" by position rather than working it out.
+ */
+export function useOffline(): { manifest: Manifest | null; jobs: Job[]; recent: Finished[]; progress: Progress } {
   const [, bump] = useState(0);
   useEffect(() => {
     const listener = () => bump((n) => n + 1);
@@ -152,7 +193,40 @@ export function useOffline(): { manifest: Manifest | null; jobs: Job[] } {
       listeners.delete(listener);
     };
   }, []);
-  return { manifest, jobs: [...jobs.values()] };
+  // A chapter removed since is no longer "saved", whatever this visit did.
+  const kept = recent.filter((f) => manifest?.series[f.seriesId]?.chapters[f.chapterId]);
+  return { manifest, jobs: orderedJobs(), recent: kept, progress: { ...progress, left: queue.length + (current ? 1 : 0) } };
+}
+
+/** Just the number of chapters waiting or saving — for a badge that should not redraw a screen. */
+export function useDownloadCount(): { left: number; failed: number; fraction: number | null } {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const listener = () => bump((n) => n + 1);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, []);
+  const left = queue.length + (current ? 1 : 0);
+  const failedCount = [...jobs.values()].filter((j) => j.problem).length;
+  const now = current ? jobs.get(current.key) : undefined;
+  const over = progress.finished + progress.failed;
+  const all = over + left;
+  const fraction = left === 0 || all === 0 ? null : (over + (now?.total ? now.done / now.total : 0)) / all;
+  return { left, failed: failedCount, fraction };
+}
+
+function orderedJobs(): Job[] {
+  const out: Job[] = [];
+  const now = current ? jobs.get(current.key) : undefined;
+  if (now) out.push(now);
+  for (const q of queue) {
+    const job = jobs.get(q.key);
+    if (job) out.push(job);
+  }
+  for (const job of jobs.values()) if (job.problem) out.push(job);
+  return out;
 }
 
 /* ---- reading from it ---- */
@@ -250,40 +324,126 @@ export type SeriesInfo = {
   position: SavedPlace | null;
 };
 
-type Queued = { series: SeriesInfo; chapter: { id: string; number: number; name: string }; pages: () => Promise<string[]> };
+type Queued = {
+  key: string;
+  series: SeriesInfo;
+  chapter: { id: string; number: number; name: string };
+  pages: () => Promise<string[]>;
+};
+/** Waiting, in the order they will be saved. The one saving now is `current`, not here. */
 const queue: Queued[] = [];
+let current: Queued | null = null;
 /** What a failed download needs to be tried again, by job key. */
 const failed = new Map<string, Queued>();
+/** The last few chapters finished, newest first. This visit only: it is a receipt, not a record. */
+const recent: Finished[] = [];
+const RECENT_KEPT = 8;
+/** How far through the current run, reset whenever the queue empties. */
+const progress = { finished: 0, failed: 0, bytes: 0 };
 let running = false;
 let asked = false;
 
 /**
  * Save a chapter. Queued, one chapter at a time, three pages at a time, so
  * "download the next ten" does not put thirty requests on the PC at once.
+ *
+ * `first` puts it at the front of the line — behind the chapter saving now,
+ * never instead of it, since stopping a chapter halfway wastes what it fetched.
+ * Asking for one already waiting with `first` moves it up rather than adding a
+ * second copy.
  */
 export function queueDownload(
   series: SeriesInfo,
   chapter: { id: string; number: number; name: string },
-  pages: () => Promise<string[]>
+  pages: () => Promise<string[]>,
+  options: { first?: boolean } = {}
 ): void {
   if (!offlineSupported) return;
   const key = `${series.seriesId}:${chapter.id}`;
-  if (jobs.has(key) || manifest?.series[series.seriesId]?.chapters[chapter.id]) return;
+  if (manifest?.series[series.seriesId]?.chapters[chapter.id]) return;
+  const existing = jobs.get(key);
+  if (existing && !existing.problem) {
+    if (options.first) moveToFront([key]);
+    return;
+  }
+  // A chapter that failed and is asked for again starts over as a new job.
   jobs.set(key, {
     key,
     seriesId: series.seriesId,
     seriesTitle: series.title,
     chapterId: chapter.id,
+    number: chapter.number,
     name: chapter.name,
     done: 0,
     total: null,
+    bytes: 0,
+    missing: 0,
     problem: null,
+    state: 'waiting',
+    startedAt: null,
   });
-  queue.push({ series, chapter, pages });
+  const item: Queued = { key, series, chapter, pages };
+  if (options.first) queue.unshift(item);
+  else queue.push(item);
   failed.delete(key);
   notify();
   firstTime();
   void run();
+}
+
+/**
+ * Put these at the front of the line, in this order. Anything not waiting —
+ * saving already, saved, or never asked for — is passed over.
+ */
+export function moveToFront(keys: string[]): void {
+  const front = keys.map((k) => queue.find((q) => q.key === k)).filter((q): q is Queued => q !== undefined);
+  if (front.length === 0) return;
+  const moved = new Set(front.map((q) => q.key));
+  const rest = queue.filter((q) => !moved.has(q.key));
+  queue.splice(0, queue.length, ...front, ...rest);
+  notify();
+}
+
+/**
+ * The chapters you are about to read go next.
+ *
+ * Called when a chapter opens. "Next 10" queued from chapter 2 and then reading
+ * chapter 6 would otherwise spend the next minutes on 3, 4 and 5, which you have
+ * just skipped past, while the one you will open in ten minutes waits behind
+ * them. From the chapter in your hands upwards, by number; only what is already
+ * waiting is reordered, so this never saves anything nobody asked for.
+ */
+export function prioritiseFrom(seriesId: string, number: number, count: number): void {
+  const ahead = queue
+    .filter((q) => q.series.seriesId === seriesId && q.chapter.number >= number)
+    .sort((a, b) => a.chapter.number - b.chapter.number)
+    .slice(0, count);
+  moveToFront(ahead.map((q) => q.key));
+}
+
+/**
+ * One page's bytes, fetched once however many ask.
+ *
+ * The reader and the downloader both want a page of the chapter you are reading
+ * while it saves, and without this they would each fetch it — the same picture
+ * across the same tunnel twice, at the moment the tunnel is busiest. Whoever
+ * asks second waits for the first answer. Only while it is in flight: this is a
+ * coalescer, not a cache, the same rule `api.ts` follows for reads.
+ */
+const fetching = new Map<string, Promise<Blob>>();
+
+export function fetchPage(url: string): Promise<Blob> {
+  const known = fetching.get(url);
+  if (known) return known;
+  const loading = (async () => {
+    const response = await fetch(url, { headers: { authorization: `Bearer ${getToken()}` } });
+    if (!response.ok) throw new Error(`page failed (${response.status})`);
+    return response.blob();
+  })();
+  fetching.set(url, loading);
+  const forget = () => fetching.delete(url);
+  loading.then(forget, forget);
+  return loading;
 }
 
 /**
@@ -307,142 +467,174 @@ async function run(): Promise<void> {
   try {
     const cache = await caches.open(CACHE);
     while (queue.length > 0) {
-      const { series, chapter, pages } = queue[0]!;
-      const key = `${series.seriesId}:${chapter.id}`;
-      const job = jobs.get(key)!;
-      try {
-        const list = await pages();
-        job.total = list.length;
-        notify();
-
-        let bytes = 0;
-        let missing = 0;
-        let next = 0;
-        /*
-         * Into the folder, when one is chosen and still permitted.
-         *
-         * Decided once per chapter rather than per page, so a permission that
-         * lapses mid-chapter cannot split it across two places — half a
-         * chapter in each is the one arrangement neither reader path can make
-         * whole.
-         */
-        const toFolder = (await folderPermission()) === 'granted';
-        const files: (string | null)[] = toFolder ? new Array<string | null>(list.length).fill(null) : [];
-        const worker = async () => {
-          while (next < list.length && !job.cancelled) {
-            const at = next++;
-            const url = list[at]!;
-            try {
-              const have = toFolder ? undefined : await cache.match(url);
-              // A copy already here counts only if it is a whole picture — one
-              // left damaged by an earlier attempt is fetched again, not kept.
-              const haveBlob = have ? await have.clone().blob() : null;
-              if (haveBlob && (await blobIsWholeImage(haveBlob))) {
-                bytes += haveBlob.size;
-              } else {
-                const response = await fetch(url, { headers: { authorization: `Bearer ${getToken()}` } });
-                if (!response.ok) throw new Error(String(response.status));
-                const body = await response.arrayBuffer();
-                /*
-                 * Checked before it is kept. A page that arrived cut off, or as
-                 * an error message, is a missing page — counted as one and
-                 * offered again — rather than a saved page that draws as a gap
-                 * on the train, which is the one place nothing can fetch it.
-                 */
-                if (!isWholeImage(new Uint8Array(body, 0, Math.min(32, body.byteLength)), new Uint8Array(body, Math.max(0, body.byteLength - 1024)), body.byteLength)) {
-                  throw new Error('damaged');
-                }
-                const type = response.headers.get('content-type') ?? 'image/jpeg';
-                bytes += body.byteLength;
-                if (toFolder) {
-                  const path = await writeFolderPage(series.title, chapter.number, at, body, type);
-                  // A page the folder would not take is a missing page, counted
-                  // as one: recorded as saved it would be a hole discovered on
-                  // the train, which is the one place it cannot be fixed.
-                  if (!path) throw new Error('folder');
-                  files[at] = path;
-                } else {
-                  await cache.put(url, new Response(body, { headers: { 'content-type': type } }));
-                }
-              }
-            } catch {
-              missing += 1;
-            }
-            job.done += 1;
-            notify();
-          }
-        };
-        await Promise.all(Array.from({ length: Math.min(IN_FLIGHT, list.length) }, worker));
-
-        if (series.coverPath && !(await cache.match(series.coverPath))) {
-          try {
-            const cover = await fetch(series.coverPath, { headers: { authorization: `Bearer ${getToken()}` } });
-            if (cover.ok) await cache.put(series.coverPath, cover);
-          } catch {
-            // A saved chapter with a blank where the cover was is still a saved chapter.
-          }
-        }
-
-        if (job.cancelled) {
-          // Stopped: take back what it had saved, rather than leave pages that
-          // no list mentions using space nobody can see.
-          if (toFolder) await removeChapterFolder(series.title, chapter.number);
-          await Promise.all(list.map((url) => cache.delete(url)));
-          jobs.delete(key);
-          queue.shift();
-          notify();
-          continue;
-        }
-
-        /*
-         * Recorded as saved only when every page is here. A chapter with holes
-         * saved as "downloaded" would be discovered on the train, which is the
-         * one place it cannot be fixed.
-         */
-        if (missing > 0) {
-          job.problem = `${missing} of ${list.length} pages would not download — try again while online`;
-          failed.set(key, queue[0]!);
-        } else {
-          const m = await loadManifest();
-          const current = m.series[series.seriesId];
-          await saveManifest({
-            ...m,
-            series: {
-              ...m.series,
-              [series.seriesId]: {
-                seriesId: series.seriesId,
-                title: series.title,
-                sourceName: series.sourceName,
-                coverPath: series.coverPath,
-                readChapters: series.readChapters,
-                position: series.position ?? current?.position ?? null,
-                chapters: {
-                  ...(current?.chapters ?? {}),
-                  [chapter.id]: {
-                  chapterId: chapter.id,
-                  number: chapter.number,
-                  name: chapter.name,
-                  pages: list,
-                  bytes,
-                  at: Date.now(),
-                  // Only when it went there, so absent keeps meaning the browser.
-                  ...(toFolder ? { files: files as string[] } : {}),
-                },
-                },
-              },
-            },
-          });
-          jobs.delete(key);
-        }
-      } catch (error) {
-        job.problem = error instanceof Error ? error.message : 'the download failed';
-        failed.set(key, queue[0]!);
-      }
-      queue.shift();
+      const item = queue.shift()!;
+      const job = jobs.get(item.key);
+      if (!job) continue;
+      current = item;
+      job.state = 'saving';
+      job.startedAt = Date.now();
       notify();
+      try {
+        await saveOne(cache, item, job);
+      } finally {
+        current = null;
+        notify();
+      }
     }
   } finally {
     running = false;
+    current = null;
+    // A run is over when nothing is left; the next "Next 5" is a new one.
+    progress.finished = 0;
+    progress.failed = 0;
+    progress.bytes = 0;
+    notify();
+  }
+}
+
+async function saveOne(cache: Cache, item: Queued, job: Job): Promise<void> {
+  const { key, series, chapter, pages } = item;
+  try {
+    const list = await pages();
+    job.total = list.length;
+    notify();
+
+    let next = 0;
+    /*
+     * Into the folder, when one is chosen and still permitted.
+     *
+     * Decided once per chapter rather than per page, so a permission that
+     * lapses mid-chapter cannot split it across two places — half a
+     * chapter in each is the one arrangement neither reader path can make
+     * whole.
+     */
+    const toFolder = (await folderPermission()) === 'granted';
+    const files: (string | null)[] = toFolder ? new Array<string | null>(list.length).fill(null) : [];
+    const worker = async () => {
+      while (next < list.length && !job.cancelled) {
+        const at = next++;
+        const url = list[at]!;
+        try {
+          const have = toFolder ? undefined : await cache.match(url);
+          // A copy already here counts only if it is a whole picture — one
+          // left damaged by an earlier attempt is fetched again, not kept.
+          const haveBlob = have ? await have.clone().blob() : null;
+          if (haveBlob && (await blobIsWholeImage(haveBlob))) {
+            job.bytes += haveBlob.size;
+          } else {
+            // Shared with the reader, if it is asking for this page too.
+            const blob = await fetchPage(url);
+            const body = await blob.arrayBuffer();
+            /*
+             * Checked before it is kept. A page that arrived cut off, or as
+             * an error message, is a missing page — counted as one and
+             * offered again — rather than a saved page that draws as a gap
+             * on the train, which is the one place nothing can fetch it.
+             */
+            if (!isWholeImage(new Uint8Array(body, 0, Math.min(32, body.byteLength)), new Uint8Array(body, Math.max(0, body.byteLength - 1024)), body.byteLength)) {
+              throw new Error('damaged');
+            }
+            const type = blob.type || 'image/jpeg';
+            if (toFolder) {
+              const path = await writeFolderPage(series.title, chapter.number, at, body, type);
+              // A page the folder would not take is a missing page, counted
+              // as one: recorded as saved it would be a hole discovered on
+              // the train, which is the one place it cannot be fixed.
+              if (!path) throw new Error('folder');
+              files[at] = path;
+            } else {
+              await cache.put(url, new Response(body, { headers: { 'content-type': type } }));
+            }
+            job.bytes += body.byteLength;
+          }
+        } catch {
+          job.missing += 1;
+        }
+        job.done += 1;
+        notify();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(IN_FLIGHT, list.length) }, worker));
+
+    if (series.coverPath && !(await cache.match(series.coverPath))) {
+      try {
+        const cover = await fetch(series.coverPath, { headers: { authorization: `Bearer ${getToken()}` } });
+        if (cover.ok) await cache.put(series.coverPath, cover);
+      } catch {
+        // A saved chapter with a blank where the cover was is still a saved chapter.
+      }
+    }
+
+    if (job.cancelled) {
+      // Stopped: take back what it had saved, rather than leave pages that
+      // no list mentions using space nobody can see.
+      if (toFolder) await removeChapterFolder(series.title, chapter.number);
+      await Promise.all(list.map((url) => cache.delete(url)));
+      jobs.delete(key);
+      return;
+    }
+
+    /*
+     * Recorded as saved only when every page is here. A chapter with holes
+     * saved as "downloaded" would be discovered on the train, which is the
+     * one place it cannot be fixed.
+     */
+    if (job.missing > 0) {
+      job.problem = `${job.missing} of ${list.length} pages would not download — try again while online`;
+      job.state = 'failed';
+      failed.set(key, item);
+      progress.failed += 1;
+      return;
+    }
+    const m = await loadManifest();
+    const existing = m.series[series.seriesId];
+    await saveManifest({
+      ...m,
+      series: {
+        ...m.series,
+        [series.seriesId]: {
+          seriesId: series.seriesId,
+          title: series.title,
+          sourceName: series.sourceName,
+          coverPath: series.coverPath,
+          readChapters: series.readChapters,
+          position: series.position ?? existing?.position ?? null,
+          chapters: {
+            ...(existing?.chapters ?? {}),
+            [chapter.id]: {
+              chapterId: chapter.id,
+              number: chapter.number,
+              name: chapter.name,
+              pages: list,
+              bytes: job.bytes,
+              at: Date.now(),
+              // Only when it went there, so absent keeps meaning the browser.
+              ...(toFolder ? { files: files as string[] } : {}),
+            },
+          },
+        },
+      },
+    });
+    jobs.delete(key);
+    progress.finished += 1;
+    progress.bytes += job.bytes;
+    recent.unshift({
+      key,
+      seriesId: series.seriesId,
+      chapterId: chapter.id,
+      seriesTitle: series.title,
+      name: chapter.name,
+      pages: list.length,
+      bytes: job.bytes,
+      ms: Date.now() - (job.startedAt ?? Date.now()),
+      at: Date.now(),
+    });
+    recent.splice(RECENT_KEPT);
+  } catch (error) {
+    job.problem = error instanceof Error ? error.message : 'the download failed';
+    job.state = 'failed';
+    failed.set(key, item);
+    progress.failed += 1;
   }
 }
 
@@ -465,6 +657,11 @@ export function retryDownload(key: string): void {
   queueDownload(item.series, item.chapter, item.pages);
 }
 
+/** Every failed download, tried again in the order they were asked for. */
+export function retryAll(): void {
+  for (const key of [...failed.keys()]) retryDownload(key);
+}
+
 /**
  * Stop a download. One still waiting is simply taken off the list; the one in
  * progress stops after the pages already in flight, and what it saved is
@@ -473,16 +670,20 @@ export function retryDownload(key: string): void {
 export function cancelDownload(key: string): void {
   const job = jobs.get(key);
   if (!job) return;
-  const at = queue.findIndex((q) => `${q.series.seriesId}:${q.chapter.id}` === key);
-  if (at > 0) {
-    queue.splice(at, 1);
-    jobs.delete(key);
-  } else if (at === 0) {
+  if (current?.key === key) {
     job.cancelled = true;
   } else {
+    const at = queue.findIndex((q) => q.key === key);
+    if (at >= 0) queue.splice(at, 1);
     jobs.delete(key);
     failed.delete(key);
   }
+  notify();
+}
+
+/** Take everything still waiting off the list. The chapter saving now finishes. */
+export function cancelWaiting(): void {
+  for (const q of queue.splice(0)) jobs.delete(q.key);
   notify();
 }
 

@@ -63,7 +63,15 @@ function ShelfPanel() {
    */
   const newFirst = pinned === 'follow' ? storedNewFirst() : data.shelfNewFirst !== false;
 
-  const picked = show === 'favourites' ? data.series.filter((s) => s.favourite) : data.series;
+  /*
+   * Nothing on a hidden shelf, the rule *Everything* on the Library tab
+   * follows — favourites included, since hidden wins over every other shelf a
+   * series is on. A shelf put away for being out of the way should not be the
+   * first thing on the Dashboard.
+   */
+  const away = new Set((data.libraries ?? []).filter((l) => l.hidden).map((l) => l.id));
+  const shown = data.series.filter((s) => !s.libraries?.some((id) => away.has(id)));
+  const picked = show === 'favourites' ? shown.filter((s) => s.favourite) : shown;
   const list = sorted(picked, order, newFirst).slice(0, SHELF_TILES);
 
   if (data.series.length === 0) {
@@ -82,6 +90,17 @@ function ShelfPanel() {
    * nothing" are different situations with different fixes — and the first is
    * the one the favourites mode will meet on the day it is switched on.
    */
+  if (list.length === 0 && show === 'all') {
+    return (
+      <div className="empty">
+        Everything you follow is on a hidden shelf.{' '}
+        <button className="btn subtle" onClick={() => goTo('manga')}>
+          Open Manga
+        </button>
+      </div>
+    );
+  }
+
   if (list.length === 0) {
     return (
       <div className="empty">

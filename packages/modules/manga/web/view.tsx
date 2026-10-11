@@ -30,6 +30,7 @@ import { Compare } from './Compare';
 import { Browse } from './Browse';
 import { SeriesDetail } from './SeriesDetail';
 import { Downloads } from './Downloads';
+import { useDownloadCount } from './offline-store';
 import { History } from './History';
 import { Icon } from './Icons';
 import { Library } from './Library';
@@ -120,6 +121,8 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
   const [glimpsing, setGlimpsing] = useState<{ sourceMangaId: string; title: string; sourceName: string; carryOn: boolean } | null>(null);
   /** A search handed to Browse — the 🔍, or details on a series with no source yet. */
   const [browseSearch, setBrowseSearch] = useState<{ query: string; at: number } | null>(null);
+  /** A source to open Browse on, from Manage extensions. `at` makes picking it twice a second request. */
+  const [browsePick, setBrowsePick] = useState<{ source: string; at: number } | null>(null);
   const [browsed, setBrowsed] = useState(false);
   useEffect(() => {
     if (tab === 'browse') setBrowsed(true);
@@ -350,7 +353,18 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
       );
     }
   }
-  if (!overlay && managingExtensions) overlay = <Extensions local={local} onClose={() => setManagingExtensions(false)} />;
+  if (!overlay && managingExtensions)
+    overlay = (
+      <Extensions
+        local={local}
+        onClose={() => setManagingExtensions(false)}
+        onBrowse={(source) => {
+          setManagingExtensions(false);
+          setBrowsePick({ source, at: Date.now() });
+          goTab('browse');
+        }}
+      />
+    );
   if (!overlay && suwayomiOpen) overlay = <SuwayomiUI onClose={() => setSuwayomiOpen(false)} />;
 
   const title = TABS.find((t) => t.id === tab)!.label;
@@ -407,7 +421,13 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
             */}
           {(tab === 'browse' || browsed) && (
             <div hidden={tab !== 'browse'}>
-              <Browse onFollowed={() => library.reload()} onRead={(id) => setReading(id)} search={browseSearch} />
+              <Browse
+                onFollowed={() => library.reload()}
+                onRead={(id) => setReading(id)}
+                search={browseSearch}
+                pick={browsePick}
+                onExtensions={() => setManagingExtensions(true)}
+              />
             </div>
           )}
 
@@ -499,12 +519,38 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
                 goTab(t.id);
               }}
             >
-              <t.icon />
+              {t.id === 'downloads' ? <DownloadsIcon /> : <t.icon />}
               <span>{t.label}</span>
             </button>
           ))}
         </nav>
       </div>
     </>
+  );
+}
+
+/**
+ * The Downloads tab's icon, with how many chapters are still to save.
+ *
+ * Its own component because it redraws on every page saved, and the screen
+ * around it holds a library of sixty covers that has no reason to redraw with
+ * it. A failure with nothing else running shows as ! so it is noticed from any
+ * tab rather than only from the one that lists it.
+ */
+function DownloadsIcon() {
+  const { left, failed } = useDownloadCount();
+  return (
+    <span className="manga-tab-icon">
+      <Icon.downloads />
+      {left > 0 ? (
+        <span className="manga-tab-badge" aria-label={`${left} saving`}>
+          {left > 99 ? '99+' : left}
+        </span>
+      ) : failed > 0 ? (
+        <span className="manga-tab-badge failed" aria-label={`${failed} not saved`}>
+          !
+        </span>
+      ) : null}
+    </span>
   );
 }

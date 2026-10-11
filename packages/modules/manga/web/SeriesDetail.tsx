@@ -14,6 +14,8 @@
  * is only the one source, and the comparison view is a Follow away.
  */
 import { useEffect, useRef, useState } from 'react';
+import { FloatingBack } from '@app/FloatingBack';
+import { About } from './About';
 import { Cover } from './Cover';
 import { Reader } from './Reader';
 import { beside, skippedBetween, skipTarget } from './chapter-nav.js';
@@ -32,8 +34,6 @@ const STATUS_LABEL: Record<SeriesDetailPage['status'], string> = {
   unknown: 'Status unknown',
 };
 
-/** Long enough to say what it is about; the rest is behind "More". */
-const BLURB_CLAMP = 420;
 
 type Chapter = SeriesDetailPage['chapters'][number];
 
@@ -84,8 +84,9 @@ export function SeriesDetail({
   updatesUrl?: string | null;
 }) {
   const [page, setPage] = useState<SeriesDetailPage | null>(null);
+  // Watched by the Back beside the ☰, shown once this one has scrolled away.
+  const backRef = useRef<HTMLButtonElement>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [blurbOpen, setBlurbOpen] = useState(false);
   const [open, setOpen] = useState<Chapter | null>(null);
 
   /**
@@ -295,7 +296,6 @@ export function SeriesDetail({
         ? { chapter: inOrder[0], label: `Read chapter ${chapterText(inOrder[0].number)}`, resume: null }
         : null;
   const blurb = page?.description ?? null;
-  const long = blurb !== null && blurb.length > BLURB_CLAMP;
   // Sites put the artist among the authors as often as not ("Ye Xiao, Wuer
   // Manhua" and "Wuer Manhua"), so names are split and each said once.
   const people = page
@@ -311,9 +311,10 @@ export function SeriesDetail({
 
   return (
     <div className="manga-detail">
-      <button className="btn subtle" onClick={onBack}>
+      <button ref={backRef} className="btn subtle" onClick={onBack}>
         ‹ Back
       </button>
+      <FloatingBack target={backRef} onBack={onBack} />
 
       <div className="manga-detail-head">
         <Cover path={page?.coverPath ?? result.coverPath} title={result.title} size={150} />
@@ -394,16 +395,7 @@ export function SeriesDetail({
         </div>
       )}
 
-      {blurb && (
-        <p className="manga-detail-blurb">
-          {long && !blurbOpen ? `${blurb.slice(0, BLURB_CLAMP).trimEnd()}…` : blurb}{' '}
-          {long && (
-            <button className="btn subtle" onClick={() => setBlurbOpen(!blurbOpen)}>
-              {blurbOpen ? 'Less' : 'More'}
-            </button>
-          )}
-        </p>
-      )}
+      {blurb && <About text={blurb} />}
       {page && !blurb && <p className="meta">{result.sourceName} gives no description.</p>}
 
       {others.length > 0 && (
@@ -424,12 +416,15 @@ export function SeriesDetail({
 
       <h3>Chapters</h3>
       {!followingId && page && page.chapters.length > 0 && (
-        <p className="meta">You can read before following. Nothing is marked read until you follow it.</p>
+        <p className="meta">
+          You can read before following. What you read is kept in History with your place, and moves onto the series
+          if you follow it.
+        </p>
       )}
       {followingId && !ownSeriesId && page && page.chapters.length > 0 && (
         <p className="meta">
-          You follow this series, but reading from this page does not mark anything — open it from your library to keep
-          your place.
+          You follow this series from another copy. What you read here is kept in History, but not on the series in
+          your library: open it from your library to mark it there.
         </p>
       )}
       {page?.chaptersProblem && <p className="banner">Could not list its chapters: {page.chaptersProblem}</p>}

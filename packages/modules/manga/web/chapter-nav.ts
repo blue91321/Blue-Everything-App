@@ -53,6 +53,13 @@ export function skipTarget<T extends Numbered>(list: readonly T[], n: number): T
   const whole = list
     .filter((c) => c.number > n && isWhole(c.number))
     .sort((a, b) => a.number - b.number)[0];
+  /*
+   * Only to the very next whole number: from 2 or 2.1, to 3 and nowhere
+   * further. A source with a hole after the point chapters (2.1, then 8) made
+   * this a jump of six chapters dressed as "skip the extras", which is the
+   * opposite of what it is for. Next still goes there, and asks first.
+   */
+  if (!whole || whole.number > Math.floor(n) + 1) return undefined;
   return whole;
 }
 

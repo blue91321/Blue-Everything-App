@@ -7,7 +7,7 @@
  * nobody looks at twice.
  */
 import { chapterValue, worthPolling } from './identity.js';
-import type { Series, Store } from './library.js';
+import { isPutAway, type Series, type Store } from './library.js';
 import { seriesUrl } from './releases.js';
 
 export type SeriesSummary = {
@@ -249,6 +249,11 @@ export function recentReleases(store: Store, limit = 8): RecentRelease[] {
   return store.links
     .slice()
     .sort((a, b) => b.raisedAt - a.raisedAt)
+    // Before the limit, so eight releases of hidden series do not empty the panel.
+    .filter((link) => {
+      const series = byId.get(link.seriesId);
+      return !series || !isPutAway(store, series);
+    })
     .slice(0, limit)
     .flatMap((link) => {
       const series = byId.get(link.seriesId);

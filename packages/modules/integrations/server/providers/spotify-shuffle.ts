@@ -174,6 +174,8 @@ let starting = false;
  * three times; songs added in the last ten minutes wait for the next one.
  */
 const PRE_PLAY_SYNC_MS = 10 * 60_000;
+/** How long Play waits for that sync before dealing from what is stored. */
+const PRE_PLAY_SYNC_WAIT_MS = 5_000;
 let lastPrePlaySync = 0;
 
 export async function shuffleOnSpotify(...args: Parameters<typeof startShuffle>): Promise<ShuffleResult> {
@@ -210,8 +212,17 @@ async function startShuffle(
    * already stored is a perfectly good deal.
    */
   if (Date.now() - lastPrePlaySync > PRE_PLAY_SYNC_MS) {
-    await syncPlaylists().catch(() => undefined);
+    /*
+     * Waited on for a few seconds at most. A sync after a while away can be
+     * long — a changed playlist read page by page, under the rate limit — and
+     * the songs still have to be queued after it, one request each. Waiting it
+     * out made Play take past the 15s the app gives a change, and the app took
+     * that for the server being gone: "offline", with the server fine. Past
+     * the bound it finishes in the background and the deal uses what is stored.
+     */
     lastPrePlaySync = Date.now();
+    const sync = syncPlaylists().catch(() => undefined);
+    await Promise.race([sync, new Promise((done) => setTimeout(done, PRE_PLAY_SYNC_WAIT_MS))]);
   }
 
   const sources = (await shuffleSources()).filter((s) => s.readable && (!collectionIds || collectionIds.includes(s.id)));
@@ -337,11 +348,17 @@ async function startShuffle(
   }
 
   /*
-   * If something fails after the music has started — the eighth song refused
-   * on its way into the queue — what was queued is kept and the session runs:
-   * its first check tops the queue up. Throwing it all away left music playing
-   * with nothing to follow it and an error on the card.
+   * Only the start is waited on: the music playing and the first song of the
+   * shuffle in place. The rest of the queue is added after Play has answered
+   * (`fill`). It used to be added first, one request per song under the rate
+   * limit, so Play could take past the 15s the app gives a change — and the
+   * app read that as the server being gone.
+   *
+   * If something fails once the music has started, what was queued is kept
+   * and the session runs: its first check tops the queue up.
    */
+  let rest = 0;
+  let waiting: string[] = [];
   try {
     if (mode === 'play' && carryOn) {
       await apiSend('spotify', 'PUT', `${API}/me/player/play?device_id=${encodeURIComponent(device.id)}`, {
@@ -350,11 +367,11 @@ async function startShuffle(
       });
       await apiSend('spotify', 'PUT', `${API}/me/player/shuffle?state=false&device_id=${encodeURIComponent(device.id)}`, null);
       // What is still queued from before plays next; take it over, then add ours.
-      const waiting = ((await readQueue()) ?? []).filter((u) => u !== carryOn!.uri);
+      waiting = ((await readQueue()) ?? []).filter((u) => u !== carryOn!.uri);
       s.foreign.add(carryOn.uri);
       const taken = adopt(s, waiting, inPool);
       const dealt = await queueFirst(s, first.uri, waiting);
-      await enqueue(s, ahead - taken - dealt, waiting);
+      rest = ahead - taken - dealt;
     } else if (mode === 'play') {
       // One song as the thing playing, the rest queued behind it — so the queue
       // is the whole list, and topping it up keeps the order intact.
@@ -364,29 +381,53 @@ async function startShuffle(
       s.sent.push(first.uri);
       // Playing `first` replaced the album or playlist that was on, but songs
       // queued earlier — a previous shuffle's — are still waiting after it.
-      const waiting = ((await readQueue()) ?? []).filter((u) => u !== first.uri);
+      waiting = ((await readQueue()) ?? []).filter((u) => u !== first.uri);
       const taken = adopt(s, waiting, inPool);
-      await enqueue(s, ahead - taken, waiting);
+      rest = ahead - taken;
     } else {
       /*
        * Behind whatever is on: the queue there is mostly the album or playlist
        * playing, which is not ours to take over. It is only kept from being
        * dealt twice.
        */
-      const waiting = (await readQueue()) ?? [];
+      waiting = (await readQueue()) ?? [];
       for (const uri of waiting) s.foreign.add(uri);
       const dealt = await queueFirst(s, first.uri, waiting);
-      await enqueue(s, ahead - dealt, waiting);
+      rest = ahead - dealt;
     }
   } catch (error) {
     if (s.sent.length === 0) throw error;
+    rest = 0;
   }
   if (s.sent.length === 0) {
     throw new Error('Every song in those lists is already waiting in the queue.');
   }
 
   run(s);
-  return { songs: s.sent.length, of: pool.length, mode, device: device.name };
+  fill(s, rest, waiting);
+  return { songs: Math.max(s.sent.length, ahead), of: pool.length, mode, device: device.name };
+}
+
+/**
+ * Queue the rest of a new shuffle after Play has answered.
+ *
+ * Marked as a check in progress, so the session's own 45-second check does not
+ * start a top-up alongside it and over-fill the queue. Stop, or a newer Play,
+ * sets `stopped` and it ends after the song it is on. A failure part-way is
+ * left to the next check, which tops up whatever is missing.
+ */
+function fill(s: Session, count: number, waiting: readonly string[]): void {
+  if (count <= 0) return;
+  s.checking = true;
+  void enqueue(s, count, waiting)
+    .catch(() => undefined)
+    .finally(() => {
+      s.checking = false;
+      if (s.stopped) return;
+      persist(s);
+      // "13 queued" becomes "20 queued" on every screen showing it.
+      changes.emitChange('integrations');
+    });
 }
 
 /** Make `s` the running session: its timer, its file, and the announcement. */

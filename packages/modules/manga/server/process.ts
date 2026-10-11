@@ -81,10 +81,39 @@ export function bundledJava(): string | null {
   return existsSync(exe) ? exe : null;
 }
 
-/** Suwayomi's temporary files, inside the app's data rather than the system's. */
+/**
+ * Suwayomi's temporary files, inside the app's data rather than the system's,
+ * with the parts that only grow cleared each time the app starts it.
+ *
+ * Nothing ever cleared them, and on this PC they had reached 6.5GB: 6.2GB of
+ * it `Tachidesk/manga-cache`, its own copy of every chapter page it had
+ * served (25,283 files), which the app's page cache already keeps the useful
+ * part of; the rest a `tachidesk_network_cache…` folder per launch, never
+ * reused. Those go. `thumbnails` stays: it is the covers, and clearing it
+ * would fetch nine hundred of them from the sites again after every start.
+ *
+ * Only here, when the app is about to launch its own Suwayomi — nothing is
+ * answering on the port, so nothing is using them, and an adopted Suwayomi is
+ * never launched, so its files are never touched. **Each entry on its own:**
+ * deleting the folder in one go stopped at the first locked file and removed
+ * nothing at all.
+ */
 function suwayomiTemp(): string {
   const dir = join(dataDir, 'suwayomi', 'tmp');
   mkdirSync(dir, { recursive: true });
+  const doomed = [
+    join(dir, 'Tachidesk', 'manga-cache'),
+    ...readdirSync(dir)
+      .filter((name) => ['tachidesk_network_cache', 'jna-', 'zstd-kmp'].some((prefix) => name.startsWith(prefix)))
+      .map((name) => join(dir, name)),
+  ];
+  for (const path of doomed) {
+    try {
+      rmSync(path, { recursive: true, force: true, maxRetries: 2 });
+    } catch {
+      // Something still holds a file in it: left for the next start.
+    }
+  }
   return dir;
 }
 
@@ -291,6 +320,22 @@ class SuwayomiProcess {
     if (this.starting) return this.starting;
 
     /*
+     * The whole of what follows is one shared start, looking for one to adopt
+     * included. `starting` was set only once the launch began, after the
+     * `describe` below had been awaited — so every request arriving in that
+     * moment passed the check above, each found nothing answering yet, and
+     * each spawned a JVM. Seen after a restart with the Browse tab open: half a
+     * dozen Suwayomis in one second, every one but the first quitting because
+     * the port was taken.
+     */
+    this.starting = this.adoptOrLaunch(jarPath, baseUrl, mode).finally(() => {
+      this.starting = null;
+    });
+    return this.starting;
+  }
+
+  private async adoptOrLaunch(jarPath: string, baseUrl: string, mode: SuwayomiMode): Promise<ManagedState> {
+    /*
      * Something is already answering there — adopt it rather than spawn.
      *
      * Two ways this happens and both are ordinary: you run Suwayomi yourself and
@@ -327,10 +372,7 @@ class SuwayomiProcess {
       return this.status;
     }
 
-    this.starting = this.launch(jarPath, baseUrl, mode).finally(() => {
-      this.starting = null;
-    });
-    return this.starting;
+    return this.launch(jarPath, baseUrl, mode);
   }
 
   private async launch(jarPath: string, baseUrl: string, mode: SuwayomiMode): Promise<ManagedState> {
@@ -363,6 +405,18 @@ class SuwayomiProcess {
         bundledJava() ?? 'java',
         [
           `-Dsuwayomi.tachidesk.config.server.port=${port}`,
+          /*
+           * This PC only. Suwayomi's default is every network interface, with
+           * no login, so anything on the Wi-Fi or the tailnet that reached port
+           * 4567 had all of it, including installing extensions, which is code
+           * that runs here. Found in an audit with the firewall allowing the
+           * app's Java on Private networks, which home Wi-Fi and Tailscale both
+           * are. The app only ever talks to it from this machine, and the phone
+           * reaches its web interface through `/manga/ui`, which checks who is
+           * asking. A property rather than an edit to its server.conf, so it
+           * holds on a fresh data folder and over a hand-edited one.
+           */
+          '-Dsuwayomi.tachidesk.config.server.ip=127.0.0.1',
           // Its own folder under ours, so it never writes into the app's data
           // root beside the database.
           `-Dsuwayomi.tachidesk.config.server.rootDir=${join(dataDir, 'suwayomi')}`,
@@ -399,8 +453,21 @@ class SuwayomiProcess {
       return this.status;
     }
 
-    this.child.stdout?.pipe(log);
-    this.child.stderr?.pipe(log);
+    /*
+     * `end: false`, and the log is closed only on `close` below. A pipe ends its
+     * destination when its source ends, so Suwayomi's output ending closed the
+     * log — and the exit handler then wrote "exited" into a closed file. That
+     * is an `error` event with nobody listening, which Node turns into a crash:
+     * **Suwayomi stopping took the whole server down.** It stops by itself after
+     * fifteen idle minutes in on-demand mode, so an app left alone went offline
+     * for no visible reason. Found in `server.err.log` after a restart.
+     *
+     * The listener is the second guard: whatever goes wrong writing Suwayomi's
+     * log, losing a line of it is no reason to stop the app.
+     */
+    log.on('error', () => undefined);
+    this.child.stdout?.pipe(log, { end: false });
+    this.child.stderr?.pipe(log, { end: false });
     const listen = (chunk: Buffer) => {
       said = (said + chunk.toString()).slice(-8000);
       lastOutputAt = Date.now();
@@ -421,8 +488,12 @@ class SuwayomiProcess {
       this.child = null;
     });
 
+    // After both outputs have closed, so nothing it printed lands after the file is shut.
+    this.child.on('close', (code) => {
+      log.end(`--- exited ${code} ---\n`);
+    });
+
     this.child.on('exit', (code) => {
-      log.write(`--- exited ${code} ---\n`);
       this.child = null;
       // An exit during normal running is a crash; after `stop()` the state is
       // already 'off' and must not be overwritten with a failure.

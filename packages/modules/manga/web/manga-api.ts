@@ -8,7 +8,7 @@
  * is no sense keeping a second copy of where it is stored.
  */
 import { apiRequest, getToken } from '@app/api';
-import { cachedResponse, replaceSavedPage, savedPages } from './offline-store';
+import { cachedResponse, fetchPage, replaceSavedPage, savedPages } from './offline-store';
 import { blobIsWholeImage } from './image-bytes';
 import { keptBlob } from '@app/offline-sync';
 
@@ -188,6 +188,17 @@ export interface ExtensionList {
   repos: string[];
   /** Offered by name, because a fresh Suwayomi has none and finds nothing. */
   suggestedRepo: string;
+  /** By package: series linked to its sources, chapters read there, and the sources. Absent from an older server. */
+  usage?: Record<string, ExtensionUsage>;
+  /** Packages flagged to install later, from a device that cannot install. */
+  flagged?: string[];
+  readLanguages?: string[];
+}
+
+export interface ExtensionUsage {
+  series: number;
+  chapters: number;
+  sources: Array<{ id: string; name: string; lang: string }>;
 }
 
 /** How "Set up manga" is getting on — see `server/setup.ts`. */
@@ -198,6 +209,10 @@ export interface SetupState {
   total: number | null;
   done: boolean;
   problem: string | null;
+  /** What the last run did, in words. Absent from an older server. */
+  result?: string | null;
+  /** When extensions last updated themselves (once a day while Suwayomi runs), and what it did. */
+  lastExtensionCheck?: { at: number; note: string } | null;
 }
 
 /** What the app's own Suwayomi process is doing, when it is managing one. */
@@ -306,6 +321,11 @@ export interface BrowseResult extends SourceMatch {
   following: string | null;
   /** That series has no source yet, so reading this copy would link it. */
   unlinked?: boolean;
+  /**
+   * How many chapters it has, as Suwayomi has stored them; null when it has
+   * not fetched them yet (ask `browse.chapters`). Absent from an older server.
+   */
+  chapters?: number | null;
 }
 
 /** A filter as a source declares it. Redeclared by hand, as `api.ts` does, since the PWA imports nothing from the server. */
@@ -612,11 +632,28 @@ export const manga = {
     get: () => call<BrowseState>('/api/manga/browse'),
     setSource: (id: string) =>
       call<{ selected: string }>('/api/manga/browse/source', { method: 'PUT', body: JSON.stringify({ id }) }),
-    /** `safe` leaves adult titles out; `hidden` and `unchecked` say what that did. Older servers send neither. */
-    list: (source: string, type: 'popular' | 'latest', page: number, safe: 'adult' | 'mature' | null = null) =>
-      call<{ results: BrowseResult[]; hasNextPage: boolean; page: number; hidden?: number; unchecked?: number }>(
-        `/api/manga/browse/list?source=${encodeURIComponent(source)}&type=${type}&page=${page}${safe ? `&safe=${safe}` : ''}`
+    /**
+     * `hide` names the tags to leave out; `hidden`, `hiddenBy` and `unchecked`
+     * say what that did. Older servers send none of them.
+     */
+    list: (source: string, type: 'popular' | 'latest', page: number, hide: readonly string[] = []) =>
+      call<{
+        results: BrowseResult[];
+        hasNextPage: boolean;
+        page: number;
+        hidden?: number;
+        hiddenBy?: Record<string, number>;
+        unchecked?: number;
+      }>(
+        `/api/manga/browse/list?source=${encodeURIComponent(source)}&type=${type}&page=${page}` +
+          hide.map((t) => `&hide=${encodeURIComponent(t)}`).join('')
       ),
+    /** Chapter counts for results whose count was not stored: a dozen at most, fetched from the site. */
+    chapters: (ids: string[]) =>
+      call<{ counts: Record<string, number | null> }>('/api/manga/browse/chapters', {
+        method: 'POST',
+        body: JSON.stringify({ ids }),
+      }),
     filters: (source: string) =>
       call<{ filters: SourceFilter[] }>(`/api/manga/browse/filters?source=${encodeURIComponent(source)}`),
     search: (body: {
@@ -658,11 +695,22 @@ export const manga = {
       }),
     setRepos: (repos: string[]) =>
       call<ExtensionList>('/api/manga/extensions/repos', { method: 'PUT', body: JSON.stringify({ repos }) }),
+    /** Flag to install later from the PC. Allowed from any device: it runs nothing. */
+    flag: (pkg: string, flagged: boolean) =>
+      call<{ flagged: string[] }>(`/api/manga/extensions/${encodeURIComponent(pkg)}/flag`, {
+        method: 'PUT',
+        body: JSON.stringify({ flagged }),
+      }),
   },
 
   reader: {
     chapters: (id: string, refresh = false) =>
       call<ChapterList>(`/api/manga/${id}/chapters${refresh ? '?refresh=1' : ''}`),
+    /** The source's description, people and genres, for the chapter list's head. */
+    about: (id: string) =>
+      call<{ description: string | null; author: string | null; artist: string | null; genres: string[]; url: string | null }>(
+        `/api/manga/${id}/about`
+      ),
     /**
      * A saved chapter's pages come from this device — no request, no Suwayomi,
      * no PC needed. Otherwise the server is asked.
@@ -705,11 +753,15 @@ export const manga = {
         }
       }
       // `fresh` reaches the server too: its own page cache could hold the bad copy.
-      const response = await fetch(options.fresh ? `${path}&fresh=1` : path, {
-        headers: { authorization: `Bearer ${getToken()}` },
-      });
-      if (!response.ok) throw new Error(`page failed (${response.status})`);
-      const blob = await response.blob();
+      let blob: Blob;
+      if (options.fresh) {
+        const response = await fetch(`${path}&fresh=1`, { headers: { authorization: `Bearer ${getToken()}` } });
+        if (!response.ok) throw new Error(`page failed (${response.status})`);
+        blob = await response.blob();
+      } else {
+        // The same request as the download's, when this chapter is saving as you read it.
+        blob = await fetchPage(path);
+      }
       if (!(await blobIsWholeImage(blob))) throw new Error('the page arrived damaged');
       // Mend a saved chapter with the good copy, if this page was one.
       void replaceSavedPage(path, await blob.arrayBuffer(), blob.type || 'image/jpeg');
