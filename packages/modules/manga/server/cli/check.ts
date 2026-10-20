@@ -52,6 +52,9 @@ import { explainFailure, findJars, portOf } from '../process.js';
 import { BATCH, checkEvery, dueForCheck, pollable, RECENT_SLOTS, RETRY_SLOTS, seriesUrl } from '../releases.js';
 import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiChanges } from '../browse.js';
 import { thumbPath } from '../present.js';
+import { betterTitle, retitleFromSource } from '../titles.js';
+import { sorted } from '../../web/shelf.js';
+import { glideDistance, glideStep, MAX_SPEED, releaseVelocity, STOP_SPEED } from '../../web/glide.js';
 import { PlistError, readBinaryPlist, unarchive } from '../bplist.js';
 import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup, repairMojibake } from '../mangareader.js';
 import { failureReason, fallbackSources, pickMatch, siteKey, sourceForSite } from '../matching.js';
@@ -735,6 +738,7 @@ const store: Store = {
   shelfShow: 'all',
   shelfSort: 'follow',
   shelfNewFirst: true,
+  shelfFavFirst: false,
   releaseNudges: true,
   browseSource: null,
   libraries: [],
@@ -1395,6 +1399,124 @@ console.log('\na check that failed is asked again sooner\n');
   check('an error page is not a picture', !whole(bytes('<!DOCTYPE html><html><body>502 Bad Gateway</body></html>', pad(20))));
   check('a JSON message is not a picture', !whole(bytes('{"error":"could not fetch the page"}', pad(20))));
   check('nothing at all is not a picture', !whole(new Uint8Array(0)));
+}
+
+console.log("\na series takes its source's name, when it is a rename");
+{
+  // The two real renames in the library this was written against.
+  check('a romanised title gives way to an English one',
+    betterTitle('Dungeon-eul Geurineun Hwaga', 'The Dungeon Painter') === 'The Dungeon Painter');
+  check('an English rename is taken',
+    betterTitle('Illusion Hunter from Another World', 'The Delusional Hunter in Another World') ===
+      'The Delusional Hunter in Another World');
+  // And the 53 that were respellings, by kind.
+  check('an apostrophe is not a rename', betterTitle("The Archmage's Restaurant", 'The Archmage’s Restaurant') === null);
+  check('a source taking a series down is not a rename', betterTitle('Just Leave Me Be', 'Just Leave Me Be [delete]') === null);
+  check('nor is a promo upload', betterTitle('Black Killer Whale Baby', 'Black Killer Whale Baby (Promo)') === null);
+  check('nor an author in brackets', betterTitle('All Rounder', 'All Rounder (Kim Dae-hoon)') === null);
+  check('nor a year', betterTitle('Black Haze (2025)', 'Black Haze') === null);
+  check('nor 「」 for quotation marks',
+    betterTitle('The Reincarnated 「Sword Saint」 Wants to Take it Easy', 'The Reincarnated "Sword Saint" Wants to Take It Easy') === null);
+  check("nor a source's capitalisation", betterTitle('The Hierarch Can’t Resist His Mistresses', "The Hierarch Can'T Resist His Mistresses") === null);
+  // Never towards something harder to read.
+  check('never towards the romanisation', betterTitle('The Dungeon Painter', 'Dungeon-eul Geurineun Hwaga') === null);
+  check('never towards another script', betterTitle('Solo Leveling', '나 혼자만 레벨업') === null);
+  check('but away from one', betterTitle('나 혼자만 레벨업', 'Solo Leveling') === 'Solo Leveling');
+  check('a housekeeping tag is not carried into the new name',
+    betterTitle('Dungeon-eul Geurineun Hwaga', 'The Dungeon Painter [delete]') === 'The Dungeon Painter');
+
+  const series = { title: 'Dungeon-eul Geurineun Hwaga', source: { title: 'The Dungeon Painter' } } as {
+    title: string; altTitles?: string[]; source: { title: string } | null;
+  };
+  check('renaming says so', retitleFromSource(series));
+  check('  ...and keeps the old name to search by', series.title === 'The Dungeon Painter' && series.altTitles?.[0] === 'Dungeon-eul Geurineun Hwaga');
+  check('  ...and does nothing the second time', !retitleFromSource(series) && series.altTitles?.length === 1);
+}
+
+console.log('\nfavourites and new chapters on top, in four groups');
+{
+  // Titles sort A–Z within each group, so the groups are what is being tested.
+  type Row = Parameters<typeof sorted>[0][number];
+  const row = (title: string, favourite: boolean, fresh: boolean) =>
+    ({ title, favourite, latestNumber: fresh ? 10 : 5, readUpTo: 5, position: null }) as unknown as Row;
+  const list = [
+    row('a plain', false, false),
+    row('b fav', true, false),
+    row('c new', false, true),
+    row('d fav new', true, true),
+    row('e plain', false, false),
+    row('f fav new', true, true),
+  ];
+  const order = (newFirst: boolean, favFirst: boolean) =>
+    sorted(list, 'title', newFirst, favFirst)
+      .map((s) => s.title)
+      .join(', ');
+  check('both: starred and new, new, starred, the rest', order(true, true) === 'd fav new, f fav new, c new, b fav, a plain, e plain', order(true, true));
+  check('new only: the star moves nothing', order(true, false) === 'c new, d fav new, f fav new, a plain, b fav, e plain', order(true, false));
+  check('favourites only: new moves nothing', order(false, true) === 'b fav, d fav new, f fav new, a plain, c new, e plain', order(false, true));
+  check('neither: the order alone', order(false, false) === 'a plain, b fav, c new, d fav new, e plain, f fav new', order(false, false));
+}
+
+console.log('\na mouse drag slides on after letting go');
+{
+  // Pulling up 200px over 100ms, sampled every 10ms: scrolling down at 2px/ms.
+  const pull = Array.from({ length: 11 }, (_, i) => ({ t: 1000 + i * 10, y: 500 - i * 20 }));
+  const v = releaseVelocity(pull, 1105);
+  check('a drag up throws the page down, at the speed of its last stretch', Math.abs(v - 2) < 0.01, `${v.toFixed(3)}px/ms`);
+  check('a drag down throws it up', releaseVelocity(pull.map((s) => ({ ...s, y: 1000 - s.y })), 1105) < 0);
+  check('held still before letting go, it stays put', releaseVelocity(pull, 1100 + 61) === 0);
+  // Fast, then slowing to a crawl before release: it is the crawl that counts.
+  const slowing = [...pull, ...Array.from({ length: 10 }, (_, i) => ({ t: 1110 + i * 10, y: 300 - i }))];
+  check('only the end of the drag decides the speed', Math.abs(releaseVelocity(slowing, 1200)) < 0.2, releaseVelocity(slowing, 1200).toFixed(3));
+  check('a wild flick is capped', releaseVelocity([{ t: 0, y: 1000 }, { t: 10, y: 0 }], 10) === MAX_SPEED);
+  check('a single sample is not a speed', releaseVelocity([{ t: 0, y: 5 }], 0) === 0);
+
+  check('a 2px/ms flick carries about a thousand pixels', Math.abs(glideDistance(2) - 1000) < 5, `${glideDistance(2).toFixed(0)}px`);
+  // The same slide in 60 frames a second and in 20 must end in the same place.
+  const run = (dt: number) => {
+    let velocity = 2;
+    let travelled = 0;
+    for (let t = 0; t < 3000; t += dt) {
+      const step = glideStep(velocity, dt);
+      travelled += step.distance;
+      velocity = step.velocity;
+    }
+    return travelled;
+  };
+  check('it slides as far at 20 frames a second as at 60', Math.abs(run(1000 / 60) - run(50)) < 1, `${run(1000 / 60).toFixed(1)} vs ${run(50).toFixed(1)}`);
+  check('and slows rather than stopping dead', glideStep(2, 16).velocity > 1.9 && glideStep(2, 16).velocity < 2);
+
+  /*
+   * A slow slide on a screen that keeps scroll in whole pixels. Reading the
+   * position back each frame rounds the fraction away — the hitch at low speeds:
+   * steps of 1 and 2 by turns, then stuck. Keeping it exactly and handing over
+   * only the result moves the page as far as the slide says.
+   */
+  const slow = (readBack: boolean, snap: (n: number) => number = Math.round) => {
+    let velocity = 0.15;
+    let exact = 0;
+    let shown = 0;
+    let stuck = 0;
+    while (Math.abs(velocity) >= STOP_SPEED) {
+      const step = glideStep(velocity, 1000 / 60);
+      velocity = step.velocity;
+      exact = (readBack ? shown : exact) + step.distance;
+      const next = snap(exact);
+      if (next === shown) stuck += 1;
+      shown = next;
+    }
+    return { shown, stuck };
+  };
+  const kept = slow(false);
+  const lost = slow(true);
+  // A browser that truncates rather than rounds: the old way moved 1px a frame
+  // where it should have moved 1.6, and fell far short.
+  const truncated = slow(true, Math.floor);
+  const truncatedKept = slow(false, Math.floor);
+  check('a slow slide goes as far as it should, kept to the fraction', Math.abs(kept.shown - (glideDistance(0.15) - glideDistance(STOP_SPEED))) <= 1, `${kept.shown}px`);
+  check('  ...and never sits still mid-slide', kept.stuck === 0, `${kept.stuck} frames`);
+  check('  ...where reading the position back fell short', lost.shown < kept.shown, `${lost.shown}px`);
+  check('  ...and far short where the browser truncates', truncated.shown < truncatedKept.shown * 0.8, `${truncated.shown}px against ${truncatedKept.shown}px`);
 }
 
 process.exit(failures === 0 ? 0 : 1);

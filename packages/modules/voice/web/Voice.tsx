@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from '@app/api';
 import { useAsync } from '@app/useAsync';
 import { RestartBanner } from '@app/views/InstalledPackages';
-import { Vocabulary } from './Vocabulary';
 import { Toggle } from '@app/controls';
 import { VoicePhrases } from './VoiceCommands';
 import { VoiceLook } from './VoiceLook';
@@ -101,6 +100,9 @@ function VoiceSettings({
 }) {
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<VoiceTabId>('general');
+  // Read here, not in the status card, so the switch and the card answer from one reading.
+  const [status, setStatus] = useVoiceStatus();
+  const paused = status?.paused === true;
   const [draftDecoys, setDraftDecoys] = useState<string | null>(null);
   const [error, setError] = useState('');
 
@@ -151,17 +153,6 @@ function VoiceSettings({
 
   const decoys = draftDecoys ?? current.wakeDecoys ?? '';
 
-  /*
-   * A decoy the model cannot pronounce is dropped by Vosk without a word, which
-   * is the same silent failure the wake word already has a warning for — so it
-   * reuses the same list rather than growing a second mechanism.
-   */
-  const decoyUnknown = (look?.unknownWords ?? []).filter((word) =>
-    (current.wakeDecoys ?? '')
-      .toLowerCase()
-      .split(/[,\s]+/)
-      .includes(word)
-  );
   return (
     <>
       <div className="tabs" role="tablist" aria-label="Voice sections">
@@ -201,16 +192,27 @@ function VoiceSettings({
                 Applies to this PC whichever device you set it from, and stays set until you change it.
               </div>
             </div>
+            {/*
+              On means listening for the wake word, not that the setting is
+              stored as on. Paused, the setting stays on and the microphone is
+              shut, and a switch reading "on" beside it was the screen saying
+              the opposite of the card below it. Switching it on while paused
+              resumes, since saving voiceEnabled clears a pause.
+            */}
             <Toggle
-              on={Boolean(current.voiceEnabled)}
+              on={Boolean(current.voiceEnabled) && !paused}
               disabled={saving}
               label="Enable voice"
-              onChange={(on) => update({ voiceEnabled: on })}
+              onChange={async (on) => {
+                await update({ voiceEnabled: on });
+                // Straight away, or the switch would sit at "paused" until the next reading.
+                setStatus(await api.voice.status().catch(() => status));
+              }}
             />
           </div>
         </div>
 
-        <LiveStatus enabled={Boolean(current.voiceEnabled)} selectedDevice={current.voiceInputDevice ?? null} onPick={(device) => update({ voiceInputDevice: device })} saving={saving} />
+        <LiveStatus status={status} setStatus={setStatus} enabled={Boolean(current.voiceEnabled)} selectedDevice={current.voiceInputDevice ?? null} onPick={(device) => update({ voiceInputDevice: device })} saving={saving} />
 
         {/*
           The wake word is on this tab *as well as* Settings, and it is the same
@@ -223,7 +225,6 @@ function VoiceSettings({
         <WakeWordCard
           current={current}
           saving={saving}
-          unknown={look?.unknownWords ?? []}
           update={update}
         />
       </section>
@@ -239,7 +240,6 @@ function VoiceSettings({
         <WakeWordCard
           current={current}
           saving={saving}
-          unknown={look?.unknownWords ?? []}
           update={update}
         />
 
@@ -325,9 +325,9 @@ function VoiceSettings({
         <div className="card">
           <div className="title">Words that keep waking it by mistake</div>
           <div className="meta" style={{ marginTop: 4 }}>
-            The recogniser is only allowed to answer with the wake word or "not that", so anything close
-            enough gets forced onto the wake word — a pet called Harley, a name, a phrase you say often.
-            Listing the real word here gives it somewhere better to put that sound.
+            If something close to the wake word keeps setting it off — a pet called Harley, a name, a
+            phrase you say often — list the real word here. It is listened for beside the wake word, so a
+            sound that matches it better goes there instead and is ignored.
           </div>
 
           <div className="row" style={{ marginTop: 8, gap: '.4rem' }}>
@@ -350,14 +350,6 @@ function VoiceSettings({
             </button>
           </div>
 
-          {decoyUnknown.length > 0 && (
-            <div className="meta urgent" style={{ marginTop: 6 }}>
-              ⚠ {decoyUnknown.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so
-              it cannot absorb anything. The same fix as for a wake word: two ordinary words beat one
-              invented one.
-            </div>
-          )}
-
           <div className="meta" style={{ marginTop: 6 }}>
             {/*
               Said plainly, because the obvious reading of this box is "ignore
@@ -368,10 +360,6 @@ function VoiceSettings({
             sound. Separate them with commas.
           </div>
         </div>
-
-        {/* Directly after the two cards about the grammar, because it is the
-            same subject: what the recogniser is allowed to say. */}
-        <Vocabulary unknown={look?.unknownWords ?? []} />
 
         <div className="card">
           <div className="title">Keep listening after it answers</div>
@@ -462,11 +450,15 @@ function VoiceSettings({
         <div className="card">
           <div className="row between">
             <div className="grow">
-              <div className="title">{current.hasVoiceprint ? 'Enrolled' : 'Not set up'}</div>
-              <div className="meta">
-                {current.hasVoiceprint
-                  ? `Learned from ${current.voiceprintSamples} samples. Commands that don't sound like you are ignored.`
-                  : 'Without this, anything that says the wake word can tick off a habit — including a video playing on this PC.'}
+              <div className="title">
+                {current.voiceprintStale ? 'Needs teaching again' : current.hasVoiceprint ? 'Enrolled' : 'Not set up'}
+              </div>
+              <div className={`meta ${current.voiceprintStale ? 'urgent' : ''}`}>
+                {current.voiceprintStale
+                  ? 'Voice recognition changed, and what it learned about your voice before does not carry over. Until you teach it again, it is not checking who is speaking.'
+                  : current.hasVoiceprint
+                    ? `Learned from ${current.voiceprintSamples} samples. Commands that don't sound like you are ignored.`
+                    : 'Without this, anything that says the wake word can tick off a habit — including a video playing on this PC.'}
               </div>
             </div>
             <Toggle
@@ -651,21 +643,9 @@ function Enrol({
  * level reading would reload every open client several times a second. It only
  * polls while this screen is open, and faster only while a test is running.
  */
-function LiveStatus({
-  enabled,
-  selectedDevice,
-  onPick,
-  saving,
-}: {
-  enabled: boolean;
-  selectedDevice: string | null;
-  onPick: (device: string | null) => void;
-  saving: boolean;
-}) {
+/** The agent's live state, read every two seconds while the screen is open (faster during a test). */
+function useVoiceStatus(): [VoiceStatusType | null, (next: VoiceStatusType | null) => void] {
   const [status, setStatus] = useState<VoiceStatusType | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const testing = status?.testing ?? false;
 
   useEffect(() => {
     let live = true;
@@ -690,6 +670,28 @@ function LiveStatus({
       clearTimeout(timer);
     };
   }, []);
+
+  return [status, setStatus];
+}
+
+function LiveStatus({
+  status,
+  setStatus,
+  enabled,
+  selectedDevice,
+  onPick,
+  saving,
+}: {
+  status: VoiceStatusType | null;
+  setStatus: (next: VoiceStatusType | null) => void;
+  enabled: boolean;
+  selectedDevice: string | null;
+  onPick: (device: string | null) => void;
+  saving: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  const testing = status?.testing ?? false;
 
   if (!status) return null;
 
@@ -719,7 +721,20 @@ function LiveStatus({
       }
     : status.error
       ? { text: 'Not listening', tone: 'urgent', why: status.error }
-      : !enabled
+      : enabled && status.preparing
+      ? {
+          text: 'Getting the speech models',
+          tone: 'meta',
+          why: `${status.preparing}. They are fetched the first time voice is switched on — about 100MB, once.`,
+        }
+      : // Before "switched off": the setting is off, and the microphone is open anyway.
+        status.borrowed
+        ? {
+            text: 'Listening for one command',
+            tone: 'ok-text',
+            why: 'From the listen shortcut. Voice stays off, and the microphone closes again when it is done.',
+          }
+        : !enabled
         ? { text: 'Switched off', tone: 'meta', why: 'The microphone is closed and the models are unloaded.' }
         : status.paused
           ? { text: 'Paused', tone: 'urgent', why: `You asked it to stop listening, ${pausedFor}.` }
@@ -735,7 +750,7 @@ function LiveStatus({
               }
             : status.listening
               ? { text: `Listening on ${status.device ?? 'the default microphone'}`, tone: 'ok-text', why: '' }
-              : { text: 'Starting up…', tone: 'meta', why: 'Loading the speech models — this takes a moment.' };
+              : { text: 'Starting up…', tone: 'meta', why: 'Loading the wake word spotter — this takes a moment.' };
 
   return (
     <div className="card">
@@ -807,7 +822,7 @@ function LiveStatus({
 
       {/* The level meter answers "is this microphone picking me up at all",
           which is the first thing to check and the hardest to guess at. */}
-      {enabled && status.listening && (
+      {(enabled || status.borrowed) && status.listening && (
         <div className="level" style={{ marginTop: 10 }} aria-label={`Input level ${Math.round(status.peak * 100)}%`}>
           <div className="level-fill" style={{ width: `${Math.min(100, Math.round(status.peak * 400))}%` }} />
         </div>
@@ -1296,9 +1311,9 @@ function comboFromEvent(event: KeyboardEvent): string | null {
  * The wake word, on two tabs at once.
  *
  * A component rather than the markup twice, because the one thing that must not
- * happen is the copies drifting — the version that warns about a word the model
- * cannot pronounce is the whole reason this box is worth looking at, and a
- * second copy would be the one that quietly lost it.
+ * happen is the copies drifting — the advice about a weak wake word is the
+ * reason this box is worth looking at, and a second copy would be the one that
+ * quietly lost it.
  *
  * The draft lives here, so switching tabs mid-edit discards it rather than
  * carrying half a wake word to the other tab. That is the right loss: the two
@@ -1308,13 +1323,10 @@ function comboFromEvent(event: KeyboardEvent): string | null {
 function WakeWordCard({
   current,
   saving,
-  unknown,
   update,
 }: {
   current: VoiceSettings;
   saving: boolean;
-  /** Words the speech model has no pronunciation for. */
-  unknown: string[];
   update: (patch: Record<string, unknown>) => Promise<unknown>;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
@@ -1324,12 +1336,6 @@ function WakeWordCard({
   // screen advises rather than refuses.
   const valid = /^[a-z]+(?: [a-z]+)*$/i.test(wakeWord.trim()) && wakeWord.trim().length >= 3;
   const advice = valid ? wakeWordAdvice(wakeWord) : null;
-  /*
-   * A wake word the model cannot pronounce is the worst version of this bug:
-   * nothing wakes at all, and every other diagnostic on this screen looks fine.
-   * Only checks the *saved* one, since that is what the agent was asked about.
-   */
-  const broken = unknown.filter((word) => current.wakeWord.toLowerCase().split(/\s+/).includes(word));
 
   return (
     <div className="card">
@@ -1358,13 +1364,6 @@ function WakeWordCard({
       {advice && (
         <div className="meta urgent" style={{ marginTop: 6 }}>
           {advice}
-        </div>
-      )}
-      {broken.length > 0 && (
-        <div className="meta urgent" style={{ marginTop: 6 }}>
-          ⚠ {broken.map((w) => `"${w}"`).join(', ')} is not in the speech model's dictionary, so this wake
-          word can never be heard. Compounds and invented names are the usual cause — separating one into
-          two ordinary words almost always fixes it.
         </div>
       )}
       <div className="meta" style={{ marginTop: 6 }}>

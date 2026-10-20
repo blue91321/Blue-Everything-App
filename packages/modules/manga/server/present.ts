@@ -13,6 +13,8 @@ import { seriesUrl } from './releases.js';
 export type SeriesSummary = {
   id: string;
   title: string;
+  /** Names it went by before linking renamed it — see `Series.altTitles`. */
+  altTitles: string[];
   status: Series['status'];
   latestChapter: string | null;
   totalChapters: number | null;
@@ -192,6 +194,7 @@ export function seriesSummary(series: Series): SeriesSummary {
   return {
     id: series.id,
     title: series.title,
+    altTitles: series.altTitles ?? [],
     status: series.status,
     latestChapter: series.latestChapter,
     totalChapters: series.totalChapters,

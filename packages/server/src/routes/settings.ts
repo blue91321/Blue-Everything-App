@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { AWAY_FROM_PC_IDLE_MS, quietReason, updateSettingsSchema } from '@everything/shared';
+import { AWAY_FROM_PC_IDLE_MS, quietReason, updateSettingsSchema, voiceprintIsCurrent } from '@everything/shared';
 import { db } from '../db/client.js';
 import { settings } from '../db/schema.js';
 import { getSettings } from '../nudge-engine.js';
@@ -61,8 +61,9 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
   });
 
   // The private half must never leave the server. The voiceprint is dropped for
-  // a different reason — it isn't secret, it's just 128 floats that no screen
+  // a different reason — it isn't secret, it's just 192 floats that no screen
   // has any use for, and the settings payload is fetched on every page load.
+  // What a screen does need is whether it is from the old speaker model.
   const { vapidPrivateKey: _secret, vapidPublicKey: _stored, voiceprint, ...safe } = row;
 
   return {
@@ -73,12 +74,21 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     quietReason: reason,
     awayFromPcIdleMinutes: AWAY_FROM_PC_IDLE_MS / 60_000,
     hasVoiceprint: Boolean(voiceprint),
+    voiceprintStale: Boolean(voiceprint) && !voiceprintIsCurrent(parseVoiceprint(voiceprint)),
     // Stored as whole percent; the shared threshold constants are fractions.
     speakerThreshold: row.speakerThreshold / 100,
     hiddenProviders: parseHiddenProviders(row.hiddenProviders),
     dashboardPanels: parsePanelList(row.dashboardPanels),
     dashboardBlocks: parsePanelList(row.dashboardBlocks),
   };
+}
+
+function parseVoiceprint(stored: string | null): number[] | null {
+  try {
+    return stored ? (JSON.parse(stored) as number[]) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {

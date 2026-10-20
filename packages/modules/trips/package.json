@@ -1,0 +1,6 @@
+{
+  "name": "@everything/module-trips",
+  "private": true,
+  "version": "0.5.8",
+  "type": "module"
+}

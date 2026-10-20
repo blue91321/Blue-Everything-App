@@ -17,6 +17,8 @@ export type SeriesStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'u
 export interface SeriesSummary {
   id: string;
   title: string;
+  /** Names it went by before linking renamed it. Optional: an older server does not send them. */
+  altTitles?: string[];
   status: SeriesStatus;
   latestChapter: string | null;
   totalChapters: number | null;
@@ -442,6 +444,7 @@ export interface Library {
   shelfShow?: 'all' | 'favourites';
   shelfSort?: 'follow' | 'read' | 'catchup' | 'updated' | 'title' | 'added';
   shelfNewFirst?: boolean;
+  shelfFavFirst?: boolean;
   /** The shelves, with how many series are on each. Counts overlap. */
   libraries?: Array<{ id: string; name: string; count: number; hidden?: boolean }>;
 }
@@ -528,7 +531,7 @@ export const manga = {
   },
   setFavourite: (id: string, on: boolean) =>
     call<{ favourite: boolean }>(`/api/manga/${id}/favourite`, { method: 'PUT', body: JSON.stringify({ on }) }),
-  setShelf: (body: { show?: 'all' | 'favourites'; sort?: string; newFirst?: boolean }) =>
+  setShelf: (body: { show?: 'all' | 'favourites'; sort?: string; newFirst?: boolean; favFirst?: boolean }) =>
     call<{ shelfShow: string; shelfSort: string }>('/api/manga/shelf', { method: 'PUT', body: JSON.stringify(body) }),
   setReadAhead: (chapters: number) =>
     call<{ readAheadChapters: number }>('/api/manga/read-ahead', {

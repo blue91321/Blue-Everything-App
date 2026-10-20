@@ -1,7 +1,7 @@
 {
   "name": "@everything/web",
   "private": true,
-  "version": "0.5.7",
+  "version": "0.5.8",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -12,10 +12,12 @@
   },
   "dependencies": {
     "@everything/shared": "*",
+    "leaflet": "^1.9.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/leaflet": "^1.9.12",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",

@@ -115,6 +115,7 @@ import {
   type ChapterToArchive,
 } from './archive.js';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
+import { retitleFromSource } from './titles.js';
 
 /**
  * When something happened, as a device that was offline says it did.
@@ -134,6 +135,21 @@ function happenedAt(value: unknown): number {
 }
 
 export async function routes(app: FastifyInstance): Promise<void> {
+  /*
+   * Series linked before linking renamed anything keep the name they arrived
+   * with. One pass at startup gives them their source's name under the same
+   * rule as a fresh link — see `titles.ts` — and does nothing on every start
+   * after, since a renamed series already matches its source.
+   */
+  {
+    const store = read();
+    const renamed = store.series.filter((series) => retitleFromSource(series));
+    if (renamed.length > 0) {
+      write(store);
+      app.log.info({ renamed: renamed.map((s) => s.title) }, 'manga: renamed series after their sources');
+    }
+  }
+
   /**
    * Bringing a library in from Manga Reader, by its iMazing app backup — see
    * `mangareader.ts` for what is taken from where.
@@ -272,6 +288,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       shelfShow: store.shelfShow,
       shelfSort: store.shelfSort,
       shelfNewFirst: store.shelfNewFirst,
+      shelfFavFirst: store.shelfFavFirst,
       /**
        * The shelves, with how many series are on each.
        *
@@ -459,7 +476,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * optional field says better than two endpoints would.
    */
   app.put('/api/manga/shelf', async (request, reply) => {
-    const body = request.body as { show?: unknown; sort?: unknown; newFirst?: unknown } | null;
+    const body = request.body as { show?: unknown; sort?: unknown; newFirst?: unknown; favFirst?: unknown } | null;
     const store = read();
 
     if (body?.show !== undefined) {
@@ -472,6 +489,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
       if (typeof body.newFirst !== 'boolean') return reply.code(400).send({ error: 'newFirst must be true or false' });
       store.shelfNewFirst = body.newFirst;
     }
+    if (body?.favFirst !== undefined) {
+      if (typeof body.favFirst !== 'boolean') return reply.code(400).send({ error: 'favFirst must be true or false' });
+      store.shelfFavFirst = body.favFirst;
+    }
     if (body?.sort !== undefined) {
       // Checked rather than clamped here: a value the screen cannot have sent
       // is a mistake worth reporting, where a hand-edited file is not.
@@ -481,7 +502,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
       store.shelfSort = body.sort as typeof store.shelfSort;
     }
     write(store);
-    return { shelfShow: store.shelfShow, shelfSort: store.shelfSort, shelfNewFirst: store.shelfNewFirst };
+    return {
+      shelfShow: store.shelfShow,
+      shelfSort: store.shelfSort,
+      shelfNewFirst: store.shelfNewFirst,
+      shelfFavFirst: store.shelfFavFirst,
+    };
   });
 
   /**
@@ -1349,6 +1375,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
     series.sourceChapter = null;
     series.sourceCheckedAt = null;
     series.checkedAt = null;
+    // Found under another name: go by it, when it is one worth having.
+    retitleFromSource(series);
 
     /*
      * Ask MangaUpdates once, here, and never again for this series.
@@ -1379,6 +1407,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
       const row = fresh.series.find((s) => s.id === id);
       if (!row) return reply.code(404).send({ error: 'no such series' });
       row.source = series.source;
+      row.title = series.title;
+      row.altTitles = series.altTitles;
       row.latestChapter = null;
       row.sourceChapter = null;
       row.sourceCheckedAt = null;
@@ -2042,6 +2072,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       target.sourceChapter = null;
       target.sourceCheckedAt = null;
       target.checkedAt = null;
+      retitleFromSource(target);
       absorbGlimpse(store, target, body.mangaId);
       write(store);
       return { series: seriesSummary(target), matchedOn: 'existing' };
@@ -2099,6 +2130,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       existing.sourceChapter = null;
       existing.sourceCheckedAt = null;
       existing.checkedAt = null;
+      retitleFromSource(existing);
       absorbGlimpse(store2, existing, body.mangaId);
       write(store2);
       return { series: seriesSummary(existing), matchedOn: 'existing' };

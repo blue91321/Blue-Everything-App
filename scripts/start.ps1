@@ -231,12 +231,15 @@ function Save-PreviousLog([string]$name) {
 # -AgentOnly starts the agent and not the server. The install and build checks
 # above still run and are nearly free once they have been done once; what is
 # skipped is starting a second server on a port something is already holding.
+# `--expose-gc` on the agent: the speech models have no free in their binding and
+# go back when collected, so switching voice off asks for a collection rather
+# than leaving ~150MB to whenever the collector next gets round to it.
 if ($AgentOnly) {
   Save-PreviousLog 'agent'
   Save-PreviousLog 'agent.err'
   Write-Host 'Starting agent... ' -NoNewline
   $only = Start-Process $script:AgentExe `
-    -ArgumentList '--import', 'tsx', "`"$agentEntry`"" `
+    -ArgumentList '--expose-gc', '--import', 'tsx', "`"$agentEntry`"" `
     -WorkingDirectory $agentDir `
     -WindowStyle Hidden `
     -RedirectStandardOutput (Join-Path $logDir 'agent.log') `
@@ -290,7 +293,7 @@ if ($Foreground) {
   Write-Host "App:  $url" -ForegroundColor Cyan
   Write-Host 'Running the agent here. Ctrl+C stops the agent, and the server follows within 90s.' -ForegroundColor Cyan
   Push-Location $agentDir
-  try { & $script:AgentExe --import tsx $agentEntry } finally { Pop-Location }
+  try { & $script:AgentExe --expose-gc --import tsx $agentEntry } finally { Pop-Location }
   exit 0
 }
 
@@ -311,7 +314,7 @@ Save-PreviousLog 'agent'
 Save-PreviousLog 'agent.err'
 Write-Host 'Starting agent... ' -NoNewline
 $agent = Start-Process $script:AgentExe `
-  -ArgumentList '--import', 'tsx', "`"$agentEntry`"" `
+  -ArgumentList '--expose-gc', '--import', 'tsx', "`"$agentEntry`"" `
   -WorkingDirectory $agentDir `
   -WindowStyle Hidden `
   -RedirectStandardOutput (Join-Path $logDir 'agent.log') `

@@ -1033,6 +1033,50 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   check('  ...but the listen shortcut still reaches it', offConfig.listenHotkey === 'ctrl+alt+numpad9', offConfig.listenHotkey);
   check('  ...and so does whether it may work while off', offConfig.listenHotkeyWhileOff === true, String(offConfig.listenHotkeyWhileOff));
 
+  /*
+   * And the command it hears is acted on. The route refused everything while
+   * voice was off, so the shortcut opened the microphone, heard you, and was
+   * told "disabled" every time.
+   */
+  const heardByWakeWord = (await post('/api/voice/command', { text: 'hey everything i sipped water', speakerScore: null })).json();
+  check('with voice off, a wake-word command is refused', heardByWakeWord.outcome === 'disabled', heardByWakeWord.outcome);
+  const heardByShortcut = (
+    await post('/api/voice/command', { text: 'hey everything i sipped water', speakerScore: null, manual: true })
+  ).json();
+  check('  ...but one from the listen shortcut is carried out', heardByShortcut.outcome !== 'disabled', heardByShortcut.outcome);
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceListenHotkeyWhileOff: false } });
+  const shortcutNotAllowed = (
+    await post('/api/voice/command', { text: 'hey everything i sipped water', speakerScore: null, manual: true })
+  ).json();
+  check('  ...and refused again once the shortcut may not work while off', shortcutNotAllowed.outcome === 'disabled', shortcutNotAllowed.outcome);
+
+  // The toggle shortcut sends what voice should become, not "flip whatever is stored".
+  const toggledOn = (await post('/api/voice/toggle', { enabled: true })).json();
+  const onNow = (await app.inject({ method: 'GET', url: '/api/settings' })).json().voiceEnabled;
+  check('the toggle shortcut can ask for voice on', toggledOn.enabled === true && Boolean(onNow), String(onNow));
+  const toggledOnAgain = (await post('/api/voice/toggle', { enabled: true })).json();
+  check('  ...and asking twice leaves it on, rather than flipping it back off', toggledOnAgain.enabled === true);
+  const toggledOff = (await post('/api/voice/toggle', { enabled: false })).json();
+  check('  ...and off', toggledOff.enabled === false);
+
+  /*
+   * A voiceprint from the old speaker model. Vosk's were 128 numbers and the
+   * current model's are 192; nothing can score against the old one, so
+   * enforcing it would refuse every command until somebody enrolled again.
+   */
+  await post('/api/voice/toggle', { enabled: true });
+  const settingsNow = async () => (await app.inject({ method: 'GET', url: '/api/settings' })).json();
+  await post('/api/voice/enrol', { voiceprint: Array.from({ length: 128 }, (_, i) => Math.sin(i)), samples: 10 });
+  check('a 128-number voiceprint reads as stale', (await settingsNow()).voiceprintStale === true);
+  const underStale = (await post('/api/voice/command', { text: 'hey everything i sipped water', speakerScore: null })).json();
+  check('  ...and is not enforced', underStale.outcome !== 'wrong-speaker', underStale.outcome);
+  await post('/api/voice/enrol', { voiceprint: Array.from({ length: 192 }, (_, i) => Math.sin(i)), samples: 10 });
+  check('a 192-number one does not', (await settingsNow()).voiceprintStale === false);
+  const underCurrent = (await post('/api/voice/command', { text: 'hey everything i sipped water', speakerScore: null })).json();
+  check('  ...and is enforced', underCurrent.outcome === 'wrong-speaker', underCurrent.outcome);
+  await app.inject({ method: 'DELETE', url: '/api/voice/enrol' });
+  await post('/api/voice/toggle', { enabled: false });
+
   const numpadRefused = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceListenHotkey: 'numpad5' } });
   check('a bare number-pad key is refused', numpadRefused.statusCode === 400, `HTTP ${numpadRefused.statusCode}`);
   const f5Refused = await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceListenHotkey: 'f5' } });

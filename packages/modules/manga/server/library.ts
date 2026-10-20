@@ -129,6 +129,12 @@ export type Series = SeriesIds & {
    */
   favourite?: boolean;
   /**
+   * Names it went by before, newest last — see `titles.ts`. Kept when linking
+   * renames a series after its source, so the Library's title box still finds
+   * it by the name you knew. Optional, and absent means none.
+   */
+  altTitles?: string[];
+  /**
    * Which libraries this is on, by id.
    *
    * **Optional, and absent means none**, like `favourite` — nine hundred series
@@ -431,6 +437,8 @@ export type Store = {
    * On by default, matching the Library's own default.
    */
   shelfNewFirst: boolean;
+  /** The card's own "Favourites on top", pinned only, like the box above. Off by default. */
+  shelfFavFirst: boolean;
   /**
    * Whether a new chapter raises a nudge at all. On unless switched off, which
    * is what it always did. Off, chapters are still noticed and recorded — the
@@ -527,6 +535,7 @@ function emptyStore(): Store {
     shelfShow: 'all',
     shelfSort: 'follow',
     shelfNewFirst: true,
+    shelfFavFirst: false,
     releaseNudges: true,
     browseSource: null,
     libraries: [],
@@ -560,6 +569,7 @@ export function read(): Store {
       shelfShow: parsed.shelfShow === 'favourites' ? 'favourites' : 'all',
       shelfSort: clampShelfSort(parsed.shelfSort),
       shelfNewFirst: parsed.shelfNewFirst !== false,
+      shelfFavFirst: parsed.shelfFavFirst === true,
       archiveFolder:
         typeof parsed.archiveFolder === 'string' && parsed.archiveFolder.trim() ? parsed.archiveFolder : null,
       releaseNudges: parsed.releaseNudges !== false,

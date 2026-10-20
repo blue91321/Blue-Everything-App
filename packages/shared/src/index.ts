@@ -527,8 +527,8 @@ export function parseWakeDecoys(stored: string, wakeWord = ''): string[] {
 /**
  * Words a speech recogniser drops constantly and that carry no identity.
  *
- * "hey" is short, unstressed and usually run into the next word, so Vosk hears
- * "jarvis" far more often than it hears "hey jarvis". Requiring the whole
+ * "hey" is short, unstressed and usually run into the next word, so a recogniser
+ * hears "jarvis" far more often than it hears "hey jarvis". Requiring the whole
  * phrase meant the wake word failing on utterances where the distinctive part
  * was recognised perfectly.
  */
@@ -538,10 +538,8 @@ const WAKE_PREFIXES = new Set(['hey', 'ok', 'okay', 'hi', 'hello', 'yo', 'hay', 
  * The part of the wake word that actually has to be heard.
  *
  * Leading attention words are optional; whatever follows them is the name and
- * is required. This is not a loosening of the gate — the wake recogniser runs a
- * grammar containing only the wake word and `[unk]`, so the sole thing it can
- * emit besides "nothing" is wake-word words. What it changes is that a
- * half-heard "…jarvis" counts, which is the common case.
+ * is required. The keyword spotter is given both — the wake word as typed and
+ * this — so a half-heard "…jarvis" counts, which is the common case.
  */
 export function wakeWordRequired(wakeWord: string): string[] {
   const words = wakeWord.toLowerCase().split(/\s+/).filter(Boolean);
@@ -725,6 +723,13 @@ export const voiceCommandSchema = z.object({
   /** Cosine similarity against the enrolled voiceprint, if one exists. */
   speakerScore: z.number().min(-1).max(1).nullish(),
   at: z.number().int().optional(),
+  /**
+   * Started by the listen shortcut rather than the wake word. A key pressed on
+   * this keyboard is its own proof, so the server neither holds it to a
+   * voiceprint (there is no wake word to take one from) nor refuses it while
+   * voice is off, when "use the shortcut while voice is off" is switched on.
+   */
+  manual: z.boolean().optional(),
 });
 export type VoiceCommand = z.infer<typeof voiceCommandSchema>;
 
@@ -770,6 +775,19 @@ export const voiceAgentReportSchema = z.object({
    * away would make the Voice tab say "starting up…" indefinitely.
    */
   awayFromPc: z.boolean().default(false),
+  /**
+   * Listening for one command because the listen shortcut was pressed while
+   * voice is off. Without it the screen said "Switched off" beside a
+   * microphone that was open.
+   */
+  borrowed: z.boolean().default(false),
+  /**
+   * Fetching the speech models, in words — "Downloading the command
+   * recogniser — 31MB of 101MB". Null otherwise. The first switch-on downloads
+   * about 100MB, and a screen that said "starting up" for a minute and a half
+   * would look stuck.
+   */
+  preparing: z.string().max(200).nullish(),
   /** Loudest RMS since the last report, 0-1. Drives the level meter. */
   peak: z.number().min(0).max(1).default(0),
   /**
@@ -781,11 +799,11 @@ export const voiceAgentReportSchema = z.object({
   /** Version the agent last saw; a mismatch answers straight away. */
   since: z.number().int().optional(),
   /**
-   * Phrase words the speech model has no pronunciation for.
-   *
-   * These are silently dropped from the grammar, so a phrase containing one can
-   * never match. Reported so the screen can say which, rather than leaving a
-   * command that reads perfectly and never works.
+   * Phrase words the recogniser will never write — today, a number in digits,
+   * since speech is written down as words. A phrase containing one can never
+   * match. Reported so the screen can say which, rather than leaving a command
+   * that reads perfectly and never works. (Under Vosk this was words missing
+   * from the model's dictionary.)
    */
   unknownWords: z.array(z.string().max(60)).max(50).default([]),
   /** How many usable enrolment samples are in hand, while enrolling. */
@@ -848,6 +866,23 @@ export const VOICE_ENROL_SAMPLES = 10;
 
 /** Below this the embedding came from too little audio to mean anything. */
 export const VOICE_ENROL_MIN_FRAMES = 40;
+
+/**
+ * How long a voiceprint from the current speaker model is.
+ *
+ * Vosk's were 128 numbers and the 3D-Speaker model's are 192, and the two
+ * cannot be compared — not even by truncating, since the dimensions mean
+ * nothing to each other. So a voiceprint of any other length is **stale**: kept,
+ * because forgetting it silently would be a protection switched off behind your
+ * back, but not enforced, and the Voice screen asks for a fresh enrolment.
+ * Enforcing it would refuse every command, since nothing could ever score
+ * against it.
+ */
+export const VOICEPRINT_DIMENSIONS = 192;
+
+export function voiceprintIsCurrent(voiceprint: readonly number[] | null | undefined): boolean {
+  return Array.isArray(voiceprint) && voiceprint.length === VOICEPRINT_DIMENSIONS;
+}
 
 /**
  * Mean of the length-normalised vectors.

@@ -1,0 +1,98 @@
+/*
+ * The Trips screen. Its own file, imported by the screen, so it arrives with
+ * the screen's chunk and leaves with the package.
+ */
+
+.trips h3 {
+  margin: 22px 0 6px;
+}
+
+/* The map: tall enough to read a city, never taller than most of a phone. */
+.trips-map {
+  height: min(52vh, 420px);
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  /* Leaflet stacks its panes up to z-index 1000; this keeps them under the app's ☰ and menus. */
+  position: relative;
+  z-index: 0;
+}
+
+/*
+ * OpenStreetMap draws only a light map. On a dark theme the tiles are inverted
+ * and turned back round the colour wheel, so water stays blue and the map is
+ * not the brightest thing on the screen. Only the tiles: the markers and the
+ * lines keep the accent as drawn.
+ */
+:root[data-theme='dark'] .trips-map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
+}
+.trips-map.leaflet-container {
+  background: var(--surface);
+}
+:root[data-theme='dark'] .trips-map .leaflet-control-attribution,
+:root[data-theme='dark'] .trips-map .leaflet-bar a {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+:root[data-theme='dark'] .trips-map .leaflet-control-attribution a {
+  color: var(--accent);
+}
+
+/* A trip in the list is a button that reads as a card. */
+.trips-row,
+.trips-place,
+.trips-hit {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  width: 100%;
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.trips-place,
+.trips-hit {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.trips-hit {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.trips-hit:first-of-type {
+  margin-top: 8px;
+}
+@media (hover: hover) {
+  .trips-row:hover,
+  .trips-hit:hover {
+    background: var(--surface-raised);
+  }
+}
+
+/* The trip's name is edited where it is shown, at the size of a heading. */
+.trips-name {
+  width: 100%;
+  font-size: 1.3rem;
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+}
+.trips-name:hover,
+.trips-name:focus {
+  border-color: var(--border);
+}
+
+.trips-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trips .btn.danger {
+  color: var(--danger);
+}

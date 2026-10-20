@@ -18,6 +18,7 @@ import { createPortal } from 'react-dom';
 import { chapterText } from './judge';
 import { ProgressRing, remainingText, speedText } from './ProgressRing';
 import { retryDownload, sizeText, type Job } from './offline-store';
+import { useTakeScreen } from './take-screen';
 
 export type WaitLine = { id: string; number: number; saved: boolean; job: Job | undefined };
 
@@ -42,6 +43,7 @@ export function WaitForChapter({
   onSave: () => void;
   onStop: () => void;
 }) {
+  useTakeScreen();
   const now = Date.now();
   const fraction = job?.total ? job.done / job.total : null;
   const position = job?.state === 'waiting' ? 'waiting for the chapter saving before it' : null;

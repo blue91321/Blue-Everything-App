@@ -50,6 +50,7 @@ import { suwayomiProcess } from './process.js';
 import { effectiveUrl, type SourceMatch } from './sources.js';
 import { DEFAULT_BASE_URL, SuwayomiAdapter, type BrowseSource } from './suwayomi.js';
 import { fillTags } from './tags.js';
+import { retitleFromSource } from './titles.js';
 
 export type MatchingState = {
   running: boolean;
@@ -278,6 +279,9 @@ async function run(todo: Series[]): Promise<void> {
         row.sourceChapter = null;
         row.sourceCheckedAt = null;
         row.checkedAt = null;
+        // Matched by title, so nearly always the same name — but the same rule
+        // as every other link, for the times it is not.
+        retitleFromSource(row);
         write(now);
         state.linked += 1;
       }

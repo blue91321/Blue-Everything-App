@@ -67,7 +67,7 @@ const SCOPE_HELP: Record<StopScope, string> = {
   manual: 'Closes the microphone until you turn it back on from this screen.',
 };
 
-/** Words of a command the speech model has no pronunciation for. */
+/** Words of a command the recogniser will never write — a number written as digits. */
 function brokenWords(command: VoiceCommand, unknown: Set<string>): string[] {
   if (unknown.size === 0) return [];
   const words = command.phrases.flatMap((phrase) => phrase.toLowerCase().split(/\s+/));
@@ -168,12 +168,12 @@ export function VoicePhrases() {
   const all = commands.data ?? [];
 
   /*
-   * Words the speech model has no pronunciation for.
+   * Words the recogniser will never write.
    *
-   * Vosk drops these from the grammar with a warning on stderr, so the phrase
-   * reads perfectly and can never match — the exact failure this screen exists
-   * to prevent. Compounds and coinages are the usual culprits: "unmute" is
-   * absent from a dictionary that has "obstreperous".
+   * Under Vosk this was the model's dictionary, and "unmute" was missing from
+   * it. The recogniser now writes any word, so what is left is spelling: it
+   * writes numbers out as words, so "drink 2 water" reads perfectly and can
+   * never match — the exact failure this screen exists to prevent.
    */
   const unknown = new Set(status.data?.unknownWords ?? []);
   const broken = unknown.size === 0
@@ -234,7 +234,7 @@ export function VoicePhrases() {
           <div className="grow">
             <div className="title">
               {command.label ?? KIND_LABEL[command.kind]}
-              {bad.length > 0 && <span className="urgent" title="contains a word that cannot be recognised"> ⚠</span>}
+              {bad.length > 0 && <span className="urgent" title="contains a word that is never heard as written"> ⚠</span>}
             </div>
             <div className="meta">
               {describeKind(command)}
@@ -244,14 +244,9 @@ export function VoicePhrases() {
             </div>
             {bad.length > 0 && (
               <div className="meta urgent" style={{ marginTop: 4 }}>
-                {bad.map((w) => `"${w}"`).join(', ')} cannot be recognised, so this never fires
-                {/* The fix is nearly always the same one, and saying so here
-                    saves working it out from first principles: what is missing
-                    from the dictionary is coinages and compounds, not ordinary
-                    words. "un mute" is two words it knows. */}
+                {bad.map((w) => `"${w}"`).join(', ')} is never heard that way, so this never fires
                 <div style={{ marginTop: 2 }}>
-                  Try writing {bad.length > 1 ? 'them' : 'it'} as two ordinary words — a compound like
-                  "unmute" is usually missing where "un mute" is not.
+                  Numbers are heard as words — write "two", not "2".
                 </div>
               </div>
             )}
@@ -280,10 +275,10 @@ export function VoicePhrases() {
 
       {broken.length > 0 && (
         <div className="card">
-          <div className="title urgent">Some words can never be recognised</div>
+          <div className="title urgent">Some words are never heard as written</div>
           <div className="meta" style={{ marginTop: 4 }}>
-            The speech model has no pronunciation for these, so they are dropped and the phrase never matches.
-            Compounds and made-up words are the usual cause — try two ordinary words instead.
+            Speech is written down as words, so a number in digits never matches. Write it out — "two", not
+            "2".
           </div>
           {broken.map(({ command, words }) => (
             <div className="meta" key={command.id} style={{ marginTop: 6 }}>
@@ -366,7 +361,7 @@ function CommandEditor({
   habits: Habit[];
   /** What this PC has actually run — the only things a `launch` may point at. */
   games: Game[];
-  /** Words the model cannot pronounce, so a phrase using one never matches. */
+  /** Words the recogniser never writes, so a phrase using one never matches. */
   unknownWords: Set<string>;
   onDone: (savedKind?: VoiceCommandKind) => void;
 }) {
@@ -603,7 +598,7 @@ function CommandEditor({
                 key={phrase}
                 className={`btn subtle${bad.length > 0 ? ' danger' : ''}`}
                 aria-label={`Remove phrase ${phrase}`}
-                title={bad.length > 0 ? `${bad.join(', ')} cannot be recognised` : undefined}
+                title={bad.length > 0 ? `${bad.join(', ')} is never heard that way — write numbers as words` : undefined}
                 onClick={() => setPhrases(phrases.filter((p) => p !== phrase))}
               >
                 {bad.length > 0 && '⚠ '}

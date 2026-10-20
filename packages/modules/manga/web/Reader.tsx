@@ -133,6 +133,8 @@ import { chapterText } from './judge';
 import { ReaderSettings } from './ReaderSettings';
 import { useReaderPrefs } from './reader-prefs';
 import { reachedTheEnd } from './chapter-nav';
+import { glideStep, releaseVelocity, STOP_SPEED, type DragSample } from './glide';
+import { useTakeScreen } from './take-screen';
 
 const IN_FLIGHT = 3;
 /** How long the reader waits before giving the pages that failed a second go. */
@@ -311,6 +313,7 @@ export function Reader({
     const y = underneath.current;
     return () => window.scrollTo(0, y);
   }, []);
+  useTakeScreen();
 
   /** The page crossing the read line — what the counter says. */
   const [page, setPage] = useState(resume?.page ?? 0);
@@ -679,16 +682,120 @@ export function Reader({
    * `setState` per `pointermove` would re-render the strip sixty times a
    * second — the same reason `useEdgeDrawer` keeps its position in one.
    */
-  const drag = useRef<{ y: number; top: number; moved: boolean } | null>(null);
+  const drag = useRef<{
+    /** Where the press was, for the slop. */
+    y: number;
+    /** Where the pointer was at the last move, for the next one's distance. */
+    last: number;
+    /** The part of a pixel the browser could not scroll by — see `dragMove`. */
+    carry: number;
+    moved: boolean;
+    samples: DragSample[];
+  } | null>(null);
   /** Set when a drag ends, so the click it is followed by does not toggle the controls. */
   const dragged = useRef(false);
 
+  /*
+   * The slide after letting go, as a phone does it — see `glide.ts`.
+   *
+   * Driven by `requestAnimationFrame` with a `setTimeout` racing it, whichever
+   * comes first: rAF is what makes it smooth, and it does not fire at all in a
+   * window that is not drawing, which is the trap this project keeps finding.
+   * The timeout is what stops a slide being left half-done in that case.
+   */
+  const glide = useRef<{
+    velocity: number;
+    at: number;
+    /** Where the slide has got to, exactly — see `frame`. */
+    pos: number;
+    raf: number;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+
+  const stopGlide = () => {
+    const g = glide.current;
+    if (!g) return false;
+    cancelAnimationFrame(g.raf);
+    clearTimeout(g.timer);
+    glide.current = null;
+    return true;
+  };
+
+  const startGlide = (velocity: number) => {
+    stopGlide();
+    if (Math.abs(velocity) < STOP_SPEED) return;
+    // Not for somebody who has asked the system for less motion.
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+
+    const frame = () => {
+      const g = glide.current;
+      if (!g) return;
+      cancelAnimationFrame(g.raf);
+      clearTimeout(g.timer);
+      const now = performance.now();
+      const step = glideStep(g.velocity, Math.min(now - g.at, 100));
+      /*
+       * The position is kept here, to the fraction, and only handed to the
+       * browser — never read back from it. The browser keeps a scroll position
+       * in whole device pixels, so reading it back each frame threw the fraction
+       * away: a slow slide moving 0.4px a frame went nowhere at all, and one
+       * moving 1.6px went 1 or 2 by turns. That was the hitch at low speeds.
+       *
+       * Unless something else moved the page meanwhile — a page loading above,
+       * the reader putting your place back — in which case the slide carries on
+       * from where the page actually is.
+       */
+      if (Math.abs(window.scrollY - g.pos) > 2) g.pos = window.scrollY;
+      g.pos += step.distance;
+      window.scrollTo(0, g.pos);
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      // Over when it has slowed to nothing, or run into the top or the bottom.
+      const blocked = (step.distance < 0 && window.scrollY <= 0) || (step.distance > 0 && window.scrollY >= max - 1);
+      if (Math.abs(step.velocity) < STOP_SPEED || blocked) {
+        glide.current = null;
+        return;
+      }
+      g.velocity = step.velocity;
+      g.at = now;
+      g.raf = requestAnimationFrame(frame);
+      g.timer = setTimeout(frame, 34);
+    };
+
+    glide.current = {
+      velocity,
+      at: performance.now(),
+      pos: window.scrollY,
+      raf: requestAnimationFrame(frame),
+      timer: setTimeout(frame, 34),
+    };
+  };
+
+  // A wheel or a key takes over from a slide, as touching the screen does.
+  useEffect(() => {
+    const stop = () => void stopGlide();
+    window.addEventListener('wheel', stop, { passive: true });
+    window.addEventListener('keydown', stop);
+    return () => {
+      window.removeEventListener('wheel', stop);
+      window.removeEventListener('keydown', stop);
+      stopGlide();
+    };
+  }, []);
+
   const dragStart = (e: React.PointerEvent) => {
+    /*
+     * Pressing again stops a slide dead, wherever it is pressed — which is how a
+     * phone works, and the way to stop at the page you were reaching for. The
+     * click that follows is not also a tap on the page, or catching a slide
+     * would flash the controls up every time.
+     */
+    const caught = stopGlide();
     if (!prefs.dragToScroll || e.pointerType !== 'mouse' || e.button !== 0) return;
     // Not from the controls: a drag that begins on a button is somebody missing
     // the button, and scrolling the page under them is the wrong apology.
     if ((e.target as HTMLElement).closest('.manga-reader-chrome, button, a, input')) return;
-    drag.current = { y: e.clientY, top: window.scrollY, moved: false };
+    if (caught) dragged.current = true;
+    drag.current = { y: e.clientY, last: e.clientY, carry: 0, moved: false, samples: [{ t: performance.now(), y: e.clientY }] };
   };
 
   const dragMove = (e: React.PointerEvent) => {
@@ -702,13 +809,39 @@ export function Reader({
       // Only once it is a drag: taken on pointerdown it would eat every click.
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     }
-    // Up drags the page up, which is how every hand tool works.
-    window.scrollTo(0, d.top - dy);
+    /*
+     * Up drags the page up, which is how every hand tool works — by the distance
+     * since the last move, not to a place worked out at the press.
+     *
+     * The first version scrolled to "where the page was, less how far you have
+     * dragged", and a page loading above undid it. The browser keeps your place
+     * when a page above you grows, by scrolling down by as much; the next move
+     * then put the page back where the arithmetic said, so it lurched by a whole
+     * page's height mid-drag. Moving by the difference leaves the browser's
+     * correction alone.
+     *
+     * `carry` keeps the fraction of a pixel the browser could not scroll by,
+     * for the reason the slide keeps its own position: on a scaled screen the
+     * pointer moves in fractions and the page in whole pixels.
+     */
+    const want = d.last - e.clientY + d.carry;
+    d.last = e.clientY;
+    const before = window.scrollY;
+    window.scrollTo(0, before + want);
+    d.carry = Math.max(-1, Math.min(1, want - (window.scrollY - before)));
+    const now = performance.now();
+    d.samples.push({ t: now, y: e.clientY });
+    // Only the last stretch is ever read, so the rest is let go.
+    while (d.samples.length > 2 && now - d.samples[0].t > 200) d.samples.shift();
   };
 
-  const dragEnd = () => {
-    dragged.current = drag.current?.moved === true;
+  const dragEnd = (e: React.PointerEvent) => {
+    const d = drag.current;
+    // Kept true if pressing caught a slide, so that click is swallowed too.
+    dragged.current = dragged.current || d?.moved === true;
     drag.current = null;
+    // Let go mid-drag and it carries on; a cancelled pointer just stops.
+    if (d?.moved && e.type === 'pointerup') startGlide(releaseVelocity(d.samples, performance.now()));
   };
   const [shown, setShown] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -925,6 +1058,14 @@ export function Reader({
                * the reader is used on an iPhone.
                */
               draggable={false}
+              /*
+               * Decoded off the main thread. A strip can be 800×15000 — 48MB once
+               * decoded — and decoding one as it scrolled into view held up the
+               * page for that long, which showed as the drag catching while
+               * pages loaded. Async lets the browser draw the frame first and
+               * the picture when it is ready.
+               */
+              decoding="async"
               // Lazy pages above a place being returned or jumped to would load
               // only as they scroll into view, pushing it down afterwards — so up
               // to there they load now, and the move can finish.
@@ -1178,10 +1319,22 @@ function useThumbnails(urls: (string | null)[], active: boolean, near: number, c
 
 async function drawThumbnail(url: string): Promise<string | null> {
   try {
-    const bitmap = await createImageBitmap(await (await fetch(url)).blob());
+    const blob = await (await fetch(url)).blob();
     const canvas = document.createElement('canvas');
     canvas.width = THUMB_W * 2;
     canvas.height = THUMB_H * 2;
+    /*
+     * Decoded straight to thumbnail size where the browser can, so a 48MB strip
+     * never exists as a bitmap just to be shrunk, and the work happens off the
+     * main thread rather than in the middle of somebody dragging the page. A
+     * browser without the resize options decodes it whole, as before.
+     */
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(blob, { resizeWidth: canvas.width, resizeHeight: canvas.height, resizeQuality: 'low' });
+    } catch {
+      bitmap = await createImageBitmap(blob);
+    }
     canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     bitmap.close();
     const small = await new Promise<Blob | null>((done) => canvas.toBlob(done, 'image/jpeg', 0.7));

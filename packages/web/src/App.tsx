@@ -21,6 +21,7 @@ import { onDataChange } from './live';
 import { onNavigate, onSectionShown } from './nav';
 import { onPopView, pushView, startHistory, viewFromUrl } from './view-history';
 import { homeTiles, inMenu, publishEntries, useMenuEntries, type MenuEntry } from './menu-prefs';
+import { groupMenu, readOpen, saveOpen } from './menu-groups';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
@@ -143,6 +144,8 @@ export function App() {
   const [sectionsReady, setSectionsReady] = useState<Record<string, boolean>>({});
   // Which sections are doing something now — a dot beside them. See `SectionMeta.live`.
   const [sectionsLive, setSectionsLive] = useState<Record<string, boolean>>({});
+  // Menu groups opened on this device; a group is folded until opened. See `menu-groups.ts`.
+  const [openGroups, setOpenGroups] = useState<Set<string>>(readOpen);
   useEffect(() => {
     let alive = true;
     const ask = async () => {
@@ -607,9 +610,39 @@ export function App() {
           </span>
         </div>
         <nav>
-          {entries
-            .filter(inMenu)
-            .map((e) => {
+          {groupMenu(entries.filter(inMenu), (id) => webFeatures.find((w) => w.id === id)?.group).map((row) => {
+              if (row.kind === 'group') {
+                const open = openGroups.has(row.group.id);
+                return (
+                  <button
+                    key={`group:${row.group.id}`}
+                    className="group-head"
+                    aria-expanded={open}
+                    onClick={() => {
+                      const next = new Set(openGroups);
+                      if (open) next.delete(row.group.id);
+                      else next.add(row.group.id);
+                      setOpenGroups(next);
+                      saveOpen(next);
+                    }}
+                  >
+                    <span className="glyph" aria-hidden="true">
+                      {row.group.glyph}
+                    </span>
+                    {row.group.label}
+                    <span className="group-twist" aria-hidden="true">
+                      {open ? '▾' : '▸'}
+                    </span>
+                  </button>
+                );
+              }
+              const e = row.entry;
+              /*
+               * A folded group still shows the screen you are on, so the mark
+               * saying where you are is never folded away.
+               */
+              const groupId = webFeatures.find((w) => w.id === (e.parent ?? e.id))?.group?.id;
+              if (row.inGroup && groupId && !openGroups.has(groupId) && current.id !== (e.parent ?? e.id)) return null;
               const pinned = nav.find((n) => n.id === e.id)?.pinned;
               const here = e.parent
                 ? current.id === e.parent && section === e.id.split('#')[1]
@@ -617,7 +650,7 @@ export function App() {
               return (
                 <button
                   key={e.id}
-                  className={[pinned ? 'pinned' : '', e.parent ? 'sub' : ''].filter(Boolean).join(' ') || undefined}
+                  className={[pinned ? 'pinned' : '', e.parent ? 'sub' : '', row.inGroup ? 'in-group' : ''].filter(Boolean).join(' ') || undefined}
                   aria-current={here}
                   onClick={() => go(e.id)}
                 >

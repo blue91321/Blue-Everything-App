@@ -29,6 +29,59 @@ Windows Electron agent  ──┐
 - `packages/web` — React PWA. Served by the server on the same origin; also the Windows UI in a browser.
 - `packages/shared` — types and Zod schemas shared by all three.
 
+## Where this is heading: every platform, and the server in Docker
+
+Stated as a goal on 2026-10-14, and it outranks convenience in any decision
+made from here on: **the app is meant to work on every platform eventually, and
+the server is meant to run in Docker**, since nearly every computer and server
+can run Docker. Today it runs on one Windows PC; nothing new should make that
+harder to change.
+
+**Docker carries the server, not the agent, and that split is already the
+architecture.** A container is Linux (on Windows and macOS, inside a Linux VM),
+and it is cut off from the machine it runs on: it cannot ask which window is in
+front or whether a game fills the screen, read how long since the keyboard was
+touched, open the microphone, or put an icon in the tray. (None of that is
+recording: the agent never captures the screen, and audio never leaves it as
+anything but text. It asks the operating system a handful of questions about
+windows and processes.) So everything that senses or acts on the machine stays native, in an
+agent per platform: the attention sensor, the tray icon, the popup over games,
+hotkeys, sounds and voice capture. The server is the part that moves. The two
+already speak only HTTP ("the agent is an HTTP client like any other"), which
+is the boundary that makes this possible; keep it.
+
+**Rules that follow, for anything written from now on:**
+
+- **The server must not shell out to the operating system.** No PowerShell, no
+  `cmd /c start`, no `explorer.exe`, no Windows paths. If something needs the
+  machine (launching a game, opening a folder, restarting the native install),
+  it is the agent's job, asked for over HTTP.
+- **Prefer dependencies that ship for Windows, macOS and Linux, x64 and arm64.**
+  The voice engine is the live example: it was Vosk, bound through koffi to a
+  bundled Windows `libvosk.dll`, and is now sherpa-onnx, which publishes
+  prebuilt packages for all six (switched 2026-10-14; see **Voice**). Voice runs
+  in the agent, so Docker does not decide it, but the every-platform goal does.
+- **Anything Windows-only is fenced behind a platform check and degrades with a
+  sentence**, the way the manga setup already says "setting up automatically is
+  for Windows" rather than failing.
+
+**Where it stands (2026-10-14).** Server-side code that assumes Windows today,
+found by searching for shell-outs, and what each would become:
+
+| Where | What it does | Belongs |
+| --- | --- | --- |
+| `routes/restart.ts`, `routes/update.ts`, `routes/agent-start.ts`, `routes/desktop-icon.ts` | run the `.ps1` scripts through `cmd /c start` | the native install's own tools; in Docker the container restarts itself and updates by image |
+| `routes/games.ts` | launches a game, shows it in Explorer | the agent |
+| `modules.ts` | opens the packages folder in Explorer | the agent, or a download in the browser |
+| `routes/connect.ts` | reads `tailscale.exe status` | per-platform lookup, or a Tailscale sidecar in Docker |
+| `modules/manga/server/process.ts`, `setup.ts` | downloads a Windows Java, runs `java.exe`, opens logs in Notepad | in Docker, Suwayomi as its own container beside the server |
+
+**The Dockerfile is stale and would not work as it is.** It copies
+`packages/shared` and `packages/server` only, so a container built from it has
+no shipped packages (`packages/modules/`: manga, voice's server half,
+integrations, weather, vault, push) and no built PWA to serve. It was written
+before either existed and has never been run since.
+
 ## Features: switched off, or gone entirely
 
 The nudge engine is the app; everything else is optional. Which optional parts
@@ -92,7 +145,9 @@ cost anybody their source.
 
 React + Vite, no router and no state library — the current view is `useState`,
 data loading is a 30-line `useAsync`. React and ReactDOM are the only runtime
-dependencies, which is 66KB gzipped and nearly all of it framework.
+dependencies of the app itself, which is 66KB gzipped and nearly all of it
+framework. The one other is Leaflet, inside the Trips screen's own chunk: see
+**Trips**.
 
 ### Screens
 
@@ -171,6 +226,30 @@ playback permission, it shows three steps and the Spotify card from Services,
 exported as `ProviderCard` and opened (`startOpen`). It is the same card, not a
 copy. "Go to the Services tab and find Spotify" was a second errand before the
 first.
+
+### Groups: screens under one heading in the menu
+
+**World** holds Weather and Trips (`menu-groups.ts`). A group is a heading
+that folds, not a screen: each member is still its own screen and its own
+package, and either can be switched off or deleted. That is why it was chosen
+over one screen with two tabs, which would have tied two deletable packages
+together.
+
+**Each member names the group in its own `meta.ts`** (`group: { id, label,
+glyph }`), because there is nowhere shared to write it once: a package may not
+import another, and core does not know which packages exist. The menu gathers
+every screen naming the same id at the place of the first of them, whatever
+their `order`, and the first member's label wins if they disagree. A group with
+one member left keeps its heading; one with none is not drawn.
+
+**Only the menu is grouped.** Home keeps a tile per screen, since it is a
+launcher of screens, and Settings lists screens as before. **A group starts
+folded**, so World is one line until opened; what is stored, per device in
+`localStorage` like the notes tree, is the groups you opened, which makes a
+group added later folded too. A folded group still shows the screen you are on,
+so the mark saying where you are is never folded away.
+Verified in the browser: folded, the menu lost Weather and Trips and kept the
+heading; opened on Trips and folded, Trips stayed, marked as current.
 
 ### Both columns are chosen side by side
 
@@ -585,6 +664,136 @@ against.
   are a great many places called Springfield — and the live check confirms it:
   Philadelphia returns five, in two different states.
 
+### Trips: flights, a map, and the to-do list
+
+`packages/modules/trips/`. A trip is a name, optional dates, and three lists:
+flights, places and a checklist. Each feeds the to-do list, which is the reason
+it is in this app rather than in an airline's: "leave for the airport" is the
+reminder that must not land mid-match and must not be missed either, and as an
+ordinary task with a due time the nudge engine already does both. `npm run
+trips-check -w @everything/server` proves the rules with no network.
+
+**A flight is a number and a date.** With a flight service key, one lookup
+fills in the airports and times. Without one, or when the service does not know
+the flight, the screen asks for the two airports and two times, and those are
+**times at those airports**: 8:30 at DEN is 8:30 in Denver whatever zone the PC
+is in. `zonedToUtc` places them with each airport's zone, asked of `Intl`; near
+a clock change the first guess can be an hour out, so the offset at the guess is
+tried and kept if it holds, and 2:30 on the morning clocks go forward lands an
+hour later, as a wall clock does. Every time on screen is shown in its airport's
+zone too, the way a boarding pass shows it.
+
+**The airport table is fetched, not shipped.** Typed times need a zone and the
+map needs a position, so `airports.ts` fetches the MIT-licensed `mwgg/Airports`
+list once, cuts it to the ~7,000 airports with an IATA code and keeps it as
+`data/trips-airports.json`. The voice models' reasoning: data from elsewhere,
+fetched when needed. With a key the service sends each airport's position and
+zone, so the table is only the fallback.
+
+**Live status is AeroDataBox through RapidAPI**, with your own key, chosen
+because it has a free plan you sign up for, needs no card, and reports gates.
+`GET /flights/number/{number}/{date}`, the date being the departure date at the
+departure airport, the date on a booking. Its free allowance is counted in
+units, and the unit price of a lookup is theirs to set, so this counts
+*requests* against a monthly budget you choose (250 by default) and the screen
+says to check their pricing. Every request goes through the one function that
+counts. The key is local-only to set and never sent back to a browser, like
+every credential in the integrations package.
+
+#### Watching a flight is the one timer here, and it is a single timeout
+
+Delay alerts cannot be refresh-on-read: a gate change is only worth something if
+it reaches you while you are doing something else, the argument the coursework
+sync makes for its half-hourly check. But it is one `setTimeout` to the next
+moment any flight is due a look (`nextCheckAt`), re-armed after every change and
+at least every six hours, `unref`ed and cleared on close. With no key it never
+runs; with no flight inside a day of leaving it sleeps until one is.
+
+The spacing: nothing until a day before, every four hours until four hours out,
+every twenty minutes until it leaves, hourly in the air, and once just after
+landing for the baggage belt. About twenty requests a flight, all on its day,
+which `trips-check` counts (22 for a three-hour flight). The windows run from
+the **best known** times, so a flight three hours late is watched until it
+actually goes. Reading the trips list also starts a look at anything due, in
+the background, so a phone opened after the PC slept is not shown an old gate.
+
+Lookups hold the store across somebody else's server, so the store is read
+again afterwards and only the lookup's fields are copied, onto flights that
+still exist. The manga sweep's lesson, applied from the start.
+
+**What is worth a nudge** (`changesWorthSaying`): a departure moving by fifteen
+minutes or more, a gate being announced or changed, a terminal change, a
+cancellation or diversion. Not the first reading, which has nothing to compare
+with. Within three hours of leaving the nudge carries a passed deadline, so the
+engine delivers it at once, into a game if need be; further out it waits for a
+stopping point like any reminder.
+
+#### The tasks follow the coursework sync's rules
+
+Check in (24 hours before by default), leave for the airport (2 hours domestic,
+3 international, by whether the two airports are in different countries), and
+each checklist item on its day relative to the trip's first day, which is typed
+or taken from the flights. `tasks.ts` holds the rules, and they are the ones
+Canvas already settled:
+
+- **A deleted task stays deleted.** Each link keeps `made: true` after its task
+  is gone, and a made link is never made again. Verified by deleting a check-in
+  task and re-syncing.
+- **A due date you moved is yours.** A task is moved to follow the trip only
+  while its due date is still the one this package last set.
+- **Removing a flight or a trip removes only its open tasks.** `done` and
+  `dropped` are records.
+- **Delays do not move "leave for the airport".** Bag drop closes by the
+  timetable however late the plane is, and a reminder that slid later with
+  every delay would talk you into missing it. The airline *retiming* the
+  flight moves the timetable, and that moves the task.
+
+#### The map is the one runtime dependency besides React
+
+Leaflet 1.9.4, over OpenStreetMap's own tiles. It is 42KB gzipped and arrives
+only with the Trips screen's chunk, which is 50KB gzipped in all; the main
+bundle gained only the menu entry, under a kilobyte. A pannable, zoomable map is the one thing here that cannot be drawn
+by hand the way the weather graph is, and it was chosen when the screen was
+asked for.
+
+- **No marker images.** Leaflet's default pin is a PNG found by a path its CSS
+  guesses, which a bundler breaks. Markers are SVG circles in the accent.
+- **Names go into tooltips as text nodes.** A tooltip given a string sets
+  `innerHTML`, and a place's name came from a stranger's map edit or from you.
+  The notes renderer's reasoning.
+- **Flights are drawn along the great circle**, computed on the server
+  (`greatCircle`), with the longitude carried past 180 rather than jumping the
+  map. New York to Tokyo goes over Alaska, as it does.
+- **Dark theme inverts the tiles** with a CSS filter. OpenStreetMap draws only
+  a light map.
+- **The map is redrawn only when its contents change**, keyed on a signature
+  of ids and positions. The screen redraws as its clock ticks, and refitting on
+  every render threw away wherever you had panned to.
+
+Places are found through OpenStreetMap's Nominatim, from the server, because it
+asks for a User-Agent naming the app (a browser cannot set one) and no more than
+a request a second, which a queue in `places.ts` keeps to.
+
+**The store refuses to read a damaged file**, unlike the weather's. The weather
+is a cache and treats a bad file as empty; trips are typed, and treating a stray
+comma as no trips and then saving would replace all of it. So an unreadable
+`trips.json` is an error on screen and nothing is written over it. Writes go to
+a temporary file and are renamed into place.
+
+**A flight route answers two outcomes as replies, not errors**: `legs` when a
+number flies several legs that day, and `needsTimes` when the service cannot
+say. `apiRequest` keeps only an error's message, so anything the screen has to
+act on has to arrive as a reply.
+
+Verified against the running app with throwaway trips, then deleted: typed
+times placed correctly in Denver, San Francisco, London and New York; the five
+tasks made with the right due times; a deleted task not made again; the
+checklist task moving a day when the trip's first day did; deleting the trip
+leaving no task behind; and the map loading OpenStreetMap tiles with both routes
+and four markers drawn, with no sideways scroll at 375px. **Not verified here**:
+live status, which needs a key, and how the screen looks, since the browser pane
+was hidden and would not take a screenshot.
+
 ### Manga is laid out like a reader
 
 `packages/modules/manga/web/view.tsx`. The screen takes the shape of the
@@ -972,6 +1181,17 @@ without "what has moved" pinned over it. *Most to catch up on* counts whole
 chapters between where you are and the newest, which is also what the badge
 says (`12 NEW`) — an estimate, since sources skip and split numbers.
 
+**Favourites on top** is a second box beside it, off by default. With both
+ticked the order is four groups: starred with a new chapter, new chapter,
+starred, the rest, each in the chosen sort. New outranks the star because that
+box is about what has moved; the star then orders each half. `sorted` ranks by
+`2 × new + starred`, which gives exactly that, and either box alone moves only
+its own group. The Dashboard card follows it like the other box, or keeps its
+own on the server when pinned (`shelfFavFirst`). `shelf.ts` now has no imports
+at all: its one type import pulled `manga-api.ts` into the server's typecheck
+when `manga-check` started asserting the groups, so it describes the fields it
+reads as `ShelfRow`.
+
 **"Source not answering" was three things wearing one label**, which an audit of
 a real library settled: 698 linked series, 8 of them marked broken, and the 8
 were two unrelated problems with two different fixes.
@@ -1113,14 +1333,27 @@ touching the controls restarts the countdown. With them away, the chapter, page
 and time sit small in a corner.
 
 **The reader takes the whole screen by leaving the app.** It is drawn into
-`body` through a portal and `body:has(> .manga-reader) > #root` hides the app,
-the ☰ included. It opens from four places (a chapter list, a series' details, a
+`body` through a portal and `body.manga-reading > #root` hides the app, the ☰
+included. It opens from four places (a chapter list, a series' details, a
 details card inside Browse, the offline shelf) and inside each it wore that
 screen's surroundings: a card's margins, Browse's tabs, and Manga's tab bar
 drawn over the page strip. One rule beats a list of things to hide that grows
 with every screen that learns to open a chapter. The window still scrolls, so
 the read line and `scrollY` are unchanged, and closing restores the scroll
 position taken during the reader's first render, before the page shrank.
+
+**Handing the screen back nudges the window a pixel and back** (`take-screen.ts`).
+Reported from an iPhone: after reading a while, the list came back blank until
+it was scrolled. Not reproducible on the PC, so both suspects are covered. The
+hiding was `body:has(> .manga-reader) > #root`, and WebKit has had bugs
+re-checking a `:has()` when the element it names is removed; a class set by the
+reader and the waiting screen (`useTakeScreen`, counted, since one replaces the
+other in a single commit) is the plainest change to notice. And Safari under the
+memory pressure of 48MB page strips drops the tiles of what is hidden and does
+not always repaint it when shown, so closing the reader, and lifting the Manga
+tabs' `hidden` when a chapter list or other overlay closes, both scroll 1px and
+back 60ms later (`repaintSoon`). It does nothing while a reader is open again,
+where putting the scroll back would undo the reader finding your page.
 
 - **The arrows go between chapters, not pages.** Scrolling and the thumbnail
   strip already move between pages; the arrows were the one way to leave a
@@ -1399,7 +1632,14 @@ entry goes when its request settles. `fresh` (tap to try again) skips it, since
 sharing the request that just failed would fail the same way.
 
 **Read while you wait** is a mode of the chapter list, on until the reader
-closes. While on, every way into a chapter goes through `openChapter`: it saves
+closes. **It is one of three states of the one button at the top of the
+list**, not a button of its own: *Continue* (your place, or the next after the
+furthest you finished), *Read first chapter* on a series not started, and
+*Read while you wait* only while chapters of this series are saving or waiting
+and the PC can be reached. It first shipped as a second button on the Save bar,
+offered with nothing downloading, beside a Read that opened the same chapter.
+All three open that chapter; the third only waits for it. A series read to its
+newest chapter has no card, as before. While on, every way into a chapter goes through `openChapter`: it saves
 that chapter and the `KEEP_READY` (3) after it, at the front of the line, and if
 the chapter is not saved yet it shows `WaitForChapter` instead of the reader.
 That screen is drawn into `body` with the reader's own class, so going from the
@@ -1526,6 +1766,48 @@ chapters had to be refilled from notes taken before it.
 - **The position is a ref, not state.** A `setState` per `pointermove` would
   re-render a strip of seventy images sixty times a second — the same reason
   `useEdgeDrawer` keeps its drag position in one.
+- **Letting go slides, as a phone does** (`glide.ts`). The speed is the drag's
+  over its last 80ms, so a drag that slowed before release is thrown at the slow
+  speed; held still for 60ms first, it is put down rather than thrown. It slows
+  at iOS's own rate (0.998 a millisecond: a 2px/ms flick goes about a thousand
+  pixels in two seconds), capped at 6px/ms, and stops at the top or the bottom.
+  **Pressing again stops it dead**, anywhere, and that press is not also a tap
+  on the page, or catching a slide would flash the controls every time; a wheel
+  or a key stops it too. Reduced motion gets no slide.
+
+  The distance is integrated per frame rather than taken as speed × time, so it
+  goes as far at twenty frames a second as at sixty. And each frame is asked for
+  twice, by `requestAnimationFrame` and by a 34ms timeout, whichever comes first:
+  rAF does not fire in a window that is not drawing, which is how this was
+  tested, and a slide must not hang half-done there.
+
+  **The slide keeps its own position, to the fraction, and never reads it back.**
+  The first version added each frame's distance to `window.scrollY`, and on a
+  screen without scaling the browser keeps that in whole pixels, so the fraction
+  was thrown away every frame: a slow slide went 1px and 2px by turns, or, where
+  the browser truncates, a third short and then stuck. Reported as a hitch at low
+  speeds. Only a jump of more than 2px from somewhere else (a page loading above)
+  resets it. The slide also ends at 0.05px/ms rather than 0.02, under a pixel a
+  frame, because past that a whole-pixel page can only show a pixel, a pause, a
+  pixel. `manga-check` simulates both kinds of snapping.
+
+  **Dragging while pages load caught, for three reasons, all fixed together.**
+  Pages are `decoding="async"`: a strip is up to 800×15000, 48MB decoded, and
+  decoding one on the main thread as it scrolled in held the drag for that long.
+  Thumbnails decode straight to their own size (`createImageBitmap` with
+  `resizeWidth`, falling back to a whole decode where that is not supported)
+  instead of decoding each full page only to shrink it. And the drag scrolls by
+  the distance since the last move rather than to a place worked out at the
+  press: a page loading above makes the browser scroll down to keep your place,
+  and the absolute version put the page back on the next move, a lurch the
+  height of a page. Not measured here: the browser pane was hidden, and a hidden
+  pane lays out no pages at all, eager or not.
+
+Measured by driving real pointer events in a reader with every write blocked: a
+200px pull over 100ms slid 958px more after release, easing out over two seconds;
+the same pull downwards slid 977px up; a quarter of the speed slid 236px; held
+still before letting go slid 0; a press mid-slide stopped it in place with the
+controls left alone; and a plain click with nothing sliding still toggled them.
 
 Measured by driving real pointer events: a 300px drag scrolls exactly 300px and
 leaves the controls alone; a plain click still toggles them; a 2px twitch
@@ -1632,6 +1914,32 @@ each site it was read on:
   languages you read, ordered by which have been finding things this run, so
   the order settles on the big catalogues without a list of names to go stale.
   The match is still exact by title wherever it comes from.
+
+**Linking renames a series after its source, when that is a rename.**
+`titles.ts`. A series kept the title it arrived with, so one found under
+another name through Other sources went on showing the old one: "Dungeon-eul
+Geurineun Hwaga" on the shelf for a source calling it "The Dungeon Painter".
+Every link now asks `retitleFromSource` (the comparison's relink, following from
+a source onto an unlinked series, and the import's matching), and a pass at
+startup applies the same rule to series linked before it existed.
+
+**Most differences are not renames, and taking them would have been worse.** Of
+55 linked series here whose title differed from their source's, 53 differed by
+a curly apostrophe, a year, an author in brackets, or the source's own
+housekeeping: "[delete]", "(Promo)", "Can'T". `titleKey` folds all of that
+away, and `tidySourceTitle` strips the housekeeping before a name is taken. Two
+were real, and those two are what the startup pass renamed.
+
+**And never towards something harder to read.** The point is an English name. A
+source's name in another script is refused while the current one is Latin, and
+taken while it is not; between two Latin names, `englishScore` (English words,
+less twice the Japanese and Korean particles a romanised title is full of) must
+not go down, so relinking to a source that lists the romanisation does not undo
+the rename. A tie goes to the source, since you chose it.
+
+**The old name is kept**, in `altTitles`, and the Library's title box searches
+it: you may well type the name you knew it by. A chapter saved to a device keeps
+the name it was saved under until it is saved again.
 
 **Once linked, the old app's number is gone.** Until a source has been asked,
 the bar showed Manga Reader's newest chapter, which is *another site's
@@ -2529,10 +2837,11 @@ a relative database path would quietly create a second, empty database there.
 | iPhone app | Installable PWA | No Mac, no Apple Developer account. iOS 16.4+ supports web push for home-screen PWAs, which was the blocker. |
 | Sync | Server on the Windows PC, reachable over Tailscale | Free, private, no cloud. Trade-off: the phone only syncs while the PC is awake. |
 | Password vault | Own vault, own browser extension | Decided 2026-08-06 after comparing Bitwarden, Vaultwarden, KeePassXC and 1Password. You want to own all of it. |
-| Voice | Always-on wake word → local Vosk | Revised 2026-08-06. Push-to-talk is cheaper and cannot false-positive, but the requirement was a wake word you can *change from a text box*, and hands-free mid-game. See **Voice** below for what that costs. |
+| Voice | Always-on wake word → local sherpa-onnx | Revised 2026-08-06, engine switched 2026-10-14. Push-to-talk is cheaper and cannot false-positive, but the requirement was a wake word you can *change from a text box*, and hands-free mid-game. Vosk did that with a closed grammar, which is what made it wake on "harvest festival"; a keyword spotter does it without one. See **Voice** below. |
 | Source control | Local git, heading for a public GitHub repo | Revised 2026-08-08. `npm run publish-check` is the gate: it asks git whether the sensitive paths are ignored, refuses to pass on a tracked database or key, and warns about personal identifiers. Run it before pushing. |
 | Licence | MIT | Decided 2026-08-08, over AGPL-3.0. AGPL's network clause would have forced anyone hosting it to publish their changes, which suits a product with users to protect; this has one user and the point of publishing it is that the ideas get taken. Copyright is held as `blue91321` rather than a legal name, matching the history rewrite that took the personal address out. |
 | Commit identity | `blue91321 <blue91321@users.noreply.github.com>` | History was rewritten 2026-08-08 to remove a personal email. Trees verified byte-identical before and after; only metadata changed. `git config user.email` is set locally so new commits match — check it after any fresh clone, because that setting does not travel. |
+| Platforms | Every platform eventually; the server in Docker | Decided 2026-10-14. The agent stays native per OS, since a container cannot ask about windows, idle time or the microphone. See **Where this is heading** at the top: the server must not shell out to the OS, and new dependencies should ship for Windows, macOS and Linux. |
 | Windows agent | Headless Node service, **not Electron** | Electron costs 150–250MB resident to show a tray icon. The agent is 55MB — toasts go through WinRT via PowerShell, and the UI is the PWA in a browser. It *does* now draw a tray icon, via `Shell_NotifyIconW` for well under a megabyte; what was rejected was Electron's price for one, not the icon. See **The tray icon**. |
 
 ## Leanness
@@ -2559,39 +2868,30 @@ Three mechanisms, all in `attention.ts` and `routes/attention.ts`:
 
 Before adding anything that runs on a timer, check it against these numbers.
 
-**Voice is the one thing that breaks this budget, and it breaks it badly.**
-Measured on this machine, voice on and idle:
+**Voice is the one thing that breaks this budget**, and since the switch to
+sherpa-onnx it breaks it in bursts rather than all day. Measured in the
+listener harness (`voice-listen`), on top of whatever the agent already holds:
 
-| | Agent, voice off | Agent, voice on |
+| | resident | when |
 | --- | --- | --- |
-| Resident | 66MB cold, 75MB after voice has run | **212MB**, flat once warm (198MB before the overlay module) |
-| CPU | ~0.002% | **1.9ms per 100ms block** — ~2% of a core *while the room is audible* |
-| Model load | — | 0.2s, on switch-on rather than at startup |
+| wake word spotter | **+50MB** | while voice is on |
+| command recogniser | **+155MB** | from a wake until 10 minutes after the last command |
+| speaker model | +25MB | from the first wake or enrolment |
+| CPU | **~11ms per second of audio** | only while the room is audible — the RMS gate skips silence |
 
-The RMS gate bounds the CPU: a silent room skips the model entirely, so the
-honest figure is "2% of a core times the fraction of the day something is
-making noise", not 2% flat.
+Under Vosk the whole set was resident whenever voice was on: **212MB** for the
+agent, inside the 150–250MB this project rejected Electron over. Idle now, the
+agent with voice on is roughly 120MB; it reaches Vosk's figure only for the ten
+minutes after somebody actually spoke a command, which is the cost of a command
+recogniser that can transcribe any English rather than a closed grammar of a
+hundred words.
 
-**The memory is the uncomfortable number.** 198MB is inside the 150–250MB range
-this project rejected Electron over. The comparison is not quite fair — Electron
-cost that to draw a tray icon, this buys continuous speech recognition — but the
-raw figure is what it is, and the leanness argument above cannot be quoted while
-pretending voice is free.
-
-It is unavoidable *for an always-on wake word*: the acoustic model, the decoding
-graph and the speaker model all have to stay resident to answer within a second.
-Push-to-talk would not pay it — 0.2s to load means the models could be pulled in
-per utterance and dropped again. That is the cost of the wake word being
-always-on, as distinct from the cost of it being editable.
-
-**Switching voice off gives it back**, which is why `shutdown()` in `voice.ts`
-calls `disposeVosk()` rather than only closing the microphone: 198MB → 75MB,
-measured. Without that, "off" would have been a lie about everything except the
-microphone — the models would have sat there for a feature nobody had enabled.
-The 9MB it doesn't return is heap the allocator keeps, and the DLLs stay mapped.
-
-Recogniser handles must be freed *before* the models they point into, or the
-frees dangle. `shutdown()` does them in that order deliberately.
+**Switching voice off gives it back.** `shutdown()` ends the command worker,
+drops the spotter and the speaker model, and calls `global.gc` (the agent runs
+with `--expose-gc` for exactly this). The binding has no explicit free, so
+without the collection "off" would be a lie about everything except the
+microphone until the collector next got round to it. What it does not return is
+the onnxruntime DLLs, which stay mapped — about 30MB.
 
 ## Versions
 
@@ -2609,7 +2909,7 @@ the first question whenever something looks wrong.
 Bump with `npm version <patch|minor|major> --workspaces --include-workspace-root`.
 
 **Check what it committed before you walk away, because it does not commit all
-of it, and it no longer even *bumps* all of it.** Sixteen files carry a version
+of it, and it no longer even *bumps* all of it.** Twenty files carry a version
 now and `npm version --workspaces` can see five: the root and the four
 workspaces. It misses
 
@@ -2639,7 +2939,7 @@ So the bump is two steps, and the second is not optional:
 
 ```bash
 npm version minor --workspaces --include-workspace-root
-# then bump the eleven it cannot see, and only then:
+# then bump the fifteen it cannot see, and only then:
 git add -A && git commit --amend --no-edit && git tag -d v0.3.0 && git tag v0.3.0
 ```
 
@@ -3482,12 +3782,11 @@ npm run popup-check -w @everything/agent   # prove the popup stays up and goes w
 npm run sensor -w @everything/agent    # live attention readout; --seconds N to bound it
 npm run smoke -w @everything/server    # end-to-end proof the nudge engine holds and releases
 
-npm run voice-setup -w @everything/agent   # are the mic and the models actually working?
+npm run voice-setup -w @everything/agent   # fetch the models if missing; is the mic live?
 npm run voice-try   -w @everything/agent   # prove the recognisers, without saying anything
+npm run voice-listen -w @everything/agent  # drive the live listener with synthesised speech
 npm run voice-enrol -w @everything/agent   # teach it your voice — say the wake word ten times
 npm run voice-check -w @everything/server  # prove the phrase matcher, in memory
-npm run voice-latency -w @everything/agent # where the delay between speaking and acting goes
-npm run wake-probe -w @everything/agent    # what the wake partial says, block by block
 npm run wake-falsing -w @everything/agent  # how often ordinary conversation wakes it
 npm run pair -w @everything/server -- "Device name" phone   # mint a bearer token, shown once
 
@@ -5052,6 +5351,48 @@ there is no wake word to take an embedding from, so the feature would read as
 broken for exactly the people who had switched the protection on. The Voice
 screen says so where the setting is, rather than leaving it to be discovered.
 
+#### On and off mean what you can see, and four ways they did not
+
+Reported as the hotkeys being weird and voice reading off when it was on. All
+four were real, and each was the stored switch standing in for what the
+microphone was doing.
+
+- **The listen shortcut while voice is off never ran a command.** The agent
+  opened the microphone and heard you, and `/api/voice/command` refused
+  everything while `voiceEnabled` was 0, so every borrowed exchange came back
+  `disabled`. It had been verified by watching memory rise when the key was
+  pressed, which it did; nobody had looked at the answer. The listener now marks
+  a shortcut exchange `manual`, and the server takes one while voice is off if
+  *Let it work while voice is off* is on. It also skips the voiceprint for it,
+  which it had been enforcing server-side even though the agent already
+  skipped it: a key pressed here is the proof, and there is no wake word to
+  take a voiceprint from. `smoke` covers all three answers.
+- **The toggle flipped the stored switch.** Paused, or asleep because you had
+  been away, the switch is on and the microphone is shut, so the key you pressed
+  to get voice back turned it *off* and said "Voice off". The agent now works
+  out what a press should make voice from what is actually happening
+  (`effectivelyOn`: switched on, not paused, you at the desk, not a borrowed
+  exchange) and sends that as a target; `/api/voice/toggle` takes it, and its
+  own flip, kept for an older agent, counts a pause as off. A press within four
+  seconds of the last goes from what that press asked for, since the answer
+  takes a poll to come back. Turning it on also marks you present, because a
+  key was just pressed here.
+- **The screen showed the state from the last check-in**, which can be twenty
+  seconds old: the voice loop spends most of its life parked in a long poll,
+  and the report it parked with is what the server holds. Coming back to the
+  desk, the toggle, and the listen shortcut now send a second report
+  (`reportSoon`, 600ms after, once the models are in). The server keeps the
+  latest body; the parked request only refreshes the timestamp. Measured with
+  synthesised presses of the real shortcuts: on and listening 3s after the first
+  toggle, off 3s after the second, and "listening for one command" 3s after the
+  listen shortcut.
+- **The big switch read "on" while paused.** It shows on only when the setting
+  is on *and* not paused now, from the same two-second reading as the status
+  card (`useVoiceStatus`, lifted out of the card so both use one answer).
+  Switching it on while paused resumes, since saving `voiceEnabled` clears a
+  pause. A borrowed exchange has its own line on the card, *Listening for one
+  command*, instead of *Switched off* beside an open microphone.
+
 #### It worked exactly once
 
 The first version toggled voice off and then the key stopped working. Switching
@@ -5083,28 +5424,30 @@ for a second reason on top of that: the agent only learned a test had started on
 its next poll, so up to a third of the window was spent not listening while the
 countdown ran anyway.
 
-The replay buffer is cleared at every utterance boundary Vosk reports, not just
-on an RMS gap — a close-talk headset can hold the gate open through breathing
-between sentences, and a buffer spanning two deliveries comes back transcribed
+The replay buffer is cleared at every utterance boundary, and at every wake —
+under Vosk a close-talk headset could hold the gate open through breathing
+between sentences, and a buffer spanning two deliveries came back transcribed
 as one: "hey jarvis drink water hey jarvis drink water".
 
-During a test the wide-vocabulary recogniser runs alongside the wake one, and
-words heard while still waiting for the wake word are reported as `speech`. That
+During a test the command recogniser runs alongside the spotter, and words
+heard while still waiting for the wake word are reported as `speech`. That
 distinction is the whole value of the test: "it can't hear me" and "it hears me
 fine but the wake word isn't landing" look identical on a level meter and need
 opposite fixes.
 
-**The two recognisers endpoint independently**, so the wide one routinely
-finishes a block or two before the wake one. Reporting that as "but not the wake
+**The two models answer independently**, so the command recogniser can finish
+before the spotter has said anything (under Vosk, a block or two before the wake
+recogniser). Reporting that as "but not the wake
 word" over a transcript that plainly contained it was a flat lie that sent you
 looking for the wrong problem. The agent now decides `matchedWake` — it is the
 only side that knows the wake word without the PWA importing zod — and the
 readout says "wake word in there" instead.
 
 `npm run voice-try -w @everything/agent` is the same idea without a microphone —
-Windows' own speech synthesiser writes the audio, so it exercises grammar
-construction, the block feed and `[unk]` handling. It proves nothing about the
-speaker check, since it is not your voice.
+Windows' own speech synthesiser writes the audio, so it exercises the spotter,
+the command recogniser and the block feed. It proves nothing about the speaker
+check beyond the model producing an embedding, since it is not your voice.
+`voice-listen` goes one further and drives the listener itself.
 
 ### Choosing a microphone
 
@@ -5143,7 +5486,8 @@ chair is empty — the *same* function the server uses to decide whether a nudge
 may go to your phone, so the two can never disagree about what "away" means.
 
 It goes through the same `enabled: false` path as the off switch, which means
-the speech models go too. Measured:
+the speech models go too. Measured under Vosk, whose models were all resident
+whenever it was listening:
 
 | | listening | resident |
 | --- | --- | --- |
@@ -5168,284 +5512,242 @@ That is the honest cost of not holding a microphone open at an empty desk, and
 the screen says which state it is in rather than leaving you guessing.
 
 ```
-microphone ──► RMS gate ──► wake recogniser ──► command recogniser
-  (winmm)      (silence is    ("hey everything",      (habit vocabulary)
-                free)          + speaker embedding)          │
-                                                             ▼
-                                                    POST /api/voice/command
-                                                    (server decides intent)
+microphone ──► RMS gate ──► wake spotter ──► command recogniser
+  (winmm)      (silence is    ("hey jarvis",      (any English, in a worker
+                free)          ~50MB, always)      thread, loaded on wake)
+                                                         │
+                                                speaker check (ERes2Net)
+                                                         │
+                                                         ▼
+                                                POST /api/voice/command
+                                                (server decides intent)
 ```
 
-### Everything is Vosk, and that is why there is no second dependency
+### sherpa-onnx, and why it replaced Vosk
 
-One `libvosk.dll` does both jobs: it recognises the wake word *and* emits a
-128-dimension speaker embedding for what it just heard. The obvious alternative
-— an ONNX speaker model — meant `onnxruntime-node` (~150MB native) on top of a
-separate wake-word engine. Bound through koffi rather than the `vosk` npm
-package, which is built on `ffi-napi` and does not build on Node 24.
+Switched 2026-10-14. Three models from the k2-fsa sherpa-onnx project, through
+its prebuilt Node binding (`sherpa-onnx-node`, pinned at 1.13.8): a **keyword
+spotter** for the wake word, a **streaming transducer** for the command, and a
+**speaker model** for "only my voice". `engine.ts` holds all three; nothing
+else touches the binding.
 
-The models are **not in git** (`packages/agent/src/features/voice/models/`, ~150MB of third-party
-binaries). `npm run voice-setup -w @everything/agent` checks what is present and
-prints exactly what to download and where to put it.
+**The reason was the wake word.** Vosk could only listen for one by running a
+general recogniser in a *closed grammar* — the wake word and `[unk]` — and a
+closed grammar has to answer every sound with something it contains. Much of
+this file's voice history was a fight with that: "harvest festival" landing on
+"hey jarvis", a dog called Harley waking it, decoy words filled in by hand, and
+confidence scores reading 1.00 for everything because inside a grammar the
+chosen path is the only path. A keyword spotter is asked the right question —
+*was this phrase said* — and can answer no.
 
-### An editable wake word is the expensive choice, deliberately
+Measured on the same synthesised audio with `wake-falsing`:
 
-Porcupine and openWakeWord are cheap *because* the keyword is trained into a
-model — changing it means retraining on someone's web console. That was the one
-property that had to hold, so the wake word is recognised by a general speech
-model constrained to a grammar, and is a plain string in `settings`.
-
-**Leading attention words are optional, and one word is allowed.** `"hey"` is
-short, unstressed and run into whatever follows it, so the recogniser returns
-`jarvis` far more often than `hey jarvis`. Requiring the whole phrase meant the
-wake word failing on utterances where the distinctive part came through
-perfectly. `wakeWordRequired()` drops leading `hey/ok/hi/yo/…`, so `hey jarvis`
-answers to `jarvis` too — verified against the real recogniser, along with bare
-`hey` *not* waking it.
-
-A one-word wake word is permitted but warned about rather than refused. It
-genuinely is worse — there is nothing before it to rule out ordinary
-conversation, and with an always-on microphone that means habits ticked off by
-accident. It is also the thing that survives being half-heard, so it is your
-trade to make. The schema validates shape only; `wakeWordAdvice()` supplies the
-warning.
-
-Two things keep that affordable:
-
-1. **An RMS gate in front of the recogniser.** A silent room costs nothing;
-   without it the model would run on all 86,400 seconds of every day.
-2. **Two recognisers.** The wake recogniser knows two or three words, so it is
-   cheap enough to run continuously and rarely fires by accident. Only once it
-   fires does the wide-vocabulary command recogniser get fed anything.
-
-### The wake word waits for a settled answer, not a guess
-
-Vosk answers `accept` only when its endpointer decides the speaker has stopped,
-and it can be slow or simply decline to answer at all. So it was tried the other
-way: fire on `wake.partial()`, the decoder's current best guess, which names the
-wake word around 700ms in — before the word has even finished.
-
-**That was wrong, and the number that says so is the false-wake rate.** Measured
-over ten lines of ordinary conversation, none of it addressed to the app, with
-`npm run wake-falsing -w @everything/agent`:
-
-| | false wakes on chatter | a brisk "hey jarvis" |
+| | false wakes on chatter | wakes on the real thing |
 | --- | --- | --- |
-| fire on a partial | **3 / 10** | **misses** |
-| wait for settled | 1 / 10 | fires |
+| Vosk, no decoys | 1 / 14 | yes |
+| Vosk, decoys filled in by hand | 0 / 14 | yes |
+| **spotter, no decoys** | **0 / 16** | yes — normal, fast, run together, name only |
 
-Three times the interruptions — and it was not even reliable at the job it was
-added for, because a quickly spoken wake word never settles into the partial and
-only appears in the committed result. An always-on microphone in a room with
-other people in it cannot spend that. A wake word that answers a moment later is
-strictly better than one that goes off while you are talking to someone.
+Checked across "hey jarvis", "hey everything" and "hey computer", each 0/16.
+The two new chatter lines are the ones most likely to catch a spotter out —
+"hey are you coming to dinner" and "jars of jam".
 
-The partial is also inherently unable to satisfy the speaker check, since it
-carries no embedding — so waking on one meant running the wake recogniser
-onwards through the command window to collect the evidence afterwards, which is
-a lot of machinery to support a guess.
+**It answers mid-sentence, and that changed the shape of the listener.** Vosk
+reported the wake word only when the whole *utterance* ended, so the command
+had to be dug back out of a replay buffer once you stopped talking. The spotter
+fires about 0.3s after the word itself, while the command is still being said.
 
-`Recogniser.partial()` still exists, and only the diagnostics use it. That is
-how the recogniser inventing "hey jarvis" out of a plain "hey" was caught in the
-first place — `wake-probe` prints it block by block.
+**The wake word is still a runtime string**, which is the property Vosk was
+chosen for in the first place. The spotter takes its keywords as text at
+construction, so the box on the Voice tab still works without training
+anything. The one wrinkle is that it takes them as **SentencePiece tokens**
+(`▁JA R VI S`), not words, and the `modelingUnit`/`bpeVocab` options that encode
+text for the streaming recogniser are not applied to keywords. `wake-tokens.ts`
+encodes them. **The file is called `bpe.model` and is a unigram model**: BPE
+merges got four of the nine example keywords that ship with it wrong, by id
+order and by the stored scores alike, and unigram Viterbi got all nine. The
+protobuf is read by hand — two fields of one message — the call `zip.ts` makes.
 
-**What replaced it is asking at the right moment instead of guessing early.**
-The RMS gate already knows when an utterance ended: quiet for longer than
-`HANGOVER_MS`. At that boundary the wake recogniser is `flush()`ed — a real
-finalisation, with the embedding attached — rather than waiting for Vosk to
-volunteer an answer, which `voice-latency` shows it may not do inside six
-seconds. The boundary is better defined than the endpointer anyway: it is
-exactly the moment the sentence stopped, and nothing has to infer when that was.
+**The command recogniser is open-vocabulary**, which Vosk's grammar never was.
+It writes "Hey, Jarvis, I drank 2 waters." with capitals, commas and digits, so
+`cleanTranscript` lowers it, strips punctuation and spells numbers up to twenty
+back out, since `spokenCount` reads words. The machinery that let the grammar
+say "drank" (`spokenVariants`, the joined `nevermind` forms) no longer decides
+whether a sentence can be heard. It stays, because the matcher still stems and
+a recogniser that writes "nevermind" as one word still has to be answered.
 
-The command side is the same: its partial is not consulted either. The command
-endpointer is prompt — measured at 100ms after speech ends — so there was never
-much to win, and acting on a revisable transcript risks running the wrong
-command rather than merely a late one.
+#### Three models, three lifetimes
 
-**The remaining false wake is acoustic, not a rule.** "harvest festival is on
-the weekend" genuinely sounds like "hey jarvis" to a grammar that is only
-allowed to answer with those words. No decision rule fixes that: a more
-distinctive wake word does, and so does switching on **only respond to my
-voice**, which is what the enrolled voiceprint is for.
+| | resident | loaded | why |
+| --- | --- | --- | --- |
+| spotter (gigaspeech 3.3M, int8) | ~50MB | while voice is on | it is what listens |
+| command (kroko, English) | ~155MB | on wake, in a worker; dropped after 10 min unused | needed for seconds at a time |
+| speaker (3D-Speaker ERes2Net) | ~25MB | on first use | only to check a wake word or enrol |
 
-**The tone marks the end of the trigger, and the popup goes up with it.** Both
-now happen once you have stopped speaking, so there is no longer a gap to
-manage — the listener emits `wake` for the window and `listening` for the tone,
-and the run-together case skips the tone because there was no pause to
-acknowledge and the result tone is a moment away.
+**The command model loads on the wake, and 10 minutes was the user's choice.**
+Keeping it resident all day would be the 200MB this project already apologised
+for under Vosk; loading it per utterance would put 1.4s in front of every
+command. So the first command of a session pays the load and a run of them does
+not.
 
-**The pause after the wake word falls inside the command window**, which made
-"Didn't catch that" arrive before you had said anything. The command recogniser
-endpoints on that pause holding only the replayed wake word — measured:
-`2000ms ENDPOINTED text="hey jarvis"`, then `4600ms ENDPOINTED text="drink
-water"`. That first result is not a miss, it is "you have not started yet", so
-it resets the recogniser and keeps listening. `VOICE_COMMAND_TIMEOUT_MS` still
-bounds the exchange, and a miss is reported when the window is genuinely up —
-which is the point at which it is true.
+**It loads in a worker thread, because the microphone's ring is 800ms.** Eight
+100ms buffers, and the load is 1.4s: on the listener's thread it would drop the
+start of the very command it was loaded for, and freeze the tray and the popup
+while it did. In a worker, the audio sent meanwhile waits in the port's queue,
+in order, for free. `command-worker.mjs` is plain JavaScript for that reason:
+whether `--import tsx` reaches a worker is one more thing that could silently
+leave voice deaf.
 
-### Speaking without a pause used to lose the command
+**And ending the worker is how its memory comes back.** The binding has no
+explicit free; memory returns when the objects are collected. Terminating the
+thread gives back all of it at a moment of our choosing — 196MB → 55MB in the
+spike. The spotter and speaker model live on the listener's thread, so
+switching voice off drops them and calls `global.gc`, which `start.ps1` exposes
+with `--expose-gc` on the agent for exactly this.
 
-Vosk reports the wake word only when it decides the *utterance* ended, not when
-the wake word did. Say "hey jarvis I drank water" in one breath and the whole
-sentence goes into the wake recogniser — which returns `hey jarvis`, the rest
-being `[unk]`, once you finally stop. The command had already been consumed and
-thrown away. Measured before the fix: a pause gave `drink two water`, the same
-sentence run together gave `""`.
+**The window runs from when the recogniser could hear, not from the wake.** The
+first command of a session waits 1.4s for the model, and what was said meanwhile
+is queued rather than lost — so charging that second and a half to
+`VOICE_COMMAND_TIMEOUT_MS` would time out commands that had been said perfectly
+well.
 
-So the listener keeps a **four-second replay buffer** and feeds it to the
-command recogniser the moment the wake word fires. That is what makes fluent
-speech work; without it the app rewarded talking like a robot.
+#### Taking the wake word back out of the command, by time
 
-The replay deliberately includes the wake-word audio, so the command transcript
-usually starts with it. Extra words are harmless to the matcher — but a
-transcript of *only* the wake word is not a command, and `hasCommand()` guards
-that, or trailing off after "jarvis" would file a note reading "jarvis".
+The command recogniser is given **the whole sentence so far**, wake word
+included, and the wake word is then dropped by *when* it was said. Each model
+stamps every token with the moment its sound begins; the spotter's last token
+is the start of the wake word's last syllable, and any word the recogniser says
+started more than 0.1s after it belongs to the command.
 
-Verified across four deliveries: 600ms pause, 1.5s pause, run together, and run
-together at speed. All four deliver.
+Cutting the *audio* at the keyword was tried first, and it mangles the next word
+however the cut is tuned, because a word cut in half is a different word:
 
-### Words that are not the wake word
+| cut at the last token plus | "hey jarvis I drank two waters" | "…drink water" | "…skip this track" |
+| --- | --- | --- | --- |
+| 0.2s | "rank two waters" | "water" | "this track" |
+| 0 | "i drank two waters" | "drink water" | "gip this track" |
+| −0.1s | "i drank two waters" | "strike water" | "skip this track" |
 
-Reported from real use: a dog called Harley kept waking it, and it was not the
-only thing. The cause is structural rather than a tuning mistake — **a closed
-grammar has to answer every sound with something it contains.** With one phrase
-and `[unk]` in it, a near-miss has nowhere better to go than the wake word, and
-`[unk]` is a weak competitor.
+Timing gets all of them right, and it beats dropping the wake word by *text* for
+a reason that showed up on the first run: the recogniser heard one fast "hey
+jarvis" as **"Hage Arba"**. Matched by text, that would have gone through as two
+words of the command; matched by time, it went where it belonged. Speech
+*before* the wake word in the same breath ("ok so hey jarvis…") goes the same
+way.
 
-`settings.wake_decoys` is a comma-separated list of words that keep being heard
-*as* the wake word. They go into the wake grammar beside it and are **never
-matched against** — `matchesWakeWord` only ever looks for the wake word — so a
-decoy can absorb a sound but can never trigger on one.
+`afterWake` still strips through a recognised wake word as a second line of
+defence, and `hasCommand` still treats a transcript of nothing but the wake
+word as you pausing to think.
 
-`npm run wake-falsing -w @everything/agent` takes `WAKE_DECOYS=` so the effect is
-measured rather than argued about: **1/14 false wakes to 0/14**, with both real
-wakes still firing.
+**A test that stops feeding needs two seconds of silence, not one.** The
+recogniser will not commit to an endpoint until its look-ahead has seen enough
+quiet; a live microphone always supplies that, a test harness has to.
 
-**Two things were measured and rejected first**, and they are worth keeping
-written down because both are the obvious idea.
+#### The tone waits for a pause
 
-- **Confidence gating does not work here.** `vosk_recognizer_set_words` is bound
-  now and per-word confidence is on `Utterance`, and in grammar mode it is
-  **1.00 for everything** — real wake words and forced ones alike. Inside a
-  closed grammar the chosen path is the only path, so there is no competing
-  hypothesis to be unsure against. A threshold would have rejected nothing and
-  cost real wakes. `npm run wake-confidence -w @everything/agent` prints the
-  numbers.
-- **A generic word list does not work either.** 108 common English words in the
-  grammar changed the false-wake count not at all: "harvest festival" still
-  landed on the wake word. It stopped only when *"harvest"* and *"festival"*
-  themselves were there. The competitor has to actually sound like the wake
-  word, which is why this is a list you fill in rather than one that ships —
-  and why it costs nothing, since it is a handful of words rather than a
-  vocabulary. The generic list also cost 1.49ms → 1.61ms per 100ms block for
-  that nothing.
+The spotter fires while you may still be talking, and a beep over the rest of
+"…I drank two waters" is noise. So the "go ahead" tone plays once 300ms of
+quiet follows the wake word, and not at all if you carried straight on — the
+run-together case gets the result tone alone, as it always did. The popup still
+goes up the instant the wake word is heard. `voice-listen` asserts both.
 
-**The synthesiser cannot reproduce the report.** Windows TTS says "Harley" far
-too clearly for it to be mistaken, so `wake-falsing` shows it not firing while
-it fires in the room. That is a limit of the tool, not evidence against the
-report: the mechanism is the same one "harvest festival" demonstrates, which is
-reproducible. Slurred speech at a distance is simply not something this test can
-make.
+#### What carried over, and what did not
 
-**A decoy the model cannot pronounce does nothing**, silently — Vosk drops words
-outside its lexicon. So decoys ride along in `checkWords` and get the same
-dictionary warning the phrase words already had, rather than a second mechanism.
+- **Leading attention words are still optional.** `wakeWordRequired` gives
+  "jarvis" for "hey jarvis", and the spotter is handed both, so a swallowed
+  "hey" still wakes it and a bare "hey" still does not.
+- **One-word wake words are still allowed and warned about.** A spotter for
+  "everything" fires on every "everything is fine" — that is the word's fault,
+  not the engine's.
+- **Decoys still work, differently.** They are keywords beside the wake word: a
+  sound that matches "harley" better than "jarvis" is a hit on "harley", which
+  the listener ignores. With no closed grammar they are needed far less, and the
+  setting stays for the case `wake-falsing` cannot make — a slurred name across
+  a room.
+- **The dictionary warnings mostly went away.** "Can this word be heard" was
+  Vosk's lexicon: "unmute" was missing and a phrase using it never fired. An
+  open vocabulary has no such list. What is left is spelling — a number written
+  in digits is never in a transcript, since speech is written as words — so
+  `unknownWords` flags that and nothing else, and the warnings on the commands
+  screen say "write two, not 2". The wake word box only takes letters, so its
+  warning was removed.
+- **"Everything it can hear" was removed.** It listed the grammar, grouped by
+  where each word came from, because a closed grammar's contents explained most
+  of what voice did. An open recogniser has no list to show, and a screen
+  presenting one would be a claim about a constraint that no longer exists.
+- **The spotter is rebuilt only when the wake word or the decoys change**, not on
+  every `version` bump, which also moves with each command phrase. It knows
+  nothing about phrases, and a rebuild is half a second on the listener's thread.
 
-### The grammar must be able to say what people actually say
+#### Voiceprints from Vosk are stale, and say so
 
-The matcher stems, so a stored `drink water` covers "I drank some water". The
-**recogniser cannot help**: a grammar only emits words it contains, and the
-stored phrase gave it `drink`, never `drank`. Asked to transcribe "drank" it had
-to pick something from the list anyway, and what it picked was arbitrary —
-"I drank water" came back as **"resume water"**, which matched a one-word
-`resume` phrase and paused the music.
+Vosk's speaker embeddings were 128 numbers and ERes2Net's are 192, and the two
+cannot be compared — not even by truncating, since the dimensions mean nothing
+to each other. `VOICEPRINT_DIMENSIONS` in `shared` is 192, and a voiceprint of
+any other length is **kept but not enforced**: enforcing it would refuse every
+command, since nothing can score against it, and deleting it would switch the
+protection off behind your back. `/api/settings` carries `voiceprintStale`, and
+the Voice screen says *Needs teaching again* until you enrol. The agent and the
+server both skip the check, for the reason they both run it. `smoke` asserts
+both lengths, both ways.
 
-So `vocabularyFor` expands every phrase word through `spokenVariants`: the
-irregular past, `-s`/`-es`, `-ed`, `-ing`. Widening a grammar normally widens
-what can be mis-matched, but not here — every generated form stems back to the
-word it came from, so a mis-hear between two of them still reaches the same
-command. That property is checked in `voice-check`.
+On synthesised voices the same voice scores 0.73–0.79 against itself and
+0.15–0.21 against a different one, so the default 55% threshold sits well clear
+of both.
 
-The counting words (`one`…`ten`, `twice`, `once`, `couple`) are in the grammar
-**always**, whatever the phrases are. `spokenCount` reads them out of the
-transcript, and without them the recogniser was never allowed to say "two" —
-"I drank two waters" came back as `waters` and matched nothing at all. A feature
-reading for words the recogniser could not produce.
+#### The models arrive by themselves
 
-The wake word is deliberately *not* expanded: it is a name, and widening the one
-grammar that most needs to stay narrow buys nothing.
+Switching voice on with the models missing fetches them — about 100MB from the
+sherpa-onnx GitHub releases, six seconds on this connection — and the Voice
+screen says *Getting the speech models* with how far it has got. The agent
+reports every second while it does, rather than parking in the long poll.
+`models.ts` is the one function, and `voice-setup` calls it too. It replaced a
+page of instructions — three zips, which folder each unpacks into, "keep the
+folder name" — which was the open-a-terminal friction the double-clickable files
+exist to remove.
 
-`checkWords` carries the literal phrase words separately, so the
-can-this-be-heard warning below reports what you typed rather than the
-generated forms.
+Each archive is unpacked into a scratch folder and only the named files are
+moved into place, so a half-finished download leaves nothing that looks
+installed. Windows' own `tar.exe`, by path, for the reason the release packaging
+gives. A failure becomes the error on the Voice screen and is retried after ten
+minutes rather than at the listener's 10Hz. Once the new set is whole, Vosk's
+DLLs and model folders are deleted; one still mapped by a running agent is left
+for the next start.
 
-### A grammar can only contain words the model can pronounce
+**The file names are short on purpose.** onnxruntime reports a path over
+Windows' 260 characters as the file *not existing*, and the upstream names
+(`encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx`), under a checkout in a
+OneDrive folder with spaces in it, did exactly that in the spike.
 
-`vosk_recognizer_new_grm` silently drops any word missing from the model's
-lexicon, with a warning on stderr nobody reads — so the phrase reads perfectly
-and can never match. `"unmute my mic"` was live for days before anyone noticed.
+**It is cross-platform, which Vosk here was not.** The binding ships prebuilt
+for Windows, Linux and macOS on x64 and arm64 as optional dependencies, so the
+lockfile carries all six and npm installs the one that fits. That is a step
+toward the platform goal above, not the end of it: the microphone is still
+winmm, and on macOS the binding needs `DYLD_LIBRARY_PATH` pointed at its folder.
 
-`unknownWords()` in `vosk.ts` asks the model directly via
-`vosk_model_find_word`, and the agent reports the result on its heartbeat. That
-check generalises: it stays right whichever model is installed, because it asks
-that model rather than assuming a word list.
+#### The tools
 
-**A phrase said as one word is offered to the grammar too.** "never mind" is
-stored as two words, so the grammar could only ever hold them separately — and
-a closed grammar has to map every sound onto something it contains. Said as
-*"nevermind"*, the recogniser could not answer with the word actually spoken and
-picked whatever was nearest, which on this machine was `went` (present only
-because `go` is, via the phrase "stop go away", and `spokenVariants` reads the
-irregular-past table backwards).
+- `voice-setup` — fetch the models if missing, list the microphones, load the
+  spotter and listen for three seconds.
+- `voice-try` — the spotter, the speaker model and the command recogniser over
+  synthesised speech, and what the server's matcher would do with the result.
+- `voice-listen` — **the listener itself**, driven through a stand-in
+  microphone at real speed: a paused command, a run-together one, chatter, and
+  silence after the wake word, asserting what reaches `post` and when the tone
+  plays. `createVoiceListener` takes a `microphone` option for it, and nothing
+  else passes one.
+- `wake-falsing` — the false-wake count. `EVERYTHING_WAKE_THRESHOLD` (0.25) and
+  `EVERYTHING_WAKE_SCORE` (1.0) are read by the spotter, so a change can be
+  measured here first.
 
-So `vocabularyFor` adds the phrase joined up, and `matchVoiceCommand` treats
-that joined token as covering the whole phrase. The two halves are useless
-apart: the grammar change lets the recogniser say a word the matcher would
-otherwise reject. Adding it is free when it is not a real word — Vosk drops
-anything outside the lexicon, so `stopgoaway` and `forgetit` cost nothing and
-disappear, while `nevermind` and `drinkwater` survive and work.
+`wake-probe`, `wake-confidence` and `voice-latency` were Vosk's: a partial
+printed block by block, per-word confidence in grammar mode, and how long its
+endpointer took. A spotter has no equivalent question to ask, so they went too.
 
-`remainderAfterPhrase` and `segmentUtterance` both account for the joined form
-as well, or a note would begin with its own trigger and a chained segment would
-report every word of itself as unexplained.
-
-The warning appears **everywhere the word does**, not only as a summary:
-
-- on the command's own row — the one you are looking at when you wonder why the
-  phrase never fires,
-- on the group heading, so collapsing a section cannot hide a broken command,
-- on the offending phrase chip inside the editor, and
-- under the wake word, which is the worst case of all: nothing wakes at all and
-  every other diagnostic on the screen looks perfectly healthy.
-
-Each warning also says what to *do*, because the fix is nearly always the same
-one and working it out from first principles is a poor use of anybody's evening:
-separate the compound into two ordinary words. That advice sits next to the
-warning rather than in a help page, since the warning is where the question gets
-asked.
-
-**It is not a small-vocabulary problem, and a bigger model would not fix it.**
-Probed against `vosk-model-small-en-us-0.15`: `obstreperous`, `quixotic`,
-`netflix`, `youtube`, `obsidian`, `unfollow`, `livestream`, `rewind`, `shuffle`
-and `spotify` are all present. What is missing is coinages and compounds —
-`unmute`, `unpause`, `playpause`, `fastforward`, `doomscroll`, `valorant`. The
-lexicon is the usual ~200k CMU-derived dictionary; a larger model buys acoustic
-accuracy, not those words. Two ordinary words beat one invented compound.
-
-`[unk]` must stay in every grammar. Without it Vosk cannot represent "that was
-none of these" and forces everything it hears onto the nearest phrase — which
-for an always-on microphone means the wake word firing on coughs and music.
-
-**And `[unk]` must be stripped out of the transcript**, in `vosk.ts`. A closed
-grammar can only ever emit vocabulary words, so ordinary speech comes back
-studded with it — "i drank two waters" arrives as `[unk] drink two water [unk]`.
-Stripping it at that boundary means an utterance of *entirely* unknown words
-reduces to the empty string, and empty already means "heard nothing" everywhere
-downstream. Left in, every unrecognised sentence in earshot would have been
-filed as a note reading `[unk] [unk]`.
-
-The models are third-party binaries, so the versions that were actually tested:
-`vosk-win64-0.3.45`, `vosk-model-small-en-us-0.15`, `vosk-model-spk-0.4`.
+The versions that were measured: `sherpa-onnx-node` 1.13.8,
+`sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01` (int8),
+`sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06`, and
+`3dspeaker_speech_eres2net_sv_en_voxceleb_16k`.
 
 ### The server decides what was said, the agent only hears it
 
@@ -5968,39 +6270,15 @@ do" without doing it. The failure everyone hits is a phrase that reads perfectly
 and never matches; the alternative way to find that out is repeating it at the
 microphone while watching a log.
 
-### The vocabulary is on screen
+### The vocabulary was on screen
 
-**Voice → "Everything it can hear"**, collapsed, with a count. It exists because
-a closed grammar can only emit words it contains, and most of the confusing
-things this feature has ever done came straight from that: a stored "drink
-water" left it unable to say "drank", so "I drank water" came back as "resume
-water" and paused the music. None of that is guessable from the commands screen.
-
-**Grouped by where each word came from**, which is the part that makes it worth
-showing rather than a wall of words:
-
-| | |
-| --- | --- |
-| The wake word | left exactly as typed, never expanded |
-| Words that are not the wake word | the decoys, absorbing sounds only |
-| Words from your phrases | exactly what you typed |
-| Forms it worked out for itself | plurals, past tenses, `-ing`, and each phrase run together |
-| Always included | the counting and amount words, whatever your commands are |
-
-**The groups partition the grammar exactly** — every word the recogniser can emit
-appears in one and none appears twice, which `voice-check` asserts. A display
-that quietly omitted part of the grammar would be worse than none, since the
-whole reason to open it is to find the word you did not expect. On this install
-it is 136 words: 2 wake, 28 typed, 89 generated, 17 always.
-
-**Its own endpoint, not a field on `/api/voice/config`.** That one is the
-agent's and is long-polled; putting a hundred-odd words on it would send the
-whole list every poll forever to serve a screen nobody has open.
-
-A word the model cannot pronounce is marked, reusing the `unknownWords` the
-agent already reports rather than growing a second mechanism — the same warning
-the wake word and the phrases already carry, in the one place that shows every
-word at once.
+**Voice → "Everything it can hear"** listed Vosk's grammar, grouped by where each
+word came from — typed, generated, always included — because a closed grammar's
+contents explained most of the confusing things voice did ("I drank water" heard
+as "resume water", since the grammar had no "drank"). Removed with Vosk: an
+open-vocabulary recogniser has no list, and showing one would describe a
+constraint that no longer exists. `/api/voice/vocabulary` and
+`vocabularyBreakdown` went with it.
 
 ### Only responding to your voice
 
@@ -7316,14 +7594,24 @@ song just played. It follows the music across devices: each check reads the devi
 when you switch from the PC to the phone, but top-ups addressed to the old
 device would fail once it is idle, or pull playback back to it. The session is
 held in memory and ends itself when something
-not from it plays (after its first song has), when nothing has played for 30
-minutes, or on Stop. A restart does **not** end it: the session is saved to
+not from it plays (after its first song has), or on Stop. A restart does **not** end it: the session is saved to
 `spotify-shuffle-session.json` whenever it changes (a song finished, a top-up,
 a device switch), and `resumeSession` picks it up five seconds after boot,
 rebuilding the dealer with what was sent as its history so the gap and the
-deck carry on. Only a session saved within the last half hour is resumed. Stop
-deletes the file; the server closing only pauses it. `stopped` on the session
-stops a top-up already under way, so Stop does not keep adding songs. Those are the conditions that keep it from polling an empty room.
+deck carry on, however old the file is, since a paused session is only written
+when something changes. Stop deletes the file; the server closing only pauses
+it. `stopped` on the session stops a top-up already under way, so Stop does not
+keep adding songs.
+
+**Paused, it slows down rather than ending.** It used to end once nothing had
+played for half an hour, so after a long pause the songs already queued played
+out and nothing followed them. Now, after ten minutes with nothing playing
+(`SLOW_AFTER_MS`), the 45-second timer still ticks but asks Spotify only every
+fifteen minutes (`IDLE_CHECK_MS`): about four requests an hour to an empty room,
+against eighty while music plays. A late noticing costs nothing you would hear,
+because the queue already holds a full `queueAhead` of songs for when the music
+comes back. Failing checks slow down the same way, and only a full day of them
+(`FAILING_MS`: a lost permission, a deleted device) ends the session.
 
 **"Something else started" is decided by the queue, not by the song.** A song
 you added by hand mid-shuffle plays, and is not one of the session's, but

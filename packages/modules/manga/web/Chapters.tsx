@@ -338,6 +338,9 @@ export function Chapters({
   const savingNow = [...jobs.values()].find((j) => j.state === 'saving') ?? null;
   const waitingHere = [...jobs.values()].filter((j) => j.state === 'waiting').length;
   const failedHere = [...jobs.values()].filter((j) => j.problem).length;
+  /** Chapters of this series saving or waiting to, with the PC reachable: what makes Read while you wait worth offering. */
+  const downloadingHere = offlineSupported && !net.offline && (savingNow !== null || waitingHere > 0);
+  const firstChapter = data && data.chapters.length > 0 ? [...data.chapters].sort((a, b) => a.number - b.number)[0]! : null;
 
   /**
    * This chapter and the `count` after it, in the order Next will open them.
@@ -399,8 +402,7 @@ export function Chapters({
   function readWhileYouWait() {
     if (!data || data.chapters.length === 0) return;
     saver.flush();
-    const first = [...data.chapters].sort((a, b) => a.number - b.number)[0]!;
-    const from = placeChapter ?? shownCopy(nextUp ?? first);
+    const from = placeChapter ?? shownCopy(nextUp ?? firstChapter!);
     setAhead(true);
     openChapter(from, placeChapter && sameCopy && place ? { page: place.page, offset: place.offset } : null, true);
   }
@@ -891,29 +893,57 @@ export function Chapters({
       )}
       {problem && <p className="banner">{problem}</p>}
 
-      {place && placeChapter && (
+      {/*
+        * One button for where to start, in three states: continue where you
+        * are (or the next after the furthest you finished), read the first
+        * chapter of something not started, or — while chapters of this series
+        * are downloading — read while you wait. They all open the same chapter;
+        * the last only waits for each one to be saved and keeps the next few
+        * saving ahead. It was a second button on the Save bar, offered even
+        * with nothing downloading, beside a Read that went to the same place.
+        *
+        * A series read to the end has no card: there is nowhere to go on to.
+        */}
+      {data && (placeChapter || nextUp || (furthestRead === -Infinity && firstChapter)) && (
         <div className="manga-continue">
           <div className="manga-row-text">
-            <span className="title">Continue {place.chapterName}</span>
-            <span className="meta">
-              {sameCopy
-                ? `page ${place.page + 1} of ${place.pages}`
-                : `You were on page ${place.page + 1} of ${place.pages} on ${place.source}. ${data?.sourceName} splits its pages differently, so this opens at the start of the chapter.`}
-            </span>
+            {place && placeChapter ? (
+              <>
+                <span className="title">Continue {place.chapterName}</span>
+                <span className="meta">
+                  {sameCopy
+                    ? `page ${place.page + 1} of ${place.pages}`
+                    : `You were on page ${place.page + 1} of ${place.pages} on ${place.source}. ${data.sourceName} splits its pages differently, so this opens at the start of the chapter.`}
+                </span>
+              </>
+            ) : nextUp ? (
+              <>
+                <span className="title">Next: {nextUp.name}</span>
+                <span className="meta">the first after chapter {chapterText(furthestRead)}, the furthest you have finished</span>
+              </>
+            ) : (
+              <>
+                <span className="title">Start: {firstChapter!.name}</span>
+                <span className="meta">nothing read here yet</span>
+              </>
+            )}
+            {downloadingHere && (
+              <span className="meta">
+                Downloading — each chapter opens once it is saved, and the next {KEEP_READY} keep saving ahead of you.
+              </span>
+            )}
           </div>
-          <button className="btn primary" onClick={carryOn}>
-            Continue
-          </button>
-        </div>
-      )}
-      {!placeChapter && nextUp && (
-        <div className="manga-continue">
-          <div className="manga-row-text">
-            <span className="title">Next: {nextUp.name}</span>
-            <span className="meta">the first after chapter {chapterText(furthestRead)}, the furthest you have finished</span>
-          </div>
-          <button className="btn primary" onClick={() => read(shownCopy(nextUp))}>
-            Read
+          <button
+            className="btn primary"
+            onClick={
+              downloadingHere
+                ? readWhileYouWait
+                : placeChapter
+                  ? carryOn
+                  : () => read(shownCopy(nextUp ?? firstChapter!))
+            }
+          >
+            {downloadingHere ? 'Read while you wait' : placeChapter || nextUp ? 'Continue' : 'Read first chapter'}
           </button>
         </div>
       )}
@@ -926,13 +956,6 @@ export function Chapters({
             </span>
           ) : offlineSupported ? (
             <>
-              <button
-                className="btn primary"
-                onClick={readWhileYouWait}
-                title={`Saves the chapter you are on and the ${KEEP_READY} after it, opens each once it is whole, and keeps ${KEEP_READY} saved ahead of you as you read`}
-              >
-                Read while you wait
-              </button>
               <span className="meta">Save for offline:</span>
               {SAVE_AHEAD.map((n) => (
                 <button key={n} className="btn subtle" onClick={() => saveAhead(n)}>

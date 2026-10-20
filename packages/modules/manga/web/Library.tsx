@@ -63,7 +63,7 @@ import { Tile } from './Tile';
  * because several other files already take these from here, and moving a file
  * should not mean editing every importer.
  */
-import { NEW_FIRST_KEY, SORT_KEY, SORT_LABEL, hasNew, notAnswering, sorted, sourceHasNothing, sourceLabel, storedSort, toCatchUp, type SortKey } from './shelf';
+import { FAV_FIRST_KEY, NEW_FIRST_KEY, SORT_KEY, SORT_LABEL, hasNew, notAnswering, sorted, sourceHasNothing, sourceLabel, storedSort, toCatchUp, type SortKey } from './shelf';
 export { hasNew, notAnswering, sourceHasNothing, sourceLabel, toCatchUp, type SortKey };
 
 export type Show = 'all' | 'starred' | 'new' | 'broken' | 'empty' | 'unlinked';
@@ -144,6 +144,7 @@ export function Library({
 }) {
   const [sort, setSort] = useState<SortKey>(storedSort);
   const [newFirst, setNewFirst] = useState(() => stored(NEW_FIRST_KEY) !== '0');
+  const [favFirst, setFavFirst] = useState(() => stored(FAV_FIRST_KEY) === '1');
   const [show, setShow] = useState<Show>(storedShow);
   /*
    * Which shelf is being looked at, or null for everything you follow.
@@ -184,6 +185,13 @@ export function Library({
         keep(NEW_FIRST_KEY, newFirst ? '0' : '1');
       },
     },
+    {
+      label: `${favFirst ? '☑' : '☐'} Favourites on top`,
+      onSelect: () => {
+        setFavFirst(!favFirst);
+        keep(FAV_FIRST_KEY, favFirst ? '0' : '1');
+      },
+    },
   ]);
 
   const counts = useMemo(
@@ -211,7 +219,8 @@ export function Library({
       (s) =>
         (!words ||
           s.title.toLowerCase().includes(words) ||
-          (s.source?.title.toLowerCase().includes(words) ?? false)) &&
+          (s.source?.title.toLowerCase().includes(words) ?? false) ||
+          (s.altTitles ?? []).some((t) => t.toLowerCase().includes(words))) &&
         /*
          * On a hidden shelf, so out of *Everything* — but still there when the
          * shelf itself is picked. Hidden wins over any visible shelf the same
@@ -227,8 +236,8 @@ export function Library({
           (show === 'unlinked' && !s.source)) &&
         (tag === null || (s.tags ?? []).includes(tag))
     );
-    return sorted(matching, sort, newFirst);
-  }, [series, filter, sort, newFirst, show, tag, shelf, hiddenShelves]);
+    return sorted(matching, sort, newFirst, favFirst);
+  }, [series, filter, sort, newFirst, favFirst, show, tag, shelf, hiddenShelves]);
 
   const fresh = counts.new;
   /*
@@ -244,7 +253,7 @@ export function Library({
 
   // A new filter or order starts from the top again.
   const [limit, setLimit] = useState(PAGE);
-  useEffect(() => setLimit(PAGE), [filter, sort, newFirst, show, tag, shelf]);
+  useEffect(() => setLimit(PAGE), [filter, sort, newFirst, favFirst, show, tag, shelf]);
 
   return (
     <div className="manga-library">
@@ -343,6 +352,7 @@ export function Library({
         {hiding ? ` · ${series.length - shown.length} put away` : ''}
         {fresh > 0 ? ` · ${fresh} with new chapters` : ''} · {SORT_LABEL[sort].toLowerCase()}
         {newFirst ? ', new on top' : ''}
+        {favFirst ? ', favourites on top' : ''}
       </p>
       {show === 'broken' && shown.length > 0 && (
         <p className="meta">

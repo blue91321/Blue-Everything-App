@@ -35,7 +35,7 @@ import * as popup from '../../../agent/src/popup.js';
 import { playSound } from '../../../agent/src/sound.js';
 import { createVoiceListener } from './voice.js';
 import { createHotkeys, type HotkeyAction, type Hotkeys } from './hotkeys.js';
-import { unknownWords, VoskUnavailable } from './vosk.js';
+import { unknownWords, VoiceUnavailable } from './engine.js';
 
 const OVERLAY_RESULT_MS = popup.POPUP_RESULT_MS;
 const OVERLAY_ASK_MS = popup.POPUP_ASK_MS;
@@ -301,7 +301,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     }
 
     client
-      .voiceCommand({ text: heard.text, speakerScore: heard.speakerScore })
+      .voiceCommand({ text: heard.text, speakerScore: heard.speakerScore, manual: heard.manual })
       .then((result) => {
         performAction(result);
         showResult(result);
@@ -313,10 +313,23 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
   // whole agent down because a microphone was unplugged.
   voice.on('error', (error: Error) => {
     console.error(`[${clock()}] voice: ${error.message}`);
-    if (error instanceof VoskUnavailable) {
+    if (error instanceof VoiceUnavailable) {
       console.error('         voice is off until this is fixed — run: npm run voice-setup -w @everything/agent');
     }
   });
+
+  // The first switch-on fetches the models, and the command model loads on the
+  // first wake of a session. Both are worth a line: "it took two seconds to
+  // answer" is otherwise a mystery.
+  voice.on('preparing', (text: string) => console.log(`[${clock()}] voice: ${text}`));
+  voice.on('prepared', () => {
+    console.log(`[${clock()}] voice: models in place`);
+    reportSoon();
+  });
+  voice.on('command-ready', ({ ms, waitedMs }: { ms: number; waitedMs: number }) =>
+    console.log(`[${clock()}] voice: command recogniser loaded in ${ms}ms (${waitedMs}ms after it was asked for)`)
+  );
+  voice.on('command-unloaded', () => console.log(`[${clock()}] voice: command recogniser unloaded after 10 minutes unused`));
 
   voice.on('wake', ({ speakerScore }: { speakerScore: number | null }) => {
     const score = speakerScore === null ? '' : ` (voice match ${(speakerScore * 100).toFixed(0)}%)`;
@@ -600,17 +613,51 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     // Back to whatever the server says, which is off — this is the line that
     // releases the microphone and the ~123MB of speech models again.
     applyConfig();
+    reportSoon();
+  }
+
+  /**
+   * What a press of the toggle should make voice, judged by what you can see.
+   *
+   * The stored switch is not that. Paused, or asleep because you had been away,
+   * the switch is on and the microphone is shut, so flipping the switch turned
+   * voice *off* at exactly the moment you were pressing the key to get it back.
+   * So "on" here means it is actually listening for the wake word: switched on,
+   * not paused (the server folds a pause into `enabled`), and you at the desk.
+   *
+   * A press within a few seconds of the last one goes from what that press
+   * asked for, because the answer takes a moment to come back on the next poll
+   * and two quick presses should be off-and-on, not on-and-on.
+   */
+  let lastToggle: { enabled: boolean; at: number } | null = null;
+  const TOGGLE_SETTLE_MS = 4000;
+
+  function effectivelyOn(): boolean {
+    if (lastToggle && Date.now() - lastToggle.at < TOGGLE_SETTLE_MS) return lastToggle.enabled;
+    return Boolean(wanted.enabled) && present && !oneShot;
   }
 
   async function onHotkey(action: HotkeyAction): Promise<void> {
     console.log(`[${clock()}] hotkey: ${action}`);
     if (action === 'toggle') {
       /*
-       * Straight to the server, which owns the flip. The answer comes back on the
-       * next poll like any other settings change, so nothing here has to model
-       * what the new state is.
+       * The server stores it; the agent says what it should become, from what
+       * you can see (see `effectivelyOn`). The answer comes back on the next
+       * poll like any other settings change.
        */
-      const { enabled } = await client.voiceToggle();
+      const target = !effectivelyOn();
+      lastToggle = { enabled: target, at: Date.now() };
+      if (target) {
+        // A key was just pressed on this keyboard, so you are here: wake the
+        // microphone now rather than when the attention loop next looks.
+        endOneShot();
+        if (!present) {
+          present = true;
+          applyConfig();
+        }
+      }
+      const { enabled } = await client.voiceToggle(target);
+      reportSoon();
       popup.show({
         title: enabled ? 'Voice on' : 'Voice off',
         lines: [{ text: enabled ? 'listening for the wake word' : 'the microphone is closed', tone: 'muted' }],
@@ -703,6 +750,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
 
     oneShotTimer = setTimeout(endOneShot, oneShotWindow());
     oneShotTimer.unref();
+    reportSoon();
   }
 
   function applyHotkeys(): void {
@@ -752,30 +800,64 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     applyHotkeys();
   }
 
-  async function voiceTick(): Promise<number> {
+  /** What the agent is doing, as the Voice screen reads it. */
+  function reportBody() {
     const status = voice.status();
-    // Both modes want a live screen rather than a held connection.
-    const busy = Math.max(voice.testingUntil ?? 0, voice.enrolUntil ?? 0) > Date.now();
-
-    const answer = await client.voiceAgentReport({
+    return {
       listening: status.listening,
       device: status.device,
       devices: status.devices,
       screens: screensFor(),
       unknownWords: missingWords,
       error: status.error,
+      preparing: status.preparing,
       peak: status.peak,
       // So the screen can say "you walked away" rather than leaving the reader
       // to guess why a switch that reads "on" is not listening.
       awayFromPc: !present,
-      // While testing or enrolling the screen wants live progress, so ask now.
-      waitMs: busy ? 0 : VOICE_WAIT_MS,
-      since: voiceVersion,
+      // Open for one command from the shortcut, with voice off.
+      borrowed: oneShot,
       enrolSamples: enrolSamples.length,
       enrolAgreement,
       // Combinations another program already owns. A hotkey that silently does
       // nothing is indistinguishable from one that was never saved.
       hotkeyProblems: hotkeys?.problems() ?? [],
+    };
+  }
+
+  /**
+   * Tell the server now, rather than on the next pass of the loop.
+   *
+   * The loop spends most of its life parked in a 20-second long poll, and the
+   * report it parked with is what the screen goes on showing. So coming back to
+   * the desk, or pressing the listen shortcut, left the screen reading "Asleep"
+   * or "Switched off" for up to twenty seconds while the microphone was open:
+   * the state of it being off when it was actually on. A second, unparked
+   * report fixes that; the server keeps whichever arrived last, and the parked
+   * one only refreshes its timestamp when it returns. Half a second after the
+   * change, so the models have had a moment to load and "listening" is true.
+   */
+  let reportTimer: NodeJS.Timeout | null = null;
+  function reportSoon(): void {
+    if (reportTimer) clearTimeout(reportTimer);
+    reportTimer = setTimeout(() => {
+      reportTimer = null;
+      void client.voiceAgentReport({ ...reportBody(), waitMs: 0, since: voiceVersion }).catch(() => undefined);
+    }, VOICE_SETTLE_MS);
+    reportTimer.unref();
+  }
+
+  async function voiceTick(): Promise<number> {
+    // Testing, enrolling and downloading all want a live screen rather than a
+    // held connection — a download's progress parked for twenty seconds looks
+    // stuck.
+    const busy = Math.max(voice.testingUntil ?? 0, voice.enrolUntil ?? 0) > Date.now() || voice.preparing !== null;
+
+    const answer = await client.voiceAgentReport({
+      ...reportBody(),
+      // While testing or enrolling the screen wants live progress, so ask now.
+      waitMs: busy ? 0 : VOICE_WAIT_MS,
+      since: voiceVersion,
     });
 
     voiceVersion = answer.version;
@@ -801,11 +883,8 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       const full = await client.voiceConfig();
 
       /*
-       * Which phrase words the model cannot pronounce.
-       *
-       * Only when the vocabulary actually changed, and only while voice is on:
-       * the lookup needs the speech model loaded, and loading 130MB to answer a
-       * question nobody asked would be a poor trade.
+       * Which phrase words the recogniser will never write — a digit or a
+       * symbol in a phrase. Only when the vocabulary actually changed.
        */
       if (full.version !== missingCheckedFor) {
         missingCheckedFor = full.version;
@@ -855,6 +934,8 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
     appliedVoice = signature;
 
     if (answer.testUntil > Date.now() || (answer.enrolUntil ?? 0) > Date.now()) return VOICE_TEST_POLL_MS;
+    // A second is plenty for a download's progress; it moves in megabytes.
+    if (voice.preparing !== null) return 1000;
 
     // Leaving enrolment with a half-collected set would silently poison the next
     // attempt, which would then average two different sittings together.
@@ -894,6 +975,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       present = next;
       console.log(`[${clock()}] ${next ? 'back at the desk — voice may listen again' : 'away from the desk — releasing the microphone'}`);
       applyConfig();
+      reportSoon();
     },
 
     stop() {

@@ -16,7 +16,7 @@ import { useAsync } from '@app/useAsync';
 import { goTo } from '@app/nav';
 import { Cover } from './Cover';
 import { ageOf, manga } from './manga-api';
-import { sorted, storedNewFirst, storedSort } from './shelf';
+import { sorted, storedFavFirst, storedNewFirst, storedSort } from './shelf';
 import { Tile } from './Tile';
 
 /**
@@ -62,6 +62,7 @@ function ShelfPanel() {
    * agrees across devices in both halves rather than one.
    */
   const newFirst = pinned === 'follow' ? storedNewFirst() : data.shelfNewFirst !== false;
+  const favFirst = pinned === 'follow' ? storedFavFirst() : data.shelfFavFirst === true;
 
   /*
    * Nothing on a hidden shelf, the rule *Everything* on the Library tab
@@ -72,7 +73,7 @@ function ShelfPanel() {
   const away = new Set((data.libraries ?? []).filter((l) => l.hidden).map((l) => l.id));
   const shown = data.series.filter((s) => !s.libraries?.some((id) => away.has(id)));
   const picked = show === 'favourites' ? shown.filter((s) => s.favourite) : shown;
-  const list = sorted(picked, order, newFirst).slice(0, SHELF_TILES);
+  const list = sorted(picked, order, newFirst, favFirst).slice(0, SHELF_TILES);
 
   if (data.series.length === 0) {
     return (

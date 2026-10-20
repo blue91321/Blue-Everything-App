@@ -16,6 +16,7 @@
  *   - **view** is lazy. This is the part that costs something, and a feature
  *     that is off or that you never opens is never downloaded at all.
  */
+import type { MenuGroup } from '../menu-groups';
 import { createElement, lazy, type ComponentType, type LazyExoticComponent } from 'react';
 
 export interface FeatureViewProps {
@@ -60,6 +61,11 @@ export interface FeatureMeta {
    * with the section's id as `focus`, which the screen reads as "show this".
    */
   sections?: SectionMeta[];
+  /**
+   * A heading in the menu to sit under, shared with any screen naming the same
+   * id: Weather and Trips under World. See `menu-groups.ts`.
+   */
+  group?: MenuGroup;
 }
 
 export interface SectionMeta {

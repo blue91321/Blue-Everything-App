@@ -1,7 +1,7 @@
 {
   "name": "@everything/agent",
   "private": true,
-  "version": "0.5.7",
+  "version": "0.5.8",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -11,20 +11,19 @@
     "bench": "tsx src/bench.ts",
     "audio": "tsx src/cli/test-audio.ts",
     "tray-try": "tsx src/cli/tray-try.ts",
-    "voice-latency": "tsx ../modules/voice/agent/cli/voice-latency.ts",
-    "wake-probe": "tsx ../modules/voice/agent/cli/wake-probe.ts",
     "wake-falsing": "tsx ../modules/voice/agent/cli/wake-falsing.ts",
     "sound-try": "tsx src/cli/sound-try.ts",
     "popup-check": "tsx src/cli/popup-check.ts",
     "voice-setup": "tsx ../modules/voice/agent/cli/voice-setup.ts",
     "voice-try": "tsx ../modules/voice/agent/cli/voice-try.ts",
+    "voice-listen": "tsx ../modules/voice/agent/cli/voice-listen.ts",
     "voice-enrol": "tsx ../modules/voice/agent/cli/voice-enrol.ts",
-    "overlay-try": "tsx src/cli/overlay-try.ts",
-    "wake-confidence": "tsx ../modules/voice/agent/cli/wake-confidence.ts"
+    "overlay-try": "tsx src/cli/overlay-try.ts"
   },
   "dependencies": {
     "@everything/shared": "*",
-    "koffi": "^2.9.0"
+    "koffi": "^2.9.0",
+    "sherpa-onnx-node": "1.13.8"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

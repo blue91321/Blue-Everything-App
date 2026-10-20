@@ -570,11 +570,30 @@ export function More({
                 New chapters on top
               </label>
             )}
+            {data.shelfSort !== 'follow' && (
+              <label className="meta" style={{ display: 'block', marginTop: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={data.shelfFavFirst === true}
+                  disabled={savingShelf}
+                  onChange={async (e) => {
+                    setSavingShelf(true);
+                    try {
+                      await manga.setShelf({ favFirst: e.target.checked });
+                      onChanged();
+                    } finally {
+                      setSavingShelf(false);
+                    }
+                  }}
+                />{' '}
+                Favourites on top
+              </label>
+            )}
 
             <div className="meta" style={{ marginTop: 6 }}>
               {data.shelfSort === 'follow'
-                ? 'The card is ordered however this device has the Library tab sorted, including its "New chapters on top" box — change either there and the card follows. Both are per device, so your PC and phone can differ.'
-                : 'A fixed order for the card, kept on the server, so every device shows it the same way. The Library tab keeps its own sort and its own box.'}
+                ? 'The card is ordered however this device has the Library tab sorted, including its "New chapters on top" and "Favourites on top" boxes — change any of them there and the card follows. Both are per device, so your PC and phone can differ.'
+                : 'A fixed order for the card, kept on the server, so every device shows it the same way. The Library tab keeps its own sort and its own boxes.'}
             </div>
           </div>
         )}

@@ -1,8 +1,15 @@
 import type { FeatureMeta, PanelMeta } from '@app/features/index';
 
+/*
+ * Under World in the menu, beside Trips. Written out here and again in that
+ * package's own meta, since a package may not import another: see
+ * `menu-groups.ts` in core.
+ */
+const WORLD = { id: 'world', label: 'World', glyph: '🌍' };
+
 // After Notes (40) and before the vault (50): a glance-at-it screen belongs
 // nearer the top than the ones you go and work in.
-export const meta: FeatureMeta = { id: 'weather', label: 'Weather', glyph: '⛅', order: 45 };
+export const meta: FeatureMeta = { id: 'weather', label: 'Weather', glyph: '⛅', order: 45, group: WORLD };
 
 /**
  * One panel, and it is the reason this package exists.

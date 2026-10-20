@@ -1,0 +1,9 @@
+{
+  "id": "trips",
+  "label": "Trips",
+  "blurb": "Trips with a map, flights you can track, and the to-dos that go with them.",
+  "version": "0.5.8",
+  "author": "blue91321",
+  "server": "server/index.ts",
+  "notes": "Map tiles come from OpenStreetMap and places are looked up through its Nominatim search. Live flight status is optional and uses AeroDataBox through RapidAPI with your own key: the flight number and date are sent to them when it checks."
+}

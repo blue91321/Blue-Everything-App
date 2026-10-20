@@ -88,7 +88,7 @@ const MMSYSERR_NOERROR = 0;
 /**
  * 16kHz mono 16-bit.
  *
- * Not a compromise — it is exactly what the speech models want. Vosk resamples
+ * Not a compromise — it is exactly what the speech models want. They resample
  * anything else internally, so capturing at 48kHz would mean moving three times
  * the bytes for the privilege of throwing two thirds of them away.
  */

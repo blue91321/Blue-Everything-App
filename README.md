@@ -31,7 +31,7 @@ The nudge engine is the app. Everything else is optional:
 | **deleted** | remove the folder; the app boots and reports it as not installed |
 
 **Settings → Packages** lists them — the password vault, voice, app
-integrations, phone push, weather and manga, each in `packages/modules/<name>/`
+integrations, phone push, weather, trips and manga, each in `packages/modules/<name>/`
 — with a switch, its size and a Remove button. A change takes a restart, and
 the screen has the button for it. Habits, notes and time tracking can be
 switched off but not deleted: the Dashboard uses them.
@@ -105,16 +105,18 @@ would expose it to the internet, which this app should never use.
 
 ### Voice, if you want it
 
-The speech models are ~150MB of third-party binaries and are **not in git**.
+Recognition is local, through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx).
+Its models are about 100MB of third-party files and are **not in git**: they
+download by themselves the first time you switch voice on, and the Voice screen
+shows the progress. To fetch them ahead of time, or to check the microphone:
 
 ```bash
 npm run voice-setup -w @everything/agent
 ```
 
-prints exactly what to download and where to put it, then proves the microphone
-and recognisers work. Voice is off by default in settings even when installed —
-it is the only feature that holds a microphone open, so it should be something
-you switched on rather than something you find already running.
+Voice is off by default — it is the only feature that holds a microphone open,
+so it should be something you switched on rather than something you find
+already running.
 
 ## Checking your work
 

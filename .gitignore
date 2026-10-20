@@ -85,7 +85,8 @@ logs/
 /runtime/
 
 # ---- Large third-party binaries -----------------------------------------
-# Voice models: ~150MB of third-party binaries, downloaded by voice-setup.
+# Voice models: ~100MB of third-party binaries, fetched the first time voice
+# is switched on (or by voice-setup).
 # Not ours, not small, and not something a git history should carry.
 #
 # They live inside the voice feature so that deleting the feature reclaims the

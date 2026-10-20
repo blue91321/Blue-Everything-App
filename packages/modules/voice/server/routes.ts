@@ -36,6 +36,7 @@ import {
   type VoiceCandidate,
   type VoiceHeard,
   parseWakeDecoys,
+  voiceprintIsCurrent,
 } from '@everything/shared';
 import { db } from '@everything/server/module-api';
 import { notes, settings, voiceCommands } from '@everything/server/module-api';
@@ -49,7 +50,6 @@ import {
   resolveVoiceCommand,
   runCommand,
   phraseWordsFor,
-  vocabularyBreakdown,
   vocabularyFor,
   type VoiceOutcome,
 } from './actions.js';
@@ -205,44 +205,23 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
    * changes when you change it — so it carries the voiceprint inline rather
    * than making the agent fetch it separately.
    */
-  /**
-   * Everything the recogniser is allowed to say, and where each word came from.
-   *
-   * Its own endpoint rather than a field on `/api/voice/config`, because that
-   * one is the *agent's* and is long-polled: this is a page somebody opens
-   * occasionally, and putting it there would send the whole list on every poll
-   * forever to serve a screen nobody has open.
-   */
-  app.get('/api/voice/vocabulary', async () => {
-    const row = await getSettings();
-    const commands = await loadCommands();
-    const decoys = parseWakeDecoys(row.wakeDecoys ?? '', row.wakeWord);
-    const groups = vocabularyBreakdown(commands, row.wakeWord, decoys);
-
-    return {
-      total: groups.reduce((sum, group) => sum + group.words.length, 0),
-      groups,
-    };
-  });
-
   app.get('/api/voice/config', async () => {
     const row = await getSettings();
     const commands = await loadCommands();
 
-    // The union of every word in every phrase, plus the wake word. Handed to
-    // the recogniser as its entire vocabulary: a small closed grammar is both
-    // far more accurate and far cheaper than open-ended transcription, which is
-    // what makes an always-on microphone affordable at all.
+    // The union of every word in every phrase, plus the wake word. Vosk was
+    // handed this as its whole grammar; the recogniser now is open-vocabulary
+    // and does not need it, so what it still does is move `version` whenever a
+    // phrase changes. An older agent still reads it as a grammar.
     const words = vocabularyFor(commands, row.wakeWord);
     /*
      * Words that keep being *mis*heard as the wake word. They are not commands
-     * and are never matched against — they exist only so the wake grammar has
-     * somewhere better to put that sound than the one phrase it contains.
+     * and are never matched against — they are keywords the spotter listens
+     * for beside the wake word, so a sound close to both goes to them instead.
      */
     const decoys = parseWakeDecoys(row.wakeDecoys ?? '', row.wakeWord);
-    // Checked against the model separately from the grammar: the grammar now
-    // carries generated inflections, and warning that "waters" is unknown would
-    // bury the one warning that matters under noise nobody typed.
+    // The words you typed, for the can-this-be-heard check: a digit or a
+    // symbol in a phrase is something the recogniser will never write.
     const literal = phraseWordsFor(commands, row.wakeWord);
 
     return {
@@ -253,18 +232,12 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       voiceprint: row.voiceprint ? (JSON.parse(row.voiceprint) as number[]) : null,
       vocabulary: words,
       wakeDecoys: decoys,
-      /*
-       * The decoys ride along here too. A word the model cannot pronounce is
-       * dropped by Vosk without a murmur, so a decoy nobody can say absorbs
-       * nothing and looks exactly like one that is working — the same silent
-       * failure the phrase words already have a warning for, reusing the same
-       * mechanism rather than growing a second one.
-       */
+      /* The decoys ride along here too, checked the same way. */
       checkWords: [...literal, ...decoys.flatMap((d) => d.split(' '))],
       /**
        * Changes whenever anything above does. The agent compares this instead
-       * of diffing the payload, so rebuilding the recognisers — which reloads a
-       * grammar, and is not free — only happens when something actually moved.
+       * of diffing the payload, so it re-reads the config only when something
+       * actually moved.
        *
        * Hashes the words rather than counting them. Renaming a phrase from
        * "drink water" to "sip water" leaves the count identical, and a counted
@@ -273,9 +246,9 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
        */
       version: createHash('sha256')
         /*
-         * The decoys are hashed in too: they change the *wake* grammar, so
-         * leaving them out would leave the agent listening with the old one
-         * until something unrelated happened to move the hash.
+         * The decoys are hashed in too: they change what the spotter listens
+         * for, so leaving them out would leave the agent with the old list until
+         * something unrelated happened to move the hash.
          */
         .update(`${row.wakeWord}
 ${words.join(' ')}
@@ -371,7 +344,18 @@ ${decoys.join(' ')}`)
     }
 
     const row = await getSettings();
-    const enabled = !row.voiceEnabled;
+    /*
+     * A target when the agent sends one, a flip otherwise (an older agent).
+     *
+     * The flip read only the stored switch, which is not what you can see:
+     * paused, the switch is on and the microphone is shut, so pressing the key
+     * to get voice back switched it *off* and said "Voice off". The agent now
+     * sends what it should become, worked out from what is actually happening,
+     * and the flip here treats a pause as off for the same reason.
+     */
+    const body = (request.body ?? {}) as { enabled?: unknown };
+    const enabled =
+      typeof body.enabled === 'boolean' ? body.enabled : !(row.voiceEnabled && !isPaused(row.voicePausedUntil));
 
     await db
       .update(settings)
@@ -422,6 +406,10 @@ ${decoys.join(' ')}`)
        * leaving a switch reading "on" next to a microphone that is shut.
        */
       awayFromPc: fresh ? (agentState!.awayFromPc ?? false) : false,
+      /** Open for one command from the listen shortcut, with voice off. */
+      borrowed: fresh ? (agentState!.borrowed ?? false) : false,
+      /** Fetching the speech models, in words — the first switch-on downloads ~100MB. */
+      preparing: fresh ? (agentState!.preparing ?? null) : null,
       peak: fresh ? agentState!.peak : 0,
       lastReportAt: agentState?.at ?? null,
       selectedDevice: row.voiceInputDevice,
@@ -515,12 +503,25 @@ ${decoys.join(' ')}`)
     const body = voiceCommandSchema.parse(request.body);
     const row = await getSettings();
 
-    if (!row.voiceEnabled) return { outcome: 'disabled' as const, text: body.text };
+    /*
+     * The listen shortcut while voice is off is allowed when that setting says
+     * so. This refused every command while voice was off, so the shortcut
+     * opened the microphone, heard you, and was told "disabled": push-to-talk
+     * that could never do anything. It was checked by watching memory rise when
+     * the key was pressed, which it did; nobody had looked at what came back.
+     */
+    if (!row.voiceEnabled && !(body.manual && row.voiceListenHotkeyWhileOff)) {
+      return { outcome: 'disabled' as const, text: body.text };
+    }
 
     // The speaker check is enforced here as well as in the agent. The agent
     // does it to avoid a pointless round trip; the server does it because it is
     // the only side that cannot be bypassed by a stale or edited agent config.
-    if (row.requireKnownSpeaker && row.voiceprint) {
+    // Not for the shortcut: a key pressed here is the proof, and there is no
+    // wake word to take a voiceprint from, so it failed every time. Nor for a
+    // voiceprint from the old speaker model, which nothing can score against —
+    // enforcing it would refuse every command until somebody enrolled again.
+    if (row.requireKnownSpeaker && row.voiceprint && !body.manual && voiceprintIsCurrent(JSON.parse(row.voiceprint))) {
       const score = body.speakerScore ?? -1;
       if (score < thresholdFraction(row.speakerThreshold)) {
         return { outcome: 'wrong-speaker' as const, text: body.text, speakerScore: body.speakerScore ?? null };

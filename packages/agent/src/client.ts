@@ -275,8 +275,12 @@ export class ServerClient {
    * opposite back: two presses in quick succession would otherwise both read
    * the same "before", and the second would undo nothing.
    */
-  voiceToggle(): Promise<{ enabled: boolean }> {
-    return this.request('/api/voice/toggle', { method: 'POST', body: '{}' });
+  voiceToggle(enabled?: boolean): Promise<{ enabled: boolean }> {
+    // A target rather than a flip when the agent knows what you can see — see the route.
+    return this.request('/api/voice/toggle', {
+      method: 'POST',
+      body: JSON.stringify(enabled === undefined ? {} : { enabled }),
+    });
   }
 
   /**
@@ -309,7 +313,7 @@ export class ServerClient {
    * as it has been turned into text — there is deliberately no endpoint that
    * would accept it.
    */
-  voiceCommand(payload: { text: string; speakerScore: number | null }): Promise<VoiceOutcome> {
+  voiceCommand(payload: { text: string; speakerScore: number | null; manual?: boolean }): Promise<VoiceOutcome> {
     return this.request<VoiceOutcome>('/api/voice/command', {
       method: 'POST',
       body: JSON.stringify(payload),

@@ -18,7 +18,7 @@
  * left; sticky pins it to the bottom of this screen's own column, so it is the
  * same bar at every width without knowing the drawer exists.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { pushStep } from '@app/view-history';
@@ -39,6 +39,7 @@ import { failing, needsSetup } from './SourceCard';
 import { flushQueue } from './sync-queue';
 import { resendRecent } from './reading-log';
 import { openAtLoad } from './open-chapter';
+import { repaintSoon } from './take-screen';
 import { manga, type SeriesSummary } from './manga-api';
 
 type Tab = 'browse' | 'library' | 'history' | 'downloads' | 'more';
@@ -366,6 +367,18 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
       />
     );
   if (!overlay && suwayomiOpen) overlay = <SuwayomiUI onClose={() => setSuwayomiOpen(false)} />;
+
+  /*
+   * Coming back to the tabs from a chapter list or any other screen over them:
+   * `hidden` is lifted, and iOS can leave what it uncovers unpainted until the
+   * window scrolls. See `take-screen.ts`.
+   */
+  const covered = overlay !== null;
+  const wasCovered = useRef(covered);
+  useEffect(() => {
+    if (wasCovered.current && !covered) repaintSoon();
+    wasCovered.current = covered;
+  }, [covered]);
 
   const title = TABS.find((t) => t.id === tab)!.label;
 

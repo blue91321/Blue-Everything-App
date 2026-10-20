@@ -2,35 +2,28 @@
  * How often does the wake word fire on speech that was not addressed to it?
  *
  *   npm run wake-falsing -w @everything/agent
+ *   WAKE_WORD="hey computer" npm run wake-falsing -w @everything/agent
  *
- * The wake recogniser runs a grammar of two or three words plus `[unk]`, so
- * every sound in the room has to be mapped onto one of them. A *partial* is the
- * decoder's current best guess and is revisable; the endpointed result is what
- * it settles on once `[unk]` has had a fair chance to win.
+ * This is the number the switch from Vosk was made on. A closed grammar had to
+ * put every sound somewhere, so "harvest festival" landed on "hey jarvis"; the
+ * keyword spotter can say no. It feeds ordinary conversation past the spotter,
+ * behind the live gate, and counts — then checks the real thing still wakes it,
+ * said normally, said fast, and run into a command.
  *
- * This feeds ordinary conversation past both and counts the difference, which
- * is the number that decides whether firing early is affordable.
+ * `EVERYTHING_WAKE_THRESHOLD` (default 0.25) and `EVERYTHING_WAKE_SCORE`
+ * (default 1.0) are read by the spotter, so a change to either can be measured
+ * here before anybody lives with it.
+ *
+ * The synthesiser cannot reproduce everything: it says "Harley" far too clearly
+ * to be mistaken, which is a limit of the tool and not evidence the problem is
+ * gone. A slurred name across a room is not something this can make.
  */
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { matchesWakeWord } from '@everything/shared';
-import { rms, SAMPLE_RATE } from '../mic.js';
-import { createRecogniser } from '../vosk.js';
+import { wakeWordRequired } from '@everything/shared';
+import { cleanUp, say, spot } from './speech-test.js';
 
-const WAKE = process.env.WAKE_WORD || 'hey jarvis';
-/**
- * Words to put in the grammar beside the wake word, comma-separated.
- *
- *   WAKE_DECOYS="harvest,festival" npm run wake-falsing -w @everything/agent
- *
- * This is the whole point of the setting on the Voice tab, and it is here so
- * the effect can be *measured* rather than argued about.
- */
+const WAKE = (process.env.WAKE_WORD || 'hey jarvis').toLowerCase();
 const DECOYS = (process.env.WAKE_DECOYS ?? '').split(',').map((w) => w.trim()).filter(Boolean);
-const BLOCK = SAMPLE_RATE / 10;
-const SPEECH_FLOOR = 0.006;
+const PHRASES = [...new Set([WAKE, wakeWordRequired(WAKE).join(' '), ...DECOYS])];
 
 /** Nothing here is addressed to the app. None of it should wake anything. */
 const CHATTER = [
@@ -44,137 +37,42 @@ const CHATTER = [
   'just give us a minute and we can sort it out',
   'that is not what i meant at all',
   'they always do this at the end of the month',
-  /*
-   * Reported from real use: a dog called Harley set it off repeatedly. It is
-   * two syllables with the same stress and a near-identical vowel, which is
-   * exactly the shape that beats `[unk]` in a grammar holding one real phrase.
-   */
   'harley come here',
   'where did harley go',
   'harley stop that right now',
   'charlie was asking about it earlier',
+  'hey are you coming to dinner tonight',
+  'jars of jam are in the cupboard',
 ];
 
-const workDir = mkdtempSync(join(tmpdir(), 'everything-falsing-'));
-
-function synthesise(text: string, file: string, rate = 1): void {
-  const script = `
-    Add-Type -AssemblyName System.Speech
-    $fmt = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(${SAMPLE_RATE}, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
-    $s = New-Object System.Speech.Synthesis.SpeechSynthesizer
-    $s.SetOutputToWaveFile(${JSON.stringify(file)}, $fmt)
-    $s.Rate = ${rate}
-    $s.Speak(${JSON.stringify(text)})
-    $s.Dispose()
-  `;
-  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    windowsHide: true,
-  });
-  if (result.status !== 0) throw new Error(`speech synthesis failed: ${result.stderr?.toString().trim()}`);
-}
-
-function pcm(file: string): Int16Array {
-  const buffer = readFileSync(file);
-  const body = buffer.subarray(44);
-  return new Int16Array(body.buffer, body.byteOffset, Math.floor(body.byteLength / 2));
-}
-
-const HANGOVER_MS = 700;
-
-interface Outcome {
-  /** The rule that was tried and rejected: fire on a partial while audible. */
-  partial: boolean;
-  /** What ships: the gate, the hangover, and a flush at the boundary. */
-  live: boolean;
-}
-
-/**
- * Mirrors `poll()` in voice.ts — the gate, the hangover, and the flush at the
- * utterance boundary.
- *
- * Kept faithful on purpose. A probe that reimplements the rule loosely
- * measures a system nobody is running, which is worse than not measuring.
- */
-function run(audio: Int16Array): Outcome {
-  const wake = createRecogniser([WAKE, ...DECOYS], { withSpeaker: true });
-  const out: Outcome = { partial: false, live: false };
-
-  let at = 0;
-  let lastLoudAt = 0;
-  let fedAnything = false;
-
-  const feed = (chunk: Int16Array): void => {
-    at += 100;
-    const level = rms(chunk);
-    if (level >= SPEECH_FLOOR) lastLoudAt = at;
-
-    // The gate. Quiet for longer than the hangover is an utterance boundary.
-    if (at - lastLoudAt > HANGOVER_MS) {
-      if (fedAnything) {
-        const settled = wake.flush();
-        if (settled.text && matchesWakeWord(settled.text, WAKE)) out.live = true;
-        else wake.reset();
-        fedAnything = false;
-      }
-      return;
-    }
-
-    fedAnything = true;
-    const finished = wake.accept(chunk);
-    if (finished?.text && matchesWakeWord(finished.text, WAKE)) out.live = true;
-
-    // The rejected rule, measured alongside for comparison only.
-    if (!out.partial && level >= SPEECH_FLOOR) {
-      const guess = wake.partial();
-      if (guess && matchesWakeWord(guess, WAKE)) out.partial = true;
-    }
-  };
-
-  for (let i = 0; i < audio.length; i += BLOCK) feed(audio.subarray(i, Math.min(i + BLOCK, audio.length)));
-
-  // Long enough for the boundary to be reached and the flush to happen.
-  const quiet = new Int16Array(BLOCK);
-  for (let i = 0; i < 12; i++) feed(quiet);
-
-  wake.close();
-  return out;
-}
+const isWake = (phrase: string) => !DECOYS.includes(phrase);
 
 try {
-  console.log(`\nwake word: "${WAKE}"`);
+  console.log(`\nwake word: "${WAKE}"   listening for: ${PHRASES.map((p) => `"${p}"`).join(', ')}`);
   console.log('none of the following is addressed to the app\n');
 
-  let partialFalse = 0;
-  let finalFalse = 0;
-
+  let falseWakes = 0;
   for (const line of CHATTER) {
-    const file = join(workDir, 'c.wav');
-    synthesise(line, file);
-    const outcome = run(pcm(file));
-    if (outcome.partial) partialFalse++;
-    if (outcome.live) finalFalse++;
-
-    const mark = outcome.live ? 'WOKE' : '  . ';
-    console.log(
-      `  ${mark}  partial-rule=${outcome.partial ? 'FIRED' : '-----'}  live=${outcome.live ? 'FIRED' : '-----'}  "${line}"`
-    );
+    const hits = spot(say(line), PHRASES).filter((hit) => isWake(hit.phrase));
+    if (hits.length) falseWakes++;
+    console.log(`  ${hits.length ? 'WOKE' : '  . '}  "${line}"${hits.length ? `  (as "${hits[0].phrase}")` : ''}`);
   }
-
-  console.log(`\n  false wakes on a partial : ${partialFalse} / ${CHATTER.length}`);
-  console.log(`  false wakes when settled : ${finalFalse} / ${CHATTER.length}`);
+  console.log(`\n  false wakes: ${falseWakes} / ${CHATTER.length}`);
 
   console.log('\nand the real thing must still work:\n');
-  for (const [label, rate] of [['normal', 1], ['fast', 3]] as const) {
-    const file = join(workDir, 'w.wav');
-    synthesise(WAKE, file, rate);
-    const outcome = run(pcm(file));
-    console.log(
-      `  "${WAKE}" (${label})  partial-rule=${outcome.partial ? 'fires' : 'MISSES'}  live=${outcome.live ? 'fires' : 'MISSES'}`
-    );
+  let missed = 0;
+  for (const [label, text, rate] of [
+    ['normal', WAKE, 1],
+    ['fast', WAKE, 3],
+    ['run together', `${WAKE} i drank two waters`, 1],
+    ['name only', wakeWordRequired(WAKE).join(' '), 1],
+  ] as const) {
+    const hit = spot(say(text, rate), PHRASES).find((h) => isWake(h.phrase));
+    if (!hit) missed++;
+    console.log(`  ${hit ? 'fires ' : 'MISSES'}  ${label.padEnd(13)} "${text}"${hit ? `  at ${hit.atMs}ms` : ''}`);
   }
   console.log('');
+  process.exitCode = falseWakes > 0 || missed > 0 ? 1 : 0;
 } finally {
-  rmSync(workDir, { recursive: true, force: true });
+  cleanUp();
 }
-
-process.exit(0);

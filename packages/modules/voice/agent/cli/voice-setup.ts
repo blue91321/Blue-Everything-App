@@ -7,39 +7,46 @@
  * so there has to be one command that answers it.
  *
  *   npm run voice-setup -w @everything/agent
+ *
+ * Fetches the models if they are missing, through the same function the agent
+ * uses when voice is first switched on, so the two cannot disagree about what
+ * "installed" means.
  */
-import { existsSync, statSync } from 'node:fs';
 import { listMicrophones, openMicrophone, rms, SAMPLE_RATE } from '../mic.js';
-import { createRecogniser, speakerModelAvailable, VoskUnavailable } from '../vosk.js';
-import { VOICE_DOWNLOADS, voiceModelPaths } from '../voice-paths.js';
+import { createWakeSpotter, missingModels, speakerModelAvailable, toFloat } from '../engine.js';
+import { downloadModels, modelsNeeded, removeOldVosk } from '../models.js';
+import { voiceModelPaths } from '../voice-paths.js';
 
 const paths = voiceModelPaths();
 const ok = (label: string, value: string) => console.log(`  ${label.padEnd(22)}${value}`);
 
 console.log(`\nModels directory: ${paths.root}\n`);
 
-const present = {
-  library: existsSync(paths.library),
-  speech: existsSync(paths.speechModel) && statSync(paths.speechModel).isDirectory(),
-  speaker: speakerModelAvailable(),
-};
-
-ok('libvosk.dll', present.library ? 'found' : 'MISSING');
-ok('speech model', present.speech ? 'found' : 'MISSING');
-ok('speaker model', present.speaker ? 'found' : 'missing — "only my voice" will be unavailable');
-
-if (!present.library || !present.speech) {
-  console.log('\nVoice needs three downloads. None of them are in git — they are');
-  console.log('third-party binaries, and this repo keeps its own history clean.\n');
-
-  for (const item of VOICE_DOWNLOADS) {
-    console.log(`  ${item.what}  (${item.size})`);
-    console.log(`    ${item.url}`);
-    console.log(`    unpack: ${item.unpackTo}\n`);
+if (modelsNeeded()) {
+  console.log('Fetching the speech models (about 100MB, once)…');
+  let last = '';
+  try {
+    await downloadModels((progress) => {
+      const line = `  ${progress.what}: ${Math.round((progress.done / progress.total) * 100)}%`;
+      if (line !== last) process.stdout.write(`\r${line.padEnd(70)}`);
+      last = line;
+    });
+    console.log('\n');
+  } catch (error) {
+    console.error(`\n\nFAILED: ${(error as Error).message}\n`);
+    process.exit(1);
   }
+}
 
-  console.log(`Everything goes under ${paths.root}`);
-  console.log('Then run this command again.\n');
+const removed = removeOldVosk();
+if (removed.length) console.log(`Removed what Vosk left behind: ${removed.join(', ')}\n`);
+
+const missing = missingModels();
+ok('wake word spotter', missing.some((f) => f.startsWith(paths.wake.dir)) ? 'MISSING' : 'found');
+ok('command recogniser', missing.some((f) => f.startsWith(paths.command.dir)) ? 'MISSING' : 'found');
+ok('speaker model', speakerModelAvailable() ? 'found' : 'missing — "only my voice" will be unavailable');
+if (missing.length) {
+  console.error(`\nFAILED: still missing ${missing.join(', ')}\n`);
   process.exit(1);
 }
 
@@ -52,28 +59,24 @@ if (devices.length === 0) {
 } else {
   for (const device of devices) console.log(`  [${device.id}] ${device.name} (${device.channels}ch)`);
 }
-console.log('  The default input is used; change it in Windows sound settings.');
+console.log('  The default input is used unless one is picked on the Voice screen.');
 
 /* ------------------------------------------------------------------ */
 
-console.log('\nLoading the speech model…');
+console.log('\nLoading the wake word spotter…');
 const started = Date.now();
-let recogniser;
+let spotter;
 try {
-  recogniser = createRecogniser(['hey everything'], { withSpeaker: true });
+  spotter = createWakeSpotter(['hey jarvis', 'jarvis']);
 } catch (error) {
-  console.error(`\nFAILED: ${(error as Error).message}`);
-  if (error instanceof VoskUnavailable) {
-    console.error('\nThe files are present but could not be loaded. The usual cause is an');
-    console.error('architecture mismatch — this needs the win64 build of vosk.');
-  }
+  console.error(`\nFAILED: ${(error as Error).message}\n`);
   process.exit(1);
 }
-console.log(`  loaded in ${((Date.now() - started) / 1000).toFixed(1)}s`);
+console.log(`  loaded in ${Date.now() - started}ms`);
 
 /* ------------------------------------------------------------------ */
 
-console.log('\nOpening the microphone for 3 seconds — say something.');
+console.log('\nOpening the microphone for 3 seconds — say "hey jarvis".');
 
 let mic;
 try {
@@ -85,7 +88,8 @@ try {
 
 let peak = 0;
 let blocks = 0;
-let recognitionMs = 0;
+let spottingMs = 0;
+let heard: string | null = null;
 
 const timer = setInterval(() => {
   const samples = mic.read();
@@ -95,20 +99,17 @@ const timer = setInterval(() => {
   peak = Math.max(peak, rms(samples));
 
   const before = process.hrtime.bigint();
-  recogniser.accept(samples);
-  recognitionMs += Number(process.hrtime.bigint() - before) / 1e6;
+  const hit = spotter.accept(toFloat(samples));
+  spottingMs += Number(process.hrtime.bigint() - before) / 1e6;
+  if (hit) heard = hit.phrase;
 }, 100);
 
 setTimeout(() => {
   clearInterval(timer);
-  const heard = recogniser.flush();
   mic.close();
-  recogniser.close();
 
   // A live microphone in a quiet room reads a small non-zero level; a dead one
-  // reads exactly 0. Reporting "is the right mic default?" for anything below
-  // speech conflates "nobody spoke" with "wrong device", which sends you to
-  // Windows sound settings to fix something that was never broken.
+  // reads exactly 0.
   const level =
     peak < 0.0005
       ? '  <- no signal at all; wrong device, or muted'
@@ -118,9 +119,8 @@ setTimeout(() => {
 
   console.log(`\n  blocks captured      ${blocks} (expected ~30 at ${SAMPLE_RATE}Hz)`);
   console.log(`  loudest             ${peak.toFixed(4)}${level}`);
-  console.log(`  recognition cost    ${(recognitionMs / Math.max(blocks, 1)).toFixed(2)}ms per 100ms block`);
-  console.log(`  heard               ${heard.text || '(nothing on-grammar — expected unless you said the wake word)'}`);
-  console.log(`  speaker embedding   ${heard.speaker ? `${heard.speaker.length} dimensions` : 'none (needs a few seconds of speech)'}`);
+  console.log(`  spotting cost       ${(spottingMs / Math.max(blocks, 1)).toFixed(2)}ms per 100ms block`);
+  console.log(`  heard               ${heard ? `"${heard}"` : '(not the wake word — expected unless you said it)'}`);
 
   const failures = [
     blocks === 0 && 'no audio arrived from the microphone at all',

@@ -323,6 +323,8 @@ async function startShuffle(
     lists: sources.map((x) => x.name),
     repeatAfter: order === 'random' ? repeatAfter : null,
     quietSince: null,
+    failingSince: null,
+    lastAskedAt: 0,
     timer: null,
     stopped: false,
     foreign: new Set(),
@@ -452,8 +454,10 @@ function run(s: Session): void {
  * and read back at boot. The dealer is rebuilt with what was sent as its
  * history, so Random's gap and Shuffle's deck carry on rather than restart.
  *
- * Only a session that was still alive recently is resumed: one whose music
- * stopped long ago is over, and resuming it would poll an empty room.
+ * Resumed however long ago it was saved: a paused session is still a
+ * session, and is only written when something changes, so its file can be
+ * hours old. If other music is playing by the time it looks, its first check
+ * ends it, as it would have had the server never stopped.
  */
 const SESSION_FILE = join(dataDir, 'spotify-shuffle-session.json');
 
@@ -514,10 +518,6 @@ export async function resumeSession(): Promise<void> {
     forget();
     return;
   }
-  if (Date.now() - saved.savedAt > QUIET_MS) {
-    forget();
-    return;
-  }
   const account = await getAccount('spotify');
   if (!account || !SHUFFLE_SCOPES.every((x) => grantedScopes(account).includes(x))) return forget();
   const sources = (await shuffleSources()).filter((x) => x.readable && saved.resume.collectionIds.includes(x.id));
@@ -540,6 +540,8 @@ export async function resumeSession(): Promise<void> {
     lists: sources.map((x) => x.name),
     repeatAfter: saved.repeatAfter,
     quietSince: null,
+    failingSince: null,
+    lastAskedAt: 0,
     timer: null,
     stopped: false,
     foreign: new Set(),
@@ -589,8 +591,16 @@ export function pickDevice<D extends { is_active: boolean; type?: string }>(
  * anybody when a song ends, so the only way to know the queue is running low is
  * to ask. Every `TICK_MS` it asks what is playing, and tops up when fewer than
  * the setting are still ahead. It ends itself when you play something that is
- * not from it, when nothing has played for `QUIET_MS`, or when Stop is pressed,
- * so a session nobody is listening to does not poll for ever.
+ * not from it, or when Stop is pressed.
+ *
+ * **Paused, it waits rather than ending.** It used to end once nothing had
+ * played for half an hour, so after a long pause the songs already queued
+ * played out when the music came back, and then nothing followed them. Now, once nothing has played
+ * for `SLOW_AFTER_MS`, it asks only every `IDLE_CHECK_MS`: about four requests
+ * an hour to an empty room, against eighty while the music plays, and the
+ * queue still holds a full `queueAhead` of songs for when it comes back, so
+ * the slow check costs nothing you would hear. Only a Spotify that has refused
+ * every check for `FAILING_MS` (a lost permission, a deleted device) ends it.
  */
 type Session = {
   deviceId: string;
@@ -624,11 +634,20 @@ type Session = {
   /** What a restart needs to build the dealer again — see `resumeSession`. */
   resume: { collectionIds: string[]; repeatAfter: number; recency: Omit<Recency, 'history'> };
   quietSince: number | null;
+  /** Since when every check has failed, for `FAILING_MS`. */
+  failingSince: number | null;
+  /** When Spotify was last asked, so a quiet session can skip ticks. */
+  lastAskedAt: number;
   timer: ReturnType<typeof setInterval> | null;
 };
 
 const TICK_MS = 45_000;
-const QUIET_MS = 30 * 60_000;
+/** Nothing playing for this long, and the checks slow down. */
+const SLOW_AFTER_MS = 10 * 60_000;
+/** How often a quiet session asks whether the music is back. */
+const IDLE_CHECK_MS = 15 * 60_000;
+/** Every check failing for this long ends it: Spotify will not take songs from it. */
+const FAILING_MS = 24 * 60 * 60_000;
 let session: Session | null = null;
 let lastEnded: { at: number; why: string } | null = null;
 
@@ -708,7 +727,11 @@ async function tick(s: Session): Promise<void> {
   // One check at a time: a slow top-up still adding songs when the next check
   // came round had both adding, and the queue over-filled.
   if (session !== s || s.checking) return;
+  // Quiet for a while: the timer still ticks, but only every `IDLE_CHECK_MS` asks anything.
+  const quietFor = s.quietSince === null ? 0 : Date.now() - s.quietSince;
+  if (quietFor > SLOW_AFTER_MS && Date.now() - s.lastAskedAt < IDLE_CHECK_MS) return;
   s.checking = true;
+  s.lastAskedAt = Date.now();
   try {
     const now = await apiGet<{
       is_playing: boolean;
@@ -716,9 +739,10 @@ async function tick(s: Session): Promise<void> {
       device?: { id: string | null; name: string } | null;
     } | null>('spotify', `${API}/me/player`);
     if (session !== s) return;
+    s.failingSince = null;
     if (!now?.is_playing) {
+      // Paused or stopped: waited out, at the slower pace — see the note on `Session`.
       s.quietSince ??= Date.now();
-      if (Date.now() - s.quietSince > QUIET_MS) stopSession('nothing has played for half an hour');
       return;
     }
     s.quietSince = null;
@@ -790,10 +814,12 @@ async function tick(s: Session): Promise<void> {
       changes.emitChange('integrations');
     }
   } catch (error) {
-    // One failed check is not the end: the next tries again. A lost permission
-    // or a vanished device keeps failing, and the quiet rule ends it.
+    // One failed check is not the end: the next tries again, at the slower pace
+    // once it has gone on a while. A lost permission or a vanished device fails
+    // every time, and a day of that ends it.
     s.quietSince ??= Date.now();
-    if (Date.now() - s.quietSince > QUIET_MS) {
+    s.failingSince ??= Date.now();
+    if (Date.now() - s.failingSince > FAILING_MS) {
       stopSession(error instanceof Error ? error.message : 'Spotify stopped answering');
     }
   } finally {

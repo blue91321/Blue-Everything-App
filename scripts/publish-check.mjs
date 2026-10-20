@@ -50,6 +50,13 @@ const MUST_BE_IGNORED = [
   'backups/20260101-000000-v0.4.0.zip',
   'packages/agent/src/features/voice/models/libvosk.dll',
   'packages/agent/src/features/voice/models/vosk-model-small-en-us-0.15/README',
+  // Where the models actually are now. The two above name a folder that moved
+  // twice, so the check had been proving a path nothing used any more.
+  'packages/modules/voice/agent/models/command/encoder.onnx',
+  'packages/modules/voice/agent/models/speaker.onnx',
+  'packages/modules/voice/agent/models/.download/x.tar.bz2',
+  // Trips: confirmation codes, and the flight service key.
+  'packages/server/data/trips.json',
   'secrets/anything',
   'private.pem',
 ];

@@ -7,10 +7,24 @@
  * module in. It is exactly the mistake the friends panel made once, where a
  * six-word label dragged in 9.5KB of Connections screen.
  *
- * So, like `presence.ts` and `chapter-nav.ts`: **no imports but a type**, which
- * is erased. Everything here is a pure function of a series row.
+ * So, like `presence.ts` and `chapter-nav.ts`: **no imports at all**.
+ * Everything here is a pure function of a series row, described below by the
+ * fields it reads, which `ShelfRow` has. It imported that type once, and
+ * the type alone pulled `manga-api.ts` and the app's aliases into the server's
+ * typecheck the moment `manga-check` asserted the sort.
  */
-import type { SeriesSummary } from './manga-api';
+export interface ShelfRow {
+  title: string;
+  addedAt: number;
+  error: string | null;
+  favourite?: boolean;
+  source: object | null;
+  latestNumber?: number | null;
+  readUpTo?: number | null;
+  lastReleaseAt?: number | null;
+  lastReadAt?: number | null;
+  position?: { chapter: number } | null;
+}
 
 export type SortKey = 'read' | 'catchup' | 'updated' | 'title' | 'added';
 
@@ -29,7 +43,7 @@ export const SORT_LABEL: Record<SortKey, string> = {
 export const SORT_KEY = 'manga.library-sort';
 
 /** Somewhere past where you are. */
-export function hasNew(s: SeriesSummary): boolean {
+export function hasNew(s: ShelfRow): boolean {
   const latest = s.latestNumber;
   if (latest === null || latest === undefined) return false;
   const reached = Math.max(s.readUpTo ?? -Infinity, s.position?.chapter ?? -Infinity);
@@ -37,7 +51,7 @@ export function hasNew(s: SeriesSummary): boolean {
 }
 
 /** Whole chapters between where you are and the newest. Zero when either is unknown. */
-export function toCatchUp(s: SeriesSummary): number {
+export function toCatchUp(s: ShelfRow): number {
   if (!hasNew(s)) return 0;
   const reached = Math.max(s.readUpTo ?? -Infinity, s.position?.chapter ?? -Infinity);
   return Math.max(1, Math.floor(s.latestNumber!) - Math.floor(reached));
@@ -58,7 +72,7 @@ export function toCatchUp(s: SeriesSummary): number {
  * through every layer to say what the message already says, and a message that
  * changes shows up as a row in the wrong filter rather than as a crash.
  */
-export const sourceHasNothing = (s: SeriesSummary) =>
+export const sourceHasNothing = (s: ShelfRow) =>
   s.source !== null && s.error !== null && /no chapters/i.test(s.error);
 
 /**
@@ -66,7 +80,7 @@ export const sourceHasNothing = (s: SeriesSummary) =>
  *
  * "Had nothing for it" is excluded: that is an *answer*, and a useful one.
  */
-export const notAnswering = (s: SeriesSummary) =>
+export const notAnswering = (s: ShelfRow) =>
   s.source !== null && s.error !== null && !/no chapters/i.test(s.error);
 
 /** "Asura Scans (EN)" → "Asura Scans": the language is the same on every tile. */
@@ -110,9 +124,38 @@ export function storedNewFirst(): boolean {
   }
 }
 
-export function sorted(list: SeriesSummary[], key: SortKey, newFirst: boolean): SeriesSummary[] {
-  const byTitle = (a: SeriesSummary, b: SeriesSummary) => a.title.localeCompare(b.title);
-  const desc = (f: (s: SeriesSummary) => number | null | undefined) => (a: SeriesSummary, b: SeriesSummary) =>
+/**
+ * The Library's "Favourites on top" box, per device like its sort.
+ *
+ * Off by default, and stored as '1' for on: the library came from an import
+ * where nothing was starred, and a box nobody ticked should not move anything.
+ */
+export const FAV_FIRST_KEY = 'manga.library-fav-first';
+
+export function storedFavFirst(): boolean {
+  try {
+    return localStorage.getItem(FAV_FIRST_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The order, then the boxes on top of it.
+ *
+ * With both ticked the groups are: starred with a new chapter, new chapter,
+ * starred, the rest. A new chapter outranks the star because it is the box
+ * about what has moved, and a starred series with nothing new is waiting for
+ * nothing; the star then orders each half.
+ */
+export function sorted<T extends ShelfRow>(
+  list: T[],
+  key: SortKey,
+  newFirst: boolean,
+  favFirst = false
+): T[] {
+  const byTitle = (a: ShelfRow, b: ShelfRow) => a.title.localeCompare(b.title);
+  const desc = (f: (s: ShelfRow) => number | null | undefined) => (a: ShelfRow, b: ShelfRow) =>
     (f(b) ?? 0) - (f(a) ?? 0) || byTitle(a, b);
   const copy = [...list];
   switch (key) {
@@ -132,6 +175,8 @@ export function sorted(list: SeriesSummary[], key: SortKey, newFirst: boolean): 
       copy.sort(desc((s) => s.lastReleaseAt));
       break;
   }
-  // Stable, so within each half the order chosen above holds.
-  return newFirst ? copy.sort((a, b) => Number(hasNew(b)) - Number(hasNew(a))) : copy;
+  if (!newFirst && !favFirst) return copy;
+  const rank = (s: ShelfRow) => (newFirst && hasNew(s) ? 2 : 0) + (favFirst && s.favourite ? 1 : 0);
+  // Stable, so within each group the order chosen above holds.
+  return copy.sort((a, b) => rank(b) - rank(a));
 }

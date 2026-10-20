@@ -491,8 +491,10 @@ export interface AppSettings {
   requireKnownSpeaker?: number;
   /** 0-1. Stored as whole percent; converted on the way out of the server. */
   speakerThreshold?: number;
-  /** The voiceprint itself is never sent — no screen has a use for 128 floats. */
+  /** The voiceprint itself is never sent — no screen has a use for 192 floats. */
   hasVoiceprint?: boolean;
+  /** Enrolled under the old speaker model: kept, not enforced, and worth redoing. */
+  voiceprintStale?: boolean;
   voiceprintSamples?: number;
   /** Microphone name; null follows the Windows default. */
   voiceInputDevice?: string | null;
@@ -573,11 +575,6 @@ export interface AppSettings {
 }
 
 /** An `AppSettings` from a server that actually has voice support. */
-export interface VoiceVocabulary {
-  total: number;
-  groups: Array<{ id: string; label: string; why: string; words: string[] }>;
-}
-
 export type VoiceSettings = AppSettings & Required<Pick<AppSettings, 'wakeWord' | 'speakerThreshold' | 'voiceprintSamples'>>;
 
 export const serverSupportsVoice = (settings: AppSettings): settings is VoiceSettings =>
@@ -601,6 +598,10 @@ export interface VoiceStatus {
   pausedUntil: number | null;
   /** Closed because the desk is empty — distinct from off, paused and broken. */
   awayFromPc?: boolean;
+  /** Open for one command from the listen shortcut, with voice switched off. */
+  borrowed?: boolean;
+  /** Fetching the speech models, in words, or null. */
+  preparing?: string | null;
   testing: boolean;
   testUntil: number;
   /** The last test ended because a command matched, not because it ran out. */
@@ -611,7 +612,7 @@ export interface VoiceStatus {
   enrolSamples: number;
   /** How well the last sample agreed with the ones before it, 0-1. */
   enrolAgreement: number | null;
-  /** Phrase words the speech model cannot pronounce, so can never be heard. */
+  /** Phrase words the recogniser never writes — a number in digits — so can never match. */
   unknownWords: string[];
   /**
    * Key combinations the agent could not register — nearly always taken by
@@ -1670,8 +1671,6 @@ export const api = {
     test: (text: string) => post<VoiceTest>('/api/voice/test', { text }),
     forgetVoice: () => request<void>('/api/voice/enrol', { method: 'DELETE' }),
     status: () => request<VoiceStatus>('/api/voice/status'),
-    /** What the recogniser can say, grouped by where each word came from. */
-    vocabulary: () => request<VoiceVocabulary>('/api/voice/vocabulary'),
     commands: () => request<VoiceCommand[]>('/api/voice/commands'),
     createCommand: (payload: Partial<VoiceCommand>) => post<VoiceCommand>('/api/voice/commands', payload),
     updateCommand: (id: string, payload: Partial<VoiceCommand>) =>
