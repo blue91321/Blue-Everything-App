@@ -128,12 +128,28 @@ if ((Test-Listening) -and -not $AgentOnly) {
   $AgentOnly = $true
 }
 
+<#
+  Runs npm without letting its stderr end this script. With
+  $ErrorActionPreference = 'Stop', Windows PowerShell 5.1 turns each line a
+  native program writes to stderr into an error, but only when the output is
+  redirected: in a console window it passes through. The tray's Restart sends
+  everything to logs	ray.log, so a harmless warning from vite during
+  "rendering chunks" ended the restart halfway through the build, after the
+  server had been stopped and before anything was started again. The exit code
+  is what decides failure, and the callers still check $LASTEXITCODE.
+#>
+function Invoke-Npm {
+  $npmArgs = $args
+  $ErrorActionPreference = 'Continue'
+  & npm @npmArgs 2>&1 | ForEach-Object { "$_" }
+}
+
 # First run — this takes a couple of minutes, then never happens again.
 if (-not (Test-Path (Join-Path $root 'node_modules'))) {
   Write-Host 'First run: installing dependencies (a few minutes)...' -ForegroundColor Cyan
   Push-Location $root
   try {
-    & npm install --no-fund --no-audit
+    Invoke-Npm install --no-fund --no-audit
     if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
   } finally { Pop-Location }
 }
@@ -144,8 +160,8 @@ elseif (-not (Test-Path (Join-Path $root 'node_modules\@everything\server'))) {
   Write-Host 'First run: finishing the install...' -ForegroundColor Cyan
   Push-Location $root
   try {
-    & npm install --offline --no-fund --no-audit
-    if ($LASTEXITCODE -ne 0) { & npm install --no-fund --no-audit }
+    Invoke-Npm install --offline --no-fund --no-audit
+    if ($LASTEXITCODE -ne 0) { Invoke-Npm install --no-fund --no-audit }
     if ($LASTEXITCODE -ne 0) { throw 'npm install failed' }
   } finally { Pop-Location }
 }
@@ -187,7 +203,7 @@ if ($needsBuild) {
   Write-Host 'Building the app...' -ForegroundColor Cyan
   Push-Location $root
   try {
-    & npm run build -w @everything/web
+    Invoke-Npm run build -w @everything/web
     if ($LASTEXITCODE -ne 0) { throw 'building the web app failed' }
   } finally { Pop-Location }
   # Written after the build, not before: a failed build must not record a state

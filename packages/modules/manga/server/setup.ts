@@ -237,7 +237,7 @@ type ExtensionRun = { updated: string[]; failed: string[] };
  * update. It reads the list from the repositories, so it is a network fetch;
  * each update is Suwayomi downloading one small file.
  */
-async function updateWaitingExtensions(adapter: SuwayomiAdapter, say: (step: string) => void = () => undefined): Promise<ExtensionRun> {
+export async function updateWaitingExtensions(adapter: SuwayomiAdapter, say: (step: string) => void = () => undefined): Promise<ExtensionRun> {
   // Read fresh, so what is waiting is what the repositories say now.
   const listed = await adapter.extensions(true).catch(() => []);
   const waiting = listed.filter((e) => e.installed && e.hasUpdate);
@@ -254,7 +254,7 @@ async function updateWaitingExtensions(adapter: SuwayomiAdapter, say: (step: str
   return run;
 }
 
-function extensionNote(run: ExtensionRun): string {
+export function extensionNote(run: ExtensionRun): string {
   if (run.updated.length === 0 && run.failed.length === 0) return 'extensions are up to date';
   const n = run.updated.length;
   return `${n} extension${n === 1 ? '' : 's'} updated${
@@ -278,7 +278,7 @@ function lastExtensionCheck(): ExtensionCheck | null {
   }
 }
 
-function noteExtensionCheck(run: ExtensionRun): void {
+export function noteExtensionCheck(run: ExtensionRun): void {
   try {
     writeFileSync(EXTENSIONS_FILE, JSON.stringify({ at: Date.now(), note: extensionNote(run) }));
   } catch {
@@ -307,10 +307,12 @@ const EXTENSIONS_EVERY_MS = 24 * 60 * 60_000;
  * keeps failing until somebody presses update.
  */
 export async function updateExtensionsIfDue(): Promise<void> {
+  // Switched off on Manage extensions: they update only from its button then.
   if (state.running) return;
+  const store = read();
+  if (!store.autoUpdateExtensions) return;
   const last = lastExtensionCheck();
   if (last && Date.now() - last.at < EXTENSIONS_EVERY_MS) return;
-  const store = read();
   const url = store.suwayomiUrl ?? DEFAULT_BASE_URL;
   if (store.manageSuwayomi && suwayomiProcess.state.state !== 'running') return;
   const adapter = new SuwayomiAdapter(url);

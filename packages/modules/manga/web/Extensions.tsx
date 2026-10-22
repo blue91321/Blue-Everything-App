@@ -23,11 +23,20 @@
  * removing entries would make a search for something that exists come back
  * empty, which reads as the feature being broken.
  *
- * ### On a phone, flag instead of install
+ * ### From any device
  *
- * Installing runs code on the PC, so it is the PC's to do. A phone can flag an
- * extension instead, which runs nothing; flagged ones wait at the top of this
- * screen on the PC with an Install button, and installing clears the flag.
+ * Installing, removing, updating and the repository are all here on the phone
+ * too. It used to be the PC's alone, with the phone flagging what it wanted,
+ * but the phone already reaches Suwayomi's own interface through More, which
+ * does all of this, so the rule was a detour rather than a guard. Anything
+ * flagged from before is still listed at the top until installed or unflagged.
+ *
+ * ### Updating
+ *
+ * An out-of-date extension is the commonest reason a source stops working, so
+ * each one with an update has its own button, **Update all** takes every one,
+ * and a switch decides whether they update themselves once a day while
+ * Suwayomi is running (on by default, as it always was).
  */
 import { useEffect, useRef, useState } from 'react';
 import { FloatingBack } from '@app/FloatingBack';
@@ -56,11 +65,10 @@ function browseTarget(usage: ExtensionUsage | undefined, languages: readonly str
 }
 
 export function Extensions({
-  local,
   onClose,
   onBrowse,
 }: {
-  local: boolean;
+  local?: boolean;
   onClose: () => void;
   /** Open Browse on this source id. */
   onBrowse: (sourceId: string) => void;
@@ -73,6 +81,7 @@ export function Extensions({
   const [problem, setProblem] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [shown, setShown] = useState(PAGE);
+  const [updated, setUpdated] = useState<string | null>(null);
   const autoRefreshed = useRef(false);
 
   async function refresh() {
@@ -127,6 +136,7 @@ export function Extensions({
         a.name.localeCompare(b.name)
     );
   const waiting = all.filter((e) => !e.installed && flagged.has(e.pkg));
+  const outdated = installed.filter((e) => e.hasUpdate);
   const searching = query.trim().length >= 2;
   const available = searching
     ? all.filter((e) => matches(e, query) && !e.installed)
@@ -137,49 +147,41 @@ export function Extensions({
       const target = browseTarget(use(e), languages);
       return (
         <>
+          {e.hasUpdate && (
+            <button
+              className="btn primary"
+              disabled={busy !== null}
+              onClick={() => act(`u:${e.pkg}`, () => manga.extensions.update(e.pkg))}
+            >
+              {busy === `u:${e.pkg}` ? '…' : 'Update'}
+            </button>
+          )}
           {target && (
             <button className="btn subtle" onClick={() => onBrowse(target)}>
               Browse
             </button>
           )}
-          {local && (
-            <button
-              className="btn danger"
-              disabled={busy !== null}
-              onClick={() => act(e.pkg, () => manga.extensions.install(e.pkg, false))}
-            >
-              {busy === e.pkg ? '…' : 'Remove'}
-            </button>
-          )}
-        </>
-      );
-    }
-    if (local) {
-      return (
-        <>
-          {flagged.has(e.pkg) && (
-            <button className="btn subtle" disabled={busy !== null} onClick={() => act(`f:${e.pkg}`, () => manga.extensions.flag(e.pkg, false))}>
-              Unflag
-            </button>
-          )}
-          <button className="btn" disabled={busy !== null} onClick={() => act(e.pkg, () => manga.extensions.install(e.pkg))}>
-            {busy === e.pkg ? '…' : 'Install'}
+          <button
+            className="btn danger"
+            disabled={busy !== null}
+            onClick={() => act(e.pkg, () => manga.extensions.install(e.pkg, false))}
+          >
+            {busy === e.pkg ? '…' : 'Remove'}
           </button>
         </>
       );
     }
-    // Not this PC: a flag, which the PC will offer to install.
-    const on = flagged.has(e.pkg);
     return (
-      <button
-        className={on ? 'btn primary' : 'btn'}
-        aria-pressed={on}
-        disabled={busy !== null}
-        onClick={() => act(`f:${e.pkg}`, () => manga.extensions.flag(e.pkg, !on))}
-        title={on ? 'Flagged: it will be waiting on the PC. Tap to unflag.' : 'Flag it to install on the PC'}
-      >
-        {busy === `f:${e.pkg}` ? '…' : on ? '⚑ Flagged' : '⚐ Flag'}
-      </button>
+      <>
+        {flagged.has(e.pkg) && (
+          <button className="btn subtle" disabled={busy !== null} onClick={() => act(`f:${e.pkg}`, () => manga.extensions.flag(e.pkg, false))}>
+            Unflag
+          </button>
+        )}
+        <button className="btn" disabled={busy !== null} onClick={() => act(e.pkg, () => manga.extensions.install(e.pkg))}>
+          {busy === e.pkg ? '…' : 'Install'}
+        </button>
+      </>
     );
   };
 
@@ -222,12 +224,6 @@ export function Extensions({
         </button>
       </div>
 
-      {!local && (
-        <p className="meta">
-          Installing happens on the PC, since an extension is code that runs there. Flag what you want here and it will be
-          waiting at the top of this screen on the PC.
-        </p>
-      )}
       {problem && <p className="banner">{problem}</p>}
       {state.loading && <p className="empty">loading…</p>}
       {state.error && <p className="banner">Could not load: {state.error.message}</p>}
@@ -243,7 +239,7 @@ export function Extensions({
           <p>No extension repository is set, so there is nothing to install from.</p>
           <button
             className="btn primary"
-            disabled={!local || busy !== null}
+            disabled={busy !== null}
             onClick={() => act('repo', () => manga.extensions.setRepos([data.suggestedRepo]))}
           >
             {busy === 'repo' ? 'Adding…' : 'Use the Keiyoushi repository'}
@@ -259,12 +255,46 @@ export function Extensions({
         <>
           {waiting.length > 0 && (
             <>
-              <h3>Flagged to install{local ? '' : ' on the PC'}</h3>
+              <h3>Flagged to install</h3>
               {waiting.map(row)}
             </>
           )}
 
-          <h3>Installed</h3>
+          <div className="row between" style={{ alignItems: 'center', marginTop: 16 }}>
+            <h3 style={{ margin: 0 }}>Installed</h3>
+            {/*
+              Always there, not only when something is out of date: the list
+              says what Suwayomi last heard from the repositories, and this asks
+              them again before updating, so it can find an update the list has
+              not shown yet.
+            */}
+            <button
+              className={outdated.length > 0 ? 'btn primary' : 'btn subtle'}
+              disabled={busy !== null || installed.length === 0}
+              onClick={() =>
+                act('update-all', async () => {
+                  setUpdated((await manga.extensions.updateAll()).note);
+                })
+              }
+            >
+              {busy === 'update-all' ? 'Updating…' : outdated.length > 0 ? `Update all (${outdated.length})` : 'Check for updates'}
+            </button>
+          </div>
+          {updated && <p className="meta">{updated[0]!.toUpperCase() + updated.slice(1)}.</p>}
+          {data.autoUpdate !== undefined && (
+            <label className="meta" style={{ display: 'block', marginTop: 4 }}>
+              <input
+                type="checkbox"
+                checked={data.autoUpdate}
+                disabled={busy !== null}
+                onChange={(e) => act('auto', () => manga.extensions.setAutoUpdate(e.target.checked))}
+              />{' '}
+              Update them by themselves once a day, while Suwayomi is running
+              {data.lastCheck
+                ? ` · last: ${new Date(data.lastCheck.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}, ${data.lastCheck.note}`
+                : ''}
+            </label>
+          )}
           {installed.length === 0 && <p className="empty">None yet. Find one below to add.</p>}
           {installed.map(row)}
 

@@ -140,6 +140,25 @@ const IN_FLIGHT = 3;
 /** How long the reader waits before giving the pages that failed a second go. */
 const SECOND_GO_MS = 3_000;
 
+/**
+ * A page still not here after this says so, rather than sitting as a bare
+ * number. Page 11 of a Thunder Scans chapter sat as "11" for over two minutes
+ * while the server tried and failed to get it, and that looked exactly like a
+ * page on its way.
+ */
+const SLOW_NOTICE_MS = 10_000;
+
+/**
+ * A page that took this long to fail is a site that is slow, not one that
+ * refused. The server has already tried it twice by then (see `page-fetch.ts`),
+ * so the second go is skipped and the button, with the offer of another
+ * source, comes straight away instead of another minute and a half later.
+ */
+const GAVE_UP_SLOWLY_MS = 40_000;
+
+/** Another source's copy of this chapter, from `/elsewhere`. */
+export type ElsewhereChapter = { sourceName: string; lang: string | null; mangaId: string; chapterId: string; chapterName: string };
+
 /** The line across the screen that counts as "where you are" — just under the top. */
 const READ_LINE = 8;
 
@@ -170,6 +189,7 @@ export function Reader({
   hasNext = false,
   nextNumber = null,
   ahead = null,
+  onElsewhere,
 }: {
   /** A followed series. */
   seriesId?: string;
@@ -218,6 +238,11 @@ export function Reader({
   hasNext?: boolean;
   /** The number Next would open, so a jump over missing chapters can be questioned. */
   nextNumber?: number | null;
+  /**
+   * Open this chapter's copy on another source, offered when a page will not
+   * come. Absent where there is no followed series to read it under.
+   */
+  onElsewhere?: (copy: ElsewhereChapter) => void;
   /**
    * Reading ahead, what is ready after this chapter — "next 3 saved ✓",
    * "saving 13 · 40%". Shown under the chapter's number, so whether the next
@@ -301,6 +326,41 @@ export function Reader({
   const [failed, setFailed] = useState<Set<number>>(new Set());
   /** The ones being fetched again right now, so the button cannot be pressed twice. */
   const [retrying, setRetrying] = useState<Set<number>>(new Set());
+  /** Asked for more than `SLOW_NOTICE_MS` ago and still not here. */
+  const [slow, setSlow] = useState<Set<number>>(new Set());
+  /**
+   * Starts the clock on one request for a page; the function it returns stops
+   * it. Past `SLOW_NOTICE_MS` the slot says the page is slow.
+   */
+  const watchSlow = (index: number) => {
+    const timer = setTimeout(() => setSlow((had) => new Set(had).add(index)), SLOW_NOTICE_MS);
+    return () => {
+      clearTimeout(timer);
+      setSlow((had) => {
+        if (!had.has(index)) return had;
+        const next = new Set(had);
+        next.delete(index);
+        return next;
+      });
+    };
+  };
+  /** Looking for this chapter on another source, and what was found. */
+  const [elsewhere, setElsewhere] = useState<
+    | null
+    | { state: 'looking' }
+    | { state: 'found'; options: ElsewhereChapter[]; searched: number }
+    | { state: 'failed'; message: string }
+  >(null);
+  const findElsewhere = async () => {
+    if (!seriesId) return;
+    setElsewhere({ state: 'looking' });
+    try {
+      const { options, searched } = await manga.reader.elsewhere(seriesId, chapter.number);
+      setElsewhere({ state: 'found', options, searched });
+    } catch (error) {
+      setElsewhere({ state: 'failed', message: error instanceof Error ? error.message : 'could not look' });
+    }
+  };
   const [total, setTotal] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   /*
@@ -362,6 +422,7 @@ export function Reader({
     const path = paths.current[index];
     if (!path || retrying.has(index)) return;
     setRetrying((had) => new Set(had).add(index));
+    const done = watchSlow(index);
     try {
       // The same call the loader makes — only the page *list* differs in
       // preview — but fresh: past any saved copy here or on the PC, which may
@@ -380,6 +441,7 @@ export function Reader({
     } catch {
       // Still not coming. It stays marked, so the button stays there.
     } finally {
+      done();
       setRetrying((had) => {
         const next = new Set(had);
         next.delete(index);
@@ -397,6 +459,23 @@ export function Reader({
     for (const index of [...failed].sort((a, b) => a - b)) await retryPage(index);
   };
 
+  /**
+   * The gear's reload: every page not on screen yet, fresh, in reading order;
+   * or, when they are all here, every page, for one that arrived but draws
+   * wrong. Pages already on screen stay up until their new copy lands.
+   */
+  const [reloading, setReloading] = useState(false);
+  const reloadPages = async () => {
+    const missing = paths.current.map((_, i) => i).filter((i) => !urls[i]);
+    const which = missing.length > 0 ? missing : paths.current.map((_, i) => i);
+    setReloading(true);
+    try {
+      for (const index of which) await retryPage(index);
+    } finally {
+      setReloading(false);
+    }
+  };
+
   useEffect(() => {
     let alive = true;
     const made: string[] = [];
@@ -405,6 +484,8 @@ export function Reader({
       setUrls([]);
       setTotal(null);
       setProblem(null);
+      setSlow(new Set());
+      setElsewhere(null);
       try {
         const { pages } = preview
           ? await manga.browse.pages(preview, chapter.id)
@@ -430,6 +511,8 @@ export function Reader({
           while (alive) {
             const index = next++;
             if (index >= pages.length) return;
+            const began = Date.now();
+            const done = watchSlow(index);
             try {
               const url = await manga.reader.page(pages[index]);
               if (!alive) {
@@ -439,8 +522,14 @@ export function Reader({
               show(index, url);
             } catch {
               // One page failing must not stop the rest: a strip with a gap is
-              // readable, a blank screen is not. Kept for a second go below.
-              later.push(index);
+              // readable, a blank screen is not. Kept for a second go below,
+              // unless it took so long to fail that a second go is a minute and
+              // a half more of the same.
+              if (Date.now() - began >= GAVE_UP_SLOWLY_MS) {
+                if (alive) setFailed((had) => new Set(had).add(index));
+              } else later.push(index);
+            } finally {
+              done();
             }
           }
         };
@@ -460,6 +549,7 @@ export function Reader({
           await new Promise((r) => setTimeout(r, SECOND_GO_MS));
           for (const index of later.sort((a, b) => a - b)) {
             if (!alive) return;
+            const done = watchSlow(index);
             try {
               const url = await manga.reader.page(pages[index], { fresh: true });
               if (!alive) {
@@ -471,6 +561,8 @@ export function Reader({
               // Marked now, so the gap says what it is and offers to try again
               // rather than looking like a slow connection.
               if (alive) setFailed((had) => new Set(had).add(index));
+            } finally {
+              done();
             }
           }
         }
@@ -937,6 +1029,56 @@ export function Reader({
 
   const visible = shown || held;
   const count = urls.filter(Boolean).length;
+  /*
+   * The offer of another source sits in one slot only, the first page that is
+   * slow or has failed, so a chapter with three bad pages does not show it
+   * three times.
+   */
+  const troubled = [...failed, ...slow].filter((i) => !urls[i]);
+  const firstTroubled = troubled.length > 0 ? Math.min(...troubled) : -1;
+  const elsewhereControl = (index: number) => {
+    if (index !== firstTroubled || !seriesId || !onElsewhere) return null;
+    if (!elsewhere) {
+      return (
+        <button className="btn" onClick={() => void findElsewhere()}>
+          Read this chapter from another source
+        </button>
+      );
+    }
+    if (elsewhere.state === 'looking') {
+      return <span className="meta">Looking for chapter {chapter.number} on your other sources… this can take a little while.</span>;
+    }
+    if (elsewhere.state === 'failed') {
+      return (
+        <>
+          <span className="meta">Could not look: {elsewhere.message}</span>
+          <button className="btn" onClick={() => void findElsewhere()}>
+            Look again
+          </button>
+        </>
+      );
+    }
+    if (elsewhere.options.length === 0) {
+      return (
+        <span className="meta">
+          {elsewhere.searched === 0
+            ? 'None of your other sources has this series under the same name.'
+            : `None of the ${elsewhere.searched} other source${elsewhere.searched === 1 ? '' : 's'} with this series lists chapter ${chapter.number}.`}
+        </span>
+      );
+    }
+    return (
+      <>
+        <span className="meta">Chapter {chapter.number} is also on:</span>
+        {elsewhere.options.map((o) => (
+          <button key={`${o.sourceName}:${o.chapterId}`} className="btn" onClick={() => onElsewhere(o)}>
+            {o.sourceName}
+          </button>
+        ))}
+        <span className="meta">Pages are split differently there, so it opens the whole chapter from the top. It still counts as read here.</span>
+      </>
+    );
+  };
   const thumbs = useThumbnails(urls, visible, page, chapter.id);
 
   // Keep the current page's thumbnail in view — centred, as the old app did.
@@ -1000,7 +1142,15 @@ export function Reader({
         </button>
       </div>
 
-      {settingsOpen && visible && <ReaderSettings prefs={prefs} onChange={changePrefs} />}
+      {settingsOpen && visible && (
+        <ReaderSettings
+          prefs={prefs}
+          onChange={changePrefs}
+          missing={total === null ? 0 : urls.filter((u) => !u).length}
+          reloading={reloading}
+          onReload={total === null ? undefined : () => void reloadPages()}
+        />
+      )}
 
       {/*
         * Dimming is a veil over the pages, below the controls — the screen's
@@ -1086,6 +1236,19 @@ export function Reader({
                   Try all {failed.size} again
                 </button>
               )}
+              {elsewhereControl(index)}
+            </div>
+          ) : slow.has(index) ? (
+            <div key={index} className="manga-page-waiting manga-page-failed">
+              <span>Page {index + 1} is taking a while: the site is slow to send it. Still trying…</span>
+              {/*
+                Asking again now, past any saved copy, alongside the request
+                still waiting: whichever answers first fills the page.
+              */}
+              <button className="btn" onClick={() => void retryPage(index)} disabled={retrying.has(index)}>
+                {retrying.has(index) ? 'Asking again…' : 'Try again now'}
+              </button>
+              {elsewhereControl(index)}
             </div>
           ) : (
             <div key={index} className="manga-page-waiting">

@@ -5,6 +5,16 @@ workspaces, the browser extension, and the six shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## 0.5.9
+
+- Restart from the tray icon could leave the app stopped: a harmless warning printed while rebuilding the app ended the restart before anything was started again. Warnings no longer stop it; only a build that actually fails does.
+- Play on the Music tab wakes a Spotify that was just opened and hadn't played anything, and says so in words when Spotify takes the request and plays nothing. The Spotify desktop app for Windows (1.3.6.1921) stops when the shuffle sends it songs, so for now start it from your phone.
+- A slow manga page has a **Try again now** button, and the reader's gear has **Reload**: it asks again for the pages that haven't loaded, or every page if they all have (for one that came through wrong).
+- A manga page that won't come now says so: after ten seconds the gap reads "the site is slow to send it. Still trying…", where it used to show a page number for minutes. A page that times out is given up on after about a minute and a half instead of two and a half (pages a site refuses are still tried three times), and gets the "try again" button straight away.
+- Where a page is slow or won't load, the reader offers **Read this chapter from another source**: it looks for the same chapter on your other sources with this series and opens the one you pick from the top. It still counts as read.
+- Manga extensions can be installed, removed and updated from the phone, not only the PC. Flagging one for the PC is gone; anything already flagged is still listed at the top.
+- Manage extensions has an **Update** button on each extension with an update, and **Update all** (or **Check for updates**) above the installed list. A box beside it switches the daily automatic update on or off; it stays on unless you untick it, and shows when it last ran.
+
 ## 0.5.8
 
 - Weather and Trips are grouped under **World** in the menu. It starts folded: tap World to open it, and it remembers on each device. The screen you're on always shows. Home still has a tile for each.

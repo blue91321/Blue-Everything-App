@@ -765,6 +765,17 @@ export function Chapters({
         hasPrevious={beside(list.data?.chapters ?? [], open.number, -1) !== undefined}
         hasNext={beside(list.data?.chapters ?? [], open.number, 1) !== undefined}
         nextNumber={beside(list.data?.chapters ?? [], open.number, 1)?.number ?? null}
+        onElsewhere={(copy) => {
+          /*
+           * The same number from another source, read under this series: the
+           * read is kept by number, so finishing it there counts here, and the
+           * arrows still go by this list. Opened from the top, since its pages
+           * are not this source's pages.
+           */
+          saver.flush();
+          setResume(null);
+          setOpen({ ...open, id: copy.chapterId, name: `${copy.chapterName} (${copy.sourceName})`, scanlator: null, uploadedAt: null });
+        }}
         onPosition={(p) =>
           saver.note({ chapter: open.number, chapterId: open.id, chapterName: open.name, ...p })
         }

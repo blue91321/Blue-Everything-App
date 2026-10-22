@@ -54,6 +54,7 @@ import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiCh
 import { thumbPath } from '../present.js';
 import { betterTitle, retitleFromSource } from '../titles.js';
 import { sorted } from '../../web/shelf.js';
+import { fetchPage, PageFetchError, SLOW_FAILURE_MS } from '../page-fetch.js';
 import { glideDistance, glideStep, MAX_SPEED, releaseVelocity, STOP_SPEED } from '../../web/glide.js';
 import { PlistError, readBinaryPlist, unarchive } from '../bplist.js';
 import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup, repairMojibake } from '../mangareader.js';
@@ -740,6 +741,7 @@ const store: Store = {
   shelfNewFirst: true,
   shelfFavFirst: false,
   releaseNudges: true,
+  autoUpdateExtensions: true,
   browseSource: null,
   libraries: [],
   glimpses: [],
@@ -1517,6 +1519,34 @@ console.log('\na mouse drag slides on after letting go');
   check('  ...and never sits still mid-slide', kept.stuck === 0, `${kept.stuck} frames`);
   check('  ...where reading the position back fell short', lost.shown < kept.shown, `${lost.shown}px`);
   check('  ...and far short where the browser truncates', truncated.shown < truncatedKept.shown * 0.8, `${truncated.shown}px against ${truncatedKept.shown}px`);
+}
+
+console.log('\na page that times out is given up on sooner');
+{
+  // A fake clock and a fake fetch: each attempt "takes" the time given, and fails.
+  const run = async (takes: number, status = 500) => {
+    let clock = 0;
+    let calls = 0;
+    const get = (async () => {
+      calls += 1;
+      clock += takes;
+      return new Response('timeout', { status });
+    }) as unknown as typeof fetch;
+    try {
+      await fetchPage('http://test/page', { now: () => clock, get });
+      return { calls, status: 200 };
+    } catch (error) {
+      return { calls, status: error instanceof PageFetchError ? error.status : null };
+    }
+  };
+  const slowRun = await run(SLOW_FAILURE_MS + 10_000);
+  check('two slow failures end it, not three', slowRun.calls === 2, `${slowRun.calls} tries`);
+  check('and it says it timed out (504)', slowRun.status === 504, String(slowRun.status));
+  const quick = await run(200);
+  check('a quick refusal still gets all three tries', quick.calls === 3, `${quick.calls} tries`);
+  check('and is not called a timeout', quick.status === 500, String(quick.status));
+  const missing = await run(200, 404);
+  check('a 404 is not retried at all', missing.calls === 1, `${missing.calls} tries`);
 }
 
 process.exit(failures === 0 ? 0 : 1);

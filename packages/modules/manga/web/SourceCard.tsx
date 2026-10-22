@@ -275,7 +275,8 @@ export function SourceCard({
           )}
           {data.manage && (
             <p className="meta">
-              Extensions update themselves once a day while Suwayomi is running
+              Extensions update themselves once a day while Suwayomi is running, unless switched off in Manage
+              extensions
               {setup?.lastExtensionCheck
                 ? ` · last checked ${new Date(setup.lastExtensionCheck.at).toLocaleString([], {
                     weekday: 'short',

@@ -18,9 +18,20 @@ import { BRIGHTNESS_MIN, DEFAULT_PREFS, HIDE_CHOICES, WIDTH_MIN, type ReaderPref
 export function ReaderSettings({
   prefs,
   onChange,
+  missing = 0,
+  reloading = false,
+  onReload,
 }: {
   prefs: ReaderPrefs;
   onChange: (change: Partial<ReaderPrefs>) => void;
+  /** Pages of this chapter not on screen yet: slow, failed, or still coming. */
+  missing?: number;
+  reloading?: boolean;
+  /**
+   * Ask for pages again, past any saved copy: the missing ones when there are
+   * any, otherwise every page, for one that loaded but drew wrong.
+   */
+  onReload?: () => void;
 }) {
   const [panel, setPanel] = useState<'main' | 'more'>('main');
   const brightness = Math.round(prefs.brightness * 100);
@@ -106,6 +117,15 @@ export function ReaderSettings({
         />
         <span className="meta">{prefs.width}%</span>
       </label>
+      {onReload && (
+        <button className="btn" disabled={reloading} onClick={onReload}>
+          {reloading
+            ? 'Reloading…'
+            : missing > 0
+              ? `Reload the ${missing} page${missing === 1 ? '' : 's'} not here yet`
+              : 'Reload every page'}
+        </button>
+      )}
       <div className="manga-reader-settings-foot">
         <button
           className="btn subtle"

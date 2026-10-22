@@ -174,6 +174,9 @@ let starting = false;
  * three times; songs added in the last ten minutes wait for the next one.
  */
 const PRE_PLAY_SYNC_MS = 10 * 60_000;
+/** How often, and how many times, `/me/player` is asked whether the song started. */
+const START_CHECK_MS = 600;
+const START_CHECKS = 5;
 /** How long Play waits for that sync before dealing from what is stored. */
 const PRE_PLAY_SYNC_WAIT_MS = 5_000;
 let lastPrePlaySync = 0;
@@ -377,7 +380,7 @@ async function startShuffle(
     } else if (mode === 'play') {
       // One song as the thing playing, the rest queued behind it — so the queue
       // is the whole list, and topping it up keeps the order intact.
-      await apiSend('spotify', 'PUT', `${API}/me/player/play?device_id=${encodeURIComponent(device.id)}`, { uris: [first.uri] });
+      await startOn({ ...device, id: device.id }, first.uri);
       // Off, or Spotify reshuffles what was just shuffled, its own way.
       await apiSend('spotify', 'PUT', `${API}/me/player/shuffle?state=false&device_id=${encodeURIComponent(device.id)}`, null);
       s.sent.push(first.uri);
@@ -408,6 +411,65 @@ async function startShuffle(
   run(s);
   fill(s, rest, waiting);
   return { songs: Math.max(s.sent.length, ahead), of: pool.length, mode, device: device.name };
+}
+
+/**
+ * Start one song on a device, and make sure it really started.
+ *
+ * Spotify answers "yes" to a play command for a device that is open but not
+ * active, and then does nothing. Found from a cold start: the desktop app
+ * open with nothing played since it launched (its own play button greyed out),
+ * Play pressed, every request answered OK, a session of 21 queued songs, and
+ * silence with an empty queue. Tried one at a time against that app, a list
+ * of songs (`uris`) did nothing whether or not playback was handed over first,
+ * and neither did a bare play or a transfer with `play: true`. **Playing a
+ * context did wake it**: an album by its `context_uri`.
+ *
+ * So: the ordinary play first, which is all an awake device needs. If
+ * `/me/player` never shows the song, the song is started inside its own album
+ * (`offset`, so it is that song and not the album's first), and once that
+ * plays, it is played again on its own at the point it reached, so the album
+ * does not carry on after the shuffle's queue.
+ */
+async function startOn(device: Device & { id: string }, uri: string): Promise<void> {
+  const id = encodeURIComponent(device.id);
+  type Now = { progress_ms: number | null; item: { uri: string; linked_from?: { uri: string } } | null } | null;
+  const playing = async (): Promise<Now> => {
+    for (let i = 0; i < START_CHECKS; i++) {
+      await new Promise((done) => setTimeout(done, START_CHECK_MS));
+      const now = await apiGet<Now>('spotify', `${API}/me/player`).catch(() => null);
+      // A song can come back under another id for this market, with the one asked for as `linked_from`.
+      if (now?.item && (now.item.uri === uri || now.item.linked_from?.uri === uri)) return now;
+    }
+    return null;
+  };
+  await apiSend('spotify', 'PUT', `${API}/me/player/play?device_id=${id}`, { uris: [uri] });
+  if (await playing()) return;
+
+  const track = await apiGet<{ album?: { uri?: string } }>('spotify', `${API}/tracks/${uri.split(':').pop()}`).catch(
+    () => null
+  );
+  const album = track?.album?.uri;
+  if (album) {
+    await apiSend('spotify', 'PUT', `${API}/me/player/play?device_id=${id}`, { context_uri: album, offset: { uri } });
+    const woke = await playing();
+    if (woke) {
+      await apiSend('spotify', 'PUT', `${API}/me/player/play?device_id=${id}`, {
+        uris: [uri],
+        position_ms: woke.progress_ms ?? 0,
+      });
+      if (await playing()) return;
+    }
+  }
+  /*
+   * Seen on the Windows desktop app 1.3.6.1921 (October 2026): it plays an
+   * album or playlist asked for by the API, and stops at a song on its own or
+   * a song added to the queue, which is all a shuffle is. The phone's app took
+   * the same requests the same evening. Nothing here can get past that.
+   */
+  throw new Error(
+    `Spotify on ${device.name} took the request and stopped. Its app is refusing songs sent to it on their own, which the shuffle needs. Try Play from your phone, or update or reinstall Spotify on ${device.name}.`
+  );
 }
 
 /**

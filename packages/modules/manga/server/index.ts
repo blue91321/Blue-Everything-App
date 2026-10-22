@@ -33,7 +33,7 @@ import { db, nudges, changes } from '@everything/server/module-api';
 import { chapterValue } from './identity.js';
 import { applyReadMark, placeIsAtEnd } from './read-marks.js';
 import { isWholeImage } from '../web/image-bytes.js';
-import { fetchPage } from './page-fetch.js';
+import { fetchPage, PageFetchError } from './page-fetch.js';
 import { search, fetchCover, MangaDexError, type Candidate } from './mangadex.js';
 import { CREDIT, readSeries } from './mangaupdates.js';
 import {
@@ -87,7 +87,7 @@ import { matchingState, startMatching, unmatchedCount } from './matching.js';
 import { fillTags } from './tags.js';
 import { tagsForLevel, withoutTags } from './mature.js';
 import { extensionUsage, readFlags, setFlag, type ExtensionUsage } from './extension-usage.js';
-import { extensionCheck, setupState, startSetup, updateExtensionsIfDue } from './setup.js';
+import { extensionCheck, extensionNote, noteExtensionCheck, setupState, startSetup, updateExtensionsIfDue, updateWaitingExtensions } from './setup.js';
 import {
   cachedPage,
   cachedPageList,
@@ -115,7 +115,7 @@ import {
   type ChapterToArchive,
 } from './archive.js';
 import { registerUiProxy, mintSession, sessionCookie, UI_PREFIX } from './uiproxy.js';
-import { retitleFromSource } from './titles.js';
+import { retitleFromSource, titleKey } from './titles.js';
 
 /**
  * When something happened, as a device that was offline says it did.
@@ -1280,6 +1280,90 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * Samples the first, the middle and the last page. See `judgePages` for why
    * those three and what counts as wrong.
    */
+  /**
+   * The same chapter, on another source: for the reader, when a page of the
+   * chapter you are in will not come.
+   *
+   * A page that times out inside Suwayomi does not get better by asking again
+   * (the Thunder Scans page that started this failed every time while the site
+   * itself served it in 0.4s), and sources split a chapter into different
+   * pages, so the only real way round one missing page is the whole chapter
+   * from somewhere else. Reads are kept by chapter number, so reading it there
+   * counts here.
+   *
+   * Strict, like the import's matching: a result is taken only when its title
+   * is the series' title once case, punctuation and bracketed asides are set
+   * aside (`titleKey`, with the old names the series has had), because a wrong
+   * match would open another series' chapter 64 with nothing saying so. The
+   * series' own source is left out, since that is the copy failing.
+   *
+   * On demand, from a button: it searches every installed source in your
+   * languages and then lists chapters on up to six matches, which can take
+   * tens of seconds and starts Suwayomi if it is asleep.
+   */
+  app.get('/api/manga/:id/elsewhere', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { number } = request.query as { number?: string };
+    const wanted = Number(number);
+    if (!number || !Number.isFinite(wanted)) return reply.code(400).send({ error: 'which chapter?' });
+
+    const store = read();
+    const series = store.series.find((s) => s.id === id) ?? store.glimpses.find((g) => g.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return reply.code(400).send({ error: 'no source is configured' });
+
+    if (store.manageSuwayomi && store.suwayomiJar) {
+      const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+      if (state.state !== 'running') {
+        return reply.code(502).send({ error: state.state === 'failed' ? state.problem : 'Suwayomi is still starting' });
+      }
+    }
+
+    const own = series.source;
+    const names = new Set(
+      [series.title, ...('altTitles' in series ? (series.altTitles ?? []) : []), own?.title ?? '']
+        .map(titleKey)
+        .filter(Boolean)
+    );
+    const adapter = new SuwayomiAdapter(url, store.ignoredSources.map((s) => s.id));
+    let matches: SourceMatch[];
+    try {
+      matches = (await adapter.search(series.title, { languages: store.readLanguages })).matches;
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
+    const candidates = matches
+      .filter((m) => names.has(titleKey(m.title)))
+      .filter((m) => !(own && m.sourceName === own.sourceName && m.id === own.mangaId))
+      .slice(0, 6);
+
+    type Option = { sourceName: string; lang: string | null; mangaId: string; chapterId: string; chapterName: string };
+    const options: Option[] = [];
+    let next = 0;
+    const worker = async () => {
+      while (next < candidates.length) {
+        const m = candidates[next++]!;
+        try {
+          // Suwayomi's stored list first, the site only when it has none.
+          let chapters = await adapter.chapters(m.id, false).catch(() => []);
+          if (!chapters.some((c) => c.number === wanted)) chapters = await adapter.chapters(m.id, true);
+          const hit = chapters.find((c) => c.number === wanted);
+          if (hit) {
+            options.push({ sourceName: m.sourceName, lang: m.lang, mangaId: m.id, chapterId: hit.id, chapterName: hit.name });
+          }
+        } catch {
+          // That source cannot say; the others still might.
+        }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    // In the order the search ranked them, which is the order they were found in.
+    options.sort((a, b) => candidates.findIndex((c) => c.id === a.mangaId) - candidates.findIndex((c) => c.id === b.mangaId));
+    return { options, searched: candidates.length };
+  });
+
   app.get('/api/manga/:id/source/check', async (request, reply) => {
     const { id } = request.params as { id: string };
     const { chapterId } = request.query as { chapterId?: string };
@@ -1580,6 +1664,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
         usage,
         flagged: readFlags(),
         readLanguages: ctx.store.readLanguages,
+        autoUpdate: ctx.store.autoUpdateExtensions,
+        lastCheck: extensionCheck(),
         /*
          * Offered by name, because a fresh Suwayomi ships with no repositories
          * and finds nothing — which is the commonest confusing first experience
@@ -1607,16 +1693,27 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return { flagged: setFlag(pkg, body.flagged) };
   });
 
-  /** Install one, or remove it. Local-only, like everything that runs code here. */
+  /**
+   * Install one, remove it, or update it (`{ update: true }`).
+   *
+   * **From any device, not only the PC.** It used to be local-only on the
+   * grounds that an extension is code that runs here, with a phone left to
+   * flag one for the PC to install. But the phone already reaches Suwayomi's
+   * own web interface through More (`/manga/ui`), which installs extensions
+   * with no such rule, so the guard protected nothing and only added a trip.
+   * What a device may reach is decided by the token it was paired with, here
+   * as everywhere else.
+   */
   app.put('/api/manga/extensions/:pkg', async (request, reply) => {
-    localOnly(request as unknown as { isLocal: boolean });
     const { pkg } = request.params as { pkg: string };
-    const body = request.body as { install?: unknown } | null;
+    const body = request.body as { install?: unknown; update?: unknown } | null;
+    if (!/^[A-Za-z0-9._-]{1,200}$/.test(pkg)) return reply.code(400).send({ error: 'not an extension' });
     const ctx = await catalogue();
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
 
     try {
-      if (body?.install === false) await ctx.adapter.uninstallExtension(pkg);
+      if (body?.update === true) await ctx.adapter.updateExtension(pkg);
+      else if (body?.install === false) await ctx.adapter.uninstallExtension(pkg);
       else {
         await ctx.adapter.installExtension(pkg);
         // Flagged on the phone and now installed: the note has done its job.
@@ -1632,14 +1729,39 @@ export async function routes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * Update every installed extension that has an update, now.
+   *
+   * The daily run's own function, so the button and the automatic update
+   * cannot disagree about what "updated" means, and the note it leaves is the
+   * one the setup card and this screen both show.
+   */
+  app.post('/api/manga/extensions/update', async (_request, reply) => {
+    const ctx = await catalogue();
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    const run = await updateWaitingExtensions(ctx.adapter);
+    noteExtensionCheck(run);
+    if (run.updated.length > 0) changes.emitChange('all');
+    return { note: extensionNote(run), extensions: await ctx.adapter.extensions(false) };
+  });
+
+  /** Whether extensions update themselves once a day. */
+  app.put('/api/manga/extensions/auto-update', async (request, reply) => {
+    const body = request.body as { on?: unknown } | null;
+    if (typeof body?.on !== 'boolean') return reply.code(400).send({ error: 'on is true or false' });
+    const store = read();
+    store.autoUpdateExtensions = body.on;
+    write(store);
+    return { autoUpdate: store.autoUpdateExtensions };
+  });
+
+  /**
    * Which repositories to list from.
    *
-   * Local-only: a repository is a URL the *source* then downloads and runs code
-   * from, which is a larger thing than any other setting here and belongs with
-   * installing a package.
+   * From any device, like installing, and for the same reason: Suwayomi's own
+   * interface, which the phone already reaches through More, sets these too.
+   * Still https only, below.
    */
   app.put('/api/manga/extensions/repos', async (request, reply) => {
-    localOnly(request as unknown as { isLocal: boolean });
     const body = request.body as { repos?: unknown } | null;
     if (!Array.isArray(body?.repos)) return reply.code(400).send({ error: 'send a list of repositories' });
 
@@ -2266,7 +2388,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
       const { body, type } = await fetchPage(`${ctx.url}${p}`);
       return reply.header('content-type', type).header('cache-control', 'private, max-age=604800').send(body);
     } catch (error) {
-      return reply.code(502).send({ error: error instanceof Error ? error.message : 'could not fetch the page' });
+      // 504 when it timed out twice, so the reader knows waiting again will not help.
+      const code = error instanceof PageFetchError && error.status === 504 ? 504 : 502;
+      return reply.code(code).send({ error: error instanceof Error ? error.message : 'could not fetch the page' });
     }
   });
 
@@ -2828,7 +2952,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
         .header('cache-control', 'private, max-age=604800')
         .send(body);
     } catch (error) {
-      return reply.code(502).send({ error: error instanceof Error ? error.message : 'could not fetch the page' });
+      // 504 when it timed out twice, so the reader knows waiting again will not help.
+      const code = error instanceof PageFetchError && error.status === 504 ? 504 : 502;
+      return reply.code(code).send({ error: error instanceof Error ? error.message : 'could not fetch the page' });
     }
   });
 

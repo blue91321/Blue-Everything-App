@@ -1272,10 +1272,23 @@ its source in a language you read (`pick`, which works on a Browse already
 open), and Browse has a **Manage extensions** button back. What there is to add
 can be scrolled in your languages, forty at a time, without typing.
 
-**A phone flags; the PC installs.** Installing runs code here and stays
-local-only. A flag is a note (`data/manga-extension-flags.json`, its route not
-local-only, since it runs nothing): the PC shows flagged ones first with Install,
-and installing clears the flag.
+**Any device installs, removes and updates, which reversed "a phone flags; the
+PC installs".** Installing was local-only on the grounds that an extension is
+code that runs here, and a phone could only flag one for the PC to install. But
+the phone already reaches Suwayomi's own interface through More (`/manga/ui`),
+which installs extensions and sets repositories with no such rule, so the guard
+protected nothing and only added a trip across the room. The extension routes
+and the repository list are now open to any paired device, like the rest of the
+manga screen; repositories are still https only. Anything flagged from before
+is listed first with Install and Unflag (`data/manga-extension-flags.json`),
+and nothing makes new flags.
+
+**Updating is on the same screen.** An extension with an update has its own
+**Update**, and the Installed heading carries **Update all (N)**, or **Check for
+updates** when nothing is known to be waiting, since it asks the repositories
+again before updating and can find one the list has not shown yet. It is
+`updateWaitingExtensions`, the daily run's own function, so the button and the
+automatic run cannot disagree, and it leaves the same note the setup card shows.
 
 **Ignored sources** (More, under the import card) are left out of searching,
 browsing and finding imports, by id. Mangakakalot went there first: every
@@ -1586,6 +1599,48 @@ over a page that won't come, and stops only after three failures in a row.
 The real cure for a Cloudflare-fronted source is FlareSolverr, which Suwayomi
 can use. It isn't set up here: it's another program to install and keep
 running.
+
+#### A page that is slow, rather than refused, says so and offers a way round
+
+Reported from a phone: page 11 of a Thunder Scans chapter sat as a bare "11"
+for over two minutes. The log showed three requests for it (the first, a fresh
+retry, and a reopen), each answered 502 after about 2 minutes 20 seconds: three
+tries of 45 seconds. Suwayomi's own log showed the download stalling part-way
+through the body, and asking Suwayomi directly failed with "timeout" after 30 to
+50 seconds, again after it re-read the page list. **The site was not the
+problem**: the same image (`0012_c08906f7.jpg`, the site lists its first image
+last) came straight from Thunder Scans in 0.4s over HTTP/1.1 and HTTP/2, with and
+without browser headers, from all three of its Cloudflare addresses, and other
+uncached pages came through Suwayomi in half a second. The page loaded fine
+later the same morning. What inside Suwayomi stalled was not found.
+
+Three changes, for whatever the cause next time:
+
+- **A slow failure is retried once** (`page-fetch.ts`). A failure that took 20s
+  or more counts as slow, and two of them end it with a 504 saying it timed out,
+  about 90 seconds in. Refusals, which fail in under a second, keep their three
+  tries. `manga-check` drives it with a fake clock.
+- **The reader says when a page is slow.** Ten seconds without it, the slot
+  reads "the site is slow to send it. Still trying…". A page that took 40s or
+  more to fail skips the reader's own second go, which would be another 90
+  seconds of the same, and gets the button at once.
+- **Read this chapter from another source.** Offered in the first slot that is
+  slow or failed. `GET /api/manga/:id/elsewhere?number=` searches your sources
+  in your languages and lists chapters on up to six results whose title is the
+  series' own once `titleKey` has folded it (with its old names), leaving out
+  the series' own source. Strict for the import's reason: a loose match opens
+  another series' chapter with nothing saying so. Picking one swaps the
+  reader's chapter for that copy's id under the same series, which the pages
+  route has always accepted, from the top since pages are split differently.
+  Reads are kept by number, so finishing it there counts here; a saved place in
+  it falls back to your source's chapter from the top. Measured on the chapter
+  that started this: Manga Demon and MangaHub both had chapter 64, found in
+  12.8 seconds, and Manga Demon's opened with 15 pages to Thunder Scans' 14.
+- **Two ways to ask again by hand.** A slow slot has **Try again now**, a
+  fresh request alongside the one still waiting, whichever answers first. And
+  the gear has **Reload**: the pages not on screen yet, fresh and in reading
+  order, or every page when all are here, for one that arrived but draws
+  wrong. Pages already showing stay up until their new copy lands.
 
 **And a reload reopens the chapter.** The URL already brings you back to the
 Manga screen, but the reader is state inside it, so reloading mid-chapter landed
@@ -3286,6 +3341,16 @@ Three things there are easy to get wrong:
   every tray icon with it, is broadcast. Without it an Explorer crash leaves the
   agent running and unreachable until a reboot.
 
+**A warning on stderr ended a restart halfway.** `start.ps1` runs with
+`$ErrorActionPreference = 'Stop'`, and Windows PowerShell 5.1 turns each line a
+native program writes to stderr into an error, but only when the output is
+redirected. In a console it passes through, so `Blue Everything.cmd` was fine,
+while the tray's Restart, which sends everything to `logs	ray.log`, died at
+vite's "rendering chunks" on a harmless dynamic-import warning: after the stop,
+before any start, so the app was left stopped. npm goes through `Invoke-Npm`
+now, which lowers the preference for that call and leaves failure to
+`$LASTEXITCODE`. Reproduced both ways under `*>>` before trusting it.
+
 The message pump is polled like the overlay's, at 250ms rather than 16ms — a
 tray click can afford a quarter of a second, and a menu nobody has opened should
 not cost 60Hz forever. The two pumps are safe together: `PeekMessageW` with a
@@ -3654,7 +3719,8 @@ every request in that moment spawned its own JVM: six in a second after a
 restart with Browse open, all but one quitting for the port. The check is now
 inside the shared start. Verified: six simultaneous requests, one start.
 
-**Extensions update themselves once a day** (`updateExtensionsIfDue`), from
+**Extensions update themselves once a day** unless switched off on Manage
+extensions (`autoUpdateExtensions`, on by default) (`updateExtensionsIfDue`), from
 the release sweep rather than a timer of their own, and only while Suwayomi is
 already running: it is never woken for this. When it last ran and what it did is
 in `data/manga-extensions.json`, so a restart does not check again at once, and
@@ -7658,7 +7724,20 @@ Otherwise it uses the kind of device Play came from (the card sends `phone` or
 then falls back to active, then first.
 
 It needs a device. The active one if there is one, else the first Spotify
-lists, so a phone with the app open but idle works. With none, it says to open
+lists, so a phone with the app open but idle works. **A cold device is woken by an album**
+(`startOn`). With the desktop app just opened and nothing played (its own play
+button greyed out), Spotify answered every play and queue request OK and did
+nothing: the card read "21 queued" over silence. Probed one at a time: `uris`
+did nothing, with or without handing playback over first (`PUT /me/player`,
+`play` true or false), and so did a bare play. A `context_uri` woke it. So if
+`/me/player` never shows the song, it is started inside its own album
+(`offset` by uri), then played again on its own at that point so the album
+doesn't follow the shuffle. Play fails rather than leave a session claiming
+songs Spotify never took. **And the desktop app 1.3.6.1921 refuses the shuffle
+outright** (2026-10-21, the evening it updated itself): awake and playing, a
+`uris` play or a queue add answers OK and stops it, with or without a song
+started by hand first; only a context plays. The phone's app took the same
+requests that evening. Play says so in words and points at the phone. With none, it says to open
 Spotify, because the API cannot start the app. It needs
 `user-modify-playback-state` and `user-read-playback-state`, which older
 connections lack, and it says "press Connect once" rather than surfacing a

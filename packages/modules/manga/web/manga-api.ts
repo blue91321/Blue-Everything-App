@@ -192,9 +192,13 @@ export interface ExtensionList {
   suggestedRepo: string;
   /** By package: series linked to its sources, chapters read there, and the sources. Absent from an older server. */
   usage?: Record<string, ExtensionUsage>;
-  /** Packages flagged to install later, from a device that cannot install. */
+  /** Packages flagged to install later, from before any device could install. */
   flagged?: string[];
   readLanguages?: string[];
+  /** Whether they update themselves once a day. Absent from an older server. */
+  autoUpdate?: boolean;
+  /** When they last updated, by themselves or from the button, and what that did. */
+  lastCheck?: { at: number; note: string } | null;
 }
 
 export interface ExtensionUsage {
@@ -696,9 +700,18 @@ export const manga = {
         method: 'PUT',
         body: JSON.stringify({ install }),
       }),
+    update: (pkg: string) =>
+      call<{ extensions: SourceExtension[] }>(`/api/manga/extensions/${encodeURIComponent(pkg)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ update: true }),
+      }),
+    updateAll: () =>
+      call<{ note: string; extensions: SourceExtension[] }>('/api/manga/extensions/update', { method: 'POST', body: '{}' }),
+    setAutoUpdate: (on: boolean) =>
+      call<{ autoUpdate: boolean }>('/api/manga/extensions/auto-update', { method: 'PUT', body: JSON.stringify({ on }) }),
     setRepos: (repos: string[]) =>
       call<ExtensionList>('/api/manga/extensions/repos', { method: 'PUT', body: JSON.stringify({ repos }) }),
-    /** Flag to install later from the PC. Allowed from any device: it runs nothing. */
+    /** Unflag one flagged before any device could install. */
     flag: (pkg: string, flagged: boolean) =>
       call<{ flagged: string[] }>(`/api/manga/extensions/${encodeURIComponent(pkg)}/flag`, {
         method: 'PUT',
@@ -739,6 +752,12 @@ export const manga = {
      * them on unmount. A cache would turn reading into a memory leak measured in
      * chapters.
      */
+    /** This chapter, by number, on your other sources with the same series. See the route. */
+    elsewhere: (id: string, number: number) =>
+      call<{
+        options: Array<{ sourceName: string; lang: string | null; mangaId: string; chapterId: string; chapterName: string }>;
+        searched: number;
+      }>(`/api/manga/${id}/elsewhere?number=${encodeURIComponent(String(number))}`),
     page: async (path: string, options: { fresh?: boolean } = {}): Promise<string> => {
       /*
        * Saved on this device first: that is what makes a downloaded chapter

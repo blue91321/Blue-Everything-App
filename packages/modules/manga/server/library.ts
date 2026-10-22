@@ -447,6 +447,12 @@ export type Store = {
    */
   releaseNudges: boolean;
   /**
+   * Whether installed extensions update themselves once a day while Suwayomi
+   * is running. On unless switched off, which is what it always did; off, they
+   * update only from the button on Manage extensions.
+   */
+  autoUpdateExtensions: boolean;
+  /**
    * The source the Browse tab lists from, and whose results a search puts first.
    * An opaque source id; one that is no longer installed is simply not found,
    * and the tab falls back to the first source it has.
@@ -537,6 +543,7 @@ function emptyStore(): Store {
     shelfNewFirst: true,
     shelfFavFirst: false,
     releaseNudges: true,
+    autoUpdateExtensions: true,
     browseSource: null,
     libraries: [],
     glimpses: [],
@@ -573,6 +580,7 @@ export function read(): Store {
       archiveFolder:
         typeof parsed.archiveFolder === 'string' && parsed.archiveFolder.trim() ? parsed.archiveFolder : null,
       releaseNudges: parsed.releaseNudges !== false,
+      autoUpdateExtensions: parsed.autoUpdateExtensions !== false,
       browseSource: typeof parsed.browseSource === 'string' && parsed.browseSource ? parsed.browseSource : null,
       glimpses: Array.isArray(parsed.glimpses)
         ? parsed.glimpses.map((g) => ({
