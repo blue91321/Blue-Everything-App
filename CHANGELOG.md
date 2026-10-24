@@ -5,7 +5,7 @@ workspaces, the browser extension, and the six shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
-## Unreleased
+## 0.6.0
 
 - A manga page already being fetched is now shared with anyone else asking for it: two people opening the same chapter at once took more than twice as long, because every page went to the site twice. Friends' copies fetch through yours, so it covers them too.
 - Closing the app no longer shows a popup; what it does is said where you choose it.

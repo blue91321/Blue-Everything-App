@@ -1,7 +1,7 @@
 {
   "name": "@everything/web",
   "private": true,
-  "version": "0.5.9",
+  "version": "0.6.0",
   "license": "MIT",
   "type": "module",
   "scripts": {
