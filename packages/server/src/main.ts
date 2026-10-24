@@ -1,12 +1,16 @@
 import { buildApp } from './app.js';
 import { AGENT_GONE_MS, watchForAgent } from './agent-watch.js';
-import { config } from './config.js';
+import { config, isGuest } from './config.js';
 import { runMigrations } from './db/migrate.js';
-import { pruneOldSamples } from './routes/attention.js';
+import { giveCopiesTheirKeys, startCopies, writeOwnPid } from './instances.js';
+import { phoneOnlyDelivery, pruneOldSamples } from './routes/attention.js';
 
 await runMigrations();
 
 const app = await buildApp();
+
+// The host hands each guest copy in `instances/` its key — see `instances.ts`.
+await giveCopiesTheirKeys((line) => app.log.info(line));
 
 /*
  * A promise that fails with nobody waiting on it — a timer's `void doThing()`
@@ -36,6 +40,14 @@ try {
   app.log.error(error);
   process.exit(1);
 }
+
+// A guest copy says where it is, so the host can stop it; the host starts the
+// people's copies that were running, in the background. See `instances.ts`.
+// Removed on exit; a copy stopped hard leaves it, which the next start overwrites.
+process.on('exit', writeOwnPid());
+void startCopies((line) => app.log.warn(line));
+// A friend's copy has no agent on this PC, so it delivers to their phone itself.
+if (isGuest) phoneOnlyDelivery();
 
 // The tray icon is the app on this PC: when its agent goes, so does the server,
 // and `app.close()` runs the hooks that take Suwayomi down with it.

@@ -570,7 +570,7 @@ export function Chapters({
           label: `Stop keeping chapters (${kept.complete}/${kept.chapters} saved)`,
           onSelect: () => void stopKeeping(),
         }
-      : { label: 'Keep every chapter on the PC', onSelect: () => void keepEverything() },
+      : { label: 'Keep every chapter in the Local collection', onSelect: () => void keepEverything() },
     /*
      * Only offered when there is something to collapse. A switch about
      * duplicates on a source that lists none is a setting for a problem you do
@@ -627,6 +627,24 @@ export function Chapters({
   }
 
   /** Star or unstar, then reload so the head and the library row agree. */
+  /** Friends on this PC who share their ratings, and what they gave this one. */
+  const [others, setOthers] = useState<Array<{ who: string; rating: number }>>([]);
+  useEffect(() => {
+    if (!series) return;
+    manga.ratingsOf(series.id).then((r) => setOthers(r.others), () => setOthers([]));
+  }, [series?.id]);
+
+  async function rate(value: number | null) {
+    if (!series) return;
+    try {
+      await manga.setRating(series.id, value);
+      onChanged?.();
+      list.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'that could not be saved');
+    }
+  }
+
   async function toggleFavourite() {
     if (!series) return;
     try {
@@ -834,6 +852,9 @@ export function Chapters({
             The star joins them, so the two things you can file a series under
             sit together rather than one being a chip and the other a menu item.
           */}
+          {others.length > 0 && (
+            <p className="meta">Rated by {others.map((o) => `${o.who} ${o.rating}/10`).join(', ')}</p>
+          )}
           {series && (
             <div className="manga-shelf-chips">
               <button
@@ -845,6 +866,21 @@ export function Chapters({
               >
                 {series.favourite ? '★' : '☆'} Favourite
               </button>
+              {/* 1 to 10, the scale MyAnimeList and AniList use. A chip like the star, so it sits with it. */}
+              <select
+                className={`manga-shelf-chip${series.rating ? ' on' : ''}`}
+                value={series.rating ?? ''}
+                disabled={shelving}
+                aria-label="Your rating"
+                onChange={(e) => void rate(e.target.value === '' ? null : Number(e.target.value))}
+              >
+                <option value="">Rate…</option>
+                {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => (
+                  <option key={n} value={n}>
+                    {n} / 10
+                  </option>
+                ))}
+              </select>
               {libraries.map((l) => {
                 const on = series.libraries?.includes(l.id) === true;
                 return (
@@ -1003,8 +1039,8 @@ export function Chapters({
                 * one thing it must not mean on a phone that has left the house.
                 */}
               {kept && (
-                <span className="meta" title="Manga → More → Kept for good">
-                  · {onThePc.size} of {kept.chapters} kept on the PC, separately
+                <span className="meta" title="Manga → Downloads → Kept for good">
+                  · {onThePc.size} of {kept.chapters} in the Local collection, separately
                 </span>
               )}
             </>
@@ -1144,7 +1180,7 @@ export function Chapters({
                   {here && place ? (sameCopy ? ` · page ${place.page + 1} of ${place.pages}` : ' · you were here') : ''}
                   {c.read ? (c.readOn ? ` · read on ${c.readOn}` : ' · read') : ''}
                   {/* Kept on the PC for good, which the ✓ beside it is not about. */}
-                  {onThePc.has(c.number) ? ' · on the PC' : ''}
+                  {onThePc.has(c.number) ? ' · in the Local collection' : ''}
                   {job?.problem ? ` · ${job.problem}` : ''}
                 </span>
               </button>
@@ -1172,7 +1208,7 @@ export function Chapters({
                             ? 'Waiting its turn — the Downloads tab shows the line'
                             : undefined) ??
                         (onThePc.has(c.number)
-                          ? 'Kept on the PC. This saves a copy into this device too, so it opens with nothing running.'
+                          ? 'In the Local collection. This saves a copy onto this device too, so it opens with nothing running.'
                           : undefined))
                   }
                   disabled={job !== undefined && !job.problem}

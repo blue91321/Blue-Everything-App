@@ -61,20 +61,53 @@ export function extensionUsage(
  */
 const FLAGS = join(dataDir, 'manga-extension-flags.json');
 
-export function readFlags(): string[] {
+type FlagFile = { pkgs: string[]; askedBy: Record<string, string[]> };
+
+function readFlagFile(): FlagFile {
   try {
-    const v = JSON.parse(readFileSync(FLAGS, 'utf8').replace(/^﻿/, '')) as { pkgs?: unknown };
-    return Array.isArray(v.pkgs) ? v.pkgs.filter((p): p is string => typeof p === 'string') : [];
+    const v = JSON.parse(readFileSync(FLAGS, 'utf8').replace(/^﻿/, '')) as { pkgs?: unknown; askedBy?: unknown };
+    const pkgs = Array.isArray(v.pkgs) ? v.pkgs.filter((p): p is string => typeof p === 'string') : [];
+    const askedBy: Record<string, string[]> = {};
+    if (v.askedBy && typeof v.askedBy === 'object') {
+      for (const [pkg, who] of Object.entries(v.askedBy as Record<string, unknown>)) {
+        if (pkgs.includes(pkg) && Array.isArray(who)) askedBy[pkg] = who.filter((w): w is string => typeof w === 'string');
+      }
+    }
+    return { pkgs, askedBy };
   } catch {
-    return [];
+    return { pkgs: [], askedBy: {} };
   }
 }
 
-export function setFlag(pkg: string, flagged: boolean): string[] {
-  const now = readFlags().filter((p) => p !== pkg);
-  if (flagged) now.push(pkg);
+export function readFlags(): string[] {
+  return readFlagFile().pkgs;
+}
+
+/**
+ * Which guest copies asked for each flagged extension (plan A): a guest may
+ * not install one, since the Suwayomi is the host's, so it asks, and the
+ * host's Manage extensions lists the ask with Install and Unflag.
+ */
+export function readAskedBy(): Record<string, string[]> {
+  return readFlagFile().askedBy;
+}
+
+/**
+ * Flag one or unflag it. `by` names the copy that asked; unflagging, which
+ * the host does once it has installed or declined one, clears every ask.
+ */
+export function setFlag(pkg: string, flagged: boolean, by?: string): string[] {
+  const file = readFlagFile();
+  const pkgs = file.pkgs.filter((p) => p !== pkg);
+  const askedBy = { ...file.askedBy };
+  if (flagged) {
+    pkgs.push(pkg);
+    if (by) askedBy[pkg] = [...new Set([...(askedBy[pkg] ?? []), by])];
+  } else {
+    delete askedBy[pkg];
+  }
   mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${FLAGS}.tmp`, JSON.stringify({ pkgs: now }));
+  writeFileSync(`${FLAGS}.tmp`, JSON.stringify({ pkgs, askedBy }));
   renameSync(`${FLAGS}.tmp`, FLAGS);
-  return now;
+  return pkgs;
 }

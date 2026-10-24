@@ -189,3 +189,42 @@ export function drawIcon(size: number, { shape, accent, fullBleed = false }: Ico
 
   return encodePng(size, size, rgba);
 }
+
+/* ---------- .ico container ---------- */
+
+/**
+ * Wrap PNGs in an .ico for the Windows shortcut. Here rather than in
+ * `make-icons.mjs`, which imports it, so the server can draw one too
+ * (`/icon/app.ico`, for the desktop client's shortcut and tray icon).
+ *
+ * Vista and later accept PNG-compressed entries directly, so this is a header
+ * and an index rather than any actual bitmap encoding. Multiple sizes matter
+ * because Windows picks different ones for the taskbar, Alt-Tab and the
+ * desktop, and letting it downscale one large image looks muddy.
+ */
+export function encodeIco(images: Array<{ size: number; png: Buffer }>): Buffer {
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2); // 1 = icon
+  header.writeUInt16LE(images.length, 4);
+
+  const entries: Buffer[] = [];
+  let offset = 6 + images.length * 16;
+
+  for (const { size, png } of images) {
+    const entry = Buffer.alloc(16);
+    // 256 is stored as 0 — the field is a single byte.
+    entry[0] = size >= 256 ? 0 : size;
+    entry[1] = size >= 256 ? 0 : size;
+    entry[2] = 0; // palette
+    entry[3] = 0; // reserved
+    entry.writeUInt16LE(1, 4); // colour planes
+    entry.writeUInt16LE(32, 6); // bits per pixel
+    entry.writeUInt32LE(png.length, 8);
+    entry.writeUInt32LE(offset, 12);
+    entries.push(entry);
+    offset += png.length;
+  }
+
+  return Buffer.concat([header, ...entries, ...images.map((i) => i.png)]);
+}

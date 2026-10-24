@@ -10,7 +10,7 @@
  * A change the PC refused on replay (a task since deleted there, say) is listed
  * rather than dropped quietly — it did not happen, and you should know that.
  */
-import { onServersMachine } from './device';
+import { onServersMachine, thePc } from './device';
 import { dismissProblems, useConnectivity } from './offline-sync';
 
 function clock(at: number): string {
@@ -39,7 +39,7 @@ export function ConnectivityBanner() {
           <strong>Offline</strong> — showing what this device saved
           {c.shownFrom ? ` (as of ${clock(c.shownFrom)})` : ''}
           {waiting}. Changes you make are kept and{' '}
-          {onServersMachine() ? 'saved once the app is running again' : 'sent when the PC is reachable'}.
+          {onServersMachine() ? 'saved once the app is running again' : `sent when ${thePc()} is reachable`}.
           {onServersMachine() && (
             <>
               {' '}
@@ -60,7 +60,7 @@ export function ConnectivityBanner() {
         <div className="banner" role="alert">
           <p>
             {c.problems.length === 1 ? 'A change made offline' : `${c.problems.length} changes made offline`} could not be
-            applied on the PC:
+            applied on {thePc()}:
           </p>
           <ul>
             {c.problems.map((p, i) => (

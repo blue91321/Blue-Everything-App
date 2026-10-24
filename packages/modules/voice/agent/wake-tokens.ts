@@ -15,8 +15,7 @@
  * stop believing.
  *
  * The model file is protobuf, read by hand: two fields of one repeated message
- * are all this needs, which is the same call `zip.ts` and `bplist.ts` make about
- * their formats.
+ * are all this needs, which is the same call `zip.ts` makes about its format.
  */
 import { readFileSync } from 'node:fs';
 

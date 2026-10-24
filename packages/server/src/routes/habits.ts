@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+import { dataDir } from '../paths.js';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -91,7 +91,7 @@ const SAFE_ID = /^[A-Za-z0-9-]{1,64}$/;
 
 const imagePath = (habitId: string, extension: string): string => {
   if (!SAFE_ID.test(habitId)) throw new Error('unsafe habit id');
-  return resolve(dirname(fileURLToPath(import.meta.url)), '../../data', `habit-${habitId}.${extension}`);
+  return resolve(dataDir, `habit-${habitId}.${extension}`);
 };
 
 function storedImage(habitId: string): { path: string; extension: string } | null {

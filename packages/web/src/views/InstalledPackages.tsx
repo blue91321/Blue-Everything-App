@@ -12,6 +12,7 @@
  * feature, so it stays in `views/` with the rest of core: the screen that
  * *removes* a broken package must exist whatever is installed.
  */
+import { serverPc } from '../device';
 import { useRef, useState } from 'react';
 import { api, type ModuleInfo, type Session } from '../api';
 import { useAsync } from '../useAsync';
@@ -130,7 +131,7 @@ function PackageRow({
             <button
               className="btn subtle"
               disabled={busy || !local}
-              title={local ? 'Delete this package from disk' : 'Only from the PC running the server'}
+              title={local ? 'Delete this package from disk' : `Only from ${serverPc()}`}
               onClick={() => setConfirming(true)}
             >
               Remove
@@ -192,7 +193,7 @@ export function RestartBanner({ why }: { why: string }) {
             <div className="meta" style={{ marginTop: 4 }}>
               {state.data.local
                 ? 'scripts/restart.ps1 is missing — use the tray icon instead.'
-                : 'Only the PC running the app can restart it.'}
+                : `Only ${serverPc()} can restart it.`}
             </div>
           )}
         </div>
@@ -429,7 +430,7 @@ export function InstalledPackages({ session }: { session: Session }) {
         </>
       ) : (
         <div className="meta" style={{ marginBottom: 8 }}>
-          Packages can only be installed or removed from the PC running the server.
+          Packages can only be installed or removed from {serverPc()}.
         </div>
       )}
 

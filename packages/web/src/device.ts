@@ -13,6 +13,48 @@
  * *say*, where a wrong guess costs one sentence that does not apply.
  */
 
+/*
+ * Where "the PC" is, said to whoever is reading. Blue Everything runs on the
+ * host's PC: to the host that is "the PC", and to a friend, with their own PC
+ * in front of them, it is "the host's PC". App remembers which kind of copy
+ * this is from the session (`rememberCopy`), in localStorage, because some of
+ * these sentences are built when a screen's code loads. Each copy is its own
+ * origin, so the two cannot share the answer.
+ */
+const COPY_KEY = 'everything.friend-copy';
+
+export function rememberCopy(friend: boolean): void {
+  try {
+    localStorage.setItem(COPY_KEY, friend ? '1' : '0');
+  } catch {
+    // The wording is a nicety; without storage it is the host's.
+  }
+}
+
+/** This is a friend's copy, run on the host's PC. */
+export function onFriendsCopy(): boolean {
+  try {
+    return localStorage.getItem(COPY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** "the PC", or "the host's PC" on a friend's copy. */
+export function thePc(): string {
+  return onFriendsCopy() ? "the host's PC" : 'the PC';
+}
+
+/** The same, to start a sentence. */
+export function ThePc(): string {
+  return onFriendsCopy() ? "The host's PC" : 'The PC';
+}
+
+/** "the PC running the server", or "the host's PC" on a friend's copy. */
+export function serverPc(): string {
+  return onFriendsCopy() ? "the host's PC" : 'the PC running the server';
+}
+
 /** Open on the PC that runs the server, by its loopback address. */
 export function onServersMachine(): boolean {
   return ['127.0.0.1', 'localhost', '[::1]'].includes(window.location.hostname);

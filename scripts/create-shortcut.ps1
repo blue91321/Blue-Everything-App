@@ -58,6 +58,7 @@ if (-not (Test-Path $icon)) {
 }
 
 $shell = New-Object -ComObject WScript.Shell
+. (Join-Path $PSScriptRoot 'app-id.ps1')
 
 foreach ($path in $targets) {
   $parent = Split-Path -Parent $path
@@ -71,8 +72,21 @@ foreach ($path in $targets) {
   if (Test-Path $icon) { $link.IconLocation = "$icon,0" }
   $link.WindowStyle = 7 # start minimised, so the launcher doesn't flash a window
   $link.Save()
+  Set-ShortcutAppId -Path $path
 
   Write-Host "Created $path" -ForegroundColor Green
+}
+
+# A copy pinned to the taskbar gets the same ID, so the pinned button and the
+# window it opens are one button. See app-id.ps1.
+$pinned = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+if (Test-Path $pinned) {
+  foreach ($file in Get-ChildItem $pinned -Filter *.lnk) {
+    if ($shell.CreateShortcut($file.FullName).Arguments -like "*$startScript*") {
+      Set-ShortcutAppId -Path $file.FullName
+      Write-Host "Joined the pinned $($file.Name) to the app's window" -ForegroundColor Green
+    }
+  }
 }
 
 # Same action, one level down: "set this machine up to run the app". Registering

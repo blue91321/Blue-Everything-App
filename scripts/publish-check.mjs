@@ -48,6 +48,9 @@ const MUST_BE_IGNORED = [
   'features.json',
   'logs/agent.log',
   'backups/20260101-000000-v0.4.0.zip',
+  'instances/sam/data/everything.db',
+  'instances/sam/host-key',
+  'instances/sam/features.json',
   'packages/agent/src/features/voice/models/libvosk.dll',
   'packages/agent/src/features/voice/models/vosk-model-small-en-us-0.15/README',
   // Where the models actually are now. The two above name a folder that moved

@@ -17,12 +17,17 @@ import { eventRoutes, registerChangeAnnouncer } from './events.js';
 import { attentionRoutes } from './routes/attention.js';
 import { connectRoutes } from './routes/connect.js';
 import { deviceRoutes } from './routes/devices.js';
+import { instanceRoutes } from './instances.js';
+import { onboardingRoutes } from './onboarding.js';
+import { nameRoutes } from './names.js';
+import { closingRoutes } from './closing.js';
 import { featureRoutes } from './routes/features.js';
 import { moduleRoutes } from './routes/modules.js';
 import { gameRoutes } from './routes/games.js';
 import { restartRoutes } from './routes/restart.js';
 import { updateRoutes } from './routes/update.js';
 import { agentStartRoutes } from './routes/agent-start.js';
+import { desktopAppRoutes } from './routes/desktop-app.js';
 import { desktopIconRoutes } from './routes/desktop-icon.js';
 import { agentAliveRoutes } from './routes/agent-alive.js';
 import { habitRoutes } from './routes/habits.js';
@@ -87,6 +92,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(gameRoutes);
 
   await app.register(deviceRoutes);
+  await app.register(instanceRoutes);
+  await app.register(onboardingRoutes);
+  await app.register(nameRoutes);
+  await app.register(closingRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);
   /*
@@ -102,6 +111,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    * reason it cannot.
    */
   await app.register(agentStartRoutes);
+  await app.register(desktopAppRoutes);
   await app.register(agentAliveRoutes);
   /*
    * Core, and beside those two rather than on the Settings screen's own routes:

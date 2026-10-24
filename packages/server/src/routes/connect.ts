@@ -1,10 +1,7 @@
-import { execFile } from 'node:child_process';
 import { networkInterfaces, hostname } from 'node:os';
-import { promisify } from 'node:util';
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
-
-const run = promisify(execFile);
+import { tailscale } from '../tailscale.js';
 
 /** Tailscale hands out addresses from 100.64.0.0/10. */
 function isTailscaleAddress(ip: string): boolean {
@@ -18,29 +15,6 @@ export interface ConnectAddress {
   label: string;
   /** Service workers and web push need a secure context; iOS enforces it. */
   secure: boolean;
-}
-
-/**
- * The Windows installer does not put tailscale.exe on PATH, so looking it up by
- * name alone silently reports "Tailscale not installed" on a machine where it
- * is running perfectly well.
- */
-const TAILSCALE_PATHS = [
-  'tailscale',
-  `${process.env.ProgramFiles ?? 'C:\\Program Files'}\\Tailscale\\tailscale.exe`,
-  `${process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)'}\\Tailscale\\tailscale.exe`,
-];
-
-async function tailscale(args: string[]): Promise<string | null> {
-  for (const exe of TAILSCALE_PATHS) {
-    try {
-      const { stdout } = await run(exe, args, { timeout: 2500, windowsHide: true });
-      return stdout;
-    } catch {
-      // Try the next location; not installed there, or not logged in.
-    }
-  }
-  return null;
 }
 
 /**

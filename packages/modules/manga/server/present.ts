@@ -35,6 +35,8 @@ export type SeriesSummary = {
   addedAt: number;
   /** Starred — see `Series.favourite`. Always a boolean here, unlike on disk. */
   favourite: boolean;
+  /** Your rating, 1 to 10, or null. See `Series.rating`. */
+  rating: number | null;
   /**
    * Which shelves it is on — see `Series.libraries`.
    *
@@ -203,6 +205,7 @@ export function seriesSummary(series: Series): SeriesSummary {
     error: series.error,
     addedAt: series.addedAt,
     favourite: series.favourite === true,
+    rating: series.rating ?? null,
     libraries: series.libraries ?? [],
     coverPath: coverPathOf(series),
     url: series.muId ? seriesUrl(series.muId) : null,

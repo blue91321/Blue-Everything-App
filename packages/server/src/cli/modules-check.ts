@@ -195,6 +195,9 @@ console.log('\nThe manifest\n');
 
 const good = validateModuleManifest({ id: 'weather', label: 'Weather', blurb: 'Forecast.', version: '1.0.0' });
 check('a minimal manifest is accepted', good.manifest !== null && good.problems.length === 0);
+check('  ...and does not start off unless it says so', good.manifest?.startsOff === undefined);
+const off = validateModuleManifest({ id: 'weather', label: 'Weather', blurb: 'Forecast.', version: '1.0.0', startsOff: true });
+check('startsOff is kept', off.manifest?.startsOff === true);
 
 const withServer = validateModuleManifest({ id: 'w', label: 'W', blurb: 'b', version: '1', server: 'server/index.js' });
 check('a one-letter id is refused', withServer.manifest === null);

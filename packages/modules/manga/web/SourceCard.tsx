@@ -172,6 +172,31 @@ export function SourceCard({
   const settingUp = setup?.running === true;
   const failed = (data && failing(data)) || Boolean(setup?.problem);
 
+  /*
+   * A guest copy has nothing to set up: it reads through the host's Suwayomi,
+   * which the host's copy starts, stops and updates. So the card only says
+   * whether that is answering, and where to ask for a source.
+   */
+  if (data?.onHost) {
+    const line = data.managed.state === 'failed' ? data.managed.problem : `The host's Suwayomi is ${data.managed.state}.`;
+    return (
+      <details className="card manga-source-card" id="manga-setup" ref={card} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+        <summary>
+          Where chapters come from
+          <span className={data.managed.state === 'failed' ? 'meta urgent' : 'meta'}> · the host's Suwayomi</span>
+        </summary>
+        <p className="meta">
+          This copy reads through the Suwayomi on the host's PC, which every copy there shares. The host sets it up and keeps
+          it running; it wakes when you search or read.
+        </p>
+        <p className={data.managed.state === 'failed' ? 'banner' : 'meta'}>{line}</p>
+        <button className="btn" onClick={onExtensions}>
+          See sources, or ask for one
+        </button>
+      </details>
+    );
+  }
+
   return (
     <details
       className="card manga-source-card"

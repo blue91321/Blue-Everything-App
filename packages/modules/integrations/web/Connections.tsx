@@ -10,6 +10,7 @@
  * render — you can see what is hooked up and sync it — and the buttons that
  * would change a connection are replaced with a line saying where to do it.
  */
+import { serverPc } from '@app/device';
 import { useState } from 'react';
 import { api, type ProviderInfo, type SetupStep, type SyncOutcome } from '@app/api';
 import { useAsync } from '@app/useAsync';
@@ -68,8 +69,8 @@ export function Connections({ local }: { local: boolean }) {
     <>
       {!local && (
         <div className="banner">
-          Connecting and disconnecting can only be done on the PC running the server — an OAuth redirect
-          comes back to a browser there. Everything on this screen is readable from here.
+          Connecting and disconnecting can only be done on {serverPc()} — an OAuth redirect comes back to a
+          browser there. Everything on this screen is readable from here.
         </div>
       )}
 
@@ -478,7 +479,7 @@ export function ProviderCard({
 
       {anythingUsable && !local && provider.missingConfig.length > 0 && (
         <div className="meta" style={{ marginTop: '.75rem' }}>
-          Not configured yet. Its credentials are filled in on the PC running the server.
+          Not configured yet. Its credentials are filled in on {serverPc()}.
         </div>
       )}
 
@@ -683,7 +684,7 @@ export function ProviderCard({
 
       {provider.auth === 'api-key' && !provider.connected && !local && (
         <div className="meta" style={{ marginTop: '.75rem' }}>
-          {provider.label} is connected from the PC running the server.
+          {provider.label} is connected from {serverPc()}.
         </div>
       )}
 

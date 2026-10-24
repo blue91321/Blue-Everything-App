@@ -80,6 +80,10 @@ logs/
 # every update. Personal exactly as the database is.
 /backups/
 
+# Guest copies of the server (start.ps1 -Instance): somebody else's database,
+# data, settings, logs and their key to the host. Personal, and not yours.
+/instances/
+
 # The app's own Node.js, downloaded by scripts/node-runtime.ps1 (or shipped in a
 # release zip). A program, not source.
 /runtime/

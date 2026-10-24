@@ -27,13 +27,45 @@ import {
   flushOutbox,
 } from './offline-sync';
 import './offline-effects';
-import { onServersMachine } from './device';
+import { onServersMachine, thePc, ThePc } from './device';
 
 const TOKEN_KEY = 'everything.token';
 
 export const getToken = (): string => localStorage.getItem(TOKEN_KEY) ?? '';
 export const setToken = (token: string): void => localStorage.setItem(TOKEN_KEY, token.trim());
 export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
+
+/**
+ * A sign-in link to a person's copy: `…/#invite=<code>`. The code is swapped
+ * for this device's own token, once, and the link is taken out of the address
+ * bar so it is not left in history to be tried again. Done before the session
+ * is asked for, so the first thing the copy sees is a signed-in device.
+ *
+ * Returns what went wrong, for the pairing screen to say, or null.
+ */
+export async function redeemInviteInUrl(): Promise<string | null> {
+  const match = /(?:^#|&)invite=([A-Za-z0-9_-]+)/.exec(location.hash);
+  if (!match) return null;
+  history.replaceState(null, '', location.pathname + location.search);
+  const phone = /iPhone|iPad|Android/i.test(navigator.userAgent);
+  try {
+    const response = await fetch('/api/invite/redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        code: match[1],
+        kind: phone ? 'phone' : 'browser',
+        name: phone ? 'Phone (signed in by link)' : 'Browser (signed in by link)',
+      }),
+    });
+    const body = (await response.json().catch(() => null)) as { token?: string; error?: string } | null;
+    if (!response.ok || !body?.token) return body?.error ?? `that sign-in link did not work (${response.status})`;
+    setToken(body.token);
+    return null;
+  } catch {
+    return 'could not reach the server to sign in with that link';
+  }
+}
 
 /** Thrown on 401 so the UI can drop back to the pairing screen. */
 export class Unauthorized extends Error {}
@@ -191,7 +223,7 @@ async function send<T>(rawPath: string, init: RequestInit, method: string): Prom
     // screen that simply is not kept offline explains nothing. On the PC
     // itself, offline means the app has stopped, and "needs the PC" would be
     // said to the PC.
-    const needs = onServersMachine() ? 'Needs the app running' : 'Needs the PC';
+    const needs = onServersMachine() ? 'Needs the app running' : `Needs ${thePc()}`;
     throw new ServerUnreachable(
       isRead ? `${needs} — this isn't kept for offline use` : `${needs} — this can't be done offline`
     );
@@ -214,8 +246,8 @@ async function send<T>(rawPath: string, init: RequestInit, method: string): Prom
     if (path === '/api/session') return unreachable('the server is slow to answer');
     throw new Error(
       isRead
-        ? 'The PC is taking too long to answer. It is running; try again in a moment.'
-        : 'The PC is taking too long to answer, so this may or may not have happened. It is running; check, then try again.'
+        ? `${ThePc()} is taking too long to answer. It is running; try again in a moment.`
+        : `${ThePc()} is taking too long to answer, so this may or may not have happened. It is running; check, then try again.`
     );
   };
 
@@ -860,6 +892,47 @@ export interface Session {
   features?: string[];
   /** Switched on but with its folder deleted. Distinct from simply off. */
   featuresMissing?: string[];
+  /**
+   * Which person's copy of the server this is, or null on the host: your own,
+   * which manages the others (Settings → People). Absent from an older server.
+   */
+  copy?: string | null;
+  /** Been through onboarding, and which screens to show (null for all). Absent from an older server. */
+  onboarding?: Onboarding;
+  /** What this person is called, to friends on this PC; null until chosen. Absent from an older server. */
+  displayName?: string | null;
+  /** What they are called until they choose: the name the host gave this copy, or "user". */
+  defaultName?: string;
+}
+
+/** One person's copy of the server, as Settings → People lists it. */
+/** Onboarding's answers. See `onboarding.ts` on the server. */
+export interface Onboarding {
+  done: boolean;
+  shown: string[] | null;
+  /** Absent from an older server. */
+  preset?: 'manga' | 'everything' | 'custom';
+  known?: string[] | null;
+}
+
+export interface Person {
+  name: string;
+  /** What they chose to be called, or null until they have. */
+  displayName: string | null;
+  port: number;
+  running: boolean;
+  autostart: boolean;
+  created: string | null;
+  /** `https://<machine>.ts.net:<port>`, once Tailscale publishes it. */
+  address: string | null;
+  localAddress: string;
+}
+
+/** A single-use sign-in link for a person's copy. */
+export interface PersonInvite {
+  url: string;
+  expiresAt: number;
+  person: Person;
 }
 
 /**
@@ -1369,8 +1442,60 @@ export const api = {
     create: (payload: { name: string; kind: 'phone' | 'browser' | 'windows-agent' | 'extension' }) =>
       post<Device & { token: string }>('/api/devices', payload),
     revoke: (id: string) => post(`/api/devices/${id}/revoke`),
+    /** A short code to sign one more device in to this copy, from a device already signed in. */
+    handoff: () => post<{ code: string; expiresAt: number }>('/api/devices/handoff'),
     /** Only works on an already-revoked device — the server enforces that. */
     remove: (id: string) => request<void>(`/api/devices/${id}`, { method: 'DELETE' }),
+  },
+
+  /** What closing the app's window does: see `closing.ts` on the server. */
+  closing: {
+    get: (side: 'host' | 'desktop') =>
+      request<{ mode: 'keep' | 'quit'; noticeShown: boolean; side: string; keeps: string[] }>(`/api/closing?side=${side}`),
+    set: (mode: 'keep' | 'quit') =>
+      request<{ mode: 'keep' | 'quit' }>('/api/closing', { method: 'PUT', body: JSON.stringify({ mode }) }),
+  },
+
+  /** Blue Everything Desktop, from this server: see `routes/desktop-app.ts`. */
+  desktopApp: {
+    get: () => request<{ version: string; ready: boolean; bytes: number | null; releases: string }>('/api/desktop-app'),
+    // The first time, the server may be fetching 60MB from GitHub before it answers.
+    ticket: () =>
+      request<{ url: string; bytes: number | null }>('/api/desktop-app/ticket', { method: 'POST', signal: AbortSignal.timeout(10 * 60_000) }),
+  },
+
+  /** What this person is called, to friends on this PC. Null takes it off. */
+  profile: {
+    setName: (name: string | null) =>
+      request<{ name: string | null }>('/api/profile/name', { method: 'PUT', body: JSON.stringify({ name }) }),
+  },
+
+  /** Onboarding: finish it, start it again, or choose which screens show. */
+  onboarding: {
+    set: (patch: { done?: boolean; shown?: string[] | null; preset?: Onboarding['preset']; known?: string[] }) =>
+      request<Onboarding>('/api/onboarding', { method: 'PUT', body: JSON.stringify(patch) }),
+  },
+
+  /**
+   * People: a copy of the server each, on the host's PC (Settings → People).
+   * Making and starting one waits for a server to boot, so those get longer
+   * than the 15s an ordinary change does.
+   */
+  people: {
+    list: () => request<{ people: Person[] }>('/api/people'),
+    create: (name: string) =>
+      request<PersonInvite>('/api/people', { method: 'POST', body: JSON.stringify({ name }), signal: AbortSignal.timeout(90_000) }),
+    start: (name: string) =>
+      request<Person>(`/api/people/${encodeURIComponent(name)}/start`, { method: 'POST', signal: AbortSignal.timeout(60_000) }),
+    stop: (name: string) => post<Person>(`/api/people/${encodeURIComponent(name)}/stop`),
+    invite: (name: string) => post<PersonInvite>(`/api/people/${encodeURIComponent(name)}/invite`),
+    /** Moves their folder aside rather than deleting it; `confirm` is the name typed again. */
+    remove: (name: string) =>
+      request<{ ok: true }>(`/api/people/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ confirm: name }),
+        signal: AbortSignal.timeout(30_000),
+      }),
   },
 
   tasks: {

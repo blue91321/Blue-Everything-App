@@ -9,6 +9,7 @@
  * and only then is there a button that writes. The preview is the whole point:
  * a wrong guess costs a click rather than a thousand rows.
  */
+import { serverPc } from '../device';
 import { useState } from 'react';
 import { api, type NoteImportResult } from '../api';
 import { useAsync } from '../useAsync';
@@ -102,7 +103,7 @@ export function NoteTransfer({
 
         {!local && (
           <div className="meta urgent" style={{ marginTop: 8 }}>
-            Importing only works from the PC running the app.
+            Importing only works from {serverPc()}.
           </div>
         )}
 

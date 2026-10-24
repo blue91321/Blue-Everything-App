@@ -29,7 +29,8 @@ import { applyServerGames, registerExtraGames, setGameDetection } from './games.
 import * as popup from './popup.js';
 import { setAccent } from './overlay.js';
 import { setSoundEnabled, setTones } from './sound.js';
-import { createTray, runAppScript, type Tray } from './tray.js';
+import { createTray, desktopOnly, runAppScript, type Tray, type TrayCopy } from './tray.js';
+import { watchClosing } from './closing.js';
 
 assertConfigured();
 /*
@@ -338,14 +339,41 @@ if (integrationsEntry) {
  */
 popup.startPopups({ log: (message) => console.log(`[${clock()}] ${message}`) });
 
+/*
+ * Friends' copies, for the tray's menu: every server on this PC under one
+ * icon. Asked of the host's People route as the menu opens, which the agent
+ * on the host may use as this PC. Not on the desktop client, which has no copies.
+ */
+let copies: TrayCopy[] = [];
+const refreshCopies = async (): Promise<void> => {
+  const { people } = await client.people();
+  copies = people.map((p) => ({
+    name: p.name,
+    label: p.displayName && p.displayName !== p.name ? `${p.displayName} (${p.name})` : p.name,
+    running: p.running,
+  }));
+};
+
 let tray: Tray | null = null;
 try {
   tray = createTray({
+    copies: desktopOnly
+      ? undefined
+      : {
+          list: () => copies,
+          refresh: refreshCopies,
+          toggle: (copy) => {
+            const action = copy.running ? client.stopCopy(copy.name) : client.startCopy(copy.name);
+            void action
+              .then(refreshCopies)
+              .catch((error: Error) => console.log(`[${clock()}] could not ${copy.running ? 'stop' : 'start'} ${copy.name}: ${error.message}`));
+          },
+        },
     tooltip: `Blue Everything — ${agentConfig.serverUrl}`,
     // Through `start.ps1 -Open` rather than launching a browser here, so there
     // is one definition of "open the app". The script sees the port is already
     // listening and goes straight to opening the window.
-    onOpen: () => runAppScript('start.ps1', ['-Open']),
+    onOpen: () => (desktopOnly ? runAppScript('desktop.ps1', ['-Open']) : runAppScript('start.ps1', ['-Open'])),
   });
 } catch (error) {
   console.log(`[${clock()}] no tray icon: ${(error as Error).message}`);
@@ -362,6 +390,14 @@ monitor.start();
  * server error, which the server would read as the icon being gone. Failures
  * are ignored: the server being down is the attention loop's to report.
  */
+/* Closing the app's window: stay in the tray or stop, as chosen. See `closing.ts`. */
+watchClosing({
+  client,
+  side: desktopOnly ? 'desktop' : 'host',
+  quit: () => (tray ? tray.quit() : runAppScript(desktopOnly ? 'desktop.ps1' : 'stop.ps1', desktopOnly ? ['-Stop'] : [])),
+  log: (message) => console.log(`[${clock()}] ${message}`),
+});
+
 const checkIn = () => void client.alive().catch(() => {});
 checkIn();
 setInterval(checkIn, 20_000).unref();

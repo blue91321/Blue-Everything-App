@@ -2225,6 +2225,16 @@ console.log('\n== a route can keep its writes out of the change stream ==');
   check('  ...and one without it still is', heard === 1, `${heard}`);
 }
 
+console.log('\nThe desktop app, from the app');
+{
+  const about = await app.inject({ method: 'GET', url: '/api/desktop-app' });
+  check('it says which version it would hand out', about.statusCode === 200 && typeof (about.json() as { version?: unknown }).version === 'string', about.body.slice(0, 80));
+  const noTicket = await app.inject({ method: 'GET', url: '/download/desktop-app' });
+  check('  ...and the download needs a ticket', noTicket.statusCode === 403, `${noTicket.statusCode}`);
+  const madeUp = await app.inject({ method: 'GET', url: '/download/desktop-app?ticket=not-a-real-one' });
+  check('  ...that it issued', madeUp.statusCode === 403, `${madeUp.statusCode}`);
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

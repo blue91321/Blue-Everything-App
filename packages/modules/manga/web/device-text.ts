@@ -11,7 +11,7 @@
  * offline shelf cannot word the same fact four ways. The device tests are
  * core's (`@app/device`), which the offline banner and push already use.
  */
-import { isAndroid, isInstalled, isIOS, isMobile, onServersMachine } from '@app/device';
+import { isAndroid, isInstalled, isIOS, isMobile, onServersMachine, thePc, ThePc } from '@app/device';
 
 /**
  * What to call the device: an iPad or an Android tablet is not a phone. An iPad
@@ -24,20 +24,22 @@ function gadget(): string {
 
 /** On the server's own PC, being offline means the app's server has stopped. */
 const onThePc = onServersMachine();
+/** "the PC", or "the host's PC" on a friend's copy: see `thePc`. */
+const PC = thePc();
 
 /** What anything not saved here is waiting for: "…so it needs the PC." */
-export const NEEDS = onThePc ? 'needs the app running' : 'needs the PC';
+export const NEEDS = onThePc ? 'needs the app running' : `needs ${PC}`;
 
 /** When saving works: "Save chapters while the PC is reachable." */
-export const WHILE_REACHABLE = onThePc ? 'while the app is running' : 'while the PC is reachable';
+export const WHILE_REACHABLE = onThePc ? 'while the app is running' : `while ${PC} is reachable`;
 
 /** Where reading done offline is headed: "…not yet on the PC." */
-export const NOT_YET_SENT = onThePc ? 'not yet saved by the app' : 'not yet on the PC';
+export const NOT_YET_SENT = onThePc ? 'not yet saved by the app' : `not yet on ${PC}`;
 
 /** A sync that could not reach it. */
 export const COULD_NOT_SEND = onThePc
   ? 'The app is not running — they will be saved on their own once it is.'
-  : 'The PC could not be reached — it will send on its own once it can.';
+  : `${ThePc()} could not be reached — it will send on its own once it can.`;
 
 /**
  * Whether these survive, which is the part that genuinely differs.
@@ -49,7 +51,7 @@ export const COULD_NOT_SEND = onThePc
 export function keepingNote(persisted: boolean | null): string {
   const progress = onThePc
     ? ' Your reading progress is kept by the app, not with these.'
-    : ' Your reading progress lives on the PC either way.';
+    : ` Your reading progress lives on ${PC} either way.`;
 
   if (isIOS()) {
     if (persisted) return `iOS has agreed to keep these even when the ${gadget()} is short of space.${progress}`;
@@ -98,7 +100,7 @@ export function whereKeptNote(persisted: boolean | null): string {
     persisted === false
       ? ` A browser keeps them more firmly once it can see you rely on the app — installing it${isIOS() ? ' from the Share menu' : ''} is what usually earns that.`
       : '';
-  return `${where}${earn} The copy the PC keeps is separate: ordinary folders of images under the app's own data folder, which nothing in a browser can clear. Manga → More → Kept for good.`;
+  return `${where}${earn} The Local collection is separate: ordinary folders of images kept on ${PC}, which nothing in a browser can clear. Manga → Downloads → Kept for good.`;
 }
 
 /** While downloads run: what stops them, which is a phone putting the app away. */

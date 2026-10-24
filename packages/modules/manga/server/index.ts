@@ -29,11 +29,11 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
-import { db, nudges, changes } from '@everything/server/module-api';
+import { db, nudges, changes, config, copyOfDevice, devices, isGuest, nameFor, readHostKey } from '@everything/server/module-api';
 import { chapterValue } from './identity.js';
 import { applyReadMark, placeIsAtEnd } from './read-marks.js';
 import { isWholeImage } from '../web/image-bytes.js';
-import { fetchPage, PageFetchError } from './page-fetch.js';
+import { fetchPagesThroughHost, PageFetchError, sharedPage } from './page-fetch.js';
 import { search, fetchCover, MangaDexError, type Candidate } from './mangadex.js';
 import { CREDIT, readSeries } from './mangaupdates.js';
 import {
@@ -49,6 +49,7 @@ import {
   type Glimpse,
   type Series,
   type Store,
+  isRating,
 } from './library.js';
 import { seriesSummary, recentReleases, thumbPath, THUMB_PATH } from './present.js';
 import { groupKey, groupMatches, isIndexSource, toSuwayomiChanges, type FilterChange } from './browse.js';
@@ -73,20 +74,10 @@ import { suwayomiProcess, findJars, portOf, suwayomiLogPath } from './process.js
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { spawn } from 'node:child_process';
-import {
-  applyImport,
-  ImportRefused,
-  inScope,
-  mergeDuplicates,
-  planImport,
-  readMangaReaderBackup,
-  type ImportScope,
-  type OldLibrary,
-} from './mangareader.js';
-import { matchingState, startMatching, unmatchedCount } from './matching.js';
 import { fillTags } from './tags.js';
 import { tagsForLevel, withoutTags } from './mature.js';
-import { extensionUsage, readFlags, setFlag, type ExtensionUsage } from './extension-usage.js';
+import { extensionUsage, readAskedBy, readFlags, setFlag, type ExtensionUsage } from './extension-usage.js';
+import { othersRatings, setShared } from './shared-ratings.js';
 import { extensionCheck, extensionNote, noteExtensionCheck, setupState, startSetup, updateExtensionsIfDue, updateWaitingExtensions } from './setup.js';
 import {
   cachedPage,
@@ -104,8 +95,12 @@ import {
   archiveRoot,
   DEFAULT_ARCHIVE_ROOT,
   isArchived,
+  keptEntry,
+  keptMangaIds,
+  keptSeries,
   isRunning as archiveRunning,
   overview as archiveOverview,
+  mendEditions,
   runQueue,
   seriesProgress,
   startArchive,
@@ -134,13 +129,105 @@ function happenedAt(value: unknown): number {
   return Math.min(value, now);
 }
 
+/** What a guest copy says when asked to manage sources: they are the host's. */
+const GUEST_SOURCES =
+  "Sources are managed on the host's copy, which runs the Suwayomi every copy shares. Ask for one from Manage extensions and the host can add it.";
+
+/**
+ * Ask the host something, as this guest copy, with its key. See
+ * `instances.ts` in the server for where the key comes from.
+ */
+async function hostFetch(path: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<Response | { error: string }> {
+  const key = readHostKey();
+  if (!key) return { error: "this copy has no key to the host yet; restarting the host's Blue Everything gives it one" };
+  try {
+    return await fetch(`${config.EVERYTHING_HOST_URL.replace(/\/$/, '')}${path}`, {
+      ...init,
+      headers: { authorization: `Bearer ${key}`, ...(init.body ? { 'content-type': 'application/json' } : {}) },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    return { error: "the host's Blue Everything isn't answering" };
+  }
+}
+
+async function askHost(path: string, body: unknown): Promise<{ ok: true } | { error: string }> {
+  const response = await hostFetch(path, { method: 'POST', body: JSON.stringify(body) });
+  if ('error' in response) return response;
+  if (response.ok) return { ok: true };
+  const said = (await response.json().catch(() => null)) as { error?: string } | null;
+  return { error: `the host said: ${said?.error ?? response.status}` };
+}
+
+/** The host's answer as JSON, or what went wrong. */
+async function hostJson<T>(path: string, init: RequestInit = {}, timeoutMs?: number): Promise<T | { error: string; status?: number }> {
+  const response = await hostFetch(path, init, timeoutMs);
+  if ('error' in response) return response;
+  const body = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!response.ok || body === null) return { error: body?.error ?? `the host answered ${response.status}`, status: response.status };
+  return body;
+}
+
+/**
+ * What the host keeps on its disk, by Suwayomi id, for a guest copy: asked at
+ * most once a minute. Every page a guest reads checks it, so a series nobody
+ * kept costs no request to the host.
+ */
+let keptOnHost: { at: number; ids: Set<string> } = { at: 0, ids: new Set() };
+async function hostKept(): Promise<Set<string>> {
+  if (Date.now() - keptOnHost.at < 60_000) return keptOnHost.ids;
+  const got = await hostJson<{ series: Array<{ mangaId: string }> }>('/api/manga/host/archive');
+  keptOnHost = { at: Date.now(), ids: 'error' in got ? keptOnHost.ids : new Set(got.series.map((k) => k.mangaId)) };
+  return keptOnHost.ids;
+}
+/** After a guest asks to keep one, so its own screens see it at once. */
+const forgetHostKept = () => {
+  keptOnHost = { at: 0, ids: keptOnHost.ids };
+};
+
+/** Suwayomi's id for one of this copy's series or glimpses, or null. */
+function mangaIdFor(store: Store, id: string): string | null {
+  return (store.series.find((s) => s.id === id) ?? store.glimpses.find((g) => g.id === id))?.source?.mangaId ?? null;
+}
+
 export async function routes(app: FastifyInstance): Promise<void> {
+  /*
+   * A friend's copy fetches pages through the host (`/api/manga/host/page`),
+   * so a page the host or another copy is already fetching is fetched once.
+   * See `sharedPage` in page-fetch.ts. The host's retries happen there; this
+   * waits long enough for them.
+   */
+  if (isGuest) {
+    fetchPagesThroughHost(async (path, fresh) => {
+      const response = await hostFetch(
+        `/api/manga/host/page?p=${encodeURIComponent(path)}${fresh ? '&fresh=1' : ''}`,
+        {},
+        150_000
+      );
+      if ('error' in response) throw new PageFetchError(response.error, null);
+      if (!response.ok) {
+        const said = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new PageFetchError(said?.error ?? `the host answered ${response.status}`, response.status);
+      }
+      return { body: Buffer.from(await response.arrayBuffer()), type: response.headers.get('content-type') ?? 'image/jpeg' };
+    });
+  }
+
   /*
    * Series linked before linking renamed anything keep the name they arrived
    * with. One pass at startup gives them their source's name under the same
    * rule as a fresh link — see `titles.ts` — and does nothing on every start
    * after, since a renamed series already matches its source.
    */
+  /*
+   * Kept series saved two editions of a chapter where the source lists two,
+   * into one folder; once at startup, down to one. See `mendManifest`.
+   */
+  if (!isGuest) {
+    const mended = mendEditions();
+    if (mended.series > 0) app.log.info(mended, 'manga: kept one edition of each kept chapter');
+  }
+
   {
     const store = read();
     const renamed = store.series.filter((series) => retitleFromSource(series));
@@ -150,80 +237,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
   }
 
-  /**
-   * Bringing a library in from Manga Reader, by its iMazing app backup — see
-   * `mangareader.ts` for what is taken from where.
-   *
-   * Two-phase, like the notes and vault imports: the first call reports what
-   * the file holds and writes nothing, and only `commit` writes — a file that
-   * turns out to be some other app's backup should cost a click, not a library.
-   * Local-only for the reason the notes import is: it reads a file from this
-   * machine and writes hundreds of rows.
-   *
-   * Base64 in JSON rather than multipart, like every other upload here, with a
-   * `bodyLimit` of its own. Not announced by the generic hook: the preview
-   * changes nothing, and the commit announces itself.
-   */
-  const IMPORT_MAX_BYTES = 150 * 1024 * 1024;
-  app.post(
-    '/api/manga/import/mangareader',
-    { bodyLimit: Math.ceil(IMPORT_MAX_BYTES * 1.37) + 1_000_000, config: { announce: false } },
-    async (request, reply) => {
-      if (!request.isLocal) return reply.code(403).send({ error: 'bring a library in from the PC running the app' });
-      const body = request.body as { data?: unknown; commit?: unknown; scope?: unknown } | null;
-      if (typeof body?.data !== 'string') return reply.code(400).send({ error: 'no file' });
-      const bytes = Buffer.from(body.data, 'base64');
-      if (bytes.length === 0) return reply.code(400).send({ error: 'that file is empty' });
-      if (bytes.length > IMPORT_MAX_BYTES) return reply.code(413).send({ error: 'that file is larger than 150MB' });
-
-      let old: OldLibrary;
-      try {
-        old = readMangaReaderBackup(bytes);
-      } catch (error) {
-        if (error instanceof ImportRefused) return reply.code(400).send({ error: error.message });
-        throw error;
-      }
-
-      const scope: ImportScope = body.scope === 'year' || body.scope === 'quarter' ? body.scope : 'all';
-      const now = Date.now();
-      const store = read();
-      // Counted after joining duplicates, so every number here is series that would arrive.
-      const series = mergeDuplicates(old.favourites);
-      const plan = planImport(store, series.filter((s) => inScope(s, scope, now)));
-      const bySite = new Map<string, number>();
-      for (const s of plan.add) bySite.set(s.site, (bySite.get(s.site) ?? 0) + 1);
-      const summary = {
-        favourites: series.length,
-        historyOnly: old.historyOnly,
-        // How many each choice would bring in, so the screen can say before you pick.
-        scopes: {
-          all: series.length,
-          year: series.filter((s) => inScope(s, 'year', now)).length,
-          quarter: series.filter((s) => inScope(s, 'quarter', now)).length,
-        },
-        scope,
-        add: plan.add.length,
-        merge: plan.merge.map((m) => m.title),
-        bySite: [...bySite].map(([site, count]) => ({ site, count })).sort((a, b) => b.count - a.count),
-        readChapters: [...plan.add, ...plan.merge.map((m) => m.old)].reduce((n, s) => n + s.readChapters.length, 0),
-      };
-      if (body.commit !== true) return { ...summary, committed: false };
-
-      const result = applyImport(store, plan);
-      write(store);
-      changes.emitChange('all');
-      return { ...summary, committed: true, ...result, matching: startMatching() };
-    }
-  );
-
-  /** How finding imported series on your sources is going — see `matching.ts`. */
-  app.get('/api/manga/import/matching', async () => ({ ...matchingState(), unmatched: unmatchedCount() }));
-
-  /** Try again: after installing an extension, or once a site stops failing. */
-  app.post('/api/manga/import/matching', { config: { announce: false } }, async () => startMatching());
 
   /**
-   * Sources left out of searching and finding imports. Not local-only: it is
+   * Sources left out of searching and browsing. Not local-only: it is
    * about what you read, like the language setting.
    */
   app.put('/api/manga/ignored-sources', async (request, reply) => {
@@ -246,6 +262,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
   app.get('/api/manga', async () => {
     const store = read();
     const positions = readPositions();
+    // Kept on the PC, for the library's "On this PC" filter: the host's own
+    // archive, or on a guest copy the host's, which every copy shares.
+    const kept = isGuest ? await hostKept() : keptMangaIds();
     return {
       series: store.series.map((s) => {
         const place = positions[s.id] ?? null;
@@ -253,6 +272,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
         return {
           ...seriesSummary(s),
           position: place,
+          kept: s.source !== null && kept.has(s.source.mangaId),
           /*
            * What the library grid draws and sorts by: the newest chapter as a
            * number (the red bar), the furthest you have finished (the NEW badge
@@ -715,8 +735,193 @@ export async function routes(app: FastifyInstance): Promise<void> {
     if (body.on) series.favourite = true;
     else delete series.favourite;
     write(store);
+    // A new favourite may be one to keep on the PC.
+    if (body.on) void autoKeep();
     return { favourite: series.favourite === true };
   });
+
+  /**
+   * Rate a series, 1 to 10, or take the rating off with null. Like the star:
+   * only a rating is stored, and it is your data, editable from the phone.
+   */
+  app.put('/api/manga/:id/rating', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { rating?: unknown } | null;
+    if (body?.rating !== null && !isRating(body?.rating)) {
+      return reply.code(400).send({ error: 'a rating is a whole number from 1 to 10, or null' });
+    }
+    const store = read();
+    const series = store.series.find((s) => s.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+    if (body.rating === null) delete series.rating;
+    else series.rating = body.rating;
+    write(store);
+    if (store.shareRatingsWithCopies) void publishRatings();
+    void autoKeep();
+    return { rating: series.rating ?? null };
+  });
+
+  /** What friends on this PC who share their ratings gave this series. */
+  app.get('/api/manga/:id/ratings', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const mangaId = mangaIdFor(read(), id);
+    if (!mangaId) return { others: [] };
+    if (!isGuest) return { others: othersRatings(mangaId, 'you').map((o) => ({ ...o, who: nameFor(o.who, 'you') })) };
+    const got = await hostJson<{ others: Array<{ who: string; rating: number }> }>(
+      `/api/manga/host/ratings?manga=${encodeURIComponent(mangaId)}`
+    );
+    if ('error' in got) return reply.code(502).send({ error: got.error });
+    return got;
+  });
+
+  /**
+   * The Local collection's rules and rating sharing, as Manga → More shows them.
+   * Not local-only: how your manga is kept and shared is yours, from any of your
+   * devices.
+   */
+  app.get('/api/manga/collection-rules', async () => {
+    const store = read();
+    return {
+      autoKeepFavourites: store.autoKeepFavourites,
+      autoKeepMinRating: store.autoKeepMinRating,
+      shareRatingsWithCopies: store.shareRatingsWithCopies,
+    };
+  });
+
+  app.put('/api/manga/collection-rules', async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      autoKeepFavourites?: unknown;
+      autoKeepMinRating?: unknown;
+      shareRatingsWithCopies?: unknown;
+    };
+    const store = read();
+    if (body.autoKeepFavourites !== undefined) {
+      if (typeof body.autoKeepFavourites !== 'boolean') return reply.code(400).send({ error: 'autoKeepFavourites is true or false' });
+      store.autoKeepFavourites = body.autoKeepFavourites;
+    }
+    if (body.autoKeepMinRating !== undefined) {
+      if (body.autoKeepMinRating !== null && !isRating(body.autoKeepMinRating)) {
+        return reply.code(400).send({ error: 'autoKeepMinRating is 1 to 10, or null' });
+      }
+      store.autoKeepMinRating = body.autoKeepMinRating;
+    }
+    const sharingWas = store.shareRatingsWithCopies;
+    if (body.shareRatingsWithCopies !== undefined) {
+      if (typeof body.shareRatingsWithCopies !== 'boolean') return reply.code(400).send({ error: 'shareRatingsWithCopies is true or false' });
+      store.shareRatingsWithCopies = body.shareRatingsWithCopies;
+    }
+    write(store);
+    // Turned on: hand them over. Turned off: take them back out.
+    if (store.shareRatingsWithCopies !== sharingWas) void publishRatings();
+    void autoKeep();
+    return {
+      autoKeepFavourites: store.autoKeepFavourites,
+      autoKeepMinRating: store.autoKeepMinRating,
+      shareRatingsWithCopies: store.shareRatingsWithCopies,
+    };
+  });
+
+  /**
+   * This copy's ratings, handed to the host's shared set, or taken out of it
+   * when sharing is off. The whole set each time, so nothing can drift.
+   */
+  async function publishRatings(): Promise<void> {
+    const store = read();
+    const ratings: Record<string, { rating: number; title: string }> = {};
+    if (store.shareRatingsWithCopies) {
+      for (const s of store.series) {
+        if (s.rating !== undefined && s.source) ratings[s.source.mangaId] = { rating: s.rating, title: s.title };
+      }
+    }
+    if (isGuest) await askHost('/api/manga/host/ratings', { ratings });
+    else setShared('you', ratings);
+  }
+
+  /** Copies hand over their shared ratings, and read everyone else's. */
+  app.post('/api/manga/host/ratings', async (request, reply) => {
+    if (isGuest) return reply.code(404).send({ error: 'only the host keeps shared ratings' });
+    const from = request as unknown as { deviceKind: string | null; deviceId: string | null };
+    if (from.deviceKind !== 'instance' || !from.deviceId) return reply.code(403).send({ error: 'only for copies on this PC' });
+    const body = request.body as { ratings?: unknown } | null;
+    if (!body?.ratings || typeof body.ratings !== 'object') return reply.code(400).send({ error: 'send ratings' });
+    const ratings: Record<string, { rating: number; title: string }> = {};
+    for (const [mangaId, value] of Object.entries(body.ratings as Record<string, unknown>)) {
+      const v = value as { rating?: unknown; title?: unknown };
+      if (/^\d{1,25}$/.test(mangaId) && isRating(v?.rating)) {
+        ratings[mangaId] = { rating: v.rating, title: typeof v.title === 'string' ? v.title.slice(0, 300) : '' };
+      }
+    }
+    const [device] = await db.select({ name: devices.name }).from(devices).where(eq(devices.id, from.deviceId));
+    setShared((device?.name ?? 'a copy').replace(/^copy: /, ''), ratings);
+    return { ok: true };
+  });
+
+  app.get('/api/manga/host/ratings', async (request, reply) => {
+    if (isGuest) return reply.code(404).send({ error: 'only the host keeps shared ratings' });
+    const from = request as unknown as { isLocal: boolean; deviceKind: string | null; deviceId: string | null };
+    if (!from.isLocal && from.deviceKind !== 'instance') return reply.code(403).send({ error: 'only for copies on this PC' });
+    const { manga } = request.query as { manga?: string };
+    if (!manga || !/^\d{1,25}$/.test(manga)) return reply.code(400).send({ error: 'which series?' });
+    const [device] = from.deviceId
+      ? await db.select({ name: devices.name }).from(devices).where(eq(devices.id, from.deviceId))
+      : [];
+    const asking = (device?.name ?? '').replace(/^copy: /, '') || 'you';
+    // By display name; the host's own reads as the host's name to a friend.
+    const others = othersRatings(manga, asking).map((o) => ({ ...o, who: nameFor(o.who, asking) }));
+    return { others };
+  });
+
+  /**
+   * The Local collection's rules: every favourite, and anything rated at or
+   * above the chosen number, kept on the PC by themselves.
+   *
+   * Run by the release sweep and straight after a star, a rating or a rule
+   * changes. A few series a run, because each is a whole series to download and
+   * the archive's worker fetches one chapter at a time anyway: the rest follow
+   * on the next run. On a guest the host keeps them, as it keeps everything.
+   */
+  const AUTO_KEEP_PER_RUN = 3;
+  let autoKeeping = false;
+  async function autoKeep(): Promise<number> {
+    if (autoKeeping) return 0;
+    autoKeeping = true;
+    try {
+      const store = read();
+      if (!store.autoKeepFavourites && store.autoKeepMinRating === null) return 0;
+      const wanted = store.series.filter(
+        (s) =>
+          s.source !== null &&
+          ((store.autoKeepFavourites && s.favourite === true) ||
+            (store.autoKeepMinRating !== null && (s.rating ?? 0) >= store.autoKeepMinRating))
+      );
+      const kept = isGuest ? await hostKept() : keptMangaIds();
+      let started = 0;
+      for (const s of wanted) {
+        if (started >= AUTO_KEEP_PER_RUN) break;
+        if (kept.has(s.source!.mangaId)) continue;
+        if (isGuest) {
+          const got = await hostJson<Record<string, unknown>>('/api/manga/host/archive', { method: 'POST', body: JSON.stringify({ title: s.title, source: s.source }) }, 60_000);
+          if ('error' in got) break;
+          forgetHostKept();
+        } else {
+          try {
+            const chapters = await archiveTools().chapters(s.source!.mangaId);
+            startArchive({ id: s.id, title: s.title, source: s.source }, chapters);
+          } catch {
+            break; // The source is not answering; the next run tries again.
+          }
+        }
+        started += 1;
+      }
+      if (started > 0) {
+        if (!isGuest) workArchive();
+        changes.emitChange('all');
+      }
+      return started;
+    } finally {
+      autoKeeping = false;
+    }
+  }
 
   /**
    * How many chapters to fetch ahead, 0 to 3 — see `Store.readAheadChapters`.
@@ -963,6 +1168,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
       mode: store.suwayomiMode,
       managed: suwayomiProcess.state,
       foundJars,
+      // A guest copy uses the host's Suwayomi and sets none of this up itself.
+      onHost: isGuest,
     });
 
     if (!url) return { ...base(), configured: false, url: null, health: null };
@@ -1565,6 +1772,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * phone; it changes nothing about which machine runs what.
    */
   app.post('/api/manga/ui-session', async (request, reply) => {
+    // Suwayomi's own interface installs extensions and sets repositories, which
+    // are the host's to do; a guest copy has no way in to it.
+    if (isGuest) return reply.code(403).send({ error: GUEST_SOURCES });
     const store = read();
     const url = effectiveUrl(store, DEFAULT_BASE_URL);
     if (!url) return reply.code(400).send({ error: 'no source is configured' });
@@ -1587,7 +1797,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return reply.header('set-cookie', sessionCookie(token, maxAgeSeconds, secure)).send({ path: `${UI_PREFIX}/` });
   });
 
-  registerUiProxy(app, {
+  if (!isGuest) registerUiProxy(app, {
     target: () => effectiveUrl(read(), DEFAULT_BASE_URL),
     ensure: async () => {
       const store = read();
@@ -1663,6 +1873,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
         repos,
         usage,
         flagged: readFlags(),
+        // Which guest copies asked for each flagged one (the host's screen).
+        askedBy: Object.fromEntries(
+          Object.entries(readAskedBy()).map(([pkg, who]) => [pkg, who.map((n) => nameFor(n, 'you'))])
+        ),
+        // A guest asks for sources; the host installs them (plan A).
+        onHost: isGuest,
         readLanguages: ctx.store.readLanguages,
         autoUpdate: ctx.store.autoUpdateExtensions,
         lastCheck: extensionCheck(),
@@ -1690,7 +1906,66 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const body = request.body as { flagged?: unknown } | null;
     if (!/^[A-Za-z0-9._-]{1,200}$/.test(pkg)) return reply.code(400).send({ error: 'not an extension' });
     if (typeof body?.flagged !== 'boolean') return reply.code(400).send({ error: 'flagged is true or false' });
+    /*
+     * On a guest copy the ask goes to the host, whose Suwayomi it is, and is
+     * kept here too so this screen can say it was asked.
+     */
+    if (isGuest) {
+      const asked = await askHost('/api/manga/host/requests', { pkg, flagged: body.flagged });
+      if ('error' in asked) return reply.code(502).send({ error: asked.error });
+    }
     return { flagged: setFlag(pkg, body.flagged) };
+  });
+
+  /* ---- what guest copies ask of the host (plan A) ---- */
+
+  /**
+   * Wake the host's Suwayomi for a guest copy and wait until it answers.
+   *
+   * Only for a copy's key (`instance`), or this PC. A guest's reading also
+   * counts as somebody using it, so this pushes the idle deadline out.
+   */
+  app.post('/api/manga/host/wake', async (request, reply) => {
+    if (isGuest) return reply.code(404).send({ error: 'only the host runs Suwayomi' });
+    const from = request as unknown as { isLocal: boolean; deviceKind: string | null };
+    if (!from.isLocal && from.deviceKind !== 'instance') return reply.code(403).send({ error: 'only for copies on this PC' });
+    const store = read();
+    const url = effectiveUrl(store, DEFAULT_BASE_URL);
+    if (!url) return reply.code(400).send({ error: 'the host has no source configured' });
+    if (!store.manageSuwayomi || !store.suwayomiJar) {
+      // Run by hand: nothing to start, so say whether it answers.
+      const reachable = (await new SuwayomiAdapter(url).describe()).reachable;
+      return { state: reachable ? { state: 'running', since: Date.now(), pid: null } : { state: 'off' } };
+    }
+    const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);
+    if (state.state === 'running') suwayomiProcess.touch(store.suwayomiMode);
+    return { state };
+  });
+
+  /**
+   * A guest copy asking for a source, or taking the ask back. Recorded as a
+   * flag with the copy's name, which Manage extensions here lists at the top
+   * with Install and Unflag.
+   */
+  app.post('/api/manga/host/requests', async (request, reply) => {
+    if (isGuest) return reply.code(404).send({ error: 'only the host keeps the requests' });
+    const from = request as unknown as { deviceKind: string | null; deviceId: string | null };
+    if (from.deviceKind !== 'instance' || !from.deviceId) return reply.code(403).send({ error: 'only for copies on this PC' });
+    const body = request.body as { pkg?: unknown; flagged?: unknown } | null;
+    const pkg = typeof body?.pkg === 'string' ? body.pkg : '';
+    if (!/^[A-Za-z0-9._-]{1,200}$/.test(pkg)) return reply.code(400).send({ error: 'not an extension' });
+    if (typeof body?.flagged !== 'boolean') return reply.code(400).send({ error: 'flagged is true or false' });
+    const [device] = await db.select({ name: devices.name }).from(devices).where(eq(devices.id, from.deviceId));
+    const by = (device?.name ?? 'a copy').replace(/^copy: /, '');
+    if (body.flagged) setFlag(pkg, true, by);
+    else {
+      // Taking back one's own ask: the flag goes only if nobody else asked.
+      const others = (readAskedBy()[pkg] ?? []).filter((n) => n !== by);
+      setFlag(pkg, false);
+      if (others.length > 0) for (const name of others) setFlag(pkg, true, name);
+    }
+    changes.emitChange('all');
+    return { ok: true };
   });
 
   /**
@@ -1705,6 +1980,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * as everywhere else.
    */
   app.put('/api/manga/extensions/:pkg', async (request, reply) => {
+    if (isGuest) return reply.code(403).send({ error: GUEST_SOURCES });
     const { pkg } = request.params as { pkg: string };
     const body = request.body as { install?: unknown; update?: unknown } | null;
     if (!/^[A-Za-z0-9._-]{1,200}$/.test(pkg)) return reply.code(400).send({ error: 'not an extension' });
@@ -1736,6 +2012,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * one the setup card and this screen both show.
    */
   app.post('/api/manga/extensions/update', async (_request, reply) => {
+    if (isGuest) return reply.code(403).send({ error: GUEST_SOURCES });
     const ctx = await catalogue();
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
     const run = await updateWaitingExtensions(ctx.adapter);
@@ -1746,6 +2023,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
   /** Whether extensions update themselves once a day. */
   app.put('/api/manga/extensions/auto-update', async (request, reply) => {
+    if (isGuest) return reply.code(403).send({ error: GUEST_SOURCES });
     const body = request.body as { on?: unknown } | null;
     if (typeof body?.on !== 'boolean') return reply.code(400).send({ error: 'on is true or false' });
     const store = read();
@@ -1762,6 +2040,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * Still https only, below.
    */
   app.put('/api/manga/extensions/repos', async (request, reply) => {
+    if (isGuest) return reply.code(403).send({ error: GUEST_SOURCES });
     const body = request.body as { repos?: unknown } | null;
     if (!Array.isArray(body?.repos)) return reply.code(400).send({ error: 'send a list of repositories' });
 
@@ -1875,7 +2154,12 @@ export async function routes(app: FastifyInstance): Promise<void> {
       const sources = sourcesToSearch(all, ctx.store.readLanguages)
         .searched.filter((s) => s.lang !== 'localsourcelang')
         .sort((a, b) => Number(isIndexSource(a.name)) - Number(isIndexSource(b.name)) || a.name.localeCompare(b.name));
-      const selected = sources.find((s) => s.id === ctx.store.browseSource)?.id ?? sources[0]?.id ?? null;
+      // `kept` is the Local collection, the series kept on the PC, which is no
+      // Suwayomi source. It is where Browse opens until a source is chosen, and
+      // where it falls back to when the chosen one is gone: the first source in
+      // alphabetical order was a default nobody picked.
+      const selected =
+        ctx.store.browseSource === 'kept' ? 'kept' : (sources.find((s) => s.id === ctx.store.browseSource)?.id ?? 'kept');
       return { sources, selected, readLanguages: ctx.store.readLanguages, installed: all.length };
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
@@ -1890,7 +2174,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
    */
   app.put('/api/manga/browse/source', async (request, reply) => {
     const body = request.body as { id?: unknown } | null;
-    if (typeof body?.id !== 'string' || !SOURCE_ID.test(body.id)) return reply.code(400).send({ error: 'which source?' });
+    if (typeof body?.id !== 'string' || !(SOURCE_ID.test(body.id) || body.id === 'kept')) {
+      return reply.code(400).send({ error: 'which source?' });
+    }
     const store = read();
     store.browseSource = body.id;
     write(store);
@@ -2384,8 +2670,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const ctx = await ready();
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
     try {
-      // Asked again on a refusal before giving up — see `page-fetch.ts`.
-      const { body, type } = await fetchPage(`${ctx.url}${p}`);
+      // Asked again on a refusal before giving up, and shared — see `page-fetch.ts`.
+      const { body, type } = await sharedPage(`${ctx.url}${p}`);
       return reply.header('content-type', type).header('cache-control', 'private, max-age=604800').send(body);
     } catch (error) {
       // 504 when it timed out twice, so the reader knows waiting again will not help.
@@ -2603,7 +2889,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
         const url = await connect();
         if (!url) throw new SourceError('the source is not running');
         const list = await new SuwayomiAdapter(url).chapters(mangaId, true);
-        return list.map((c) => ({ id: c.id, number: c.number, name: c.name }));
+        return list.map((c) => ({ id: c.id, number: c.number, name: c.name, uploadedAt: c.uploadedAt }));
       },
     };
   }
@@ -2623,11 +2909,11 @@ export async function routes(app: FastifyInstance): Promise<void> {
    * relative one resolves against the working directory, which Task Scheduler
    * sets to `C:\\Windows\\System32`.
    */
-  app.get('/api/manga/archive/folder', async () => ({
-    folder: read().archiveFolder,
-    resolved: archiveRoot(),
-    default: DEFAULT_ARCHIVE_ROOT,
-  }));
+  app.get('/api/manga/archive/folder', async () =>
+    isGuest
+      ? { folder: null, resolved: "on the host's PC", default: '', onHost: true }
+      : { folder: read().archiveFolder, resolved: archiveRoot(), default: DEFAULT_ARCHIVE_ROOT }
+  );
 
   /**
    * Point it somewhere else — another drive, a NAS, a disk with room on it.
@@ -2704,12 +2990,25 @@ export async function routes(app: FastifyInstance): Promise<void> {
   });
 
   /** Everything kept for good, what it occupies, and what is being fetched. */
-  app.get('/api/manga/archive', async () => ({ ...archiveOverview(), disk: diskUsage() }));
+  app.get('/api/manga/archive', async (_request, reply) => {
+    if (!isGuest) return { ...archiveOverview(), disk: diskUsage() };
+    // A guest copy shows the host's, which every copy shares and adds to.
+    const got = await hostJson<Record<string, unknown>>('/api/manga/host/archive/overview');
+    if ('error' in got) return reply.code(502).send({ error: got.error });
+    return { ...got, onHost: true };
+  });
 
   /** One series' archive, including the chapters it could not finish. */
   app.get('/api/manga/:id/archive', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const progress = seriesProgress(id);
+    const mangaId = mangaIdFor(read(), id);
+    if (isGuest) {
+      if (!mangaId) return reply.code(404).send({ error: 'this series is not archived' });
+      const got = await hostJson<Record<string, unknown>>(`/api/manga/host/archive/progress?manga=${encodeURIComponent(mangaId)}`);
+      if ('error' in got) return reply.code(got.status === 404 ? 404 : 502).send({ error: got.error });
+      return { ...got, seriesId: id };
+    }
+    const progress = seriesProgress(id, mangaId);
     if (!progress) return reply.code(404).send({ error: 'this series is not archived' });
     return progress;
   });
@@ -2723,17 +3022,46 @@ export async function routes(app: FastifyInstance): Promise<void> {
    */
   app.post('/api/manga/:id/archive', async (request, reply) => {
     const { id } = request.params as { id: string };
+
+    // Kept for a friend's copy, and so in no library here: caught up from what it is.
+    const forCopy = !isGuest && !read().series.some((x) => x.id === id) ? keptEntry(id) : null;
+    if (forCopy) {
+      try {
+        const added = startArchive({ id, ...forCopy }, await archiveTools().chapters(forCopy.source.mangaId));
+        workArchive();
+        return { ...added, progress: seriesProgress(id) };
+      } catch (error) {
+        if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+        throw error;
+      }
+    }
+
     const ctx = await reader(id);
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+
+    /*
+     * On a guest copy it is kept on the host's disk, by the host, where every
+     * copy can read it: one copy of each series, one thing downloading.
+     */
+    if (isGuest) {
+      const got = await hostJson<Record<string, unknown>>(
+        '/api/manga/host/archive',
+        { method: 'POST', body: JSON.stringify({ title: ctx.series.title, source: ctx.series.source }) },
+        60_000
+      );
+      if ('error' in got) return reply.code(502).send({ error: got.error });
+      forgetHostKept();
+      return { ...got, progress: got.progress ? { ...(got.progress as object), seriesId: id } : null };
+    }
 
     try {
       const list = await ctx.adapter.chapters(ctx.series.source!.mangaId, true);
       const added = startArchive(
         { id: ctx.series.id, title: ctx.series.title, source: ctx.series.source },
-        list.map((c) => ({ id: c.id, number: c.number, name: c.name }))
+        list.map((c) => ({ id: c.id, number: c.number, name: c.name, uploadedAt: c.uploadedAt }))
       );
       workArchive();
-      return { ...added, progress: seriesProgress(id) };
+      return { ...added, progress: seriesProgress(id, ctx.series.source?.mangaId) };
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
       throw error;
@@ -2752,14 +3080,176 @@ export async function routes(app: FastifyInstance): Promise<void> {
   app.delete('/api/manga/:id/archive', async (request, reply) => {
     const { id } = request.params as { id: string };
     const { files } = request.query as { files?: string };
-    if (!isArchived(id)) return reply.code(404).send({ error: 'this series is not archived' });
-    return stopArchive(id, { deleteFiles: files === 'delete' });
+    // What is kept on the PC may be what a friend is reading: only the host lets it go.
+    if (isGuest) return reply.code(403).send({ error: "Only the host stops keeping a series, since every copy reads what's kept." });
+    const mangaId = mangaIdFor(read(), id);
+    if (!isArchived(id, mangaId)) return reply.code(404).send({ error: 'this series is not archived' });
+    return stopArchive(id, { deleteFiles: files === 'delete', mangaId });
   });
 
   /** Work the queue now, rather than waiting for the sweep. */
-  app.post('/api/manga/archive/run', { config: { announce: false } }, async () => {
+  app.post('/api/manga/archive/run', { config: { announce: false } }, async (_request, reply) => {
+    if (isGuest) {
+      const got = await hostJson<Record<string, unknown>>('/api/manga/host/archive/overview');
+      if ('error' in got) return reply.code(502).send({ error: got.error });
+      return { ...got, onHost: true };
+    }
     workArchive();
     return archiveOverview();
+  });
+
+  /**
+   * Browse's "On this PC": everything kept on the PC, as results a screen can
+   * open and read like any other source's, in every copy. Read from the kept
+   * copy, so a series whose site has gone is still here.
+   */
+  app.get('/api/manga/kept', async (_request, reply) => {
+    const store = read();
+    let list: Array<{ mangaId: string; sourceName: string; title: string; complete: number; keptFor: string[] }>;
+    if (isGuest) {
+      const got = await hostJson<{ series: typeof list }>('/api/manga/host/archive');
+      if ('error' in got) return reply.code(502).send({ error: got.error });
+      list = got.series;
+    } else {
+      list = keptSeries();
+    }
+    return {
+      results: list.map((k) => ({
+        ...present(store, {
+          id: k.mangaId,
+          title: k.title,
+          sourceName: k.sourceName,
+          lang: null,
+          url: null,
+          thumbnailUrl: `/api/v1/manga/${k.mangaId}/thumbnail`,
+        }),
+        chapters: k.complete,
+        keptFor: k.keptFor,
+      })),
+    };
+  });
+
+  /* ---- what copies may read and add to (plan A) ---- */
+
+  /** A copy's key, or this PC. */
+  const fromCopy = (request: unknown) => {
+    const from = request as { isLocal: boolean; deviceKind: string | null };
+    return !isGuest && (from.isLocal || from.deviceKind === 'instance');
+  };
+  const MANGA_ID = /^\d{1,25}$/;
+
+  /** Which copy is asking, for names: `you` when it is this PC itself. */
+  const askingCopy = async (request: unknown) =>
+    (await copyOfDevice((request as { deviceId: string | null }).deviceId)) ?? 'you';
+
+  app.get('/api/manga/host/archive', async (request, reply) => {
+    if (!fromCopy(request)) return reply.code(403).send({ error: 'only for copies on this PC' });
+    return { series: keptSeries(await askingCopy(request)) };
+  });
+
+  app.get('/api/manga/host/archive/overview', async (request, reply) => {
+    if (!fromCopy(request)) return reply.code(403).send({ error: 'only for copies on this PC' });
+    return { ...archiveOverview(await askingCopy(request)), disk: diskUsage() };
+  });
+
+  app.get('/api/manga/host/archive/progress', async (request, reply) => {
+    if (!fromCopy(request)) return reply.code(403).send({ error: 'only for copies on this PC' });
+    const { manga } = request.query as { manga?: string };
+    if (!manga || !MANGA_ID.test(manga)) return reply.code(400).send({ error: 'which series?' });
+    const progress = seriesProgress('', manga, await askingCopy(request));
+    if (!progress) return reply.code(404).send({ error: 'this series is not archived' });
+    return progress;
+  });
+
+  app.get('/api/manga/host/archive/pages', async (request, reply) => {
+    if (!fromCopy(request)) return reply.code(403).send({ error: 'only for copies on this PC' });
+    const { manga, chapter } = request.query as { manga?: string; chapter?: string };
+    if (!manga || !MANGA_ID.test(manga) || !chapter || !MANGA_ID.test(chapter)) {
+      return reply.code(400).send({ error: 'which chapter?' });
+    }
+    const pages = archivedPageList('', chapter, manga);
+    if (!pages) return reply.code(404).send({ error: 'not kept' });
+    return { pages };
+  });
+
+  /**
+   * A page from the shared Suwayomi, for a friend's copy: through the host's
+   * `sharedPage`, so the host and every copy asking for the same page at once
+   * cause one fetch from the site. `fresh=1` is a "try again", not shared.
+   */
+  app.get('/api/manga/host/page', async (request, reply) => {
+    if (!fromCopy(request)) return reply.code(403).send({ error: 'only for copies on this PC' });
+    const { p, fresh } = request.query as { p?: string; fresh?: string };
+    if (!p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
+      return reply.code(400).send({ error: 'not a page' });
+    }
+    const url = await archiveTools().connect();
+    if (!url) return reply.code(503).send({ error: 'the source is not running' });
+    try {
+      const { body, type } = await sharedPage(`${url}${p}`, { share: fresh !== '1' });
+      return reply.header('content-type', type).send(body);
+    } catch (error) {
+      const code = error instanceof PageFetchError && error.status === 504 ? 504 : 502;
+      return reply.code(code).send({ error: error instanceof Error ? error.message : 'could not fetch the page' });
+    }
+  });
+
+  app.get('/api/manga/host/archive/page', async (request, reply) => {
+    if (!fromCopy(request)) return reply.code(403).send({ error: 'only for copies on this PC' });
+    const { manga, p } = request.query as { manga?: string; p?: string };
+    if (!manga || !MANGA_ID.test(manga) || !p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
+      return reply.code(400).send({ error: 'not a page' });
+    }
+    const saved = archivedPage('', p, manga);
+    if (!saved) return reply.code(404).send({ error: 'not kept' });
+    return reply.header('content-type', saved.type).send(saved.body);
+  });
+
+  /**
+   * A copy asking to keep a series: on this PC's disk, by this copy, from the
+   * Suwayomi every copy shares. Kept once whoever asks; `keptFor` says who.
+   */
+  app.post('/api/manga/host/archive', async (request, reply) => {
+    if (!fromCopy(request)) return reply.code(403).send({ error: 'only for copies on this PC' });
+    const body = request.body as { title?: unknown; source?: unknown } | null;
+    const source = body?.source as { adapter?: unknown; mangaId?: unknown; sourceName?: unknown; title?: unknown } | null;
+    if (
+      !source ||
+      typeof source.mangaId !== 'string' ||
+      !MANGA_ID.test(source.mangaId) ||
+      typeof source.sourceName !== 'string' ||
+      typeof body?.title !== 'string'
+    ) {
+      return reply.code(400).send({ error: 'which series?' });
+    }
+    const from = request as unknown as { deviceId: string | null };
+    const [device] = from.deviceId
+      ? await db.select({ name: devices.name }).from(devices).where(eq(devices.id, from.deviceId))
+      : [];
+    const by = (device?.name ?? 'you').replace(/^copy: /, '');
+    try {
+      const chapters = await archiveTools().chapters(source.mangaId);
+      const added = startArchive(
+        {
+          id: `kept-${source.mangaId}`,
+          title: body.title,
+          source: {
+            adapter: typeof source.adapter === 'string' ? source.adapter : 'suwayomi',
+            mangaId: source.mangaId,
+            sourceName: source.sourceName,
+            title: typeof source.title === 'string' ? source.title : body.title,
+          },
+        },
+        chapters,
+        by
+      );
+      workArchive();
+      changes.emitChange('all');
+      return { ...added, progress: seriesProgress('', source.mangaId, by) };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
+    }
   });
 
   /** One read-ahead run at a time per series, so a fast reader cannot stack them. */
@@ -2811,6 +3301,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
       const list = await ctx.adapter.chapters(ctx.series.source!.mangaId, false);
       const here = list.find((c) => c.id === chapterId);
       if (!here) return;
+      const mangaId = ctx.series.source!.mangaId;
+      // Kept on the host for a guest copy: its chapters are already on the PC.
+      const keptHere = isGuest && (await hostKept()).has(mangaId);
 
       /*
        * Distinct numbers above this one, nearest first. Distinct because a
@@ -2827,7 +3320,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       }
 
       for (const [i, chapter] of next.entries()) {
-        if (archivedPageList(seriesId, chapter.id) || chapterIsComplete(seriesId, chapter.id)) continue;
+        if (keptHere || archivedPageList(seriesId, chapter.id, mangaId) || chapterIsComplete(seriesId, chapter.id)) continue;
         const pages = cachedPageList(seriesId, chapter.id) ?? (await ctx.adapter.pages(chapter.id));
         if (pages.length === 0) continue;
         /*
@@ -2864,8 +3357,19 @@ export async function routes(app: FastifyInstance): Promise<void> {
      * — and unlike the cache it is never evicted, so a hit here is a hit for
      * good. Nothing is fetched and Suwayomi is not needed.
      */
-    const archived = archivedPageList(id, chapterId);
-    if (archived) return asUrls(archived);
+    const mangaId = mangaIdFor(read(), id);
+    if (isGuest) {
+      // Kept on the host's disk, which every copy reads.
+      if (mangaId && (await hostKept()).has(mangaId)) {
+        const got = await hostJson<{ pages: string[] }>(
+          `/api/manga/host/archive/pages?manga=${encodeURIComponent(mangaId)}&chapter=${encodeURIComponent(chapterId)}`
+        );
+        if (!('error' in got)) return asUrls(got.pages);
+      }
+    } else {
+      const archived = archivedPageList(id, chapterId, mangaId);
+      if (archived) return asUrls(archived);
+    }
 
     // One of the last ten opened: from disk, with no Suwayomi needed — see `page-cache.ts`.
     const kept = cachedPageList(id, chapterId);
@@ -2927,7 +3431,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
     // Either kept copy is used only while it is still a whole picture — one
     // damaged on disk falls through to the source rather than being served.
     const whole = (b: Buffer) => isWholeImage(b.subarray(0, 32), b.subarray(Math.max(0, b.length - 1024)), b.length);
-    const saved = skipKept ? undefined : archivedPage(id, p);
+    const mangaId = mangaIdFor(read(), id);
+    let saved = skipKept ? undefined : isGuest ? undefined : archivedPage(id, p, mangaId);
+    if (!skipKept && isGuest && mangaId && (await hostKept()).has(mangaId)) {
+      const response = await hostFetch(`/api/manga/host/archive/page?manga=${encodeURIComponent(mangaId)}&p=${encodeURIComponent(p)}`);
+      if (!('error' in response) && response.ok) {
+        saved = { body: Buffer.from(await response.arrayBuffer()), type: response.headers.get('content-type') ?? 'image/jpeg' };
+      }
+    }
     if (saved && whole(saved.body)) {
       return reply.header('content-type', saved.type).header('cache-control', 'private, max-age=604800').send(saved.body);
     }
@@ -2941,8 +3452,9 @@ export async function routes(app: FastifyInstance): Promise<void> {
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
 
     try {
-      // Asked again on a refusal before giving up — see `page-fetch.ts`.
-      const { body, type } = await fetchPage(`${ctx.url}${p}`);
+      // Asked again on a refusal before giving up, and shared with anyone else
+      // asking for this page now — see `page-fetch.ts`. Not for "try again".
+      const { body, type } = await sharedPage(`${ctx.url}${p}`, { share: !skipKept });
       // Kept if its chapter is one of the last ten; ignored otherwise.
       keepPage(id, p, body, type);
       return reply
@@ -3239,6 +3751,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
        * list before it asks anything.
        */
       await sweepArchive(archiveTools());
+      // The Local collection's own rules: favourites, and what you rated highly.
+      await autoKeep();
       workArchive();
     } catch (error) {
       // Never allowed to escape. This runs with nobody waiting on it, and an

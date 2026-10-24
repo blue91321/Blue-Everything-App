@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
-import { repoRoot, updateScript } from '../paths.js';
+import { logsDir, repoRoot, updateScript } from '../paths.js';
 import { VERSION } from '../version.js';
 
 type Release = { tag_name?: string; name?: string; body?: string; html_url?: string; published_at?: string };
@@ -80,7 +80,7 @@ export async function updateRoutes(app: FastifyInstance): Promise<void> {
    * a path to go and find. Only a bare `name.log` inside `logs/` — the name is
    * checked against a pattern, never joined as given.
    */
-  const logFile = (name: string) => (/^[a-z][a-z-]*\.log$/.test(name) ? resolve(repoRoot, 'logs', name) : null);
+  const logFile = (name: string) => (/^[a-z][a-z-]*\.log$/.test(name) ? resolve(logsDir, name) : null);
 
   app.get('/api/logs/:name', async (request, reply) => {
     const file = logFile((request.params as { name: string }).name);

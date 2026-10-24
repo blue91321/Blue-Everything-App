@@ -79,7 +79,11 @@ export { readZip, ZipError, type ZipEntry, type ZipLimits } from './zip.js';
  * `config.ts` is the only file allowed to read `process.env`, and that rule
  * holds for packages too — which it can only do if they are given this.
  */
-export { config } from './config.js';
+export { config, isGuest, instanceRoot } from './config.js';
+
+/** A guest copy's key to the host, for what copies share. See `instances.ts`. */
+export { copyOfDevice, readHostKey } from './instances.js';
+export { nameFor, ownName } from './names.js';
 
 /**
  * Announcing a change, so every open client refetches.

@@ -29,6 +29,8 @@ export interface SeriesSummary {
   addedAt: number;
   /** Starred. Optional: an older server does not send it. */
   favourite?: boolean;
+  /** Your rating, 1 to 10, or null. Absent from an older server. */
+  rating?: number | null;
   /** Which shelves it is on, by id. Absent means none — see `Series.libraries`. */
   libraries?: string[];
   coverPath: string | null;
@@ -54,52 +56,14 @@ export interface SeriesSummary {
   origin?: { app: string; site: string };
   /** Genres from its source. Absent until they have been asked for. */
   tags?: string[];
+  /** Kept on the PC, every chapter: by any copy, since the PC keeps one store for all. Absent from an older server. */
+  kept?: boolean;
 }
 
-/** What a Manga Reader backup holds, and — once committed — what was done with it. */
-export interface MangaReaderImport {
-  /** Favourites, with one favourited on two sites counted once. */
-  favourites: number;
-  /** Opened at some point and never favourited — counted, not brought in. */
-  historyOnly: number;
-  /** How many each choice would bring in. */
-  scopes: Record<ImportScope, number>;
-  scope: ImportScope;
-  /** New to the library. */
-  add: number;
-  /** Titles already followed, which gain the old app's progress. */
-  merge: string[];
-  bySite: Array<{ site: string; count: number }>;
-  readChapters: number;
-  committed: boolean;
-  added?: number;
-  merged?: number;
-  matching?: MatchingState;
-}
-
-export type ImportScope = 'all' | 'year' | 'quarter';
-
-/** A source left out of searching, browsing and finding imports. */
+/** A source left out of searching and browsing. */
 export interface IgnoredSource {
   id: string;
   name: string;
-}
-
-/** Finding imported series on your sources — see `matching.ts` on the server. */
-export interface MatchingState {
-  running: boolean;
-  total: number;
-  done: number;
-  linked: number;
-  notFound: number;
-  failed: number;
-  noSource: Array<{ site: string; count: number }>;
-  /** Sources set aside because they kept failing, with what they said. Optional: older servers. */
-  broken?: Array<{ id?: string; source: string; reason: string }>;
-  finishedAt: number | null;
-  problem: string | null;
-  /** Imported series still without a source. Only on the status read. */
-  unmatched?: number;
 }
 
 /** One line of the History tab — a chapter finished, or the one you are partway through. */
@@ -192,8 +156,12 @@ export interface ExtensionList {
   suggestedRepo: string;
   /** By package: series linked to its sources, chapters read there, and the sources. Absent from an older server. */
   usage?: Record<string, ExtensionUsage>;
-  /** Packages flagged to install later, from before any device could install. */
+  /** Packages flagged to install later: asked for by a guest copy, or flagged from before any device could install. */
   flagged?: string[];
+  /** By package, which guest copies asked for it (plan A). The host's screen lists them. */
+  askedBy?: Record<string, string[]>;
+  /** This is a guest copy: it asks the host for sources rather than managing them. */
+  onHost?: boolean;
   readLanguages?: string[];
   /** Whether they update themselves once a day. Absent from an older server. */
   autoUpdate?: boolean;
@@ -248,6 +216,11 @@ export interface SourceState {
    * off — the resting state, which is not the same as unreachable.
    */
   health: SourceHealth | null;
+  /**
+   * A guest copy (plan A): it reads through the host's Suwayomi, which the host
+   * sets up, starts and updates. Absent from an older server.
+   */
+  onHost?: boolean;
 }
 
 export interface SourceChapter {
@@ -486,6 +459,8 @@ export interface ArchiveProgress {
   updatedAt: number;
   /** Chapter numbers complete on the PC — see the server's `archive.ts`. */
   savedChapters: number[];
+  /** Who asked for it to be kept: `you`, or friends' copies by name. Absent from an older server. */
+  keptFor?: string[];
 }
 
 export interface ArchiveOverview {
@@ -495,6 +470,15 @@ export interface ArchiveOverview {
   bytes: number;
   root: string;
   disk?: { bytes: number; files: number };
+  /** A friend's copy: this is the host's store, which it reads and adds to but does not manage. */
+  onHost?: boolean;
+}
+
+/** What adds to the Local collection by itself, and who sees your ratings. */
+export interface CollectionRules {
+  autoKeepFavourites: boolean;
+  autoKeepMinRating: number | null;
+  shareRatingsWithCopies: boolean;
 }
 
 export const manga = {
@@ -533,6 +517,17 @@ export const manga = {
         body: JSON.stringify({ libraries }),
       }),
   },
+  /** Rate a series 1 to 10, or null to take the rating off. */
+  setRating: (id: string, rating: number | null) =>
+    call<{ rating: number | null }>(`/api/manga/${id}/rating`, { method: 'PUT', body: JSON.stringify({ rating }) }),
+  /** What friends on this PC who share their ratings gave it. */
+  ratingsOf: (id: string) => call<{ others: Array<{ who: string; rating: number }> }>(`/api/manga/${id}/ratings`),
+  /** The Local collection's rules, and whether your ratings are shared. */
+  collectionRules: {
+    get: () => call<CollectionRules>('/api/manga/collection-rules'),
+    set: (rules: Partial<CollectionRules>) =>
+      call<CollectionRules>('/api/manga/collection-rules', { method: 'PUT', body: JSON.stringify(rules) }),
+  },
   setFavourite: (id: string, on: boolean) =>
     call<{ favourite: boolean }>(`/api/manga/${id}/favourite`, { method: 'PUT', body: JSON.stringify({ on }) }),
   setShelf: (body: { show?: 'all' | 'favourites'; sort?: string; newFirst?: boolean; favFirst?: boolean }) =>
@@ -545,16 +540,6 @@ export const manga = {
   setReleaseTasks: (on: boolean) =>
     call<{ releaseTasks: boolean }>('/api/manga/release-tasks', { method: 'PUT', body: JSON.stringify({ on }) }),
 
-  import: {
-    /** Without `commit` this only reads the file and says what it found. */
-    mangaReader: (data: string, scope: ImportScope, commit = false) =>
-      call<MangaReaderImport>('/api/manga/import/mangareader', {
-        method: 'POST',
-        body: JSON.stringify({ data, scope, commit }),
-      }),
-    matching: () => call<MatchingState>('/api/manga/import/matching'),
-    matchAgain: () => call<MatchingState>('/api/manga/import/matching', { method: 'POST' }),
-  },
 
   /**
    * Keeping a series for good — see the server's `archive.ts`.
@@ -563,6 +548,8 @@ export const manga = {
    * queues only what is not already complete, so pressing it twice costs
    * nothing.
    */
+  /** Browse's "On this PC": everything kept on the PC, by any copy. */
+  kept: () => call<{ results: Array<BrowseResult & { keptFor?: string[] }> }>('/api/manga/kept'),
   archive: {
     overview: () => call<ArchiveOverview>('/api/manga/archive'),
     of: (id: string) => call<ArchiveProgress>(`/api/manga/${id}/archive`),

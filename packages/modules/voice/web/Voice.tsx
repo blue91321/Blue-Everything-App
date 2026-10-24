@@ -1,3 +1,4 @@
+import { DesktopDownload } from '@app/DesktopDownload';
 import { useEffect, useState } from 'react';
 import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from '@app/api';
 import { useAsync } from '@app/useAsync';
@@ -1026,7 +1027,12 @@ function StartAgent({ onStarted }: { onStarted: () => void }) {
       <div className="meta" style={{ maxWidth: 260, textAlign: 'right' }}>
         {can.data?.local
           ? 'scripts/start.ps1 is missing — double-click Blue Everything.cmd instead.'
-          : 'It runs on the PC, so only the PC can start it.'}
+          : (
+            <>
+              It runs on a PC: start it there. A PC without Blue Everything on it can have it too:{' '}
+              <DesktopDownload label="Get the desktop app" />
+            </>
+          )}
       </div>
     );
   }

@@ -9,6 +9,7 @@
   "scripts": {
     "sensor": "npm run sensor -w @everything/agent",
     "publish-check": "node scripts/publish-check.mjs",
+    "desktop-zip": "node scripts/package-desktop.mjs",
     "typecheck": "tsc --noEmit -p packages/server && tsc --noEmit -p packages/agent && tsc --noEmit -p packages/web",
     "features": "node --import tsx packages/server/src/cli/features.ts",
     "features-check": "node --import tsx packages/server/src/cli/features-check.ts"
@@ -18,5 +19,10 @@
   "allowScripts": {
     "koffi": true,
     "esbuild": true
+  },
+  "overrides": {
+    "@esbuild-kit/core-utils": {
+      "esbuild": "^0.25.12"
+    }
   }
 }

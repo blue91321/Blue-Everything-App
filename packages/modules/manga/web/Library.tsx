@@ -66,7 +66,7 @@ import { Tile } from './Tile';
 import { FAV_FIRST_KEY, NEW_FIRST_KEY, SORT_KEY, SORT_LABEL, hasNew, notAnswering, sorted, sourceHasNothing, sourceLabel, storedSort, toCatchUp, type SortKey } from './shelf';
 export { hasNew, notAnswering, sourceHasNothing, sourceLabel, toCatchUp, type SortKey };
 
-export type Show = 'all' | 'starred' | 'new' | 'broken' | 'empty' | 'unlinked';
+export type Show = 'all' | 'starred' | 'kept' | 'new' | 'broken' | 'empty' | 'unlinked';
 
 const SHOW_LABEL: Record<Show, string> = {
   all: 'All',
@@ -77,6 +77,12 @@ const SHOW_LABEL: Record<Show, string> = {
    * problems.
    */
   starred: 'Favourites',
+  /*
+   * Kept on the PC, every chapter, by "Keep every chapter on the PC": the
+   * series that are still here when their site is not. Shared by every copy on
+   * the PC, so a friend's keeps show here too.
+   */
+  kept: 'Local collection',
   new: 'New chapters',
   broken: 'Source not answering',
   /*
@@ -198,6 +204,7 @@ export function Library({
     () => ({
       all: series.length,
       starred: series.filter((s) => s.favourite === true).length,
+      kept: series.filter((s) => s.kept === true).length,
       new: series.filter(hasNew).length,
       broken: series.filter(notAnswering).length,
       empty: series.filter(sourceHasNothing).length,
@@ -230,6 +237,7 @@ export function Library({
         (shelf === null ? !s.libraries?.some((id) => hiddenShelves.has(id)) : s.libraries?.includes(shelf)) &&
         (show === 'all' ||
           (show === 'starred' && s.favourite === true) ||
+          (show === 'kept' && s.kept === true) ||
           (show === 'new' && hasNew(s)) ||
           (show === 'broken' && notAnswering(s)) ||
           (show === 'empty' && sourceHasNothing(s)) ||

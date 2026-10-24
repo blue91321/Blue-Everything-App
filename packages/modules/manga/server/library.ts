@@ -31,7 +31,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { dataDir } from '@everything/server/module-api';
+import { dataDir, isGuest } from '@everything/server/module-api';
 import type { SeriesIds, SeriesStatus } from './identity.js';
 import { DEFAULT_LANGUAGES, type SuwayomiMode } from './sources.js';
 
@@ -128,6 +128,12 @@ export type Series = SeriesIds & {
    * smaller set you actually keep up with.
    */
   favourite?: boolean;
+  /**
+   * Your rating, 1 to 10, the scale MyAnimeList and AniList use so it can be
+   * compared and one day exported. Optional, and absent means unrated, like
+   * `favourite`: nine hundred imported series rated nothing.
+   */
+  rating?: number;
   /**
    * Names it went by before, newest last — see `titles.ts`. Kept when linking
    * renames a series after its source, so the Library's title box still finds
@@ -453,6 +459,19 @@ export type Store = {
    */
   autoUpdateExtensions: boolean;
   /**
+   * Rules that add to the Local collection by themselves (`autoKeep` in
+   * `index.ts`, run by the release sweep): every favourite, and anything you
+   * rate this or higher. Both off unless chosen.
+   */
+  autoKeepFavourites: boolean;
+  autoKeepMinRating: number | null;
+  /**
+   * Whether friends' copies on this PC see your ratings, and you theirs on the
+   * same terms. Off unless chosen: what you thought of something is yours to
+   * share. See `/api/manga/host/ratings`.
+   */
+  shareRatingsWithCopies: boolean;
+  /**
    * The source the Browse tab lists from, and whose results a search puts first.
    * An opaque source id; one that is no longer installed is simply not found,
    * and the tab falls back to the first source it has.
@@ -544,6 +563,9 @@ function emptyStore(): Store {
     shelfFavFirst: false,
     releaseNudges: true,
     autoUpdateExtensions: true,
+    autoKeepFavourites: false,
+    autoKeepMinRating: null,
+    shareRatingsWithCopies: false,
     browseSource: null,
     libraries: [],
     glimpses: [],
@@ -553,7 +575,37 @@ function emptyStore(): Store {
   };
 }
 
+/**
+ * The stand-in for a Suwayomi jar on a guest copy, which runs none.
+ *
+ * On a guest (plan A) the host's Suwayomi is the source, woken through
+ * `HostSuwayomi` in `process.ts`. Every route already asks
+ * `manageSuwayomi && suwayomiJar` before waking a source, so a guest's store
+ * reads as managed with this in place of a path, and those routes wake the
+ * host's without each learning about copies. Extensions never update
+ * themselves from a guest: the host does that once for everyone.
+ */
+export const HOST_SUWAYOMI = 'host';
+
+/** A rating: a whole number from 1 to 10. Anything else reads as unrated. */
+export function isRating(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 10;
+}
+
 export function read(): Store {
+  const store = readStored();
+  if (!isGuest) return store;
+  return {
+    ...store,
+    suwayomiUrl: null,
+    suwayomiJar: HOST_SUWAYOMI,
+    manageSuwayomi: true,
+    suwayomiMode: 'on-demand',
+    autoUpdateExtensions: false,
+  };
+}
+
+function readStored(): Store {
   if (!existsSync(STORE)) return emptyStore();
   try {
     const parsed = JSON.parse(readFileSync(STORE, 'utf8').replace(/^\uFEFF/, '')) as Partial<Store>;
@@ -581,6 +633,9 @@ export function read(): Store {
         typeof parsed.archiveFolder === 'string' && parsed.archiveFolder.trim() ? parsed.archiveFolder : null,
       releaseNudges: parsed.releaseNudges !== false,
       autoUpdateExtensions: parsed.autoUpdateExtensions !== false,
+      autoKeepFavourites: parsed.autoKeepFavourites === true,
+      autoKeepMinRating: isRating(parsed.autoKeepMinRating) ? parsed.autoKeepMinRating : null,
+      shareRatingsWithCopies: parsed.shareRatingsWithCopies === true,
       browseSource: typeof parsed.browseSource === 'string' && parsed.browseSource ? parsed.browseSource : null,
       glimpses: Array.isArray(parsed.glimpses)
         ? parsed.glimpses.map((g) => ({
@@ -627,6 +682,7 @@ export function read(): Store {
         reviews: Array.isArray(s.reviews) ? s.reviews : [],
         // Only `true` survives, so a stray `"yes"` in a hand-edited file is a no.
         ...(s.favourite === true ? { favourite: true as const } : {}),
+        ...(isRating(s.rating) ? { rating: s.rating } : {}),
         ...(Array.isArray(s.libraries) && s.libraries.some((l: unknown) => typeof l === 'string')
           ? { libraries: s.libraries.filter((l: unknown): l is string => typeof l === 'string') }
           : {}),

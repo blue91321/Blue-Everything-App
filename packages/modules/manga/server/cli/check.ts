@@ -54,15 +54,15 @@ import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiCh
 import { thumbPath } from '../present.js';
 import { betterTitle, retitleFromSource } from '../titles.js';
 import { sorted } from '../../web/shelf.js';
-import { fetchPage, PageFetchError, SLOW_FAILURE_MS } from '../page-fetch.js';
+import { fetchPage, pagesInFlight, PageFetchError, sharedPage, SLOW_FAILURE_MS } from '../page-fetch.js';
 import { glideDistance, glideStep, MAX_SPEED, releaseVelocity, STOP_SPEED } from '../../web/glide.js';
-import { PlistError, readBinaryPlist, unarchive } from '../bplist.js';
-import { applyImport, ImportRefused, inScope, planImport, readMangaReaderBackup, repairMojibake } from '../mangareader.js';
-import { failureReason, fallbackSources, pickMatch, siteKey, sourceForSite } from '../matching.js';
-import { BACKUP, PLAIN } from './mangareader-fixture.js';
 import { normaliseTags } from '../tags.js';
 import { DEFAULT_HIDDEN_TAGS, hasTag, hiddenBy, tagsForLevel } from '../mature.js';
 import { extensionUsage } from '../extension-usage.js';
+import { chapterFolder, mendManifest, nextInQueue, pickEdition, type ArchiveManifest, type QueueItem } from '../archive.js';
+import { mkdirSync as mkdirTmp, mkdtempSync, readdirSync as listTmp, rmSync as rmTmp, writeFileSync as writeTmp } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join as joinTmp } from 'node:path';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -742,6 +742,9 @@ const store: Store = {
   shelfFavFirst: false,
   releaseNudges: true,
   autoUpdateExtensions: true,
+  autoKeepFavourites: false,
+  autoKeepMinRating: null,
+  shareRatingsWithCopies: false,
   browseSource: null,
   libraries: [],
   glimpses: [],
@@ -878,188 +881,6 @@ console.log('\nwhat a sweep asks about\n');
     whileDown.length === 5 && whileDown.every((id) => id.startsWith('mu-')),
     whileDown.join(', ')
   );
-}
-
-/* ------------------------------------------------------------------ */
-console.log('\nreading a binary property list\n');
-
-{
-  const plain = readBinaryPlist(Buffer.from(PLAIN, 'base64')) as Record<string, unknown>;
-  check('integers', plain.int === 42 && Number(plain.big) === 2 ** 40, `${String(plain.int)}, ${String(plain.big)}`);
-  // Stored as eight bytes, two's complement — read unsigned it is 18 quintillion.
-  check('a negative integer', plain.negative === -7, String(plain.negative));
-  check('a real', plain.real === 2.5);
-  check(
-    'a date, from 2001 rather than 1970',
-    plain.when instanceof Date && plain.when.toISOString() === '2026-09-27T12:00:00.000Z',
-    plain.when instanceof Date ? plain.when.toISOString() : String(plain.when)
-  );
-  check('ASCII', plain.ascii === 'plain');
-  // UTF-16 big-endian on disk, which Node has no decoder for.
-  check('anything else', plain.unicode === 'Ōkami — 狼', String(plain.unicode));
-  check('true and false', plain.yes === true && plain.no === false);
-  check('nested arrays', JSON.stringify(plain.list) === '[1,"two",[3]]', JSON.stringify(plain.list));
-  check('bytes', plain.data instanceof Uint8Array && Buffer.from(plain.data).equals(Buffer.from([0, 1, 2])));
-
-  const refuses = (what: string, fn: () => unknown) => {
-    try {
-      fn();
-      check(what, false, 'accepted');
-    } catch (error) {
-      check(what, error instanceof PlistError, error instanceof Error ? error.message : String(error));
-    }
-  };
-  refuses('a truncated file is refused, not read past', () => readBinaryPlist(Buffer.from(PLAIN, 'base64').subarray(0, 120)));
-  refuses('something else is refused by name', () => readBinaryPlist(Buffer.from('not a plist at all, not even close')));
-
-  // An array whose only element is itself. Followed, it recurses until the stack goes.
-  const trailer = Buffer.alloc(32);
-  trailer.writeUInt8(1, 6); // offset size
-  trailer.writeUInt8(1, 7); // reference size
-  trailer.writeBigUInt64BE(1n, 8); // objects
-  trailer.writeBigUInt64BE(0n, 16); // top
-  trailer.writeBigUInt64BE(10n, 24); // offset table
-  const selfish = Buffer.concat([Buffer.from('bplist00'), Buffer.from([0xa1, 0x00]), Buffer.from([0x08]), trailer]);
-  refuses('a list that contains itself is refused', () => readBinaryPlist(selfish));
-  refuses('a plain list is not an archive', () => unarchive(Buffer.from(PLAIN, 'base64')));
-}
-
-/* ------------------------------------------------------------------ */
-console.log('\nbringing a library in from Manga Reader\n');
-
-{
-  const old = readMangaReaderBackup(Buffer.from(BACKUP, 'base64'));
-  const byTitle = (t: string) => old.favourites.find((s) => s.title === t);
-  const ts = byTitle('Test Series');
-  check('favourites are the library', old.favourites.length === 4, String(old.favourites.length));
-  check('history alone is counted, not brought in', old.historyOnly === 1, String(old.historyOnly));
-  // The favourite said chapter 3 on mangakakalot; it was read to 5 on mangafire since.
-  check('where you are comes from the most recent read, on any site', ts?.current === '5', String(ts?.current));
-  check('and so does the site', ts?.site === 'mangafire', String(ts?.site));
-  check(
-    'every site it was read on is kept, newest first',
-    JSON.stringify(ts?.sites) === '["mangafire","mangakakalot","atsu"]',
-    JSON.stringify(ts?.sites)
-  );
-  // "Notice" is not a chapter; "4-1" is the first part of chapter 4.
-  check(
-    'read chapters are joined across sites, and non-chapters dropped',
-    JSON.stringify(ts?.readChapters) === '[1,2,3,4,5]',
-    JSON.stringify(ts?.readChapters)
-  );
-  check('the newest chapter is the highest any site knew of', ts?.latest === '13', String(ts?.latest));
-  check(
-    'when it was last read',
-    ts?.lastReadAt === Date.UTC(2026, 8, 10, 12),
-    ts?.lastReadAt ? new Date(ts.lastReadAt).toISOString() : 'null'
-  );
-  check('a finished series says so', byTitle('Old Finished One')?.status === 'completed');
-
-  const now = Date.UTC(2026, 8, 27);
-  check('the last year leaves out what was finished in 2021', !inScope(byTitle('Old Finished One')!, 'year', now));
-  check('and keeps what was read this month', inScope(ts!, 'quarter', now));
-
-  // A library that already follows one of them.
-  const here: Store = {
-    ...store,
-    links: [],
-    series: [
-      row({
-        id: 'mine',
-        title: 'Eleceed',
-        source: { adapter: 'suwayomi', mangaId: '7', title: 'Eleceed', sourceName: 'Asura Scans' },
-        readChapters: [1, 2],
-        readLog: [{ chapter: 2, source: 'Asura Scans', mangaId: '7', at: Date.UTC(2025, 0, 1) }],
-      }),
-    ],
-  };
-  const plan = planImport(here, old.favourites);
-  check('one series favourited on two sites is one series', plan.add.length === 2, plan.add.map((s) => s.title).join(', '));
-  check('one already followed is merged into, not added twice', plan.merge.length === 1 && plan.merge[0].into === 'mine');
-
-  const result = applyImport(here, plan);
-  check('the counts say what happened', result.added === 2 && result.merged === 1);
-  const added = here.series.find((s) => s.title === 'Test Series');
-  check('it arrives with no source, to be found afterwards', added?.source === null && added?.muId === null);
-  check('the old app\'s cover is not kept', added?.coverUrl === null);
-  check(
-    'where it came from is kept',
-    added?.origin?.app === 'Manga Reader' && added.origin.site === 'mangafire' && added.origin.sites?.length === 3,
-    JSON.stringify(added?.origin)
-  );
-  check('added when it was last read, not today', added?.addedAt === Date.UTC(2026, 8, 10, 12));
-  check('what was read comes with it', JSON.stringify(added?.readChapters) === '[1,2,3,4,5]');
-  check(
-    'one read-log entry: where you were and when',
-    added?.readLog.length === 1 && added.readLog[0].chapter === 5 && added.readLog[0].source === 'mangafire, in Manga Reader',
-    JSON.stringify(added?.readLog)
-  );
-  // Asking about it would need a MangaUpdates id or a source, and it has neither.
-  check('an unlinked import is not asked about', !pollable(here).some((s) => s.id === added?.id));
-
-  const mine = here.series.find((s) => s.id === 'mine');
-  check('a merge joins what was read', JSON.stringify(mine?.readChapters) === '[1,2,417,418,419]', JSON.stringify(mine?.readChapters));
-  check('and adds the later read to the log', mine?.readLog.length === 2);
-  check('without touching the source you chose', mine?.source?.sourceName === 'Asura Scans');
-  // Twice is the same as once, since the second finds everything already here.
-  const again = planImport(here, old.favourites);
-  check('importing the same file again adds nothing', again.add.length === 0, String(again.add.length));
-  applyImport(here, again);
-  check('nor logs the same read twice', here.series.find((s) => s.id === 'mine')?.readLog.length === 2);
-
-  const refused = (what: string, bytes: Buffer) => {
-    try {
-      readMangaReaderBackup(bytes);
-      check(what, false, 'accepted');
-    } catch (error) {
-      check(what, error instanceof ImportRefused, error instanceof Error ? error.message : String(error));
-    }
-  };
-  // As Manga Reader stored them: UTF-8 read back as Windows-1252.
-  check('a garbled apostrophe is put back', repairMojibake('Assassin\u00e2\u20ac\u2122s') === 'Assassin\u2019s');
-  check('so are curly quotes', repairMojibake('\u00e2\u20ac\u0153Hi\u00e2\u20ac\u009d') === '\u201cHi\u201d', repairMojibake('\u00e2\u20ac\u0153Hi\u00e2\u20ac\u009d'));
-  check('a correct accent is left alone', repairMojibake('Pok\u00e9mon') === 'Pok\u00e9mon');
-  check('and plain text is untouched', repairMojibake('Second Life Ranker') === 'Second Life Ranker');
-  refused('something that is not a zip is refused', Buffer.from('hello'));
-  refused('so is half of one', Buffer.from(BACKUP, 'base64').subarray(0, 900));
-}
-
-/* ------------------------------------------------------------------ */
-console.log('\nfinding an import on your sources\n');
-
-{
-  const src = (id: string, name: string, lang: string) => ({ id, name, lang, supportsLatest: true });
-  const installed = [
-    src('1', 'Mangakakalot', 'en'),
-    src('2', 'MangaFire', 'es'),
-    src('3', 'MangaFire', 'en'),
-    src('4', 'Manhwa18.cc', 'en'),
-    src('5', 'MangaDex', 'all'),
-  ];
-  check("a source's name folds to the site's", siteKey('Manhwa18.cc (EN)') === 'manhwa18cc');
-  check('the site finds its source', sourceForSite('mangakakalot', installed, ['en'])?.id === '1');
-  check('in a language you read', sourceForSite('mangafire', installed, ['en'])?.id === '3');
-  check('your first language first', sourceForSite('mangafire', installed, ['es', 'en'])?.id === '2');
-  check('a shortened site name still finds it', sourceForSite('manhwa18', installed, ['en'])?.id === '4');
-  check('so does a site named with its language', sourceForSite('mangadex-en', installed, ['en'])?.id === '5');
-  check('a site with no source installed finds none', sourceForSite('atsu', installed, ['en']) === null);
-
-  const match = (title: string) => ({ id: title, title, sourceName: 'X', lang: 'en', url: null, thumbnailUrl: null });
-  const found = [match('The Player Hides His Past 2'), match('THE PLAYER HIDES HIS PAST!'), match('Player')];
-  check('the same title, however it is written, is a match', pickMatch('The Player Hides His Past', found)?.id === 'THE PLAYER HIDES HIS PAST!');
-  // The sequel is not the series. A wrong link reports another series' chapters.
-  check('a title that merely contains it is not', pickMatch('The Player Hides His Past', [found[0], found[2]]) === null);
-
-  // The fallbacks when the site it was read on cannot help.
-  const withLocal = [...installed, src('0', 'Local source', 'en')];
-  const others = fallbackSources(withLocal, ['en']).map((s) => s.id);
-  check('fallbacks are the languages you read', others.includes('3') && !others.includes('2'), others.join(', '));
-  check('but never your own files', !others.includes('0'));
-  // Real text from Suwayomi, first line; the stack trace underneath is noise on a screen.
-  const cloudflare = new Error(
-    'Exception while fetching data (/fetchSourceManga) : Cloudflare bypass currently disabled\n\njava.io.IOException: Cloudflare bypass currently disabled\n\tat keiyoushi.a.b.a(Unknown Source)'
-  );
-  check('a failure is reduced to what the extension said', failureReason(cloudflare) === 'Cloudflare bypass currently disabled', failureReason(cloudflare));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1547,6 +1368,83 @@ console.log('\na page that times out is given up on sooner');
   check('and is not called a timeout', quick.status === 500, String(quick.status));
   const missing = await run(200, 404);
   check('a 404 is not retried at all', missing.calls === 1, `${missing.calls} tries`);
+}
+
+console.log('\na page already being fetched is shared');
+{
+  // A whole JPEG, held back until let go, counting how often it is asked for.
+  const page = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array<number>(200).fill(0), 0xff, 0xd9]);
+  let asked = 0;
+  let letGo: () => void = () => {};
+  const held = new Promise<void>((resolve) => (letGo = resolve));
+  const get = (async () => {
+    asked += 1;
+    await held;
+    return new Response(page, { headers: { 'content-type': 'image/jpeg' } });
+  }) as unknown as typeof fetch;
+  const url = 'http://test/api/v1/manga/1/chapter/2/page/0';
+  const three = [sharedPage(url, { get }), sharedPage(url, { get }), sharedPage(url, { get })];
+  check('three readers asking at once cause one fetch', asked === 1, `${asked} fetches`);
+  const tryAgain = sharedPage(url, { get, share: false });
+  check('  ...but "try again" asks again beside it', asked === 2, `${asked} fetches`);
+  letGo();
+  const got = await Promise.all([...three, tryAgain]);
+  check('  ...and all of them get the page', got.every((g) => g.body.length === page.length), got.map((g) => g.body.length).join());
+  check('  ...and nothing is held once it has come', pagesInFlight() === 0, `${pagesInFlight()} still in flight`);
+  await sharedPage(url, { get });
+  check('a later ask fetches again: it shares, it does not cache', asked === 3, `${asked} fetches`);
+}
+
+console.log('\nkeeping a series keeps one edition of each chapter');
+{
+  check('2.1 is "Chapter 0002.1", not a float remainder', chapterFolder(2.1) === 'Chapter 0002.1', chapterFolder(2.1));
+  check('a whole number has no point', chapterFolder(12) === 'Chapter 0012', chapterFolder(12));
+
+  const pick = pickEdition([
+    { id: 'a', number: 1, name: 'Ch. 1', uploadedAt: 100 },
+    { id: 'b', number: 1, name: 'Chapter 1', uploadedAt: 200 },
+  ]);
+  check('the newer upload is kept', pick.id === 'b', pick.id);
+  check('with no dates, the first listed', pickEdition([{ id: 'x', number: 1, name: '' }, { id: 'y', number: 1, name: '' }]).id === 'x');
+
+  // Two editions wrote one folder: b second, over a's 001 and 002.
+  const dir = mkdtempSync(joinTmp(tmpdir(), 'manga-editions-'));
+  try {
+    const folder = 'Chapter 0001';
+    mkdirTmp(joinTmp(dir, folder));
+    const bytes = (n: number) => Buffer.alloc(n, 1);
+    writeTmp(joinTmp(dir, folder, '001.jpg'), bytes(30)); // b's
+    writeTmp(joinTmp(dir, folder, '002.jpg'), bytes(31)); // b's
+    writeTmp(joinTmp(dir, folder, '003.jpg'), bytes(12)); // a's, never overwritten
+    const page = (file: string, n: number, chapter: number) => ({ path: `/api/v1/manga/9/chapter/${chapter}/page/${file}`, file, type: 'image/jpeg', bytes: n });
+    const manifest: ArchiveManifest = {
+      seriesId: 's',
+      title: 'T',
+      source: null,
+      startedAt: 0,
+      updatedAt: 0,
+      chapters: [
+        { number: 1, name: 'Ch. 1', chapterId: 'a', folder, pages: [page('001.jpg', 10, 1), page('002.jpg', 11, 1), page('003.jpg', 12, 1)], expected: 3, done: true, error: null, at: 1 },
+        { number: 1, name: 'Chapter 1', chapterId: 'b', folder, pages: [page('001.jpg', 30, 2), page('002.jpg', 31, 2)], expected: 2, done: true, error: null, at: 2 },
+        { number: 2, name: 'Ch. 2', chapterId: 'c', folder: 'Chapter 0002', pages: [], expected: null, done: false, error: null, at: 0 },
+      ],
+    };
+    const result = mendManifest(dir, manifest);
+    const one = manifest.chapters.find((c) => c.number === 1)!;
+    check('the whole edition is kept', one.chapterId === 'b' && one.done, one.chapterId);
+    check('the other is remembered as the same chapter', one.sameAs?.join() === 'a', String(one.sameAs));
+    check('one entry per number', manifest.chapters.length === 2, String(manifest.chapters.length));
+    check('only the dropped edition\'s own leftover is deleted', listTmp(joinTmp(dir, folder)).sort().join() === '001.jpg,002.jpg', listTmp(joinTmp(dir, folder)).join());
+    check('and nothing whole is fetched again', result.refetch.length === 0 && result.freed === 12, JSON.stringify(result));
+    check('a mended manifest is left alone the next time', mendManifest(dir, manifest).dropped.length === 0);
+  } finally {
+    rmTmp(dir, { recursive: true, force: true });
+  }
+
+  const item = (seriesId: string, chapterId: string): QueueItem => ({ seriesId, chapterId, number: 1, name: '', tries: 0, error: null });
+  const queue = [item('old', '1'), item('old', '2'), item('new', '9')];
+  check('a series never served goes first', nextInQueue(queue, new Map([['old', 5]]))?.chapterId === '9');
+  check('then the one served longest ago', nextInQueue(queue, new Map([['old', 5], ['new', 9]]))?.chapterId === '1');
 }
 
 process.exit(failures === 0 ? 0 : 1);

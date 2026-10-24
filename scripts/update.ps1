@@ -30,6 +30,14 @@
   .\scripts\update.ps1 -CheckOnly      # just say what is available
   .\scripts\update.ps1 -Open           # open the app window afterwards
   .\scripts\update.ps1 -FromZip .\Blue-Everything-0.4.1.zip   # a zip already on disk, offline
+  .\scripts\update.ps1 -Configuration everything   # switch a Just Manga install to Everything
+
+  A release has two configurations, Everything and Just Manga, and each install
+  updates from its own kind (configuration.json says which), so one without a
+  package never downloads it. -Configuration switches: the new kind's files are
+  copied in, and the old kind's that the new one lacks are removed, as any
+  update does. The download is checked against the release's SHA256SUMS.txt
+  before anything is touched.
 #>
 [CmdletBinding()]
 param(
@@ -40,7 +48,10 @@ param(
   # Install from a release zip already on disk instead of downloading one.
   [string]$FromZip = '',
   # Leave the app stopped afterwards: for trying an update on a spare copy.
-  [switch]$NoStart
+  [switch]$NoStart,
+  # Switch to the other configuration: everything, or just-manga.
+  [ValidateSet('', 'everything', 'just-manga')]
+  [string]$Configuration = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -59,6 +70,14 @@ function VersionOf([string]$text) {
 . (Join-Path $PSScriptRoot 'node-runtime.ps1')
 
 $current = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
+# Which download this is; a git clone or a release from before configurations is everything.
+$installed = 'everything'
+$configFile = Join-Path $root 'configuration.json'
+if (Test-Path $configFile) {
+  try { if ((Get-Content $configFile -Raw | ConvertFrom-Json).configuration -eq 'just-manga') { $installed = 'just-manga' } } catch { }
+}
+$wanted = if ($Configuration) { $Configuration } else { $installed }
+if ($wanted -ne $installed) { $Force = $true }
 $isGit = Test-Path (Join-Path $root '.git')
 Say "Blue Everything $current ($(if ($isGit) { 'git clone' } else { 'release install' }))"
 
@@ -68,7 +87,7 @@ $headers = @{ 'User-Agent' = 'blue-everything-updater'; 'Accept' = 'application/
 if ($FromZip) {
   if ($isGit) { throw '-FromZip is for release installs; a git clone updates with git' }
   $FromZip = (Resolve-Path $FromZip).Path
-  $latest = if ((Split-Path $FromZip -Leaf) -match 'Blue-Everything-(.+)\.zip$') { $Matches[1] } else { '0.0.0' }
+  $latest = if ((Split-Path $FromZip -Leaf) -match '(?:Blue-Everything|BlueEverything-JustManga)-(.+)\.zip$') { $Matches[1] } else { '0.0.0' }
   $release = $null
 }
 else {
@@ -142,11 +161,23 @@ else {
     $zip = $FromZip
   }
   else {
-    $asset = $release.assets | Where-Object { $_.name -like 'Blue-Everything-*.zip' } | Select-Object -First 1
-    if (-not $asset) { throw "release $latest has no zip to install from" }
+    # By exact name: the release also carries the other configuration and the desktop client.
+    $assetName = if ($wanted -eq 'just-manga') { "BlueEverything-JustManga-$latest.zip" } else { "Blue-Everything-$latest.zip" }
+    $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+    if (-not $asset) { throw "release $latest has no $assetName to install from" }
     $zip = Join-Path $work $asset.name
     Say "Downloading $($asset.name)..."
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -Headers $headers
+
+    # Checked before anything is touched: a zip that is not the one published is refused.
+    $sums = $release.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
+    if (-not $sums) { throw "release $latest has no SHA256SUMS.txt to check the download against" }
+    $sumsFile = Join-Path $work 'SHA256SUMS.txt'
+    Invoke-WebRequest -Uri $sums.browser_download_url -OutFile $sumsFile -Headers $headers
+    $expected = (Get-Content $sumsFile | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($assetName))$" } | ForEach-Object { $Matches[1] }) | Select-Object -First 1
+    $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
+    if (-not $expected -or $expected -ne $actual) { throw "$assetName does not match the release's SHA256SUMS.txt; nothing was changed" }
+    Say 'Checked against SHA256SUMS.txt.'
   }
   Expand-Archive -Path $zip -DestinationPath $work -Force
   $new = Get-ChildItem $work -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'release-files.txt') } | Select-Object -First 1

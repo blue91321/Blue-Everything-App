@@ -1,5 +1,8 @@
+import { rememberCopy } from './device';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
-import { ServerUnreachable, api, clearToken, setToken, type Session } from './api';
+import { ServerUnreachable, api, clearToken, redeemInviteInUrl, setToken, type Session } from './api';
+import { Onboarding, redeemTypedCode } from './Onboarding';
+import { NewScreens } from './NewScreens';
 import { DRAWER_WIDTH, useEdgeDrawer, useMediaQuery } from './useEdgeDrawer';
 import { prepareOffline, setEnabledFeatures, webFeatures } from './features';
 import { installedPackages, packageScreen, setInstalledPackages } from './packages';
@@ -92,6 +95,8 @@ const DEFAULT_DRAWER_BREAKPOINT = 1200;
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
+  /** Why a sign-in link to a person's copy did not work, for the pairing screen. */
+  const [inviteProblem, setInviteProblem] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   /** The last session check failed because nothing answered, not because of a 401. */
   const [unreachable, setUnreachable] = useState(false);
@@ -257,6 +262,10 @@ export function App() {
   const checkSession = useCallback(async () => {
     setChecking((wasChecking) => wasChecking || sessionRef.current === null);
     try {
+      // A sign-in link to a person's copy is spent first, so the session below
+      // is already this device's. Only the first check finds one.
+      const inviteProblem = await redeemInviteInUrl();
+      if (inviteProblem) setInviteProblem(inviteProblem);
       const next = await api.session();
       sessionRef.current = next;
       setSession(next);
@@ -292,7 +301,13 @@ export function App() {
       setSession(null);
     };
     window.addEventListener('everything:unauthorized', onUnauthorized);
-    return () => window.removeEventListener('everything:unauthorized', onUnauthorized);
+    // Settings → General's "Go through setup again": the session now says onboarding is not done.
+    const onSessionChanged = () => void checkSession();
+    window.addEventListener('everything:session-changed', onSessionChanged);
+    return () => {
+      window.removeEventListener('everything:unauthorized', onUnauthorized);
+      window.removeEventListener('everything:session-changed', onSessionChanged);
+    };
   }, []);
 
   /*
@@ -473,7 +488,7 @@ export function App() {
     );
   }
   if (!session && unreachable) return <Offline onBack={() => setUnreachable(false)} />;
-  if (!session) return <Pairing onPaired={checkSession} />;
+  if (!session) return <Pairing onPaired={checkSession} note={inviteProblem} />;
 
   /*
    * A tab appears only when both halves agree it exists: the server has the
@@ -521,6 +536,20 @@ export function App() {
   ].sort((a, b) => a.order - b.order);
 
   /*
+   * What this copy shows, chosen in onboarding (`onboarding.ts`): Settings
+   * always, and with a list chosen, only what is on it. "Just the manga" is
+   * Manga and Settings, and opens on Manga, the first screen left.
+   */
+  // For the wording that says where the server is: see `thePc` in device.ts.
+  rememberCopy(session.copy !== null && session.copy !== undefined);
+  const shownList = session.onboarding?.shown ?? null;
+  const everyScreen = nav;
+  if (shownList) {
+    const keep = new Set(shownList);
+    nav.splice(0, nav.length, ...everyScreen.filter((item) => item.id === 'settings' || keep.has(item.id)));
+  }
+
+  /*
    * The menu's and Home's entries: every screen, and under each feature its
    * sections. Published for Settings, which lists them with a switch each.
    */
@@ -549,6 +578,39 @@ export function App() {
    * is a fact about this app's navigation rather than about the package.
    */
   const packageId = current.id.startsWith('package:') ? current.id.slice('package:'.length) : null;
+
+  /*
+   * Every screen this copy has, before the choice above narrows them, but Home
+   * and Settings, which are always there: what onboarding offers, and what an
+   * update is compared against (`NewScreens`).
+   */
+  const offered = [
+    ...CORE_NAV.filter((item) => item.always || isOn(item.id)),
+    ...webFeatures.filter((f) => isOn(f.id)),
+    ...installedPackages()
+      .filter((pkg) => pkg.tab !== null)
+      .map((pkg) => ({ id: `package:${pkg.id}`, label: pkg.tab!.label, glyph: pkg.tab!.glyph, order: pkg.tab!.order })),
+  ]
+    .filter((item) => item.id !== 'home' && item.id !== 'settings')
+    .sort((a, b) => a.order - b.order)
+    .map((item) => ({ id: item.id, label: item.label, glyph: item.glyph }));
+
+  /* A new person's first run, over everything until finished. */
+  if (session.onboarding && !session.onboarding.done) {
+    return (
+      <Onboarding
+        screens={offered}
+        shown={session.onboarding.shown}
+        name={session.displayName ?? null}
+        defaultName={session.defaultName ?? 'user'}
+        local={session.local}
+        onDone={(chosen) => {
+          if (chosen && chosen.length > 0) setView(chosen[0]!);
+          void checkSession();
+        }}
+      />
+    );
+  }
 
   const shown = isDesktop || drawer.open || drawer.dragX !== null;
   const offset = drawer.dragX ?? (drawer.open ? DRAWER_WIDTH : 0);
@@ -755,6 +817,15 @@ export function App() {
           </Suspense>
         )}
       </div>
+      {/* After an update, for a hand-picked list only: see NewScreens.tsx. */}
+      {session.onboarding?.preset === 'custom' && session.onboarding.shown && (
+        <NewScreens
+          every={offered}
+          shown={session.onboarding.shown}
+          known={session.onboarding.known ?? null}
+          onDone={() => void checkSession()}
+        />
+      )}
     </div>
   );
 }
@@ -763,7 +834,7 @@ export function App() {
  * Only ever seen on a device that isn't the server's own PC — normally the
  * phone. The token is created in the app on the PC, under Settings.
  */
-function Pairing({ onPaired }: { onPaired: () => void }) {
+function Pairing({ onPaired, note }: { onPaired: () => void; note: string | null }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -772,6 +843,18 @@ function Pairing({ onPaired }: { onPaired: () => void }) {
     event.preventDefault();
     setBusy(true);
     setError('');
+    /*
+     * A short code (ABCD-2345) is a hand-off code from a device already signed
+     * in, as onboarding shows for an app just added to the Home Screen. A long
+     * one is a device token, pasted as before.
+     */
+    if (value.replace(/[\s-]/g, '').length <= 12) {
+      const problem = await redeemTypedCode(value);
+      setBusy(false);
+      if (problem) setError(problem);
+      else onPaired();
+      return;
+    }
     setToken(value);
 
     try {
@@ -788,9 +871,14 @@ function Pairing({ onPaired }: { onPaired: () => void }) {
   return (
     <form className="pair" onSubmit={submit}>
       <h1>Connect this device</h1>
+      {note && <p className="banner">{note}</p>}
       <p>
-        On the PC running Everything, open the app, go to <strong>Settings</strong>, and choose{' '}
-        <strong>Add a device</strong>. Paste the code it gives you.
+        Opened a sign-in link someone sent you? It signs you in by itself; if it did not, ask them for a new one.
+      </p>
+      <p>
+        On a device that's already signed in, open <strong>Settings → Devices</strong> and choose{' '}
+        <strong>Sign in another device</strong> (on the PC running Blue Everything, <strong>Add your phone</strong>). Type
+        the code it gives you.
       </p>
       <input
         value={value}

@@ -125,6 +125,12 @@ export function Extensions({
   const all = data?.extensions ?? [];
   const usage = data?.usage ?? {};
   const flagged = new Set(data?.flagged ?? []);
+  /*
+   * A guest copy (plan A) shares the host's Suwayomi, so it asks for a source
+   * and the host installs it; updates and removals are the host's too.
+   */
+  const onHost = data?.onHost === true;
+  const askedBy = data?.askedBy ?? {};
   const languages = data?.readLanguages ?? [];
   const use = (e: SourceExtension) => usage[e.pkg];
   const installed = all
@@ -147,7 +153,7 @@ export function Extensions({
       const target = browseTarget(use(e), languages);
       return (
         <>
-          {e.hasUpdate && (
+          {e.hasUpdate && !onHost && (
             <button
               className="btn primary"
               disabled={busy !== null}
@@ -161,14 +167,27 @@ export function Extensions({
               Browse
             </button>
           )}
-          <button
-            className="btn danger"
-            disabled={busy !== null}
-            onClick={() => act(e.pkg, () => manga.extensions.install(e.pkg, false))}
-          >
-            {busy === e.pkg ? '…' : 'Remove'}
-          </button>
+          {!onHost && (
+            <button
+              className="btn danger"
+              disabled={busy !== null}
+              onClick={() => act(e.pkg, () => manga.extensions.install(e.pkg, false))}
+            >
+              {busy === e.pkg ? '…' : 'Remove'}
+            </button>
+          )}
         </>
+      );
+    }
+    if (onHost) {
+      return flagged.has(e.pkg) ? (
+        <button className="btn subtle" disabled={busy !== null} onClick={() => act(`f:${e.pkg}`, () => manga.extensions.flag(e.pkg, false))}>
+          {busy === `f:${e.pkg}` ? '…' : 'Asked · take back'}
+        </button>
+      ) : (
+        <button className="btn" disabled={busy !== null} onClick={() => act(`f:${e.pkg}`, () => manga.extensions.flag(e.pkg, true))}>
+          {busy === `f:${e.pkg}` ? '…' : 'Ask for it'}
+        </button>
       );
     }
     return (
@@ -198,6 +217,9 @@ export function Extensions({
             {e.lang} · v{e.version}
             {e.hasUpdate && ' · update available'}
           </span>
+          {!e.installed && !onHost && (askedBy[e.pkg]?.length ?? 0) > 0 && (
+            <span className="meta">Asked for by {askedBy[e.pkg]!.join(', ')}</span>
+          )}
           {e.installed && (
             <span className="meta">
               {u && (u.series > 0 || u.chapters > 0)
@@ -234,7 +256,10 @@ export function Extensions({
         * offers the community repository by name rather than asking for a URL
         * nobody has.
         */}
-      {data && data.repos.length === 0 && (
+      {data && data.repos.length === 0 && onHost && (
+        <p className="banner">The host's copy has no extension repository set yet, so there is nothing to ask for.</p>
+      )}
+      {data && data.repos.length === 0 && !onHost && (
         <div className="banner">
           <p>No extension repository is set, so there is nothing to install from.</p>
           <button
@@ -255,7 +280,7 @@ export function Extensions({
         <>
           {waiting.length > 0 && (
             <>
-              <h3>Flagged to install</h3>
+              <h3>{onHost ? 'You asked for' : Object.keys(askedBy).length > 0 ? 'Asked for' : 'Flagged to install'}</h3>
               {waiting.map(row)}
             </>
           )}
@@ -268,20 +293,25 @@ export function Extensions({
               them again before updating, so it can find an update the list has
               not shown yet.
             */}
-            <button
-              className={outdated.length > 0 ? 'btn primary' : 'btn subtle'}
-              disabled={busy !== null || installed.length === 0}
-              onClick={() =>
-                act('update-all', async () => {
-                  setUpdated((await manga.extensions.updateAll()).note);
-                })
-              }
-            >
-              {busy === 'update-all' ? 'Updating…' : outdated.length > 0 ? `Update all (${outdated.length})` : 'Check for updates'}
-            </button>
+            {!onHost && (
+              <button
+                className={outdated.length > 0 ? 'btn primary' : 'btn subtle'}
+                disabled={busy !== null || installed.length === 0}
+                onClick={() =>
+                  act('update-all', async () => {
+                    setUpdated((await manga.extensions.updateAll()).note);
+                  })
+                }
+              >
+                {busy === 'update-all' ? 'Updating…' : outdated.length > 0 ? `Update all (${outdated.length})` : 'Check for updates'}
+              </button>
+            )}
           </div>
+          {onHost && (
+            <p className="meta">These are on the host's Suwayomi, which every copy shares. The host adds, updates and removes them.</p>
+          )}
           {updated && <p className="meta">{updated[0]!.toUpperCase() + updated.slice(1)}.</p>}
-          {data.autoUpdate !== undefined && (
+          {data.autoUpdate !== undefined && !onHost && (
             <label className="meta" style={{ display: 'block', marginTop: 4 }}>
               <input
                 type="checkbox"
@@ -298,7 +328,7 @@ export function Extensions({
           {installed.length === 0 && <p className="empty">None yet. Find one below to add.</p>}
           {installed.map(row)}
 
-          <h3>Add one</h3>
+          <h3>{onHost ? 'Ask for one' : 'Add one'}</h3>
           <div className="row">
             <input
               value={query}

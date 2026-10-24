@@ -4,5 +4,6 @@
   "blurb": "Encrypted password storage, CSV import, and the browser extension that fills them.",
   "version": "0.5.9",
   "author": "blue91321",
-  "server": "server/index.ts"
+  "server": "server/index.ts",
+  "startsOff": true
 }

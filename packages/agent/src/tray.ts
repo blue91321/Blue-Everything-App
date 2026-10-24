@@ -205,6 +205,8 @@ const IDI_APPLICATION = 32512;
 
 const MF_STRING = 0x00000000;
 const MF_SEPARATOR = 0x00000800;
+const MF_GRAYED = 0x00000001;
+const MF_CHECKED = 0x00000008;
 const TPM_RIGHTBUTTON = 0x0002;
 /** Return the chosen id rather than posting WM_COMMAND — see `showMenu`. */
 const TPM_RETURNCMD = 0x0100;
@@ -214,6 +216,8 @@ const TPM_NONOTIFY = 0x0080;
 const MENU_OPEN = 1;
 const MENU_RESTART = 2;
 const MENU_STOP = 3;
+/** Copies are numbered from here, in the order the menu lists them. */
+const MENU_COPY_FIRST = 100;
 
 /** How often the queue is drained. A tray click can afford a quarter second. */
 const PUMP_MS = 250;
@@ -231,6 +235,26 @@ export class TrayUnavailable extends Error {}
 
 export interface Tray {
   destroy(): void;
+  /** Stop, as the menu's Stop does: the icon goes first, so none is left behind. */
+  quit(): void;
+}
+
+/** A friend's copy, as the tray's menu lists it. */
+export interface TrayCopy {
+  name: string;
+  label: string;
+  running: boolean;
+}
+
+/**
+ * The host's copies, in the one icon's menu rather than an icon each: every
+ * server on this PC is under the app's icon. `refresh` is asked as the menu
+ * opens, and the menu waits for it briefly so the states are current.
+ */
+export interface TrayCopies {
+  list: () => TrayCopy[];
+  refresh: () => Promise<void>;
+  toggle: (copy: TrayCopy) => void;
 }
 
 /** `packages/agent/src` -> the repo root. */
@@ -320,7 +344,15 @@ function runScript(name: string, args: string[] = []): ChildProcess {
  * Throws `TrayUnavailable` rather than returning null, so the caller decides
  * whether a missing tray is worth caring about. It isn't — see `index.ts`.
  */
-export function createTray(options: { tooltip: string; onOpen: () => void }): Tray {
+/**
+ * The desktop client: this agent with no server beside it, a download of its
+ * own that signs in to a Blue Everything elsewhere (`scripts/desktop.ps1`).
+ * Its menu goes through that script, since `start.ps1` and `restart.ps1` start
+ * a server it does not have.
+ */
+export const desktopOnly = !existsSync(resolve(repoRoot, 'packages', 'server'));
+
+export function createTray(options: { tooltip: string; onOpen: () => void; copies?: TrayCopies }): Tray {
   const instance = GetModuleHandleW(null);
   const className = 'EverythingAgentTray';
 
@@ -344,7 +376,11 @@ export function createTray(options: { tooltip: string; onOpen: () => void }): Tr
         return 0;
       }
       if (event === WM_RBUTTONUP || event === WM_CONTEXTMENU) {
-        showMenu(hwnd);
+        // The copies' states first, for a moment at most: a menu that took
+        // longer than that to open would feel broken, and one a click old is fine.
+        const copies = options.copies;
+        if (!copies) showMenu(hwnd);
+        else void Promise.race([copies.refresh().catch(() => {}), new Promise((r) => setTimeout(r, 1500))]).then(() => showMenu(hwnd));
         return 0;
       }
       return 0;
@@ -409,7 +445,9 @@ export function createTray(options: { tooltip: string; onOpen: () => void }): Tr
    * being able to *find* the app is the point, and it having the wrong picture
    * is a detail.
    */
-  const iconPath = resolve(repoRoot, 'assets', 'everything.ico');
+  // The desktop client wears its copy's chosen icon, which desktop.ps1 fetches to assets/app.ico.
+  const chosen = resolve(repoRoot, 'assets', 'app.ico');
+  const iconPath = desktopOnly && existsSync(chosen) ? chosen : resolve(repoRoot, 'assets', 'everything.ico');
   let icon: unknown = null;
   let ownsIcon = false;
 
@@ -479,8 +517,20 @@ export function createTray(options: { tooltip: string; onOpen: () => void }): Tr
 
     AppendMenuW(menu, MF_STRING, MENU_OPEN, wide('Open Blue Everything'));
     AppendMenuW(menu, MF_SEPARATOR, 0, null as unknown as string);
-    AppendMenuW(menu, MF_STRING, MENU_RESTART, wide('Restart'));
-    AppendMenuW(menu, MF_STRING, MENU_STOP, wide('Stop'));
+
+    // Friends' copies: ticked while running, and the item does the other thing.
+    const copies = options.copies?.list() ?? [];
+    if (copies.length > 0) {
+      AppendMenuW(menu, MF_GRAYED, 0, wide("Friends' copies (ticked: running)"));
+      copies.forEach((copy, i) => {
+        const verb = copy.running ? 'Stop' : 'Start';
+        AppendMenuW(menu, MF_STRING | (copy.running ? MF_CHECKED : 0), MENU_COPY_FIRST + i, wide(`${verb} ${copy.label}`));
+      });
+      AppendMenuW(menu, MF_SEPARATOR, 0, null as unknown as string);
+    }
+
+    AppendMenuW(menu, MF_STRING, MENU_RESTART, wide(copies.length > 0 ? 'Restart everything' : 'Restart'));
+    AppendMenuW(menu, MF_STRING, MENU_STOP, wide(copies.length > 0 ? 'Stop everything' : 'Stop'));
 
     GetCursorPos(point);
     const cursor = koffi.decode(point, POINT) as { x: number; y: number };
@@ -508,8 +558,16 @@ export function createTray(options: { tooltip: string; onOpen: () => void }): Tr
     DestroyMenu(menu);
 
     if (choice === MENU_OPEN) options.onOpen();
-    if (choice === MENU_RESTART) leave('restart.ps1');
-    if (choice === MENU_STOP) leave('stop.ps1');
+    const copy = choice >= MENU_COPY_FIRST ? copies[choice - MENU_COPY_FIRST] : undefined;
+    if (copy) options.copies?.toggle(copy);
+    if (choice === MENU_RESTART) {
+      if (desktopOnly) leave('desktop.ps1', ['-Restart']);
+      else leave('restart.ps1');
+    }
+    if (choice === MENU_STOP) {
+      if (desktopOnly) leave('desktop.ps1', ['-Stop']);
+      else leave('stop.ps1');
+    }
   }
 
   /**
@@ -525,9 +583,9 @@ export function createTray(options: { tooltip: string; onOpen: () => void }): Tr
    * leaving an app with no way to reach it and no clue why. An icon that stays
    * put is a much better failure than one that vanishes.
    */
-  function leave(script: string): void {
+  function leave(script: string, args: readonly string[] = []): void {
     remove();
-    const child = runScript(script);
+    const child = runScript(script, [...args]);
 
     child.on('error', (error) => {
       console.error(`[tray] could not run ${script}: ${error.message}`);
@@ -560,6 +618,10 @@ export function createTray(options: { tooltip: string; onOpen: () => void }): Tr
   timer.unref();
 
   return {
+    quit(): void {
+      if (desktopOnly) leave('desktop.ps1', ['-Stop']);
+      else leave('stop.ps1');
+    },
     destroy(): void {
       if (destroyed) return;
       destroyed = true;

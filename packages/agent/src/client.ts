@@ -224,6 +224,24 @@ export class ServerClient {
     });
   }
 
+  /** What closing the app's window should do, and what needs the background. See `closing.ts`. */
+  closing(side: 'host' | 'desktop'): Promise<{ mode: 'keep' | 'quit'; noticeShown: boolean; keeps: string[] }> {
+    return this.request(`/api/closing?side=${side}`, {}, 5000);
+  }
+
+  /** Friends' copies on this PC, for the tray's menu. Only the host answers; see `instances.ts`. */
+  people(): Promise<{ people: Array<{ name: string; displayName: string | null; running: boolean }> }> {
+    return this.request('/api/people', {}, 4000);
+  }
+
+  startCopy(name: string): Promise<unknown> {
+    return this.request(`/api/people/${encodeURIComponent(name)}/start`, { method: 'POST' }, 60_000);
+  }
+
+  stopCopy(name: string): Promise<unknown> {
+    return this.request(`/api/people/${encodeURIComponent(name)}/stop`, { method: 'POST' }, 30_000);
+  }
+
   /** Still here, with the tray icon — see `agent-watch.ts` on the server. */
   alive(): Promise<unknown> {
     return this.request('/api/agent/alive', { method: 'POST' });

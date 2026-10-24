@@ -39,6 +39,53 @@ export const SAMPLE_RETENTION_MS = 90 * 24 * 60 * 60_000;
  */
 let lastPersisted: { state: string; at: number; away: boolean } | null = null;
 let lastSweepAt = 0;
+/** When an agent last reported, for `phoneOnlyDelivery` to stand aside. */
+let lastReportAt = 0;
+
+/** No word from an agent for this long, and a copy delivers to the phone by itself. */
+const NO_AGENT_MS = 5 * 60_000;
+/** How often it does. */
+const PHONE_ONLY_EVERY_MS = 60_000;
+
+/**
+ * Delivery for a copy with no agent: a friend's copy on this PC, whose owner
+ * may have nothing but a phone.
+ *
+ * Everything is delivered from the agent's heartbeat (`POST /api/attention`),
+ * which is where the nudge engine learns what the moment is. A copy that hears
+ * from no agent therefore never delivered anything at all, so a friend who
+ * turned notifications on in onboarding would never have had one. With nothing
+ * to say whether they are mid-game, they are treated as away from a PC, which
+ * is what sends to the phone: `free` with a long idle, not `away`, because the
+ * engine never delivers a passed deadline to `away` (nobody at the desk) and a
+ * phone is exactly where a passed deadline should go. Quiet hours still hold.
+ *
+ * A guest copy only, once a minute, and standing aside whenever an agent has
+ * reported in the last five minutes, so a friend who later runs the agent on
+ * their own PC gets the ordinary rules back. The host always has an agent, and
+ * closes itself without one.
+ */
+export function phoneOnlyDelivery(): () => void {
+  const tick = async () => {
+    const at = Date.now();
+    if (at - lastReportAt < NO_AGENT_MS) return;
+    const expired = await expireStaleNudges(at);
+    const queued = (await sweepDueTasks(at)) + (await sweepHabitReminders(at));
+    const result = await collectDeliverable(
+      attentionReportSchema.parse({
+        at,
+        state: 'free',
+        reason: 'no agent on a PC: delivering to the phone',
+        idleMs: 24 * 60 * 60_000,
+      }),
+      null
+    );
+    if (expired + queued > 0 || result.pushed > 0) changes.emitChange('all');
+  };
+  const timer = setInterval(() => void tick().catch(() => {}), PHONE_ONLY_EVERY_MS);
+  timer.unref();
+  return () => clearInterval(timer);
+}
 
 /**
  * The agent's most recent word on whether Windows Do Not Disturb is on.
@@ -75,6 +122,7 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
     // Counts as the agent being here, before anything can fail — so an agent
     // from before `/api/agent/alive` existed still keeps a newer server up.
     agentCheckedIn();
+    lastReportAt = Date.now();
     const report = attentionReportSchema.parse(request.body);
     const at = report.at ?? Date.now();
 

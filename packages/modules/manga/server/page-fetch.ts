@@ -82,3 +82,54 @@ export async function fetchPage(
   }
   throw last;
 }
+
+/* ---- one fetch per page, however many ask ---- */
+
+/**
+ * The page fetches under way, by URL, so a second ask for a page already
+ * coming waits for that one instead of asking the site again.
+ *
+ * Measured before this: two people opening the same chapter at the same
+ * moment each took 63 seconds for twenty pages, against 27 for one person
+ * alone, because every page went to the site twice and the chapter's
+ * background fill asked a third time. The reader, Browse, the background fill
+ * and the archive all go through here, so within a copy each page is fetched
+ * once. Across copies it is the host's, below.
+ *
+ * Not a cache: an entry goes the moment its fetch settles, success or not,
+ * and what is kept is the page cache's and the archive's business.
+ */
+const inFlight = new Map<string, Promise<{ body: Buffer; type: string }>>();
+
+/**
+ * A friend's copy asks the host for its pages rather than Suwayomi directly
+ * (`/api/manga/host/page`), so the host's sharing covers a friend and you on
+ * the same chapter too. Set on a guest by `index.ts`; the host fetches itself.
+ */
+let throughHost: ((path: string, fresh: boolean) => Promise<{ body: Buffer; type: string }>) | null = null;
+
+export function fetchPagesThroughHost(fetcher: (path: string, fresh: boolean) => Promise<{ body: Buffer; type: string }>): void {
+  throughHost = fetcher;
+}
+
+/**
+ * `fetchPage`, shared. `share: false` is "tap to try again", which wants its
+ * own request beside the one that may be the stuck one.
+ */
+export function sharedPage(
+  url: string,
+  { share = true, ...test }: { share?: boolean; now?: () => number; get?: typeof fetch } = {}
+): Promise<{ body: Buffer; type: string }> {
+  const go = () => (throughHost ? throughHost(new URL(url).pathname, !share) : fetchPage(url, test));
+  if (!share) return go();
+  const already = inFlight.get(url);
+  if (already) return already;
+  const fetching = go().finally(() => inFlight.delete(url));
+  inFlight.set(url, fetching);
+  return fetching;
+}
+
+/** How many are under way, for `manga-check`. */
+export function pagesInFlight(): number {
+  return inFlight.size;
+}

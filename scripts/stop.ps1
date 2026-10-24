@@ -14,10 +14,16 @@
 .PARAMETER KeepSuwayomi
   Leave Suwayomi running. For restart.ps1: the icon is back within seconds, and
   the server adopts the JVM rather than spending most of a minute starting one.
+
+.PARAMETER Instance
+  Stop one person's copy (see start.ps1 -Instance), or every one with '*',
+  leaving yours. Without it everything stops, people's copies too; your copy
+  starts again the ones that were running when it next starts.
 #>
 [CmdletBinding()]
 param(
-  [switch]$KeepSuwayomi
+  [switch]$KeepSuwayomi,
+  [string]$Instance = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,16 +40,33 @@ $root = Split-Path -Parent $PSScriptRoot
   not make the links runs it too. The names are what the *launcher* chose;
   what identifies these processes is still the path on the command line.
 #>
-$escaped = [regex]::Escape($root)
+# With the separator: "...\Everything App" must not match "...\Everything app test user"
+# (Windows compares without case), or another install's processes count as this one's.
+$escaped = [regex]::Escape($root.TrimEnd('\') + '\')
 $processes = Get-CimInstance Win32_Process `
     -Filter "Name='node.exe' OR Name='Blue Everything.exe' OR Name='Blue Everything Server.exe'" |
   Where-Object { $_.CommandLine -and $_.CommandLine -match $escaped }
+
+<#
+  A guest copy carries `--instance=<name>` on its command line (start.ps1 puts
+  it there), which is how one copy is told from another and from yours.
+#>
+if ($Instance -eq '*') {
+  $processes = @($processes | Where-Object { $_.CommandLine -match '--instance=' })
+} elseif ($Instance) {
+  $named = "--instance=$([regex]::Escape($Instance))(\s|""|$)"
+  $processes = @($processes | Where-Object { $_.CommandLine -match $named })
+}
+# Without -Instance: everything, people's copies included. Your copy starts
+# again the ones that were running when it next starts, so a restart moves
+# every copy onto the new code rather than leaving them on the old.
 
 foreach ($p in $processes) {
   # The image name already says it for the two the launcher started; the
   # command line is how a plain node.exe is told apart.
   $what =
-    if ($p.Name -eq 'Blue Everything Server.exe') { 'server' }
+    if ($p.CommandLine -match '--instance=([a-z0-9-]+)') { "copy $($Matches[1])" }
+    elseif ($p.Name -eq 'Blue Everything Server.exe') { 'server' }
     elseif ($p.Name -eq 'Blue Everything.exe') { 'agent' }
     elseif ($p.CommandLine -match 'agent') { 'agent' }
     elseif ($p.CommandLine -match 'server') { 'server' }
@@ -63,7 +86,8 @@ foreach ($p in $processes) {
   line happens to mention both is never on the list.
 #>
 $suwayomi = @()
-if (-not $KeepSuwayomi) {
+# Suwayomi is your copy's, shared by the guests: stopping a guest leaves it.
+if (-not $KeepSuwayomi -and -not $Instance) {
   $suwayomi = @(Get-CimInstance Win32_Process |
     Where-Object {
       $_.Name -match '^(java|javaw|jcef_helper)\.exe$' -and
@@ -83,7 +107,12 @@ if (-not $processes -and $suwayomi.Count -eq 0) {
 
 Start-Sleep -Milliseconds 600
 $port = if ($env:PORT) { $env:PORT } else { 8787 }
-if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
+if ($Instance -and $Instance -ne '*') {
+  try { $port = [int]((Get-Content (Join-Path $root "instances\$Instance\instance.json") -Raw | ConvertFrom-Json).port) } catch { }
+}
+if ($Instance -eq '*') {
+  Write-Host 'Stopped.' -ForegroundColor Green
+} elseif (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
   Write-Warning "Port $port is still in use."
 } else {
   Write-Host 'Stopped.' -ForegroundColor Green

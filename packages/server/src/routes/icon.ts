@@ -16,8 +16,8 @@
  */
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
+import { dataDir } from '../paths.js';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -31,7 +31,7 @@ import { db } from '../db/client.js';
 import { settings } from '../db/schema.js';
 import { getSettings } from '../nudge-engine.js';
 import { changes } from '../events.js';
-import { drawIcon } from '../icon.js';
+import { drawIcon, encodeIco } from '../icon.js';
 
 /** The sizes anything actually asks for. Anything else is refused. */
 const ALLOWED_SIZES = [16, 32, 48, 64, 128, 180, 192, 256, 512];
@@ -55,8 +55,7 @@ const CONTENT_TYPE: Record<string, string> = {
  * working directory — Task Scheduler starts the server in System32, where a
  * relative path would quietly write the logo somewhere nobody would look.
  */
-const logoPath = (extension: string): string =>
-  resolve(dirname(fileURLToPath(import.meta.url)), '../../data', `logo.${extension}`);
+const logoPath = (extension: string): string => resolve(dataDir, `logo.${extension}`);
 
 /** Whether a picture has been uploaded. Exported for the settings guard. */
 export function hasStoredLogo(): boolean {
@@ -146,6 +145,30 @@ export async function iconRoutes(app: FastifyInstance): Promise<void> {
    * pointing at a fixed `/icon-192.png` would leave every installed copy
    * showing the mark that was current when it was installed.
    */
+  /**
+   * The same mark as an .ico, for Windows: the desktop client's shortcut and
+   * tray icon (`desktop.ps1` fetches it at each start), so a friend's desktop
+   * app wears the colour and shape their copy chose rather than the default.
+   * An uploaded picture goes in whole when it is a PNG, which an .ico can hold;
+   * any other kind falls back to the drawn mark, since converting it would need
+   * the image library this file exists to avoid.
+   */
+  app.get('/icon/app.ico', async (_request, reply) => {
+    const row = await getSettings();
+    const shape = (row.logoShape ?? DEFAULT_LOGO_SHAPE) as LogoShape;
+    const accent = (row.accentColor ?? DEFAULT_ACCENT) as AccentColor;
+    let ico: Buffer | null = null;
+    if (shape === 'image') {
+      const stored = storedLogo();
+      if (stored?.extension === 'png') ico = encodeIco([{ size: 256, png: await readFile(stored.path) }]);
+    }
+    if (!ico) {
+      const drawable = (shape === 'image' ? DEFAULT_LOGO_SHAPE : shape) as Exclude<LogoShape, 'image'>;
+      ico = encodeIco([16, 32, 48, 256].map((size) => ({ size, png: drawIcon(size, { shape: drawable, accent }) })));
+    }
+    return reply.header('content-type', 'image/x-icon').header('cache-control', 'no-cache').send(ico);
+  });
+
   app.get('/manifest.webmanifest', async (_request, reply) => {
     const row = await getSettings();
     const version = `${row.accentColor}-${row.logoShape}-${row.logoVersion}`;

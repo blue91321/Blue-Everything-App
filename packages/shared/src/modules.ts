@@ -63,6 +63,14 @@ export interface ModuleManifest {
   /** Optional, and shown as written. Nothing verifies it; see `trusted` below. */
   author?: string;
   /**
+   * A shipped package that starts switched off. Shipped ones start on, since
+   * shipping is this repo deciding they should run; this is for one worth
+   * having but confusing to find on a first visit, which is the vault: a
+   * password manager nobody set up is a tab asking for a master password.
+   * Installed packages start off whatever this says.
+   */
+  startsOff?: boolean;
+  /**
    * Entry point for its server-side half, relative to the module folder.
    *
    * Optional because a module may be nothing but data. When present it is
@@ -183,6 +191,7 @@ export function validateModuleManifest(raw: unknown): { manifest: ModuleManifest
   const author = text('author', false, 64);
   const notes = text('notes', false, 1000);
   const server = text('server', false, 200);
+  const startsOff = value.startsOff === true;
 
   /*
    * The entry path is a path, so it gets the path rule rather than the string
@@ -226,6 +235,7 @@ export function validateModuleManifest(raw: unknown): { manifest: ModuleManifest
       blurb: blurb!,
       version: version!,
       ...(author === undefined ? {} : { author }),
+      ...(startsOff ? { startsOff: true } : {}),
       ...(server === undefined ? {} : { server }),
       ...(web === undefined ? {} : { web }),
       ...(tab === undefined ? {} : { tab }),

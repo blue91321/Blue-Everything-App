@@ -18,7 +18,7 @@
  */
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { api } from './api';
-import { onServersMachine } from './device';
+import { onServersMachine, onFriendsCopy } from './device';
 import { offlineFeatures, type OfflineFeature } from './features/index';
 
 export function Offline({ onBack }: { onBack: () => void }) {
@@ -141,8 +141,9 @@ export function Offline({ onBack }: { onBack: () => void }) {
         </>
       ) : (
         <p className="meta" style={{ marginTop: 12 }}>
-          Start it on the PC that runs it — this page can only reach it over the network, and cannot wake
-          it up.
+          {onFriendsCopy()
+            ? "It runs on the host's PC, so it is back when they start it there."
+            : 'Start it on the PC that runs it — this page can only reach it over the network, and cannot wake it up.'}
         </p>
       )}
 

@@ -1,3 +1,6 @@
+import { serverPc } from '../device';
+import { DesktopDownload } from '../DesktopDownload';
+import { ClosingChoice } from '../Closing';
 import { useEffect, useRef, useState } from 'react';
 import {
   homeArranged,
@@ -12,6 +15,7 @@ import {
 import { api, type AppSettings, type Device, type Session, type UpdateCheck } from '../api';
 import { InstalledPackages } from './InstalledPackages';
 import { GamesTab } from './GamesTab';
+import { PeopleTab } from './PeopleTab';
 import { Logo, type LogoShape } from '../Logo';
 import { useAsync } from '../useAsync';
 import { panelChoices } from '../panels';
@@ -423,7 +427,7 @@ function LogoPicker({ current, onChanged }: { current: AppSettings | undefined; 
       </div>
 
       <div className="meta" style={{ marginTop: 8 }}>
-        A square PNG of about 512×512 works best. It is stored on this PC, never uploaded anywhere else.
+        A square PNG of about 512×512 works best. It is stored by your Blue Everything, never uploaded anywhere else.
       </div>
       {error && <div className="banner">{error}</div>}
     </div>
@@ -447,6 +451,8 @@ const TABS = [
   { id: 'devices', label: 'Devices', hint: 'Phones, browsers and the extension' },
   { id: 'games', label: 'Games', hint: 'What counts as a game, and what may interrupt one' },
   { id: 'packages', label: 'Packages', hint: 'Which parts of the app run' },
+  // On the host only: friends' copies of the app on this PC. See PeopleTab.
+  { id: 'people', label: 'People', hint: 'Friends with their own copy, on this PC' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -793,7 +799,7 @@ export function Settings({
   return (
     <>
       <div className="tabs" role="tablist" aria-label="Settings sections">
-        {TABS.map((entry) => (
+        {TABS.filter((entry) => entry.id !== 'people' || session.copy === null).map((entry) => (
           <button
             key={entry.id}
             role="tab"
@@ -807,18 +813,107 @@ export function Settings({
         ))}
       </div>
 
-      {tab === 'general' && <GeneralTab />}
+      {tab === 'general' && <GeneralTab name={session.displayName ?? null} fallback={session.defaultName ?? 'user'} local={session.local} />}
       {tab === 'notifications' && <NotificationsTab session={session} />}
       {tab === 'devices' && <DevicesTab session={session} onChanged={onChanged} />}
       {tab === 'games' && <GamesTab session={session} />}
       {tab === 'packages' && <PackagesTab session={session} />}
+      {tab === 'people' && session.copy === null && <PeopleTab />}
     </>
   );
 }
 
-function GeneralTab() {
+/**
+ * Onboarding again: install, what's on, notifications. It opens at once, over
+ * everything, on every device of this copy (`onboarding.ts`).
+ */
+/** The display name friends on this PC see. See `names.ts` on the server. */
+function YourName({ initial, fallback }: { initial: string | null; fallback: string }) {
+  const [value, setValue] = useState(initial ?? '');
+  const [note, setNote] = useState('');
+  const changed = value.trim() !== (initial ?? '');
+  const save = () => {
+    setNote('');
+    api.profile.setName(value.trim() || null).then(
+      () => {
+        setNote('Saved.');
+        window.dispatchEvent(new Event('everything:session-changed'));
+      },
+      (e: unknown) => setNote(e instanceof Error ? e.message : 'that did not save')
+    );
+  };
+  return (
+    <section>
+      <div className="card">
+        <div className="title">Your name</div>
+        <div className="meta">
+          What friends who share this Blue Everything see beside what you ask for, rate and keep. Left empty, you're {fallback}.
+        </div>
+        <form
+          className="row"
+          style={{ gap: 8, marginTop: 8 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            save();
+          }}
+        >
+          <input className="grow" maxLength={40} value={value} onChange={(e) => setValue(e.target.value)} placeholder={fallback} aria-label="Your name" />
+          <button className="btn" type="submit" disabled={!changed}>
+            Save
+          </button>
+        </form>
+        {note && <p className="meta">{note}</p>}
+      </div>
+    </section>
+  );
+}
+
+function SetupAgain() {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  return (
+    <section>
+      <div className="card">
+        <div className="row between" style={{ alignItems: 'center' }}>
+          <div className="grow">
+            <div className="title">Set up</div>
+            <div className="meta">Go through the first-run steps again: your name, installing, what's on, and notifications.</div>
+          </div>
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={() => {
+              setBusy(true);
+              setProblem('');
+              api.onboarding.set({ done: false }).then(
+                () => window.dispatchEvent(new Event('everything:session-changed')),
+                (e: unknown) => {
+                  setProblem(e instanceof Error ? e.message : 'that did not work');
+                  setBusy(false);
+                }
+              );
+            }}
+          >
+            {busy ? 'Opening…' : 'Go through setup again'}
+          </button>
+        </div>
+        {problem && <p className="banner">{problem}</p>}
+      </div>
+    </section>
+  );
+}
+
+function GeneralTab({ name, fallback, local }: { name: string | null; fallback: string; local: boolean }) {
   return (
     <>
+      <YourName initial={name} fallback={fallback} />
+      <section>
+        <div className="card">
+          <div className="title">When you close the app</div>
+          <ClosingChoice local={local} />
+        </div>
+      </section>
+      <SetupAgain />
       <Appearance />
       <MenuDrawer />
       <MenuAndHome />
@@ -846,7 +941,7 @@ function GeneralTab() {
         <h2>This app</h2>
         <div className="card">
           <div className="meta">
-            Everything here is stored on the PC running the server, so the phone and the desktop always
+            Everything here is stored on the server, so the phone and the desktop always
             agree. Nothing is sent anywhere else.
           </div>
         </div>
@@ -1111,6 +1206,59 @@ function NotificationsTab({ session }: { session: Session }) {
   );
 }
 
+/**
+ * A short code another device types to sign in to this copy: an app just added
+ * to a Home Screen, a laptop's browser, or the desktop client on another PC.
+ * From any signed-in device, which is how a friend adds one, since pairing on
+ * the PC is the host's. The address is this page's, or on the PC itself, the
+ * Tailscale one the phone would use.
+ */
+function SignInAnother({ local }: { local: boolean }) {
+  const info = useAsync(() => (local ? api.connectInfo() : Promise.resolve(null)), [local], ['devices']);
+  const [code, setCode] = useState<{ code: string; expiresAt: number } | null>(null);
+  const [problem, setProblem] = useState('');
+  const address = local
+    ? (info.data?.addresses.find((a) => a.secure && a.kind === 'tailscale-https')?.url ?? null)
+    : window.location.origin;
+  return (
+    <section>
+      <h2>Sign in another device</h2>
+      <div className="card">
+        <div className="meta">
+          On the other device, open the address below and type the code when it asks. The code works once, for ten
+          minutes.
+        </div>
+        <div className="row" style={{ gap: 12, alignItems: 'baseline', flexWrap: 'wrap', marginTop: 8 }}>
+          {address ? <code style={{ wordBreak: 'break-all' }}>{address}</code> : <span className="meta">Add your phone shows this PC's address.</span>}
+          {code ? (
+            <strong style={{ fontSize: '1.4rem', letterSpacing: '0.08em' }}>{code.code}</strong>
+          ) : (
+            <button
+              className="btn"
+              onClick={() => {
+                setProblem('');
+                api.devices.handoff().then(setCode, (e: unknown) => setProblem(e instanceof Error ? e.message : 'no code'));
+              }}
+            >
+              Make a code
+            </button>
+          )}
+        </div>
+        <div className="meta" style={{ marginTop: 12 }}>
+          <strong>Blue Everything Desktop</strong> is optional: the app works in a browser and on a phone without it. On a
+          Windows PC it adds popups over games, noticing when a match ends, and voice, which need it running in the
+          background there. Unzip it, open <code>Blue Everything Desktop.cmd</code>, and type the address above and a
+          code.
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <DesktopDownload />
+        </div>
+        {problem && <p className="banner">{problem}</p>}
+      </div>
+    </section>
+  );
+}
+
 function DevicesTab({ session, onChanged }: { session: Session; onChanged: () => void }) {
   const devices = useAsync(() => api.devices.list(), [], ['devices']);
   const [adding, setAdding] = useState(false);
@@ -1152,6 +1300,8 @@ function DevicesTab({ session, onChanged }: { session: Session; onChanged: () =>
           {adding && <AddDeviceGuide onAdded={devices.reload} />}
         </section>
       )}
+
+      <SignInAnother local={session.local} />
 
       {/* The extension exists to fill vault entries, so it is part of that
           feature rather than a device type of its own. */}
@@ -1325,7 +1475,7 @@ function PackagesTab({ session }: { session: Session }) {
       await api.features.set(id, enabled);
       state.reload();
     } catch {
-      setError('That could not be saved. Features can only be changed from the PC running the server.');
+      setError(`That could not be saved. Features can only be changed from ${serverPc()}.`);
     } finally {
       setBusy(null);
     }
@@ -1425,7 +1575,7 @@ function PackagesTab({ session }: { session: Session }) {
                         Update now
                       </button>
                     ) : (
-                      <span className="meta">Update from the PC running the app.</span>
+                      <span className="meta">Update from {serverPc()}.</span>
                     )}
                   </div>
                   <div className="meta" style={{ marginTop: 4 }}>
@@ -1465,7 +1615,7 @@ function PackagesTab({ session }: { session: Session }) {
 
       {!session.local && (
         <div className="meta" style={{ marginBottom: 10 }}>
-          These can only be changed from the PC running the server.
+          These can only be changed from {serverPc()}.
         </div>
       )}
 

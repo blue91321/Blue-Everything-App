@@ -35,6 +35,7 @@
  * Imports nothing from `api.ts`, which imports this; the token and the
  * "back online" follow-ups are handed in.
  */
+import { thePc } from './device';
 import { useEffect, useState } from 'react';
 
 const DATA = 'everything-data-v1';
@@ -432,7 +433,7 @@ export function flushOutbox(): Promise<void> {
         const path = resolveIds(change.path);
         const body = resolveIds(change.body);
         if (/offline-[0-9a-f-]{8,}/.test(path)) {
-          problems.push(`${change.label}: what it changes was never created on the PC`);
+          problems.push(`${change.label}: what it changes was never created on ${thePc()}`);
         } else {
           let response: Response;
           try {

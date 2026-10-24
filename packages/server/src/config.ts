@@ -176,6 +176,28 @@ const envSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
 
+  /**
+   * Which copy of the server this is, when one PC runs several: plan A in
+   * "Blue Everything for friends". Empty is the host: your own copy, exactly
+   * as it has always run. A name (`test`, `sam`) makes this a guest copy,
+   * keeping everything it writes under `instances/<name>/` and trusting no
+   * request because of where it came from. See `isGuest` and `instanceRoot`.
+   *
+   * Set by `start.ps1 -Instance <name>`.
+   */
+  EVERYTHING_INSTANCE: z
+    .string()
+    .default('')
+    .refine((v) => v === '' || /^[a-z0-9][a-z0-9-]{0,31}$/.test(v), {
+      message: 'a lowercase name: letters, digits and hyphens, up to 32',
+    }),
+
+  /**
+   * Where a guest copy finds the host, for the one thing they share: the
+   * host's Suwayomi. Ignored by the host itself.
+   */
+  EVERYTHING_HOST_URL: z.string().default('http://127.0.0.1:8787'),
+
   /** Set when running behind a reverse proxy so client IPs log correctly. */
   TRUST_PROXY: z
     .enum(['true', 'false'])
@@ -190,9 +212,32 @@ if (!parsed.success) {
   process.exit(1);
 }
 
+/**
+ * A guest copy's folder: `instances/<name>/` at the checkout root. Empty for
+ * the host, whose files stay where they have always been.
+ */
+export const instanceRoot = parsed.data.EVERYTHING_INSTANCE
+  ? resolve(packageRoot, '../..', 'instances', parsed.data.EVERYTHING_INSTANCE)
+  : '';
+
+/**
+ * A guest copy: somebody else's copy of the server running on this PC. It
+ * trusts no request because of where it came from, and does nothing to the
+ * machine itself (see `isTrustedLocal`).
+ */
+export const isGuest = instanceRoot !== '';
+
 export const config = {
   ...parsed.data,
-  DATABASE_URL: anchorDatabaseUrl(parsed.data.DATABASE_URL),
+  /*
+   * A guest's database is in its own folder unless one was named outright.
+   * Read from the raw environment because the schema's default would make
+   * "not set" and "set to the default" look the same.
+   */
+  DATABASE_URL:
+    isGuest && !process.env.DATABASE_URL
+      ? `file:${resolve(instanceRoot, 'data', 'everything.db')}`
+      : anchorDatabaseUrl(parsed.data.DATABASE_URL),
   // Derived here rather than defaulted in the schema, because it depends on
   // PORT, which is a sibling field and therefore not available to a `.default()`.
   OAUTH_REDIRECT_BASE:

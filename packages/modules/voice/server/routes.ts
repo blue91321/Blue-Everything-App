@@ -15,7 +15,7 @@
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { existsSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -38,7 +38,7 @@ import {
   parseWakeDecoys,
   voiceprintIsCurrent,
 } from '@everything/shared';
-import { db } from '@everything/server/module-api';
+import { db, dataDir, isGuest } from '@everything/server/module-api';
 import { notes, settings, voiceCommands } from '@everything/server/module-api';
 import { getSettings } from '@everything/server/module-api';
 import { changes } from '@everything/server/module-api';
@@ -103,11 +103,18 @@ const AVATAR_TYPES: Record<string, string> = {
 };
 
 /**
- * Beside the database, resolved from this file rather than the working
- * directory — Task Scheduler starts the server in System32, and a relative path
- * would quietly write the avatar somewhere nobody would ever look.
+ * Beside the database, in the app's data folder (`dataDir`), so a guest copy
+ * keeps its own.
+ *
+ * It was counted from this file by hand, `../../data`, which was right while
+ * voice lived in `packages/server/src/features/` and wrong once it became a
+ * package: from `packages/modules/voice/server` it lands in
+ * `packages/modules/data`. That is where the avatar has been saved since, so
+ * the host still reads one left there (`legacyAvatarPath`) until a new one is
+ * uploaded.
  */
-const avatarPath = (extension: string): string =>
+const avatarPath = (extension: string): string => resolve(dataDir, `avatar.${extension}`);
+const legacyAvatarPath = (extension: string): string =>
   resolve(dirname(fileURLToPath(import.meta.url)), '../../data', `avatar.${extension}`);
 
 /**
@@ -197,6 +204,21 @@ function announce(result: VoiceOutcome): void {
     changes.emitChange('settings');
     bumpVoice();
   }
+}
+
+/**
+ * From the side of the agent: this PC, the agent's own key, or, on a friend's
+ * copy, any of their devices. The checks below were "local only", on the
+ * grounds that the agent is on the server's machine; the desktop client is an
+ * agent somewhere else, signed in with its own key. On a guest copy every
+ * device is that one person's, so any of them may start an enrolment.
+ */
+function agentSide(request: { isLocal: boolean; deviceId: string | null; deviceKind: string | null }): boolean {
+  return (
+    request.isLocal ||
+    request.deviceKind === 'windows-agent' ||
+    (isGuest && request.deviceId !== null && request.deviceKind !== 'instance')
+  );
 }
 
 export async function voiceRoutes(app: FastifyInstance): Promise<void> {
@@ -339,7 +361,7 @@ ${decoys.join(' ')}`)
    * and the agent is on this machine by definition.
    */
   app.post('/api/voice/toggle', async (request, reply) => {
-    if (!request.isLocal) {
+    if (!agentSide(request)) {
       return reply.code(403).send({ error: 'voice can only be toggled from the PC running the agent' });
     }
 
@@ -656,7 +678,9 @@ ${decoys.join(' ')}`)
     // not leave the previous file behind forever.
     for (const old of Object.values(AVATAR_TYPES)) {
       await rm(avatarPath(old), { force: true }).catch(() => {});
+      if (!isGuest) await rm(legacyAvatarPath(old), { force: true }).catch(() => {});
     }
+    await mkdir(dataDir, { recursive: true });
     await writeFile(avatarPath(extension), bytes);
 
     const current = await getSettings();
@@ -671,8 +695,8 @@ ${decoys.join(' ')}`)
   /** Serve it back — to the agent, which draws it, and to the settings screen. */
   app.get('/api/voice/avatar', async (_request, reply) => {
     for (const [type, extension] of Object.entries(AVATAR_TYPES)) {
-      const path = avatarPath(extension);
-      if (!existsSync(path)) continue;
+      const path = [avatarPath(extension), ...(isGuest ? [] : [legacyAvatarPath(extension)])].find((p) => existsSync(p));
+      if (!path) continue;
       return reply.type(type).send(await readFile(path));
     }
     return reply.code(404).send({ error: 'no avatar has been uploaded' });
@@ -692,7 +716,7 @@ ${decoys.join(' ')}`)
    * decides whose voice the machine obeys, and the microphone is on this PC.
    */
   app.post('/api/voice/enrol/start', async (request, reply) => {
-    if (!request.isLocal) {
+    if (!agentSide(request)) {
       return reply.code(403).send({ error: 'voice enrolment only works from the PC running the server' });
     }
     const row = await getSettings();
@@ -718,7 +742,7 @@ ${decoys.join(' ')}`)
    * tailnet — and the recording it comes from happens on this PC anyway.
    */
   app.post('/api/voice/enrol', async (request, reply) => {
-    if (!request.isLocal) {
+    if (!agentSide(request)) {
       return reply.code(403).send({ error: 'voice enrolment only works from the PC running the server' });
     }
 
@@ -747,7 +771,7 @@ ${decoys.join(' ')}`)
   /** Forget the enrolled voice. Leaves `requireKnownSpeaker` alone on purpose —
    *  see the settings route, which refuses to have it on with nothing enrolled. */
   app.delete('/api/voice/enrol', async (request, reply) => {
-    if (!request.isLocal) {
+    if (!agentSide(request)) {
       return reply.code(403).send({ error: 'voice enrolment only works from the PC running the server' });
     }
 

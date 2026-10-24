@@ -11,6 +11,7 @@
     "generate": "drizzle-kit generate",
     "pair": "tsx src/cli/pair.ts",
     "smoke": "tsx src/cli/smoke.ts",
+    "instance-check": "tsx src/cli/instance-check.ts",
     "push-test": "tsx src/cli/push-test.ts",
     "vault-check": "tsx src/cli/vault-check.ts",
     "vault-api": "tsx src/cli/vault-api-check.ts",
@@ -33,7 +34,7 @@
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.11.2",
     "web-push": "^3.6.7",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/web-push": "^3.6.4",

@@ -58,7 +58,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, createWriteStream, readdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { config, dataDir, isGuest, readHostKey } from '@everything/server/module-api';
 import { SuwayomiAdapter } from './suwayomi.js';
 import type { SuwayomiMode } from './sources.js';
 
@@ -701,7 +701,90 @@ class SuwayomiProcess {
   }
 }
 
-export const suwayomiProcess = new SuwayomiProcess();
+/**
+ * The host's Suwayomi, as a guest copy sees it (plan A, "Blue Everything for
+ * friends").
+ *
+ * One Suwayomi serves every copy on this PC, and only the host starts, stops
+ * and updates it. So on a guest this stands where `SuwayomiProcess` does, with
+ * the same five members every route already calls: `ensureRunning` asks the
+ * host to wake it (`POST /api/manga/host/wake`, with this copy's key), `touch`
+ * asks again at most once a minute so the host's idle timer counts a guest
+ * reading as someone using it, and `stop` does nothing, since it is not this
+ * copy's to stop. The nineteen routes that call `ensureRunning` then work on a
+ * guest unchanged.
+ */
+class HostSuwayomi {
+  private status: ManagedState = { state: 'off' };
+  private askedAt = 0;
+  private asking: Promise<ManagedState> | null = null;
+
+  get state(): ManagedState {
+    return this.status;
+  }
+
+  async ensureRunning(_jarPath?: string, _baseUrl?: string, _mode?: SuwayomiMode): Promise<ManagedState> {
+    // Five requests at once ask the host once.
+    this.asking ??= this.ask().finally(() => {
+      this.asking = null;
+    });
+    return this.asking;
+  }
+
+  private async ask(): Promise<ManagedState> {
+    const key = readHostKey();
+    if (!key) {
+      this.status = {
+        state: 'failed',
+        problem:
+          "Manga runs on the host's Suwayomi, and this copy has no key to ask it with yet. Restarting the host's Blue Everything gives it one.",
+      };
+      return this.status;
+    }
+    try {
+      const response = await fetch(`${config.EVERYTHING_HOST_URL.replace(/\/$/, '')}/api/manga/host/wake`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${key}` },
+        // The host may be starting the JVM for us, which it waits on.
+        signal: AbortSignal.timeout(START_TIMEOUT_MS + 15_000),
+      });
+      const body = (await response.json().catch(() => null)) as { state?: ManagedState; error?: string } | null;
+      this.askedAt = Date.now();
+      if (!response.ok || !body?.state) {
+        this.status = {
+          state: 'failed',
+          problem: `The host would not wake its Suwayomi: ${body?.error ?? `it answered ${response.status}`}`,
+        };
+      } else {
+        this.status = body.state;
+      }
+    } catch {
+      this.status = {
+        state: 'failed',
+        problem: "The host's Blue Everything isn't answering, and manga runs on its Suwayomi. It may be stopped.",
+      };
+    }
+    return this.status;
+  }
+
+  noteReachable(reachable: boolean): void {
+    if (!reachable && this.status.state === 'running') this.status = { state: 'off' };
+  }
+
+  touch(_mode?: SuwayomiMode): void {
+    if (Date.now() - this.askedAt < 60_000) return;
+    void this.ensureRunning();
+  }
+
+  stop(_port?: number, _options?: { force?: boolean }): void {
+    // The host's to stop, not ours.
+  }
+}
+
+/** What every route calls: this copy's own Suwayomi on the host, the host's on a guest. */
+export type SuwayomiManager = Pick<SuwayomiProcess, 'state' | 'ensureRunning' | 'noteReachable' | 'touch' | 'stop'>;
+
+export const suwayomiProcess: SuwayomiManager = isGuest ? new HostSuwayomi() : new SuwayomiProcess();
 
 /**
  * Which process is listening on a port, when the platform can say.

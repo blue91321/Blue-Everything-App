@@ -15,9 +15,16 @@
  *
  * Saving itself starts on a series' chapter list (⬇, or Next 5), where you can
  * see which chapter is which. This tab is for looking after what you have.
+ *
+ * Under that, what is kept **on the PC**, the Local collection: the archive
+ * ("Kept for good") and the rules that fill it, with a way to read it in
+ * Browse. They were on More; keeping a series is a download too, only to
+ * the PC rather than this device, so it is looked after here.
  */
+import { thePc } from '@app/device';
 import { useEffect, useState } from 'react';
 import { useConnectivity } from '@app/offline-sync';
+import { Archive, CollectionRulesCard } from './Archive';
 import { Cover } from './Cover';
 import {
   cancelDownload,
@@ -141,7 +148,7 @@ function DownloadFolder() {
   );
 }
 
-export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
+export function Downloads({ onRead, onBrowseKept }: { onRead: (seriesId: string) => void; onBrowseKept: () => void }) {
   const { manifest, jobs, recent, progress } = useOffline();
   const net = useConnectivity();
   const [space, setSpace] = useState<{ saved: number; quota: number | null } | null>(null);
@@ -158,13 +165,18 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
     void navigator.storage?.persisted?.().then(setKept, () => setKept(null));
   }, [manifest]);
 
+  const onThePc = <OnThePc onBrowseKept={onBrowseKept} />;
+
   if (!offlineSupported) {
     return (
-      <div className="card">
-        <p className="empty">
-          Saving for offline needs the app's https address — the one Settings → Add a device shows. This page isn't
-          one, so there is nothing to manage here.
-        </p>
+      <div className="manga-downloads">
+        <div className="card">
+          <p className="empty">
+            Saving to this device needs the app's https address — the one Settings → Add a device shows. This page
+            isn't one, so there is nothing saved here.
+          </p>
+        </div>
+        {onThePc}
       </div>
     );
   }
@@ -229,7 +241,31 @@ export function Downloads({ onRead }: { onRead: (seriesId: string) => void }) {
           <SavedSeriesRow key={s.seriesId} series={s} onRead={onRead} />
         ))}
       </div>
+
+      {onThePc}
     </div>
+  );
+}
+
+/** The Local collection: kept on the PC rather than this device. */
+function OnThePc({ onBrowseKept }: { onBrowseKept: () => void }) {
+  return (
+    <>
+      <div className="card">
+        <div className="row between">
+          <h3>Local collection</h3>
+          <button className="btn" onClick={onBrowseKept}>
+            Read it in Browse
+          </button>
+        </div>
+        <p className="meta">
+          Series kept on {thePc()}, every chapter, for everyone who shares this Blue Everything. They stay readable if the
+          site goes.
+        </p>
+      </div>
+      <Archive />
+      <CollectionRulesCard />
+    </>
   );
 }
 
@@ -405,7 +441,7 @@ function SavingCard({
                   ]
                     .filter(Boolean)
                     .join(' · ')
-                : 'Asking the PC for the page list…'}
+                : `Asking ${thePc()} for the page list…`}
             </span>
             {saving.cancelled && <span className="meta">Stopping after the pages already on their way…</span>}
           </div>

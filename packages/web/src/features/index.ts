@@ -16,6 +16,7 @@
  *   - **view** is lazy. This is the part that costs something, and a feature
  *     that is off or that you never opens is never downloaded at all.
  */
+import { thePc } from '../device';
 import type { MenuGroup } from '../menu-groups';
 import { createElement, lazy, type ComponentType, type LazyExoticComponent } from 'react';
 
@@ -247,7 +248,7 @@ export function offlineFeatures(): OfflineFeature[] {
               createElement(
                 'p',
                 { className: 'meta' },
-                'The app updated since this screen was last loaded, and the new version of it was not saved for offline use. Open the app once while the PC is reachable and it will be.'
+                `The app updated since this screen was last loaded, and the new version of it was not saved for offline use. Open the app once while ${thePc()} is reachable and it will be.`
               ),
               createElement('button', { className: 'btn', onClick: onClose }, 'Back')
             ),

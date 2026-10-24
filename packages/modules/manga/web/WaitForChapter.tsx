@@ -14,6 +14,7 @@
  * Two ways out, both said plainly: read it now from the PC (the ordinary
  * reader, pages arriving as they come), or stop reading ahead altogether.
  */
+import { thePc } from '@app/device';
 import { createPortal } from 'react-dom';
 import { chapterText } from './judge';
 import { ProgressRing, remainingText, speedText } from './ProgressRing';
@@ -49,11 +50,11 @@ export function WaitForChapter({
   const position = job?.state === 'waiting' ? 'waiting for the chapter saving before it' : null;
 
   let status: string;
-  if (offline) status = 'Not saved yet, and the PC cannot be reached. It will carry on once it can.';
+  if (offline) status = `Not saved yet, and ${thePc()} cannot be reached. It will carry on once it can.`;
   else if (!job) status = 'Not being saved.';
   else if (job.problem) status = job.problem;
   else if (job.state === 'waiting') status = position ?? 'waiting its turn';
-  else if (!job.total) status = 'Asking the PC for the page list…';
+  else if (!job.total) status = `Asking ${thePc()} for the page list…`;
   else {
     const ms = now - (job.startedAt ?? now);
     status = [

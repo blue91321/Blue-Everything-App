@@ -11,7 +11,10 @@ import { eq, isNull, and } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { db } from './db/client.js';
 import { devices } from './db/schema.js';
-import { config } from './config.js';
+import { config, isGuest } from './config.js';
+
+/** The only routes an `instance` key opens: what one copy asks of the host. */
+export const INSTANCE_PREFIXES = ['/api/manga/host/', '/api/host/'];
 
 export const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
 
@@ -71,6 +74,12 @@ export function isTrustedLocal(request: FastifyRequest): boolean {
   // signal is meaningless and local trust has to be off.
   if (config.TRUST_PROXY) return false;
 
+  // A guest copy is somebody else's, so being on this PC proves nothing to it:
+  // every request shows a token, yours included. Plan A, "Blue Everything for
+  // friends". It also keeps every local-only route, which is every one that
+  // runs something on this machine, out of a guest's reach.
+  if (isGuest) return false;
+
   const address = request.socket.remoteAddress ?? '';
   if (!LOOPBACK.has(address)) return false;
 
@@ -103,6 +112,10 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   // before there's anywhere to type a token, and it carries no data of its own;
   // everything it displays comes from an authenticated /api call.
   if (!request.url.startsWith('/api/')) return;
+  // A sign-in link's code, or a hand-off code typed into a new device: the code
+  // is the credential, swapped for a token once (`instances.ts`). The only
+  // route that answers without a token, on every copy.
+  if (request.method === 'POST' && request.url.split('?')[0] === '/api/invite/redeem') return;
   if (!config.AUTH_REQUIRED) {
     request.isLocal = true;
     return;
@@ -128,6 +141,16 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
 
   if (!device) {
     return reply.code(401).send({ error: 'unknown or revoked device' });
+  }
+
+  /*
+   * A guest copy's key to the host: it may ask the host's Suwayomi to wake
+   * and pass on a request for a source, and reach nothing else. Without this
+   * it would be a full device token for your copy held in a folder another
+   * copy can read.
+   */
+  if (device.kind === 'instance' && !INSTANCE_PREFIXES.some((p) => request.url.startsWith(p))) {
+    return reply.code(403).send({ error: "a copy's key reaches only what copies share" });
   }
 
   request.deviceId = device.id;

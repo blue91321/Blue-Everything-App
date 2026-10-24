@@ -18,6 +18,7 @@
  * The categories are stored on each row rather than computed here, so this is a
  * `group by` on the server rather than several thousand rows over the wire.
  */
+import { serverPc, thePc } from '@app/device';
 import { useState } from 'react';
 import { api } from '@app/api';
 import { useAsync } from '@app/useAsync';
@@ -65,8 +66,8 @@ export function Music({ local }: { local: boolean }) {
           )}
           {!local && (
             <div className="banner" style={{ marginTop: '.5rem' }}>
-              Connecting has to be done on the PC running the app: Spotify sends you back to a page there. Open this
-              tab on the PC (Connections → Music) to finish.
+              Connecting has to be done on {serverPc()}: Spotify sends you back to a page there. Open this tab
+              there (Connections → Music) to finish.
             </div>
           )}
         </div>
@@ -81,7 +82,7 @@ export function Music({ local }: { local: boolean }) {
     return (
       <div className="empty">
         Nothing in the library yet. Connect Spotify or YouTube on the Services tab and sync.
-        {!local && ' Connecting has to be done on the PC.'}
+        {!local && ` Connecting has to be done on ${thePc()}.`}
       </div>
     );
   }
@@ -176,7 +177,7 @@ export function Music({ local }: { local: boolean }) {
 
           {!local && (
             <div className="meta" style={{ marginTop: '.5rem' }}>
-              Ticking these is done on the PC running the server.
+              Ticking these is done on {serverPc()}.
             </div>
           )}
         </details>

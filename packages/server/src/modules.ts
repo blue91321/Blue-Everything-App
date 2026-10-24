@@ -249,7 +249,7 @@ export function scanModules(): InstalledModule[] {
        * same reason: shipping something is this repo deciding it should run,
        * while dropping a zip in a folder is not yet a decision to run it.
        */
-      enabled: state[id] ?? shipped,
+      enabled: state[id] ?? (shipped && manifest?.startsOff !== true),
       running: loaded.has(id),
     });
   }

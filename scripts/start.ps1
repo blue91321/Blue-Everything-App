@@ -14,6 +14,7 @@
   .\scripts\start.ps1
   .\scripts\start.ps1 -Open         # also open the app in the browser
   .\scripts\start.ps1 -Foreground   # run the agent in this window, to watch it
+  .\scripts\start.ps1 -Instance sam # start a guest copy called "sam", making it the first time
 #>
 [CmdletBinding()]
 param(
@@ -23,7 +24,13 @@ param(
   # The app's own "Start it" button uses this: an agent that has stopped while
   # the server is fine is the one case the ordinary path cannot serve, because
   # it short-circuits on the server's port being open.
-  [switch]$AgentOnly
+  [switch]$AgentOnly,
+  # A guest copy of the server: somebody else's, on this PC (plan A in "Blue
+  # Everything for friends"). Its database, data, settings and logs live in
+  # instances\<name>\, on a port of its own, and it starts no agent: a guest's
+  # agent runs on their own PC. The first start makes the folder and prints a
+  # device token for it.
+  [string]$Instance = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,6 +41,47 @@ $agentDir = Join-Path $root 'packages\agent'
 $logDir = Join-Path $root 'logs'
 $port = if ($env:PORT) { $env:PORT } else { 8787 }
 $url = "http://127.0.0.1:$port"
+
+<#
+  A guest copy: its folder, and the port it keeps. The port is chosen once,
+  the first free one from 8788 that no other copy has, and written to
+  instance.json so the copy's address does not move between starts.
+#>
+$instanceDir = $null
+$newInstance = $false
+if ($Instance) {
+  if ($Instance -notmatch '^[a-z0-9][a-z0-9-]{0,31}$') {
+    Write-Host 'A copy needs a lowercase name: letters, digits and hyphens, up to 32.' -ForegroundColor Red
+    exit 1
+  }
+  $instancesDir = Join-Path $root 'instances'
+  $instanceDir = Join-Path $instancesDir $Instance
+  $instanceFile = Join-Path $instanceDir 'instance.json'
+  if (Test-Path $instanceFile) {
+    $port = [int]((Get-Content $instanceFile -Raw | ConvertFrom-Json).port)
+  } else {
+    $newInstance = $true
+    $taken = @(8787)
+    if (Test-Path $instancesDir) {
+      foreach ($other in Get-ChildItem $instancesDir -Directory) {
+        $otherFile = Join-Path $other.FullName 'instance.json'
+        if (Test-Path $otherFile) {
+          try { $taken += [int]((Get-Content $otherFile -Raw | ConvertFrom-Json).port) } catch { }
+        }
+      }
+    }
+    $port = 8788
+    while (($taken -contains $port) -or (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)) {
+      $port++
+    }
+    New-Item -ItemType Directory -Force -Path $instanceDir | Out-Null
+    # No byte-order mark: the server reads this, and JSON.parse refuses one.
+    [System.IO.File]::WriteAllText($instanceFile, (@{ port = $port; created = (Get-Date).ToString('o') } | ConvertTo-Json))
+    Write-Host "Made a copy called ""$Instance"" in instances\$Instance, on port $port." -ForegroundColor Cyan
+  }
+  $url = "http://127.0.0.1:$port"
+  $logDir = Join-Path $instanceDir 'logs'
+}
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
@@ -61,9 +109,15 @@ function Test-Listening {
   never match on 'agent'.
 #>
 function Test-AgentRunning {
-  $escaped = [regex]::Escape($root)
+  # With the separator: "...\Everything App" must not match "...\Everything app test user"
+  # (Windows compares without case), or another install's processes count as this one's.
+  $escaped = [regex]::Escape($root.TrimEnd('\') + '\')
+  # A guest copy's server is never the agent, whatever its name says.
   [bool](@(Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='Blue Everything.exe'" |
-    Where-Object { $_.CommandLine -and $_.CommandLine -match $escaped -and $_.CommandLine -match 'agent' }).Count)
+    Where-Object {
+      $_.CommandLine -and $_.CommandLine -match $escaped -and $_.CommandLine -match 'agent' -and
+      $_.CommandLine -notmatch '--instance='
+    }).Count)
 }
 
 <#
@@ -76,26 +130,9 @@ function Test-AgentRunning {
   the same page.
 #>
 function Open-AppWindow {
-  $candidates = @(
-    "$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe",
-    "${env:ProgramFiles(x86)}\BraveSoftware\Brave-Browser\Application\brave.exe",
-    "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application\brave.exe",
-    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
-    "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
-    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
-    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
-  )
-
-  $browser = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-
-  if ($browser) {
-    # Chromium remembers this window's size and position per --app URL after
-    # the first launch, so the initial size is only ever used once.
-    Start-Process $browser -ArgumentList "--app=$url", '--window-size=1150,860'
-  } else {
-    # No Chromium-based browser found: a normal tab beats nothing.
-    Start-Process $url
-  }
+  # In app-id.ps1, which the desktop client (desktop.ps1) shares.
+  . (Join-Path $PSScriptRoot 'app-id.ps1')
+  Open-AppWindowAt $url
 }
 
 <#
@@ -118,7 +155,13 @@ function Open-AppWindow {
   inside the app. So this hands over to it rather than growing a second way to
   start an agent.
 #>
-if ((Test-Listening) -and -not $AgentOnly) {
+if ($Instance -and (Test-Listening)) {
+  Write-Host "The copy ""$Instance"" is already running at $url" -ForegroundColor Green
+  if ($Open) { Open-AppWindow }
+  exit 0
+}
+
+if (-not $Instance -and (Test-Listening) -and -not $AgentOnly) {
   if (Test-AgentRunning) {
     Write-Host "Blue Everything is already running at $url" -ForegroundColor Green
     if ($Open) { Open-AppWindow }
@@ -242,6 +285,68 @@ function Save-PreviousLog([string]$name) {
   } catch {
     # In use, or not ours to move: the new run writes over it as it always did.
   }
+}
+
+<#
+  A guest copy: its server only, told which copy it is. `--instance=<name>`
+  on the command line is for stop.ps1, which tells copies apart by it; the
+  server reads EVERYTHING_INSTANCE. No EXIT_WITHOUT_AGENT: a guest's agent is
+  on their own PC, so none checks in here.
+#>
+if ($Instance) {
+  $env:EVERYTHING_INSTANCE = $Instance
+  $env:PORT = "$port"
+  Remove-Item Env:EXIT_WITHOUT_AGENT -ErrorAction SilentlyContinue
+  Save-PreviousLog 'server'
+  Save-PreviousLog 'server.err'
+  Write-Host "Starting the copy ""$Instance""..." -NoNewline
+  $copy = Start-Process $script:ServerExe `
+    -ArgumentList '--import', 'tsx', "`"$serverEntry`"", "--instance=$Instance" `
+    -WorkingDirectory $serverDir `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput (Join-Path $logDir 'server.log') `
+    -RedirectStandardError (Join-Path $logDir 'server.err.log') `
+    -PassThru
+  $ready = $false
+  foreach ($i in 1..60) {
+    if ($copy.HasExited) { break }
+    if (Test-Listening) { $ready = $true; break }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not $ready) {
+    Write-Host ' failed.' -ForegroundColor Red
+    Write-Host "Check $logDir\server.err.log" -ForegroundColor Yellow
+    if (-not $copy.HasExited) { Stop-Process -Id $copy.Id -Force }
+    exit 1
+  }
+  Write-Host " ok (pid $($copy.Id))" -ForegroundColor Green
+
+  # Its key to the host's Suwayomi. The host makes one at its own start for
+  # any copy without; asked here so a new copy need not wait for that.
+  if (-not (Test-Path (Join-Path $instanceDir 'host-key'))) {
+    $hostUrl = if ($env:EVERYTHING_HOST_URL) { $env:EVERYTHING_HOST_URL } else { 'http://127.0.0.1:8787' }
+    try {
+      Invoke-RestMethod -Method Post -Uri "$hostUrl/api/instances/$Instance/key" -TimeoutSec 10 | Out-Null
+      Write-Host 'The host gave this copy its key to the shared Suwayomi.'
+    } catch {
+      Write-Host "The host did not give this copy its key yet (is it running this version?). It does at its next start; manga waits until then." -ForegroundColor Yellow
+    }
+  }
+
+  if ($newInstance) {
+    Write-Host ''
+    Write-Host "A device token for the copy ""$Instance"", shown once. Paste it into the app at $url." -ForegroundColor Cyan
+    Push-Location $serverDir
+    try { & $script:ServerExe --import tsx (Join-Path $serverDir 'src\cli\pair.ts') "$Instance (first device)" browser }
+    finally { Pop-Location }
+  }
+
+  if ($Open) { Open-AppWindow }
+  Write-Host ''
+  Write-Host "App:  $url" -ForegroundColor Cyan
+  Write-Host "Logs: $logDir"
+  Write-Host "Stop: scripts\stop.ps1 -Instance $Instance"
+  exit 0
 }
 
 # -AgentOnly starts the agent and not the server. The install and build checks

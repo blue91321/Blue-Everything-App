@@ -7,6 +7,25 @@
  */
 import { z } from 'zod';
 
+/**
+ * An update schema: every field optional, and **no defaults**.
+ *
+ * `.partial()` was enough under zod 3. zod 4 applies a field's `.default()`
+ * even once `.partial()` has made it optional, so an edit that left a field
+ * out came back with the default in it: editing a gauge habit's name sent
+ * `mode: 'target'` and turned it into a counted one. Found by `smoke` on the
+ * upgrade (zod 3 has a memory-exhaustion advisory fixed only in 4). The type
+ * is `.partial()`'s; the runtime drops each default before making it optional.
+ */
+function patchOf<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  const typed = schema.partial();
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const [key, field] of Object.entries(schema.shape as unknown as Record<string, z.ZodTypeAny>)) {
+    shape[key] = (field instanceof z.ZodDefault ? (field.unwrap() as z.ZodTypeAny) : field).optional();
+  }
+  return z.object(shape) as unknown as typeof typed;
+}
+
 /* ------------------------------------------------------------------ */
 /* Attention                                                           */
 /* ------------------------------------------------------------------ */
@@ -104,14 +123,14 @@ export function endOfDayFor(at: number): number {
   return day.getTime();
 }
 export type CreateTask = z.infer<typeof createTaskSchema>;
-export const updateTaskSchema = createTaskSchema.partial();
+export const updateTaskSchema = patchOf(createTaskSchema);
 
 export const createProjectSchema = z.object({
   name: z.string().min(1).max(200),
   color: z.string().max(20).nullish(),
   archived: z.boolean().default(false),
 });
-export const updateProjectSchema = createProjectSchema.partial();
+export const updateProjectSchema = patchOf(createProjectSchema);
 
 /* ------------------------------------------------------------------ */
 /* Habits                                                              */
@@ -404,7 +423,7 @@ export const createHabitSchema = z.object({
    */
   voicePhrases: z.array(z.string().min(1).max(120)).max(20).default([]),
 });
-export const updateHabitSchema = createHabitSchema.partial();
+export const updateHabitSchema = patchOf(createHabitSchema);
 
 /** Whole-list reorder: ids in the order they should appear. */
 export const reorderSchema = z.object({ ids: z.array(z.string().uuid()).max(500) });
@@ -1830,7 +1849,7 @@ export const createNoteSchema = z.object({
   folder: z.string().max(400).nullish(),
   pinned: z.boolean().default(false),
 });
-export const updateNoteSchema = createNoteSchema.partial();
+export const updateNoteSchema = patchOf(createNoteSchema);
 
 /* ------------------------------------------------------------------ */
 /* Nudges                                                              */
@@ -2120,13 +2139,20 @@ export function quietReason(at: Date, input: QuietInputs): QuietReason | null {
 /* Devices                                                             */
 /* ------------------------------------------------------------------ */
 
-export const deviceKinds = ['windows-agent', 'phone', 'browser', 'extension'] as const;
+/**
+ * `instance` is not a device: it is the key a guest copy of the server holds
+ * to ask the host's Suwayomi for things (plan A). Only the host mints one, for
+ * a copy it finds in `instances/`, so it is left out of what a person can pair.
+ */
+export const deviceKinds = ['windows-agent', 'phone', 'browser', 'extension', 'instance'] as const;
 export const deviceKindSchema = z.enum(deviceKinds);
 export type DeviceKind = z.infer<typeof deviceKindSchema>;
 
+export const pairableDeviceKinds = ['windows-agent', 'phone', 'browser', 'extension'] as const;
+
 export const registerDeviceSchema = z.object({
   name: z.string().min(1).max(120),
-  kind: deviceKindSchema,
+  kind: z.enum(pairableDeviceKinds),
 });
 
 /* ------------------------------------------------------------------ */
@@ -2204,7 +2230,7 @@ export const vaultItemSchema = z.object({
   totp: z.string().max(300).default(''),
 });
 export type VaultItemInput = z.infer<typeof vaultItemSchema>;
-export const vaultItemUpdateSchema = vaultItemSchema.partial();
+export const vaultItemUpdateSchema = patchOf(vaultItemSchema);
 
 export const vaultRecoverSchema = z.object({
   shareA: z.string().min(1).max(200),

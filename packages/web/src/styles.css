@@ -4432,34 +4432,6 @@ div.manga-chapter-row {
   margin: 18px auto 0;
 }
 
-.manga-import-preview {
-  margin-top: 10px;
-}
-
-.manga-import-scopes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 8px 0;
-}
-
-.manga-import-scopes .count {
-  opacity: 0.75;
-  margin-left: 4px;
-  font-variant-numeric: tabular-nums;
-}
-
-.manga-import-matching {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.manga-import-matching progress {
-  width: 100%;
-  accent-color: var(--accent);
-}
-
 /* Hover only where there is one — see `.home-tile`. */
 @media (hover: hover) {
   .manga-lib-tile:hover .manga-cover {
@@ -5412,4 +5384,89 @@ html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
 
 .shuffle-how {
   margin-top: 0.6rem;
+}
+
+/* ---- Onboarding: a new person's first run (Onboarding.tsx) ---- */
+
+.onboarding {
+  min-height: 100vh;
+  padding: 32px 16px;
+  background: var(--bg);
+  box-sizing: border-box;
+}
+
+.onboarding-card {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+/* The same card over the app rather than instead of it: "New in this version" (NewScreens.tsx). Above the ☰ and the drawer. */
+.onboarding.over-app {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  min-height: 0;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+}
+
+.onboarding-card h1 {
+  font-size: 24px;
+  margin: 4px 0 8px;
+}
+
+.onboarding-card ol {
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
+/* Typed by hand into the installed app, so big, spaced and in a face that tells 0 from O. */
+.onboarding-code {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 32px;
+  letter-spacing: 0.15em;
+  text-align: center;
+  margin: 16px 0 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.onboarding-choices {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.onboarding-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.onboarding-choice.on,
+.onboarding-choice:focus-visible {
+  border-color: var(--accent);
+}
+
+@media (hover: hover) {
+  .onboarding-choice:hover {
+    border-color: var(--accent);
+  }
+}
+
+.onboarding-picks {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 12px;
 }

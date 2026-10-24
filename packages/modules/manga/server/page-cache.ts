@@ -29,7 +29,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { join } from 'node:path';
 import { dataDir } from '@everything/server/module-api';
 import { isWholeImage } from '../web/image-bytes.js';
-import { fetchPage } from './page-fetch.js';
+import { sharedPage } from './page-fetch.js';
 
 export const KEEP_CHAPTERS = 10;
 
@@ -180,7 +180,8 @@ export async function fillChapter(baseUrl: string, seriesId: string, chapterId: 
       const next = e?.pages.find((p) => !(p in e.stored) && !passed.has(p));
       if (!e || !next) return;
       try {
-        const { body, type } = await fetchPage(`${baseUrl}${next}`);
+        // Shared with the reader asking for the same page meanwhile: see `sharedPage`.
+        const { body, type } = await sharedPage(`${baseUrl}${next}`);
         keepPage(seriesId, next, body, type);
         failedInARow = 0;
       } catch {

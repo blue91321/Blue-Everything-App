@@ -496,7 +496,15 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
           )}
 
           {/* Everything saved on this device, and what is being saved. */}
-          {tab === 'downloads' && <Downloads onRead={(id) => setReading(id)} />}
+          {tab === 'downloads' && (
+            <Downloads
+              onRead={(id) => setReading(id)}
+              onBrowseKept={() => {
+                setBrowsePick({ source: 'kept', at: Date.now() });
+                goTab('browse');
+              }}
+            />
+          )}
 
           {tab === 'more' && (
             <More

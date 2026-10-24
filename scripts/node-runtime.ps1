@@ -18,16 +18,48 @@
 #>
 
 $script:NodeMajor = 24
+<#
+  The oldest Node this app will run on. Raised by hand when Node ships a
+  security release: the folder was only ever filled when node.exe was missing,
+  so an install kept whatever Node it first downloaded for good (24.21.0 here
+  when 24.22.1 fixed security issues). An older one is replaced at the next
+  start, which on a restart is after the app has stopped and nothing holds it.
+#>
+$script:NodeMinimum = [version]'24.22.1'
 $appRoot = Split-Path $PSScriptRoot -Parent
 $nodeDir = Join-Path $appRoot 'runtime\node'
 $nodeExe = Join-Path $nodeDir 'node.exe'
 
-if (-not (Test-Path $nodeExe)) {
-  Write-Host "Downloading Node.js $script:NodeMajor into the app's folder (once, about 30MB)..."
+$nodeTooOld = $false
+if (Test-Path $nodeExe) {
+  try {
+    $have = [version](((Get-Item $nodeExe).VersionInfo.ProductVersion) -replace '[^0-9.].*$', '')
+    $nodeTooOld = $have -lt $script:NodeMinimum
+  } catch { $nodeTooOld = $false }
+}
+<#
+  Replaced only when nothing is running from the folder. -AgentOnly starts the
+  agent beside a server still up on this Node, and a running node.exe cannot be
+  deleted, so that start carries on with the old one and says so; the next full
+  start replaces it.
+#>
+if ($nodeTooOld) {
+  $inUse = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    try { $_.Path -and $_.Path.StartsWith($nodeDir, [StringComparison]::OrdinalIgnoreCase) } catch { $false }
+  }
+  if ($inUse) {
+    Write-Host "Node.js in runtime\node is older than $script:NodeMinimum but in use; it is updated at the next full start." -ForegroundColor Yellow
+    $nodeTooOld = $false
+  }
+}
+
+if (-not (Test-Path $nodeExe) -or $nodeTooOld) {
+  Write-Host "Downloading Node.js $script:NodeMajor into the app's folder (about 30MB)..."
   $ProgressPreference = 'SilentlyContinue'
   $index = Invoke-RestMethod -Uri 'https://nodejs.org/dist/index.json' -Headers @{ 'User-Agent' = 'blue-everything' }
   $version = ($index | Where-Object { $_.version -like "v$script:NodeMajor.*" } | Select-Object -First 1).version
   if (-not $version) { throw "could not find a Node.js $script:NodeMajor release to download" }
+  if ([version]$version.TrimStart('v') -lt $script:NodeMinimum) { throw "the newest Node.js $script:NodeMajor on nodejs.org ($version) is older than $script:NodeMinimum" }
 
   $name = "node-$version-win-x64"
   $work = Join-Path $env:TEMP "be-node-$([guid]::NewGuid().ToString('N'))"
@@ -37,8 +69,14 @@ if (-not (Test-Path $nodeExe)) {
   Expand-Archive -Path $zip -DestinationPath $work -Force
 
   New-Item -ItemType Directory -Force -Path (Split-Path $nodeDir) | Out-Null
-  if (Test-Path $nodeDir) { Remove-Item $nodeDir -Recurse -Force }
-  Move-Item (Join-Path $work $name) $nodeDir
+  # Moved aside, not deleted: a rename either happens or does not, where a
+  # delete stopped by one locked file leaves half a Node and no app.
+  $old = "$nodeDir.old"
+  if (Test-Path $old) { Remove-Item $old -Recurse -Force -ErrorAction SilentlyContinue }
+  if (Test-Path $nodeDir) { Move-Item $nodeDir $old }
+  try { Move-Item (Join-Path $work $name) $nodeDir }
+  catch { if (Test-Path $old) { Move-Item $old $nodeDir }; throw }
+  if (Test-Path $old) { Remove-Item $old -Recurse -Force -ErrorAction SilentlyContinue }
   Remove-Item $work -Recurse -Force
   Write-Host "Node.js $version is in runtime\node."
 }

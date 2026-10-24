@@ -22,9 +22,10 @@
  * processes in `C:\\Windows\\System32`, where a relative path finds nothing and
  * quietly creates the wrong thing somewhere nobody will look.
  */
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { config } from './config.js';
+import { config, instanceRoot } from './config.js';
 
 /** An override if one is set, otherwise the default. */
 const or = (override: string, fallback: string): string =>
@@ -36,20 +37,54 @@ export const serverSrc = dirname(fileURLToPath(import.meta.url));
 /** The checkout root: up out of `src`, `server` and `packages`. */
 export const repoRoot = resolve(serverSrc, '../../..');
 
+/**
+ * Which download this install came from: `everything`, or `just-manga`, the
+ * reader with nothing else in the folder (`package-release.mjs --config`).
+ * Written into the zip as `configuration.json`, so a git clone, which has
+ * none, is everything. Only first-run defaults read it (onboarding opens a
+ * Just Manga install on Manga); what runs is still what is on disk.
+ */
+export const configuration: 'everything' | 'just-manga' = (() => {
+  try {
+    const raw = JSON.parse(readFileSync(resolve(repoRoot, 'configuration.json'), 'utf8').replace(/^\uFEFF/, '')) as {
+      configuration?: unknown;
+    };
+    return raw.configuration === 'just-manga' ? 'just-manga' : 'everything';
+  } catch {
+    return 'everything';
+  }
+})();
+
+/**
+ * A guest copy's own folder (`instances/<name>/`), or empty for the host. See
+ * `isGuest` in `config.ts`. Everything below that a copy writes is moved into
+ * it, so two copies on one PC share no file.
+ */
+export { instanceRoot };
+
 /** Beside the database, holding pictures and the like. */
-export const dataDir = resolve(serverSrc, '../data');
+export const dataDir = instanceRoot ? resolve(instanceRoot, 'data') : resolve(serverSrc, '../data');
+
+/** Where `start.ps1` writes this copy's logs, and where the app reads them back. */
+export const logsDir = instanceRoot ? resolve(instanceRoot, 'logs') : resolve(repoRoot, 'logs');
 
 /** The per-install feature switches. Hand-editable; see `features.ts`. */
-export const featuresFile = resolve(repoRoot, 'features.json');
+export const featuresFile = instanceRoot ? resolve(instanceRoot, 'features.json') : resolve(repoRoot, 'features.json');
 
 /** Packages that ship with the app — committed, and loaded like any other. */
 export const shippedModulesRoot = or(config.MODULES_SHIPPED, resolve(repoRoot, 'packages/modules'));
 
 /** Packages you installed. Gitignored; see the note in `.gitignore`. */
-export const installedModulesRoot = or(config.MODULES_INSTALLED, resolve(repoRoot, 'modules'));
+export const installedModulesRoot = or(
+  config.MODULES_INSTALLED,
+  instanceRoot ? resolve(instanceRoot, 'modules') : resolve(repoRoot, 'modules')
+);
 
 /** Which installed packages are switched on. */
-export const modulesStateFile = or(config.MODULES_STATE, resolve(repoRoot, 'modules.json'));
+export const modulesStateFile = or(
+  config.MODULES_STATE,
+  instanceRoot ? resolve(instanceRoot, 'modules.json') : resolve(repoRoot, 'modules.json')
+);
 
 /** What the tray's Restart runs, and what the in-app button runs too. */
 export const restartScript = resolve(repoRoot, 'scripts/restart.ps1');

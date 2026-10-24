@@ -37,6 +37,13 @@ type Sub = 'popular' | 'latest' | 'search';
 
 const SUB_LABEL: Record<Sub, string> = { popular: 'Popular', latest: 'Recently released', search: 'Search' };
 
+/**
+ * Browse's "On this PC": the series kept on the PC with "Keep every chapter",
+ * by any copy, listed like a source. Not a Suwayomi source: it is read from the
+ * kept copy, so a series whose site has gone is still here.
+ */
+const KEPT = 'kept';
+
 export function Browse({
   onFollowed,
   onRead,
@@ -96,7 +103,8 @@ export function Browse({
     manga.browse.get().then(setState, (e: unknown) => setProblem(e instanceof Error ? e.message : 'could not reach your sources'));
   }, []);
 
-  const source = state?.sources.find((s) => s.id === state.selected) ?? null;
+  const keptSelected = state?.selected === KEPT;
+  const source = keptSelected ? null : (state?.sources.find((s) => s.id === state?.selected) ?? null);
 
   // A source with no recent-releases list has no such tab; land on Popular.
   useEffect(() => {
@@ -141,7 +149,7 @@ export function Browse({
 
   // Opened on a source from Manage extensions: that source, on Popular, at the list.
   useEffect(() => {
-    if (!pick || !state || !state.sources.some((s) => s.id === pick.source)) return;
+    if (!pick || !state || (pick.source !== KEPT && !state.sources.some((s) => s.id === pick.source))) return;
     setDetail(null);
     setSub('popular');
     void choose(pick.source);
@@ -170,6 +178,7 @@ export function Browse({
   }
 
   const subs: Sub[] = ['popular', ...(source?.supportsLatest ? (['latest'] as const) : []), 'search'];
+  const subLabel = (s: Sub) => (keptSelected && s === 'popular' ? 'Everything kept' : SUB_LABEL[s]);
 
   function chooseHide(next: string[]) {
     setHide(next);
@@ -201,6 +210,7 @@ export function Browse({
           Browse from
         </label>
         <select id="manga-browse-source" value={state.selected ?? ''} onChange={(e) => void choose(e.target.value)}>
+          <option value={KEPT}>Local collection</option>
           {state.sources.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -218,10 +228,10 @@ export function Browse({
       <div className="tabs" role="tablist">
         {subs.map((s) => (
           <button key={s} role="tab" aria-selected={sub === s} className={`tab${sub === s ? ' on' : ''}`} onClick={() => setSub(s)}>
-            {SUB_LABEL[s]}
+            {subLabel(s)}
           </button>
         ))}
-        {sub !== 'search' && (
+        {sub !== 'search' && !keptSelected && (
           <button
             className={`manga-browse-hide${hide.length > 0 ? ' on' : ''}`}
             onClick={() => setHideOpen((o) => !o)}
@@ -235,6 +245,7 @@ export function Browse({
       </div>
       {hideOpen && sub !== 'search' && <HideTags hide={hide} onChange={chooseHide} />}
 
+      {keptSelected && sub !== 'search' && <KeptList following={followingOf} onOpen={open} />}
       {source && sub !== 'search' && (
         <SourceList
           key={`${source.id}:${sub}:${hide.join('|')}`}
@@ -349,6 +360,58 @@ function HideTags({ hide, onChange }: { hide: string[]; onChange: (next: string[
         </datalist>
       </form>
     </div>
+  );
+}
+
+/* ---- On this PC ---- */
+
+function KeptList({
+  following,
+  onOpen,
+}: {
+  following: (r: BrowseResult) => string | null;
+  onOpen: (r: BrowseResult) => void;
+}) {
+  const [results, setResults] = useState<BrowseResult[] | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const { countOf: chaptersOf, seen } = useChapterCounts(results ?? []);
+
+  useEffect(() => {
+    manga.kept().then(
+      (got) => setResults(got.results),
+      (e: unknown) => setProblem(e instanceof Error ? e.message : 'could not list what is kept')
+    );
+  }, []);
+
+  if (problem) return <p className="banner">{problem}</p>;
+  if (!results) return <p className="empty">Loading…</p>;
+  if (results.length === 0) {
+    return (
+      <p className="empty">
+        Nothing is in the Local collection yet. Open a series, then <strong>Keep every chapter in the Local collection</strong>{' '}
+        from the ⋯ menu on its chapter list, and it shows up here for everyone who shares this Blue Everything.
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="meta">
+        {results.length} series in the Local collection, every chapter, for everyone who shares it. They read even when their site is down.
+      </p>
+      <div className="manga-browse-grid">
+        {results.map((r) => (
+          <Tile
+            key={keyOf(r)}
+            result={r}
+            title={r.title}
+            chapters={chaptersOf(r)}
+            following={following(r) !== null}
+            onOpen={() => onOpen(r)}
+            seen={seen}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 

@@ -10,6 +10,7 @@
  * So the list is a **record of what actually ran here**, not a list to maintain.
  * Rows appear because something was seen; the choices on them are yours.
  */
+import { serverPc } from '../device';
 import { useState } from 'react';
 import { api, type Game, type Session } from '../api';
 import { useAsync } from '../useAsync';
@@ -70,7 +71,7 @@ export function GamesTab({ session }: { session: Session }) {
       {problem && <div className="banner">{problem}</div>}
       {!local && (
         <div className="meta" style={{ marginBottom: 10 }}>
-          These can only be changed from the PC running the server.
+          These can only be changed from {serverPc()}.
         </div>
       )}
 
@@ -129,7 +130,7 @@ export function GamesTab({ session }: { session: Session }) {
         Detected here{watched.length > 0 ? ` · ${watched.length} treated as ${watched.length === 1 ? 'a game' : 'games'}` : ''}
       </h3>
       <div className="meta" style={{ marginBottom: 8 }}>
-        Only what has actually run on this PC — no game names ship with the app, so this is a record
+        Only what has actually run on your PC — no game names ship with the app, so this is a record
         rather than a catalogue of things you may not have installed.
       </div>
       <div className="meta" style={{ marginBottom: 8 }}>

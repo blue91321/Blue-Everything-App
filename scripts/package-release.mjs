@@ -17,6 +17,15 @@
  * for the machine it runs on — native modules are built per platform, and a
  * zip carrying this runner's would be a guess about somebody else's.
  *
+ * **Two configurations** (`--config`): `everything` (the default) and
+ * `just-manga`, which leaves out every package but manga and push (push sends
+ * new-chapter notifications), and the libraries only voice uses. Each zip says
+ * which it is in `configuration.json`, which `update.ps1` reads so an install
+ * only ever updates from its own kind: a Just Manga install never downloads
+ * voice, the vault or the rest. Named so neither, nor the desktop client's, is
+ * matched by the `Blue-Everything-*.zip` an older updater looks for, except
+ * the Everything zip it was always looking for.
+ *
  * Refuses when the tag and `package.json` disagree, because a release called
  * 0.4.1 that reports 0.4.0 on its Settings screen is the failure the Versions
  * section of CLAUDE.md describes.
@@ -41,17 +50,41 @@ if (!existsSync(dist)) {
   process.exit(1);
 }
 
-const name = `Blue-Everything-${version}`;
+const configIndex = process.argv.indexOf('--config');
+const configName = configIndex >= 0 ? process.argv[configIndex + 1] : 'everything';
+if (configName !== 'everything' && configName !== 'just-manga') {
+  console.error(`--config is everything or just-manga, not ${configName}`);
+  process.exit(1);
+}
+/** What Just Manga leaves out: every shipped package but these. */
+const JUST_MANGA_KEEPS = new Set(['manga', 'push']);
+/** And the libraries only a left-out package uses (voice's speech engine). */
+const JUST_MANGA_DROPS = [/^sherpa-onnx/];
+
+const name = configName === 'just-manga' ? `BlueEverything-JustManga-${version}` : `Blue-Everything-${version}`;
 const out = join(root, 'dist/release');
 const stage = join(out, name);
-rmSync(out, { recursive: true, force: true });
+// Only this zip's own: the workflow builds several into one folder.
+rmSync(stage, { recursive: true, force: true });
+rmSync(join(out, `${name}.zip`), { force: true });
 mkdirSync(stage, { recursive: true });
 
-const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
+/*
+ * Tracked files, and new ones not committed yet that are not ignored. Tracked
+ * alone was the first version, and a local build before a commit then left a
+ * new file out: the desktop client's zip had no agent closing.ts, and stopped
+ * as it started. In CI everything is committed, so there it is the same list.
+ */
+const tracked = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' })
   .split('\0')
   .filter(Boolean)
   // A tracked file deleted in the working tree is not in the release.
-  .filter((file) => existsSync(join(root, file)));
+  .filter((file) => existsSync(join(root, file)))
+  .filter((file) => {
+    if (configName !== 'just-manga') return true;
+    const module = /^packages\/modules\/([^/]+)\//.exec(file);
+    return !module || JUST_MANGA_KEEPS.has(module[1]);
+  });
 
 const walk = (dir) =>
   readdirSync(dir).flatMap((entry) => {
@@ -60,8 +93,11 @@ const walk = (dir) =>
   });
 const built = walk(join(root, 'packages/web/dist')).map((full) => relative(root, full).replaceAll('\\', '/'));
 
-const files = [...new Set([...tracked, ...built])].sort();
-for (const file of files) {
+// Which download it is, for update.ps1 and the server's first-run defaults.
+writeFileSync(join(stage, 'configuration.json'), JSON.stringify({ configuration: configName }, null, 2) + '\n');
+
+const files = [...new Set([...tracked, ...built, 'configuration.json'])].sort();
+for (const file of files.filter((f) => f !== 'configuration.json')) {
   const to = join(stage, file);
   mkdirSync(dirname(to), { recursive: true });
   cpSync(join(root, file), to);
@@ -92,7 +128,15 @@ if (process.argv.includes('--bundle')) {
   });
   cpSync(join(root, 'node_modules'), join(stage, 'node_modules'), {
     recursive: true,
-    filter: (src) => !lstatSync(src).isSymbolicLink() && !src.replaceAll('\\', '/').includes('/node_modules/@everything'),
+    filter: (src) => {
+      const path = src.replaceAll('\\', '/');
+      if (lstatSync(src).isSymbolicLink() || path.includes('/node_modules/@everything')) return false;
+      if (configName === 'just-manga') {
+        const top = /\/node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(path)?.[1];
+        if (top && JUST_MANGA_DROPS.some((re) => re.test(top))) return false;
+      }
+      return true;
+    },
   });
 }
 

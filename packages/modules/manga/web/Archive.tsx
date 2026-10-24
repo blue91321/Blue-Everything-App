@@ -16,9 +16,10 @@
  * fetch says so on its own row, in the warning colour, with the button that
  * tries them again.
  */
+import { thePc } from '@app/device';
 import { useState } from 'react';
 import { useAsync } from '@app/useAsync';
-import { manga, type ArchiveProgress } from './manga-api';
+import { manga, type ArchiveProgress, type CollectionRules } from './manga-api';
 
 /** Bytes as something a person can hold in their head. */
 export function sizeLabel(bytes: number): string {
@@ -28,7 +29,7 @@ export function sizeLabel(bytes: number): string {
   return `${bytes} bytes`;
 }
 
-function Row({ series, onChanged }: { series: ArchiveProgress; onChanged: () => void }) {
+function Row({ series, onChanged, onHost }: { series: ArchiveProgress; onChanged: () => void; onHost: boolean }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
 
@@ -75,27 +76,38 @@ function Row({ series, onChanged }: { series: ArchiveProgress; onChanged: () => 
             {series.failed} chapter{series.failed === 1 ? '' : 's'} could not be fetched
           </span>
         )}
+        {(series.keptFor ?? []).some((who) => who !== 'you') && (
+          <span className="meta">
+            {/* Names come from the host, already as this person sees them: "you", or a display name. */}
+            Kept for {(series.keptFor ?? []).join(', ')}
+          </span>
+        )}
         {problem && <span className="meta warn">{problem}</span>}
       </div>
-      <button
-        className="btn"
-        disabled={busy}
-        title="Fetch anything missing, and try the failed chapters again"
-        onClick={() => void act(() => manga.archive.start(series.seriesId))}
-      >
-        {busy ? '…' : 'Catch up'}
-      </button>
-      <button
-        className="btn subtle"
-        disabled={busy}
-        title="Stop saving new chapters. What is already saved is kept."
-        onClick={() => void act(() => manga.archive.stop(series.seriesId, false))}
-      >
-        Stop
-      </button>
-      <button className="btn subtle danger" disabled={busy} onClick={remove}>
-        Delete
-      </button>
+      {/* On a friend's copy this is the host's store: it fills itself, and only the host lets one go. */}
+      {!onHost && (
+        <>
+          <button
+            className="btn"
+            disabled={busy}
+            title="Fetch anything missing, and try the failed chapters again"
+            onClick={() => void act(() => manga.archive.start(series.seriesId))}
+          >
+            {busy ? '…' : 'Catch up'}
+          </button>
+          <button
+            className="btn subtle"
+            disabled={busy}
+            title="Stop saving new chapters. What is already saved is kept."
+            onClick={() => void act(() => manga.archive.stop(series.seriesId, false))}
+          >
+            Stop
+          </button>
+          <button className="btn subtle danger" disabled={busy} onClick={remove}>
+            Delete
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -115,7 +127,7 @@ export function Archive() {
     <div className="card">
       <div className="row between">
         <h3>Kept for good</h3>
-        {data && data.series.length > 0 && (
+        {data && data.series.length > 0 && !data.onHost && (
           <button className="btn" onClick={() => void manga.archive.run().then(() => overview.reload())}>
             Fetch now
           </button>
@@ -123,7 +135,7 @@ export function Archive() {
       </div>
 
       <p className="meta">
-        A whole series saved onto this PC, and every new chapter as it comes out — so it is still here if the site
+        A whole series saved onto {thePc()}, and every new chapter as it comes out — so it is still here if the site
         goes down or you have no internet. This is not the Downloads tab, which saves to the device you are holding,
         and not the last-ten-chapters cache, which throws things away. Nothing here is ever removed but by you.
       </p>
@@ -139,7 +151,7 @@ export function Archive() {
       {data && data.series.length > 0 && (
         <>
           {data.series.map((series) => (
-            <Row key={series.seriesId} series={series} onChanged={overview.reload} />
+            <Row key={series.seriesId} series={series} onChanged={overview.reload} onHost={data.onHost === true} />
           ))}
 
           <p className="meta" style={{ marginTop: 8 }}>
@@ -160,6 +172,83 @@ export function Archive() {
           </p>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * What adds to the Local collection by itself, and who sees your ratings.
+ * Sharing is off unless chosen, as asked: the other two ways are listed and
+ * marked as coming, so where they will be is not a surprise later.
+ */
+export function CollectionRulesCard() {
+  const rules = useAsync(() => manga.collectionRules.get());
+  const [problem, setProblem] = useState('');
+  const set = async (patch: Partial<CollectionRules>) => {
+    setProblem('');
+    try {
+      await manga.collectionRules.set(patch);
+      rules.reload();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'that could not be saved');
+    }
+  };
+  const r = rules.data;
+  return (
+    <div className="card">
+      <h3>Local collection and ratings</h3>
+      {!r ? (
+        <p className="meta">{rules.error ? `Could not load: ${rules.error.message}` : 'loading…'}</p>
+      ) : (
+        <>
+          <p className="meta">Added to the Local collection by themselves, every chapter, as "Keep every chapter in the Local collection" does:</p>
+          <label className="row" style={{ gap: 8 }}>
+            <input type="checkbox" checked={r.autoKeepFavourites} onChange={(e) => void set({ autoKeepFavourites: e.target.checked })} />
+            <span>Every favourite</span>
+          </label>
+          <label className="row" style={{ gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={r.autoKeepMinRating !== null}
+              onChange={(e) => void set({ autoKeepMinRating: e.target.checked ? 8 : null })}
+            />
+            <span>Anything I rate</span>
+            <select
+              value={r.autoKeepMinRating ?? 8}
+              disabled={r.autoKeepMinRating === null}
+              onChange={(e) => void set({ autoKeepMinRating: Number(e.target.value) })}
+              aria-label="Lowest rating to keep"
+            >
+              {[10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <span>or higher</span>
+          </label>
+          <p className="meta">A few series are added each time new chapters are checked, so a long list fills in over a few hours.</p>
+
+          <h3>Share my ratings</h3>
+          <label className="row" style={{ gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={r.shareRatingsWithCopies}
+              onChange={(e) => void set({ shareRatingsWithCopies: e.target.checked })}
+            />
+            <span>With friends who share this Blue Everything, who see them on a series' page</span>
+          </label>
+          <label className="row meta" style={{ gap: 8 }}>
+            <input type="checkbox" disabled checked={false} readOnly />
+            <span>With other people's servers: coming, with linking servers</span>
+          </label>
+          <label className="row meta" style={{ gap: 8 }}>
+            <input type="checkbox" disabled checked={false} readOnly />
+            <span>Export to MyAnimeList or AniList: coming</span>
+          </label>
+        </>
+      )}
+      {problem && <p className="banner">{problem}</p>}
     </div>
   );
 }

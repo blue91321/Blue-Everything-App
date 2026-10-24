@@ -13,15 +13,14 @@
  *
  * Series brought in from another app and not yet found on a source are the
  * exception: there can be hundreds, and a row each would bury the handful that
- * genuinely need a look. The import card counts them instead, says which sites
- * they came from, and offers to search again.
+ * genuinely need a look. The Library's "No source yet" filter lists them, and
+ * a cover there opens the search for one.
  */
+import { thePc } from '@app/device';
 import { useEffect, useRef, useState } from 'react';
 import { Cover } from './Cover';
-import { Archive } from './Archive';
 import { isIncognito, setIncognito } from './incognito';
 import { logCsv, logSize, syncLog, unsentCount } from './reading-log';
-import { ImportCard } from './Import';
 import { SourceCard } from './SourceCard';
 import { manga, type Candidate, type Library, type SeriesSummary } from './manga-api';
 
@@ -104,14 +103,14 @@ function ReadingLog() {
     <div className="card">
       <h3>Reading log</h3>
       <p className="meta">
-        Every chapter finished on this device is written down here first and then sent to the PC, so a read is not
-        lost to a dropped connection or to the app being closed. The last month is sent again whenever Manga opens,
-        which puts back anything the PC lost.
+        Every chapter finished on this device is written down here first and then sent to {thePc()}, so a read is
+        not lost to a dropped connection or to the app being closed. The last month is sent again whenever Manga
+        opens, which puts back anything {thePc()} lost.
       </p>
       <p className="meta">
         {rows === 0
           ? 'Nothing logged on this device yet.'
-          : `${rows} ${rows === 1 ? 'entry' : 'entries'} · ${unsent === 0 ? 'all on the PC' : `${unsent} not sent yet`}`}
+          : `${rows} ${rows === 1 ? 'entry' : 'entries'} · ${unsent === 0 ? `all on ${thePc()}` : `${unsent} not sent yet`}`}
       </p>
       <div className="row wrap" style={{ gap: '.35rem' }}>
         <button
@@ -121,7 +120,7 @@ function ReadingLog() {
             setNote('Sending…');
             const { sent } = await syncLog({ resend: true });
             bump((n) => n + 1);
-            setNote(unsentCount() === 0 ? `Sent ${sent}.` : 'Could not reach the PC — it will go when it can.');
+            setNote(unsentCount() === 0 ? `Sent ${sent}.` : `Could not reach ${thePc()} — it will go when it can.`);
           }}
         >
           {unsent > 0 ? 'Send now' : 'Send again'}
@@ -418,10 +417,6 @@ export function More({
         </div>
       )}
 
-      {/* Above "New chapters", because this is the setting about what is kept
-          rather than what is announced. */}
-      <Archive />
-
       <Incognito />
       <ReadingLog />
 
@@ -633,7 +628,9 @@ export function More({
                 ? 'Off — a chapter is only saved once you open it, so the next one loads from the source.'
                 : 'The next ' +
                   (data.readAheadChapters === 1 ? 'chapter is' : `${data.readAheadChapters} chapters are`) +
-                  ' downloaded while you read, so they open from this PC. Only while the source is already' +
+                  ' downloaded while you read, so they open from ' +
+                  thePc() +
+                  '. Only while the source is already' +
                   ' running — this never starts it — and the ten kept chapters still favour what you opened' +
                   ' yourself.'}
             </div>
@@ -687,7 +684,6 @@ export function More({
         </div>
       )}
 
-      <ImportCard local={local} onChanged={onChanged} />
 
       {!setupFirst && sourceCard}
     </div>

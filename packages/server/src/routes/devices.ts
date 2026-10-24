@@ -3,6 +3,9 @@ import { desc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { registerDeviceSchema } from '@everything/shared';
 import { hashToken } from '../auth.js';
+import { config, isGuest } from '../config.js';
+import { readOnboarding } from '../onboarding.js';
+import { defaultName, ownName } from '../names.js';
 import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
 import { activeFeatures, isEnabled, missingFeatures } from '../features.js';
@@ -25,6 +28,14 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     deviceId: request.deviceId,
     deviceKind: request.deviceKind,
     version: VERSION,
+    // Which person's copy this is (plan A), or null on the host, your own.
+    copy: isGuest ? config.EVERYTHING_INSTANCE : null,
+    // Been through onboarding, and which screens to show. See `onboarding.ts`.
+    onboarding: readOnboarding(),
+    // What this person is called, to friends on this PC. See `names.ts`.
+    displayName: ownName(),
+    // What it is called until a name is chosen: the name the host gave it, or "user".
+    defaultName: defaultName(),
     /*
      * Features *and* running packages, in one list. Three of the four things
      * that used to be here are packages now, and every reader of this list is
