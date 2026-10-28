@@ -21,6 +21,7 @@ import { instanceRoutes } from './instances.js';
 import { onboardingRoutes } from './onboarding.js';
 import { nameRoutes } from './names.js';
 import { closingRoutes } from './closing.js';
+import { uiTextRoutes } from './ui-text.js';
 import { featureRoutes } from './routes/features.js';
 import { moduleRoutes } from './routes/modules.js';
 import { gameRoutes } from './routes/games.js';
@@ -96,6 +97,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(onboardingRoutes);
   await app.register(nameRoutes);
   await app.register(closingRoutes);
+  // Your wording for the app's, from edit mode: core, since every screen reads it.
+  await app.register(uiTextRoutes);
   await app.register(connectRoutes);
   await app.register(settingsRoutes);
   /*

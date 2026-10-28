@@ -1,0 +1,42 @@
+# Runs the checks on every push and pull request, so a check that starts
+# failing is noticed the day it does rather than at the next release. The vault
+# API check was found failing in October 2026: only a release ran any checks,
+# and that one was not even in its list.
+#
+# On Windows for the reason release.yml gives: the app is a Windows app, and
+# the checks should run where it runs.
+name: Checks
+
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['v*'] # release.yml runs the same checks for a version tag
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-fund --no-audit
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Every suite with no network and no hardware in it: scripts/run-checks.mjs.
+      - name: Checks
+        run: npm run checks
+
+      - name: Build the app
+        run: npm run build -w @everything/web

@@ -1,8 +1,10 @@
 import { DesktopDownload } from '@app/DesktopDownload';
 import { useEffect, useState } from 'react';
-import { api, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from '@app/api';
+import { Editable } from '@app/ui-text';
+import { api } from '@app/api';
+import { voiceApi, serverSupportsVoice, type VoiceSettings, type VoiceStatus as VoiceStatusType, type VoiceTest } from './voice-api';
 import { useAsync } from '@app/useAsync';
-import { RestartBanner } from '@app/views/InstalledPackages';
+import { RestartBanner } from '@app/views/settings/InstalledPackages';
 import { Toggle } from '@app/controls';
 import { VoicePhrases } from './VoiceCommands';
 import { VoiceLook } from './VoiceLook';
@@ -122,7 +124,7 @@ function VoiceSettings({
 
   // Fetched for the screen list, which only the agent can see — `window.screen`
   // describes the display this tab is on and nothing else.
-  const look = useAsync(() => api.voice.status(), [], ['settings']).data ?? null;
+  const look = useAsync(() => voiceApi.status(), [], ['settings']).data ?? null;
 
   // The slider moves freely and saves once, on release. Sending a PATCH per
   // pixel would be a dozen writes and a dozen agent reconfigures for one drag.
@@ -166,7 +168,7 @@ function VoiceSettings({
             title={entry.hint}
             onClick={() => setTab(entry.id)}
           >
-            {entry.label}
+            <Editable id={`tab:voice:${entry.id}`} fallback={entry.label} inButton />
           </button>
         ))}
       </div>
@@ -207,7 +209,7 @@ function VoiceSettings({
               onChange={async (on) => {
                 await update({ voiceEnabled: on });
                 // Straight away, or the switch would sit at "paused" until the next reading.
-                setStatus(await api.voice.status().catch(() => status));
+                setStatus(await voiceApi.status().catch(() => status));
               }}
             />
           </div>
@@ -477,7 +479,7 @@ function VoiceSettings({
               <button
                 className="btn subtle danger"
                 disabled={saving}
-                onClick={() => api.voice.forgetVoice().then(reload)}
+                onClick={() => voiceApi.forgetVoice().then(reload)}
               >
                 Forget my voice
               </button>
@@ -553,7 +555,7 @@ function Enrol({
 
     const tick = async () => {
       try {
-        const next = await api.voice.status();
+        const next = await voiceApi.status();
         if (!live) return;
         // Finished: the agent stored a voiceprint and the window closed.
         if (enrolling && !next.enrolling) onDone();
@@ -577,8 +579,8 @@ function Enrol({
     setBusy(true);
     setError('');
     try {
-      await api.voice.startEnrol();
-      setStatus(await api.voice.status());
+      await voiceApi.startEnrol();
+      setStatus(await voiceApi.status());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'could not start');
     } finally {
@@ -605,7 +607,7 @@ function Enrol({
             <div className="level-fill" style={{ width: `${collected * 10}%` }} />
           </div>
           <div className="row" style={{ marginTop: 10 }}>
-            <button className="btn" disabled={busy} onClick={() => void api.voice.stopEnrol().then(() => setStatus(null))}>
+            <button className="btn" disabled={busy} onClick={() => void voiceApi.stopEnrol().then(() => setStatus(null))}>
               Cancel
             </button>
             <span className="meta">Progress also shows on the popup at your cursor.</span>
@@ -654,7 +656,7 @@ function useVoiceStatus(): [VoiceStatusType | null, (next: VoiceStatusType | nul
 
     const tick = async () => {
       try {
-        const next = await api.voice.status();
+        const next = await voiceApi.status();
         if (!live) return;
         setStatus(next);
         // A test is a live readout, so it needs to feel immediate; the rest of
@@ -767,7 +769,7 @@ function LiveStatus({
           telling you to leave the app to do.
         */}
         {!status.agentRunning ? (
-          <StartAgent onStarted={async () => setStatus(await api.voice.status())} />
+          <StartAgent onStarted={async () => setStatus(await voiceApi.status())} />
         ) : /* Resume outranks Test: while paused there is nothing to test, and
               getting back to listening is the only thing worth offering. */
         enabled && status.paused ? (
@@ -777,8 +779,8 @@ function LiveStatus({
             onClick={async () => {
               setBusy(true);
               try {
-                await api.voice.resume();
-                setStatus(await api.voice.status());
+                await voiceApi.resume();
+                setStatus(await voiceApi.status());
               } finally {
                 setBusy(false);
               }
@@ -795,9 +797,9 @@ function LiveStatus({
               onClick={async () => {
                 setBusy(true);
                 try {
-                  if (testing) await api.voice.stopListening();
-                  else await api.voice.startListening();
-                  setStatus(await api.voice.status());
+                  if (testing) await voiceApi.stopListening();
+                  else await voiceApi.startListening();
+                  setStatus(await voiceApi.status());
                 } finally {
                   setBusy(false);
                 }
@@ -939,7 +941,7 @@ function PhraseTester() {
     if (!text.trim()) return;
     setBusy(true);
     try {
-      setResult(await api.voice.test(text.trim()));
+      setResult(await voiceApi.test(text.trim()));
     } finally {
       setBusy(false);
     }

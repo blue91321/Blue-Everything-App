@@ -12,7 +12,8 @@
  */
 import { serverPc } from '@app/device';
 import { useState } from 'react';
-import { api, type ProviderInfo, type SetupStep, type SyncOutcome } from '@app/api';
+import { api } from '@app/api';
+import { integrationsApi, type ProviderInfo, type SetupStep, type SyncOutcome } from './integrations-api';
 import { useAsync } from '@app/useAsync';
 import { Credentials } from './Credentials';
 import { relativeTime } from './Integrations';
@@ -59,7 +60,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
 };
 
 export function Connections({ local }: { local: boolean }) {
-  const state = useAsync(() => api.integrations.list(), [], ['integrations']);
+  const state = useAsync(() => integrationsApi.list(), [], ['integrations']);
 
   if (state.loading) return <div className="empty">loading…</div>;
   if (state.error) return <div className="empty">Could not load: {state.error.message}</div>;
@@ -276,7 +277,7 @@ export function ProviderCard({
 
   const connect = () =>
     guard('connect', async () => {
-      const { url } = await api.integrations.authorize(provider.id);
+      const { url } = await integrationsApi.authorize(provider.id);
       /*
        * Opened in a new tab rather than navigating this one. The provider
        * redirects back to a small page on the server, and losing the app's own
@@ -287,7 +288,7 @@ export function ProviderCard({
 
   const connectCanvas = () =>
     guard('canvas', async () => {
-      await api.integrations.connectCanvas(canvasHost.trim(), canvasToken.trim());
+      await integrationsApi.connectCanvas(canvasHost.trim(), canvasToken.trim());
       // Cleared on success only. `guard` throws before this on failure, so a
       // rejected token stays in the box to be corrected — and a Canvas token is
       // shown once and never again, which makes retyping it from memory
@@ -299,7 +300,7 @@ export function ProviderCard({
 
   const connectSteam = () =>
     guard('steam', async () => {
-      await api.integrations.connectSteam(steamProfile.trim(), steamKey.trim() || undefined);
+      await integrationsApi.connectSteam(steamProfile.trim(), steamKey.trim() || undefined);
       // Cleared on success only — `guard` throws before this on failure, so a
       // rejected key stays in the box to be corrected rather than retyped.
       setSteamKey('');
@@ -309,13 +310,13 @@ export function ProviderCard({
 
   const disconnect = () =>
     guard('disconnect', async () => {
-      await api.integrations.disconnect(provider.id);
+      await integrationsApi.disconnect(provider.id);
       reload();
     });
 
   const sync = () =>
     guard('sync', async () => {
-      setOutcomes((await api.integrations.sync(provider.id)).outcomes);
+      setOutcomes((await integrationsApi.sync(provider.id)).outcomes);
       reload();
     });
 
@@ -514,7 +515,7 @@ export function ProviderCard({
               disabled={!local || busy !== ''}
               onClick={() =>
                 void guard('scopes', async () => {
-                  await api.integrations.retryScopes(provider.id);
+                  await integrationsApi.retryScopes(provider.id);
                   reload();
                 })
               }

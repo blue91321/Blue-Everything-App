@@ -24,6 +24,7 @@ import { usePositionSaver } from './usePositionSaver';
 import { isIncognito } from './incognito';
 import { beside, skippedBetween, skipTarget } from './chapter-nav.js';
 import { NEEDS, NOT_YET_SENT, WHILE_REACHABLE } from './device-text';
+import './manga.css';
 
 export default function MangaOffline({ onClose }: OfflineViewProps) {
   const { manifest } = useOffline();

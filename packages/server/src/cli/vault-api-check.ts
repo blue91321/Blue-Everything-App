@@ -11,10 +11,17 @@
 process.env.DATABASE_URL = 'file:./data/vault-smoke.db';
 process.env.AUTH_REQUIRED = 'false';
 process.env.LOG_LEVEL = 'error';
+/*
+ * Its own package switches, with the vault on. The vault starts off since
+ * 0.6.0, and read from this install's `modules.json` the suite failed on any
+ * PC where it had never been switched on.
+ */
+process.env.MODULES_STATE = './data/vault-smoke-modules.json';
 
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 
 rmSync('./data/vault-smoke.db', { force: true });
+writeFileSync('./data/vault-smoke-modules.json', JSON.stringify({ vault: true }));
 
 const { runMigrations } = await import('../db/migrate.js');
 const { buildApp } = await import('../app.js');

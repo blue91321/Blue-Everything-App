@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useNow } from '@app/clock';
-import { api, type FriendRow, type FriendSource } from '@app/api';
+import { integrationsApi, type FriendRow, type FriendSource } from './integrations-api';
 import { useAsync } from '@app/useAsync';
 import { awayFor, AWAY_TITLE, STATE_LABEL } from './presence';
 import { relativeTime } from './Integrations';
@@ -95,12 +95,12 @@ export function Friends({ seed }: { seed?: string | null } = {}) {
    * the agent pushing a new Riot snapshot updates this list without the phone
    * having asked for anything.
    */
-  const view = useAsync(() => api.integrations.friends(), [], ['integrations']);
+  const view = useAsync(() => integrationsApi.friends(), [], ['integrations']);
 
   const forceRefresh = async () => {
     setRefreshing(true);
     try {
-      await api.integrations.friends(true);
+      await integrationsApi.friends(true);
       view.reload();
     } finally {
       setRefreshing(false);
@@ -633,7 +633,7 @@ function LinkPicker({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
   const [search, setSearch] = useState('');
   const [problem, setProblem] = useState('');
   const [busy, setBusy] = useState(false);
-  const all = useAsync(() => api.integrations.friends(), [], ['integrations']);
+  const all = useAsync(() => integrationsApi.friends(), [], ['integrations']);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -710,7 +710,7 @@ function LinkPicker({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
                  * left with a single member is dissolved by the server, so a
                  * pair still comes apart in one click.
                  */
-                onClick={() => void run(() => api.integrations.unlinkFriend(account.id))}
+                onClick={() => void run(() => integrationsApi.unlinkFriend(account.id))}
               >
                 Unlink
               </button>
@@ -748,7 +748,7 @@ function LinkPicker({ friend, onChanged }: { friend: FriendRow; onChanged: () =>
              * of those is not in the list". That is exactly what happened.
              */
             onClick={() =>
-              void run(() => api.integrations.linkFriends(friend.accounts[0].id, other.accounts[0].id))
+              void run(() => integrationsApi.linkFriends(friend.accounts[0].id, other.accounts[0].id))
             }
           >
             {other.provider}: {other.name}
@@ -774,7 +774,7 @@ function Suggestions({ onLinked }: { onLinked: () => void }) {
   // A refused link used to vanish without a word, which is how the phone's
   // 403 read as a button that did nothing.
   const [failed, setFailed] = useState<string | null>(null);
-  const view = useAsync(() => api.integrations.linkSuggestions(), [], ['integrations']);
+  const view = useAsync(() => integrationsApi.linkSuggestions(), [], ['integrations']);
 
   const shown = (view.data?.suggestions ?? []).filter((s) => !dismissed.includes(s.a.id));
   if (shown.length === 0) return null;
@@ -801,7 +801,7 @@ function Suggestions({ onLinked }: { onLinked: () => void }) {
             className="btn primary"
             onClick={() => {
               setFailed(null);
-              api.integrations
+              integrationsApi
                 .linkFriends(suggestion.a.id, suggestion.b.id)
                 .then(onLinked)
                 .catch((e: unknown) => setFailed(`Could not link them — ${e instanceof Error ? e.message : String(e)}`));

@@ -99,6 +99,29 @@ export function cachedPage(seriesId: string, path: string): { body: Buffer; type
 }
 
 /**
+ * A page's bytes by its path alone, whichever series it was cached under.
+ *
+ * For the archive: a chapter just read and then kept is in this cache already,
+ * so its pages are copied from here rather than asked of the site again. The
+ * path is Suwayomi's and carries its chapter id, so it names one page whatever
+ * series id this copy filed it under; the archive files a series kept for a
+ * friend under `kept-<id>`, which no cache entry has. Only a whole picture
+ * counts, as everywhere a page is kept.
+ */
+export function cachedPageAnywhere(path: string): { body: Buffer; type: string } | null {
+  for (const e of readIndex().chapters) {
+    if (!(path in e.stored)) continue;
+    const file = fileOf(e, path);
+    if (!file || !existsSync(file)) continue;
+    const body = readFileSync(file);
+    if (isWholeImage(body.subarray(0, 32), body.subarray(Math.max(0, body.length - 1024)), body.length)) {
+      return { body, type: e.stored[path]! };
+    }
+  }
+  return null;
+}
+
+/**
  * Put a chapter at the front, keeping ten. Returns whether it still needs pages
  * fetched.
  *

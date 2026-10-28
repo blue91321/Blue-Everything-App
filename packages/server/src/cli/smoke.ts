@@ -10,11 +10,15 @@
 process.env.DATABASE_URL = 'file:./data/smoke.db';
 process.env.AUTH_REQUIRED = 'false';
 process.env.LOG_LEVEL = 'error';
+// Package switches of its own, so it runs the shipped defaults whatever this
+// install has switched on or off, and never writes this install's file.
+process.env.MODULES_STATE = './data/smoke-modules.json';
 
 import { rmSync } from 'node:fs';
 import type { AttentionReport } from '@everything/shared';
 
 rmSync('./data/smoke.db', { force: true });
+rmSync('./data/smoke-modules.json', { force: true });
 
 // Imported after the env is set, so config picks up the throwaway database.
 const { runMigrations } = await import('../db/migrate.js');
@@ -2233,6 +2237,46 @@ console.log('\nThe desktop app, from the app');
   check('  ...and the download needs a ticket', noTicket.statusCode === 403, `${noTicket.statusCode}`);
   const madeUp = await app.inject({ method: 'GET', url: '/download/desktop-app?ticket=not-a-real-one' });
   check('  ...that it issued', madeUp.statusCode === 403, `${madeUp.statusCode}`);
+}
+
+console.log('\nYour wording, from edit mode');
+{
+  /*
+   * In the real data folder, like the rest of this suite's files, so it uses an
+   * id of its own and takes it out again: anything you have renamed is left
+   * exactly as it was.
+   */
+  const { changes } = await import('../events.js');
+  const id = 'smoke:probe';
+  let scope: string | null = null;
+  const listen = (event: { scope: string }) => {
+    scope = event.scope;
+  };
+  changes.on('change', listen);
+  const set = await app.inject({ method: 'PUT', url: '/api/ui-text', payload: { id, text: '  Renamed  ' } });
+  changes.off('change', listen);
+  check('a text can be renamed', set.statusCode === 200 && (set.json() as { text: string }).text === 'Renamed', set.body);
+  check('  ...and every device is told, as ui-text', scope === 'ui-text', `${scope}`);
+  const read = (await app.inject({ method: 'GET', url: '/api/ui-text' })).json() as { text: Record<string, string> };
+  check('  ...and it reads back', read.text[id] === 'Renamed', JSON.stringify(read.text[id]));
+  const badId = await app.inject({ method: 'PUT', url: '/api/ui-text', payload: { id: 'Not An Id!', text: 'x' } });
+  check('an id the app would never write is refused', badId.statusCode === 400, `${badId.statusCode}`);
+  const long = await app.inject({ method: 'PUT', url: '/api/ui-text', payload: { id, text: 'x'.repeat(601) } });
+  check('  ...and so is a page of it', long.statusCode === 400, `${long.statusCode}`);
+  const hide = await app.inject({ method: 'PUT', url: '/api/ui-text', payload: { id, hidden: true } });
+  const hiddenRead = (await app.inject({ method: 'GET', url: '/api/ui-text' })).json() as { text: Record<string, string>; hidden: string[] };
+  check('a text can be hidden', hide.statusCode === 200 && hiddenRead.hidden.includes(id), hide.body);
+  check('  ...without losing its wording', hiddenRead.text[id] === 'Renamed', JSON.stringify(hiddenRead.text[id]));
+  const show = await app.inject({ method: 'PUT', url: '/api/ui-text', payload: { id, hidden: false } });
+  const shownRead = (await app.inject({ method: 'GET', url: '/api/ui-text' })).json() as { hidden: string[] };
+  check('  ...and shown again', show.statusCode === 200 && !shownRead.hidden.includes(id), JSON.stringify(shownRead.hidden));
+  const empty = await app.inject({ method: 'PUT', url: '/api/ui-text', payload: { id } });
+  check('a change that changes nothing is refused', empty.statusCode === 400, `${empty.statusCode}`);
+  const back = await app.inject({ method: 'PUT', url: '/api/ui-text', payload: { id, text: null } });
+  const after = (await app.inject({ method: 'GET', url: '/api/ui-text' })).json() as { text: Record<string, string> };
+  check('putting the original back removes it', back.statusCode === 200 && !(id in after.text), JSON.stringify(after.text[id]));
+  const blank = await app.inject({ method: 'PUT', url: '/api/ui-text', payload: { id, text: '   ' } });
+  check('  ...as does saving it blank', blank.statusCode === 200 && (blank.json() as { text: unknown }).text === null, blank.body);
 }
 
 await app.close();

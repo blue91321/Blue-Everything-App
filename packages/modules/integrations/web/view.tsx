@@ -5,5 +5,6 @@
  * predictable filename to look for in every feature.
  */
 import { Integrations } from './Integrations';
+import './integrations.css';
 
 export default Integrations;

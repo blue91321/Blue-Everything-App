@@ -135,8 +135,3 @@ export function keywordLines(phrases: string[], pieces: Pieces): string {
     .map((phrase) => `${tokensFor(phrase, pieces).join(' ')} @${phrase.replace(/\s+/g, '_')}`)
     .join('\n');
 }
-
-/** A character the spotter has no piece for: the word cannot be said to it. */
-export function unspellable(word: string, pieces: Pieces): boolean {
-  return [...word.toUpperCase()].some((ch) => !pieces.has(ch) && !pieces.has(`▁${ch}`));
-}

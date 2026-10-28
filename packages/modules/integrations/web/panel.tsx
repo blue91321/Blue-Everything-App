@@ -11,12 +11,13 @@
  * So this shows one thing: who could you actually talk to right now. Everything
  * else is a click away on the tab it belongs to.
  */
-import { api, type FriendRow } from '@app/api';
+import { integrationsApi, type FriendRow } from './integrations-api';
 import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { awayFor, AWAY_TITLE, STATE_LABEL } from './presence';
 import { goTo } from '@app/nav';
 import type { PanelProps } from '@app/features/index';
+import './integrations.css';
 
 /**
  * Around, in the order you would want to see them.
@@ -64,7 +65,7 @@ function LivePanel() {
    * showing the old filter until something unrelated happened to change — which
    * reads as the setting not having saved.
    */
-  const state = useAsync(() => api.integrations.live(), [], ['integrations', 'settings']);
+  const state = useAsync(() => integrationsApi.live(), [], ['integrations', 'settings']);
 
   if (state.loading) return <div className="empty">loading…</div>;
   if (state.error) return <div className="empty">Could not load: {state.error.message}</div>;
@@ -168,7 +169,7 @@ function FriendsPanel() {
    * poller of its own: having the panel open *is* the read, and the staleness
    * check inside the endpoint does the rest.
    */
-  const state = useAsync(() => api.integrations.friends(), [], ['integrations']);
+  const state = useAsync(() => integrationsApi.friends(), [], ['integrations']);
 
   if (state.loading) return <div className="empty">loading…</div>;
   /*

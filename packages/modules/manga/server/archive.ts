@@ -79,6 +79,7 @@ import { isAbsolute, join } from 'node:path';
 import { dataDir, nameFor } from '@everything/server/module-api';
 import { read } from './library.js';
 import { sharedPage } from './page-fetch.js';
+import { cachedPageAnywhere } from './page-cache.js';
 
 /** Where an archive goes when nothing else has been chosen. */
 export const DEFAULT_ARCHIVE_ROOT = join(dataDir, 'manga-archive');
@@ -149,6 +150,20 @@ export interface ArchiveChapter {
    * one from disk.
    */
   sameAs?: string[];
+  /**
+   * Saved from another source than the series', because the series' own would
+   * not give it whole (`ArchiveTools.elsewhere`): that source's name, and its
+   * chapter id. The pages are that source's throughout; a chapter is never
+   * half one scan and half another.
+   */
+  from?: ElsewhereChapter;
+}
+
+/** Where a chapter was saved from instead. `whole`: the whole chapter that a part (3.1) is in (3). */
+export interface ElsewhereChapter {
+  sourceName: string;
+  chapterId: string;
+  whole?: number;
 }
 
 export interface ArchiveManifest {
@@ -167,6 +182,8 @@ export interface QueueItem {
   name: string;
   tries: number;
   error: string | null;
+  /** Fetched from another source's chapter instead: see `ArchiveChapter.from`. */
+  from?: ElsewhereChapter;
 }
 
 export interface ArchiveIndexEntry {
@@ -258,11 +275,28 @@ export function extensionFor(type: string): string {
  * The index, and each series' manifest
  * ------------------------------------------------------------------ */
 
+/**
+ * Written whole and renamed into place, and the rename is tried again for a
+ * moment when Windows refuses it. A manifest is rewritten after every page,
+ * and something else holding the file an instant (OneDrive syncing the folder,
+ * a virus scanner) made the rename fail with EPERM and stopped the download:
+ * seen on Eleceed, mid-chapter, with the app in a OneDrive folder.
+ */
 function writeJson(path: string, value: unknown): void {
   mkdirSync(join(path, '..'), { recursive: true });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  renameSync(tmp, path);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(tmp, path);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 10 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw error;
+      // A short, synchronous wait: the callers are synchronous, and it is a few hundred ms at most.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * (attempt + 1));
+    }
+  }
 }
 
 export function readIndex(): ArchiveIndex {
@@ -533,6 +567,7 @@ export function startArchive(
       name: kept.name,
       tries: 0,
       error: null,
+      ...(kept.from ? { from: kept.from } : {}),
     });
     queued += 1;
   }
@@ -719,6 +754,10 @@ export interface SeriesProgress {
   savedChapters: number[];
   /** Who asked for it to be kept, by display name, or "you". See `nameFor`. */
   keptFor: string[];
+  /** Chapters saved from another source than the series' own, by source. */
+  fromElsewhere: Array<{ sourceName: string; count: number }>;
+  /** Parts (3.1) saved as the whole chapter they are in (3), from another source. */
+  asWhole: Array<{ number: number; whole: number; sourceName: string }>;
 }
 
 /** `asking` is who is looking: `you` on the host, or the copy asking it. */
@@ -752,6 +791,12 @@ export function seriesProgress(seriesId: string, mangaId?: string | null, asking
     updatedAt: manifest?.updatedAt ?? entry.addedAt,
     savedChapters: chapters.filter((c) => c.done).map((c) => c.number),
     keptFor: (entry.keptFor ?? ['you']).map((who) => nameFor(who, asking)),
+    fromElsewhere: [...chapters.reduce((m, c) => (c.from ? m.set(c.from.sourceName, (m.get(c.from.sourceName) ?? 0) + 1) : m), new Map<string, number>())].map(
+      ([sourceName, count]) => ({ sourceName, count })
+    ),
+    asWhole: chapters.flatMap((c) =>
+      c.from?.whole !== undefined ? [{ number: c.number, whole: c.from.whole, sourceName: c.from.sourceName }] : []
+    ),
   };
 }
 
@@ -812,6 +857,17 @@ export interface ArchiveTools {
   connect: () => Promise<string | null>;
   /** A chapter's page paths, in order. */
   pages: (chapterId: string) => Promise<string[]>;
+  /**
+   * The same chapter on another source, for one the series' own would not give
+   * whole after `MAX_TRIES`: matched by title, and ranked by how many of the
+   * chapters around it that source numbers the same way (`around`). Null when
+   * nothing fits.
+   */
+  elsewhere?: (
+    series: { seriesId: string; title: string; source: ArchiveManifest['source'] },
+    number: number,
+    around: number[]
+  ) => Promise<ElsewhereChapter | null>;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -850,7 +906,8 @@ export async function runQueue(tools: ArchiveTools): Promise<void> {
         dequeue(next);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'could not fetch the chapter';
-        noteFailure(next, message);
+        const gaveUp = noteFailure(next, message);
+        if (gaveUp && !next.from && tools.elsewhere) await tryElsewhere(next, tools);
       } finally {
         working = null;
       }
@@ -876,16 +933,19 @@ function dequeue(item: QueueItem): void {
  * reason**, which is the difference between an archive that knows it has a hole
  * and one that quietly pretends it does not.
  */
-function noteFailure(item: QueueItem, full: string): void {
+function noteFailure(item: QueueItem, full: string): boolean {
   // Suwayomi's errors carry the whole Java stack; the first line is the reason.
-  const message = full.split(/\r?\n/)[0]!.trim().slice(0, 300);
+  const first = full.split(/\r?\n/)[0]!.trim().slice(0, 300);
+  const message = item.from ? `${item.from.sourceName}: ${first}` : first;
   const index = readIndex();
   const waiting = index.queue.find((q) => q.seriesId === item.seriesId && q.chapterId === item.chapterId);
+  let gaveUp = false;
   if (waiting) {
     waiting.tries += 1;
     waiting.error = message;
     if (waiting.tries >= MAX_TRIES) {
       index.queue = index.queue.filter((q) => q !== waiting);
+      gaveUp = true;
     } else {
       // To the back, so one bad chapter cannot block the rest of the series.
       index.queue = [...index.queue.filter((q) => q !== waiting), waiting];
@@ -894,13 +954,49 @@ function noteFailure(item: QueueItem, full: string): void {
   writeIndex(index);
 
   const folder = folderOf(item.seriesId);
-  if (!folder) return;
+  if (!folder) return gaveUp;
   const manifest = readManifest(folder);
   const chapter = manifest?.chapters.find((c) => c.chapterId === item.chapterId);
-  if (!manifest || !chapter) return;
+  if (!manifest || !chapter) return gaveUp;
   chapter.error = message;
   chapter.at = Date.now();
   writeManifest(folder, manifest);
+  return gaveUp;
+}
+
+/**
+ * The series' own source would not give this chapter whole, three times
+ * running: look for it on another, and queue it from there.
+ *
+ * Found first in real use: two pages of Eleceed 3.1 on MangaFire are PNGs of
+ * more than 10MB, and both arrived cut off at 10MB every time, so the chapter
+ * stayed at 36 of 38 however often it was asked for. Asking again could never
+ * mend that; another source's copy can.
+ *
+ * `around` is the chapter numbers kept either side of it, so a source that
+ * numbers them the same way is preferred: one that has 3, 3.1 and 4 is far
+ * likelier to be the same series split the same way than one that has 3.1 and
+ * nothing near it.
+ */
+async function tryElsewhere(item: QueueItem, tools: ArchiveTools): Promise<void> {
+  const index = readIndex();
+  const entry = entryFor(index, item.seriesId);
+  const manifest = entry ? readManifest(entry.folder) : null;
+  if (!entry || !manifest) return;
+  const around = manifest.chapters
+    .map((c) => c.number)
+    .filter((n) => n !== item.number && Math.abs(n - item.number) <= 2);
+  let found: ElsewhereChapter | null = null;
+  try {
+    found = await tools.elsewhere!({ seriesId: item.seriesId, title: manifest.title, source: manifest.source }, item.number, around);
+  } catch {
+    found = null;
+  }
+  if (!found) return;
+  const fresh = readIndex();
+  if (fresh.queue.some((q) => q.seriesId === item.seriesId && q.chapterId === item.chapterId)) return;
+  fresh.queue.push({ ...item, tries: 0, error: null, from: found });
+  writeIndex(fresh);
 }
 
 /** One chapter: its page list, then its images, one at a time. */
@@ -908,12 +1004,24 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
   const folder = folderOf(item.seriesId);
   if (!folder) return; // Stopped while it was queued; nothing to do.
 
-  const paths = await tools.pages(item.chapterId);
+  const paths = await tools.pages(item.from?.chapterId ?? item.chapterId);
   if (paths.length === 0) throw new Error('the source listed no pages for this chapter');
 
   const manifest = readManifest(folder);
   const chapter = manifest?.chapters.find((c) => c.chapterId === item.chapterId);
   if (!manifest || !chapter) return;
+
+  /*
+   * From another source: that source's pages only. What the series' own source
+   * gave is another scan, split differently, so it goes rather than being
+   * mixed in; it was never a whole chapter.
+   */
+  if (item.from && chapter.from?.chapterId !== item.from.chapterId) {
+    for (const page of chapter.pages) rmSync(join(archiveRoot(), folder, chapter.folder, page.file), { force: true });
+    chapter.pages = [];
+    chapter.from = item.from;
+    chapter.sameAs = [...new Set([...(chapter.sameAs ?? []), item.from.chapterId])];
+  }
 
   chapter.expected = paths.length;
   const dir = join(archiveRoot(), folder, chapter.folder);
@@ -923,12 +1031,16 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
     if (chapter.pages.some((p) => p.path === path && existsSync(join(dir, p.file)))) continue;
 
     /*
-     * Through `sharedPage`, so a page somebody is reading as it is kept is
-     * fetched once, with the reader's retries. It refuses a page that is not
-     * a whole picture, which matters most here: a cut-off page archived is a
-     * gap that would be served in preference to the source forever.
+     * From the reading cache when it is there: a chapter read and then kept
+     * is already on this disk (`cachedPageAnywhere`), so copying it costs the
+     * site nothing. Otherwise through `sharedPage`, so a page somebody is
+     * reading as it is kept is fetched once, with the reader's retries. Both
+     * refuse a page that is not a whole picture, which matters most here: a
+     * cut-off page archived is a gap that would be served in preference to the
+     * source forever.
      */
-    const { body, type } = await sharedPage(`${baseUrl}${path}`);
+    const fromCache = cachedPageAnywhere(path);
+    const { body, type } = fromCache ?? (await sharedPage(`${baseUrl}${path}`));
 
     /*
      * Numbered from the source's own page path rather than from the loop, so a

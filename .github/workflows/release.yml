@@ -33,20 +33,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # The suites with no network and no hardware in them. The voice and Win32
-      # checks need a microphone and a desktop, which a runner does not have.
+      # The suites with no network and no hardware in them, listed once in
+      # scripts/run-checks.mjs; checks.yml runs the same on every push.
       - name: Checks
-        run: |
-          npm run smoke -w @everything/server
-          npm run manga-check -w @everything/server
-          npm run notes-check -w @everything/server
-          npm run integrations-check -w @everything/server
-          npm run modules-check -w @everything/server
-          npm run vault-check -w @everything/server
-          npm run import-check -w @everything/server
-          npm run voice-check -w @everything/server
-          npm run weather-check -w @everything/server
-          npm run publish-check
+        run: npm run checks
 
       - name: Build the app
         run: npm run build -w @everything/web

@@ -17,6 +17,7 @@
  * clicking the thing you want to change.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Editable } from '../ui-text';
 import { api, type Note, type NoteDetail, type NoteFolder } from '../api';
 import { useAsync } from '../useAsync';
 import { relative } from '../format';
@@ -471,7 +472,7 @@ export function Notes({ session }: { session?: { local: boolean } }) {
             aria-selected={showing === entry.id}
             onClick={() => setShowing(entry.id)}
           >
-            {entry.label}
+            <Editable id={`tab:notes:${entry.id}`} fallback={entry.label} inButton />
           </button>
         ))}
       </div>

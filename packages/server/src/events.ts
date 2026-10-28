@@ -21,7 +21,8 @@ export type ChangeScope =
   | 'vault'
   | 'integrations'
   | 'packages'
-  | 'games';
+  | 'games'
+  | 'ui-text';
 
 interface ChangeEvent {
   scope: ChangeScope | 'all';
@@ -72,6 +73,8 @@ function scopeForPath(path: string): ChangeScope | 'all' {
       return 'games';
     case 'integrations':
       return 'integrations';
+    case 'ui-text':
+      return 'ui-text';
     default:
       return 'all';
   }

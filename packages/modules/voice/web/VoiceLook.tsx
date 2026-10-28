@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { api, type VoiceSettings, type VoiceStatus } from '@app/api';
+import { api } from '@app/api';
+import { voiceApi, type VoiceSettings, type VoiceStatus } from './voice-api';
 
 /**
  * The anchor grid, laid out the way it sits on a screen.
@@ -131,7 +132,7 @@ export function VoiceLook({
         reader.readAsDataURL(chosen);
       });
 
-      await api.voice.uploadAvatar(data, chosen.type);
+      await voiceApi.uploadAvatar(data, chosen.type);
       await onChange({});
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'could not upload that');

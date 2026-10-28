@@ -76,6 +76,14 @@ import {
   QUEUE_AHEAD_MIN,
   SHUFFLE_SCOPES,
 } from './providers/spotify-shuffle.js';
+import {
+  checkIfDue,
+  checkThread,
+  readDesktopBug,
+  setWatching,
+  testDesktopApp,
+  THREAD_URL,
+} from './providers/spotify-desktop-bug.js';
 import * as youtube from './providers/youtube.js';
 import {
   allFollows,
@@ -583,6 +591,48 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('onClose', async () => pauseSession());
   // Picked up a little after boot, once Suwayomi and the sweep have had their moment.
   setTimeout(() => void resumeSession().catch(() => undefined), 5_000).unref?.();
+
+  /* ---- waiting for Spotify to fix its desktop app ------------------ */
+
+  /** What is known about the bug, and the thread being watched — see `spotify-desktop-bug.ts`. */
+  app.get('/api/integrations/spotify/desktop-bug', async () => ({ ...readDesktopBug(), threadUrl: THREAD_URL }));
+
+  /** Watch the forum thread, once a day, or stop. Starting looks at once. */
+  app.post('/api/integrations/spotify/desktop-bug/watch', async (request) => {
+    const { on } = z.object({ on: z.boolean() }).parse(request.body ?? {});
+    return { ...(await setWatching(on)), threadUrl: THREAD_URL };
+  });
+
+  /** Look at the thread now. */
+  app.post('/api/integrations/spotify/desktop-bug/check', async () => ({ ...(await checkThread()), threadUrl: THREAD_URL }));
+
+  /**
+   * Send one song to the desktop app and see whether it plays. Only on a press:
+   * a pass starts music on the PC, and a fail clears what it had paused.
+   */
+  app.post('/api/integrations/spotify/desktop-bug/test', async (_request, reply) => {
+    try {
+      const sources = (await shuffleSources()).filter((s) => s.readable);
+      const fallback = (await songsIn(sources.map((s) => s.id)))[0]?.uri ?? null;
+      return { ...(await testDesktopApp(fallback)), threadUrl: THREAD_URL };
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'the test failed' });
+    }
+  });
+
+  /*
+   * The thread is looked at once a day while watching: an hourly tick that asks
+   * whether a day has passed, so a restart neither checks again at once nor
+   * waits another day. Two requests a day to the forum, none when not watching.
+   */
+  const bugFirst = setTimeout(() => void checkIfDue().catch(() => undefined), 60_000);
+  const bugTick = setInterval(() => void checkIfDue().catch(() => undefined), 60 * 60_000);
+  bugFirst.unref();
+  bugTick.unref();
+  app.addHook('onClose', () => {
+    clearTimeout(bugFirst);
+    clearInterval(bugTick);
+  });
 
   /** Boost a song or an artist for the random order; 1 is no boost and removes it. */
   app.put('/api/integrations/spotify/weights', async (request) => {

@@ -1,0 +1,168 @@
+/* The app's mark, wherever it is drawn. Part of styles.css; see the order there. */
+
+/* ---------- the app mark ---------- */
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/*
+ * The menu button: top-left of the screen, and it never moves.
+ *
+ * `position: fixed` above the drawer's z-index, so it stays put whether the
+ * menu is docked beside the content, sliding over it, or away entirely. In the
+ * page header it travelled with the column — docked, the header starts 260px in
+ * and is centred in the rest, so toggling the menu slid the button sideways and
+ * you had to find it again every time.
+ */
+.menu {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + var(--menu-top));
+  left: calc(env(safe-area-inset-left) + 10px);
+  z-index: 40;
+  width: 36px;
+  height: var(--menu-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  /*
+   * A background of its own. It had none, so once the page scrolled under it
+   * the three lines sat straight on whatever was there (a chapter's number, a
+   * cover) and read as part of it.
+   */
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.menu:hover {
+  background: var(--surface-raised);
+}
+
+/*
+ * Back, beside the ☰, while the page's own Back has scrolled away
+ * (FloatingBack.tsx). The same pill on the same line, so the two read as a
+ * pair rather than a second control somewhere else to find.
+ */
+.floating-back {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + var(--menu-top));
+  left: calc(env(safe-area-inset-left) + 10px + 36px + 6px);
+  z-index: 40;
+  height: var(--menu-size);
+  display: flex;
+  align-items: center;
+  padding: 0 12px 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .floating-back:hover {
+    background: var(--surface-raised);
+  }
+}
+
+/*
+ * What the fixed button covers, given back as padding.
+ *
+ * One number in one place, because two things have to clear it and they are in
+ * different stacking contexts — the drawer's own heading, and the page title
+ * when the content reaches the left edge of the screen.
+ */
+:root {
+  --menu-clear: 40px;
+  /* Where the button's band starts and how tall it is. */
+  --menu-top: 10px;
+  --menu-size: 32px;
+}
+
+/*
+ * The wordmark sits beside the button, on its line, not under it.
+ *
+ * The alignment is derived rather than eyeballed: the head takes the button's
+ * own top offset as padding and reserves exactly the button's height, so
+ * `align-items: center` lands the logo's centre on the button's centre whatever
+ * those two numbers become. A hand-tuned `padding-top` would be right once and
+ * then quietly wrong the first time the button changed size.
+ */
+.drawer-head {
+  padding-left: calc(var(--menu-clear) + 12px);
+  padding-top: var(--menu-top);
+  min-height: calc(var(--menu-top) + var(--menu-size) + 12px);
+}
+
+/*
+ * The title steps aside whenever the menu is not docked.
+ *
+ * This was a rule per column width — "has this column centred clear of the
+ * button yet" — because the page was a centred 720px column and on a wide
+ * screen the button was hundreds of pixels from the title. That stopped being
+ * true when the page was uncapped: every screen now starts at the left edge of
+ * the window, as Notes always did, so no width is wide enough to centre clear
+ * and the answer is the same everywhere. The media queries were still answering
+ * the old question, and left the title sitting under the button on every screen
+ * except the two they named.
+ *
+ * Docked needs no rule, since the content starts 260px in.
+ */
+.shell:not(.desktop) header.top {
+  padding-left: var(--menu-clear);
+}
+
+.logo-mark {
+  display: block;
+  border-radius: 6px;
+  flex: none;
+}
+
+/*
+ * The shape choices on the Settings screen.
+ *
+ * Each renders the real <Logo>, which paints from the live `--accent`, so this
+ * row is also a preview of the colour picked directly above it.
+ */
+.logo-choices {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.logo-choice {
+  background: none;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.logo-choice[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+
+.logo-choice:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.logo-choice:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.logo-choice .logo-mark {
+  border-radius: 9px;
+  object-fit: cover;
+}

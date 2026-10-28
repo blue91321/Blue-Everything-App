@@ -6,7 +6,7 @@
  * folder leaves the server booting normally with `/api/vault/*` returning 404,
  * which is what `registerFeature` reports as "not installed".
  *
- * The browser extension in `packages/extension` is part of this feature too. It
+ * The browser extension in `../extension` is part of this feature too. It
  * needs no build step and nothing imports it, so it is removed by deleting it.
  *
  * What does *not* go away is the database schema: `vault` and `vault_entries`

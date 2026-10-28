@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { uiTextPlugin } from './ui-text-plugin.mjs';
 
 /**
  * `@app/…` is this package's own `src`, for code that lives outside it.
@@ -15,10 +16,12 @@ import react from '@vitejs/plugin-react';
  * app, and get the same things handed to them through `register(host)` instead.
  */
 const appSrc = fileURLToPath(new URL('./src', import.meta.url));
+const packagesDir = fileURLToPath(new URL('..', import.meta.url));
 
 export default defineConfig({
   resolve: { alias: { '@app': appSrc } },
-  plugins: [react()],
+  // The app's own wording, editable in edit mode: see ui-text-plugin.mjs.
+  plugins: [react({ babel: { plugins: [uiTextPlugin({ packagesDir })] } })],
   build: {
     // Served by Fastify from packages/server, so the build lands where the
     // server expects it rather than being copied around.

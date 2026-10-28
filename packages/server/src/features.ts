@@ -145,9 +145,4 @@ export async function registerFeature(
   }
 }
 
-/** Turn an id into something a person can read, for logs and error bodies. */
-export function featureLabel(id: FeatureId): string {
-  return FEATURES[id].label;
-}
-
 export { isFeatureId };

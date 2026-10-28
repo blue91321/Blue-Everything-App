@@ -31,6 +31,8 @@ import { changes, dataDir, db, schema } from '@everything/server/module-api';
 import { apiGet, apiSend, grantedScopes } from '../oauth.js';
 import { getAccount } from '../store.js';
 import { syncPlaylists } from './spotify.js';
+import { isWebPlayer } from './desktop-bug-rules.js';
+import { noteRefused, noteTaken, preferWebPlayer } from './spotify-desktop-bug.js';
 import { dealer, oneEach, songKey, type Recency, type Song, type Weights } from './shuffle-rules.js';
 
 const API = 'https://api.spotify.com/v1';
@@ -298,7 +300,7 @@ async function startShuffle(
     devices: [],
   };
   const usable = devices.filter((d) => d.id && !d.is_restricted);
-  const device = pickDevice(usable, player?.is_playing === true, from);
+  const device = pickDevice(usable, player?.is_playing === true, from, preferWebPlayer());
   if (!device?.id) {
     throw new Error('Spotify is not open anywhere. Open it on your phone or PC (it does not have to be playing), then try again.');
   }
@@ -443,8 +445,10 @@ async function startOn(device: Device & { id: string }, uri: string): Promise<vo
     }
     return null;
   };
+  // A song taken on its own by a desktop app is how a fix is noticed — see `spotify-desktop-bug.ts`.
+  const taken = () => void noteTaken(device).catch(() => undefined);
   await apiSend('spotify', 'PUT', `${API}/me/player/play?device_id=${id}`, { uris: [uri] });
-  if (await playing()) return;
+  if (await playing()) return taken();
 
   const track = await apiGet<{ album?: { uri?: string } }>('spotify', `${API}/tracks/${uri.split(':').pop()}`).catch(
     () => null
@@ -458,7 +462,7 @@ async function startOn(device: Device & { id: string }, uri: string): Promise<vo
         uris: [uri],
         position_ms: woke.progress_ms ?? 0,
       });
-      if (await playing()) return;
+      if (await playing()) return taken();
     }
   }
   /*
@@ -467,8 +471,9 @@ async function startOn(device: Device & { id: string }, uri: string): Promise<vo
    * a song added to the queue, which is all a shuffle is. The phone's app took
    * the same requests the same evening. Nothing here can get past that.
    */
+  if (!isWebPlayer(device)) noteRefused();
   throw new Error(
-    `Spotify on ${device.name} took the request and stopped. Its app is refusing songs sent to it on their own, which the shuffle needs. Try Play from your phone, or update or reinstall Spotify on ${device.name}.`
+    `Spotify on ${device.name} took the request and stopped. Spotify's desktop app has a bug that refuses songs sent to it on their own, which the shuffle needs. Open open.spotify.com in Edge (or play on your phone) and press Play again: Play picks the Web Player while the bug lasts.`
   );
 }
 
@@ -623,20 +628,28 @@ export async function resumeSession(): Promise<void> {
  *    a computer for the PC. Voice counts as the PC, where the microphone is.
  * 3. Otherwise Spotify's active device, then the first it lists.
  */
-export function pickDevice<D extends { is_active: boolean; type?: string }>(
+export function pickDevice<D extends { is_active: boolean; type?: string; name?: string }>(
   usable: D[],
   playing: boolean,
-  from: 'phone' | 'computer' | null
+  from: 'phone' | 'computer' | null,
+  preferWeb = false
 ): D | undefined {
+  const kind = (d: D) => (d.type ?? '').toLowerCase();
   const active = usable.find((d) => d.is_active);
-  if (playing && active) return active;
+  /*
+   * While Spotify's desktop app refuses the shuffle (`spotify-desktop-bug.ts`),
+   * a Web Player beats it, even over music playing on the desktop app: sending
+   * the shuffle there would only stop that music.
+   */
+  const web = preferWeb ? usable.filter((d) => kind(d) === 'computer' && isWebPlayer(d)) : [];
+  const desktop = (d: D) => kind(d) === 'computer' && !isWebPlayer(d);
+  if (playing && active && !(web.length > 0 && desktop(active))) return active;
   if (from) {
-    const kind = (d: D) => (d.type ?? '').toLowerCase();
     const same = usable.filter((d) =>
       from === 'phone' ? ['smartphone', 'tablet'].includes(kind(d)) : kind(d) === 'computer'
     );
-    // The active one of that kind if there is one, else the first of them.
-    const pick = same.find((d) => d.is_active) ?? same[0];
+    // The active one of that kind if there is one, else the first of them; a Web Player first while the desktop app is broken.
+    const pick = (from === 'computer' ? (web.find((d) => d.is_active) ?? web[0]) : undefined) ?? same.find((d) => d.is_active) ?? same[0];
     if (pick) return pick;
   }
   return active ?? usable[0];

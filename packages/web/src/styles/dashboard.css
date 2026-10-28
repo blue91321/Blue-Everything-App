@@ -1,0 +1,184 @@
+/* The Dashboard's side column and what sits in it: presence dots, panels, the gauge. Part of styles.css; see the order there. */
+
+/* ---------- connections ---------- */
+
+/* A small inline label — the provider a friend came from, or whether a
+   capability works. Sized to sit on the same line as a title without pushing
+   it around, since these appear beside names of very different lengths. */
+.chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.chip.presence-in-game,
+.chip.presence-online {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip.presence-offline {
+  opacity: 0.6;
+}
+
+/* Something went wrong with a connection.
+
+   The only chip left on a provider card, now that the per-capability status
+   labels have gone: those graded things that the sentence beneath them already
+   described, whereas this reports a fact about the last attempt and clears
+   itself on the next success. */
+.chip.problem {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* "I cannot tell" — visually between online and offline, because that is where
+   it belongs. Discord returns its friends list with no presence on it, and
+   dimming those rows to look offline would restate the claim the state exists
+   to avoid. */
+.chip.presence-unknown {
+  opacity: 0.8;
+  border-style: dashed;
+}
+
+/* ---------- the Dashboard's side column ---------- */
+
+/*
+ * One column until a panel is chosen, and two only when there is room for both.
+ *
+ * The breakpoint is 1100px rather than the 900px the drawer uses, and they are
+ * deliberately different numbers: 900 is "is there room for a drawer beside the
+ * content", while this is "is there room for a second column of content without
+ * squeezing the first". At 900 with the drawer showing, the task list would be
+ * left with about 320px, which is narrower than the phone layout it was
+ * designed for.
+ */
+.dash {
+  display: grid;
+  gap: var(--gap);
+}
+
+.dash-main {
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .dash.has-panel {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    /* Or a short panel would stretch to the height of the task list and float
+       its cards in the middle of a very tall box. */
+    align-items: start;
+  }
+}
+
+/*
+ * The Dashboard's second column needs no width rule any more.
+ *
+ * `.app:has(.dash.has-panel) { max-width: 1140px }` lived here to escape the
+ * page's 720px cap. With the cap gone it would only *narrow* the Dashboard
+ * against every other screen, which is the opposite of what it was for.
+ */
+
+.dash-panel > .card {
+  /* Tighter than the main column: this is a glance, not a list to work through. */
+  padding: 8px 10px;
+}
+
+.dash-panel h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  margin: 0 0 6px;
+}
+
+/* Long names and note titles must not widen the grid column they sit in —
+   `min-width: 0` on the flex parent is what lets this actually clip. */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- the draining gauge ---------- */
+
+.gauge {
+  flex: none;
+  display: block;
+}
+
+/* Whole even when empty, so the shape is still a shape rather than a gap. */
+.gauge-track {
+  fill: var(--surface-raised);
+}
+
+.gauge-fill {
+  fill: var(--accent);
+  /* The level only ever changes on a tick or a reload, so this animates the
+     one moment worth animating — the shape filling as you tick it off. */
+  transition: y 240ms ease, height 240ms ease;
+}
+
+.gauge-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+/*
+ * An emoji cannot be clipped by an SVG path, so it is drawn twice and the top
+ * copy is revealed by a wrapper with a height and `overflow: hidden`.
+ */
+.gauge-emoji {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  line-height: 1;
+}
+
+.gauge-emoji-empty {
+  position: absolute;
+  inset: 0;
+  /* Drained, not gone: the outline of the picture stays readable so an empty
+     gauge still says which habit it belongs to. */
+  filter: grayscale(1);
+  opacity: 0.28;
+}
+
+.gauge-emoji-full {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  transition: height 240ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gauge-fill,
+  .gauge-emoji-full {
+    transition: none;
+  }
+}
+
+/* The gauge is the button, so the button gets out of its way. */
+.check.gauge-button {
+  background: none;
+  border: none;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* An uploaded picture fills the same two-layer wrapper the emoji uses. */
+.gauge-emoji img {
+  border-radius: 5px;
+  object-fit: cover;
+}

@@ -6,11 +6,12 @@
  * division the Voice tab draws between the switch and the screen that explains
  * what the switch is doing.
  */
-import { useState } from 'react';
+import { useState } from 'react';
 import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { HourlyGraph } from './HourlyGraph';
 import { ageOf, dayName, weather, type Place, type RefreshMode, type Units } from './weather-api';
+import './weather.css';
 
 const MODES: Array<{ id: RefreshMode; label: string; hint: string }> = [
   { id: 'hourly', label: 'Once an hour', hint: 'checks when you open the app and an hour has passed' },

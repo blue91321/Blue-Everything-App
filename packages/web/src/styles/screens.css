@@ -1,0 +1,326 @@
+/* Offline, Home, the menu settings and onboarding. Part of styles.css; see the order there. */
+
+/* ---- Offline -------------------------------------------------------- */
+
+.offline-shelf {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* The shell's drawer is not there offline, so there is no button to clear. */
+.offline-app {
+  padding-top: calc(env(safe-area-inset-top) + 12px);
+}
+
+.manga-download-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+ * "Offline — showing what this device saved (as of 8:14)". Quiet enough to read
+ * past, never absent: data from this morning shown as if current is the one
+ * thing offline mode must not do.
+ */
+.offline-banner {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--muted);
+  background: var(--surface-raised);
+  font-size: 0.9rem;
+}
+
+.offline-banner.syncing {
+  border-left-color: var(--accent);
+}
+
+@keyframes manga-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- home ---------- */
+
+.home-screen {
+  max-width: 640px;
+  padding-bottom: 24px;
+}
+
+/* On the ☰'s line, like the drawer's wordmark — see `.drawer-head`. */
+.home-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: var(--menu-top) 0 24px;
+}
+
+.shell:not(.desktop) .home-head {
+  padding-left: var(--menu-clear);
+}
+
+/* Ten quick taps on the name do something (wordmark.ts); without this they select it. */
+.wordmark {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.home-title {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+/*
+ * Four across on a phone, like the home screen it sits beside. Columns from the
+ * width rather than a number, so the PC gets more of them rather than four
+ * enormous ones.
+ */
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 20px 8px;
+}
+
+.home-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.home-glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 26px;
+  line-height: 1;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+/*
+ * Hover only where there is one. A phone applies :hover to whatever was last
+ * tapped and keeps it there, so the tile you just left would stay lit.
+ */
+@media (hover: hover) {
+  .home-tile:hover .home-glyph {
+    background: var(--surface);
+    border-color: var(--accent);
+  }
+}
+
+.home-tile:focus-visible .home-glyph {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.home-tile:active .home-glyph {
+  transform: scale(0.94);
+}
+
+.home-label {
+  max-width: 100%;
+  font-size: 12.5px;
+  line-height: 1.25;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A release's notes, as written in CHANGELOG.md: kept as text, scrolled if long. */
+.update-notes {
+  max-height: 16rem;
+  overflow: auto;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+}
+
+/*
+ * A section under its screen in the menu (Connections → Music): indented and a
+ * little smaller, so it reads as part of the screen above rather than as a
+ * screen of its own.
+ */
+.drawer nav button.sub {
+  padding-left: 2.1rem;
+  font-size: 0.92em;
+}
+
+/*
+ * A group heading in the menu (World, with Weather and Trips under it): a
+ * button that folds the group, set like a screen so it reads as one place,
+ * with the arrow at the far end where a folder tree puts it. The screens under
+ * it are indented as a section is; a section of a grouped screen goes one
+ * step further.
+ */
+.drawer nav button.group-head .group-twist {
+  margin-left: auto;
+  font-size: 1.1em;
+}
+.drawer nav button.in-group {
+  padding-left: 2.1rem;
+  font-size: 0.92em;
+}
+.drawer nav button.in-group.sub {
+  padding-left: 3.3rem;
+}
+
+/* Settings → Home screen and menu: a name and two switch columns. */
+.menu-prefs {
+  margin-top: 0.75rem;
+}
+
+/* A section and its switch for the menu. Home is the ordered list above it. */
+.menu-prefs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  cursor: pointer;
+}
+
+.menu-prefs-row > input {
+  justify-self: center;
+}
+
+.menu-prefs-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Something running now: Music while shuffle is on. Green, the colour "on"
+ * already is for a friend online, rather than the accent, which means
+ * "selected" here and would read as the current screen.
+ */
+.live-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  box-shadow: 0 0 0 0.15rem color-mix(in srgb, var(--ok) 25%, transparent);
+}
+
+.home-tile {
+  position: relative;
+}
+
+.home-live {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  margin: 0;
+}
+
+/* ---- Onboarding: a new person's first run (Onboarding.tsx) ---- */
+
+.onboarding {
+  min-height: 100vh;
+  padding: 32px 16px;
+  background: var(--bg);
+  box-sizing: border-box;
+}
+
+.onboarding-card {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+/* The same card over the app rather than instead of it: "New in this version" (NewScreens.tsx). Above the ☰ and the drawer. */
+.onboarding.over-app {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  min-height: 0;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+}
+
+.onboarding-card h1 {
+  font-size: 24px;
+  margin: 4px 0 8px;
+}
+
+.onboarding-card ol {
+  padding-left: 20px;
+  line-height: 1.6;
+}
+
+/* Typed by hand into the installed app, so big, spaced and in a face that tells 0 from O. */
+.onboarding-code {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 32px;
+  letter-spacing: 0.15em;
+  text-align: center;
+  margin: 16px 0 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.onboarding-choices {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.onboarding-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.onboarding-choice.on,
+.onboarding-choice:focus-visible {
+  border-color: var(--accent);
+}
+
+@media (hover: hover) {
+  .onboarding-choice:hover {
+    border-color: var(--accent);
+  }
+}
+
+.onboarding-picks {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 12px;
+}

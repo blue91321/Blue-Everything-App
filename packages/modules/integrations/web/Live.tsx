@@ -24,7 +24,7 @@
  * document, the row is gone.
  */
 import { useState } from 'react';
-import { api, type LiveSource, type LiveStreamRow } from '@app/api';
+import { integrationsApi, type LiveSource, type LiveStreamRow } from './integrations-api';
 import { useAsync } from '@app/useAsync';
 
 /** "3h 20m", "12m" — how long they have been going. */
@@ -41,7 +41,7 @@ export function viewerLabel(viewers: number | null): string {
 }
 
 export function Live() {
-  const state = useAsync(() => api.integrations.live(), [], ['integrations']);
+  const state = useAsync(() => integrationsApi.live(), [], ['integrations']);
 
   if (state.loading) return <div className="empty">loading…</div>;
   if (state.error) return <div className="empty">Could not load: {state.error.message}</div>;
@@ -89,7 +89,7 @@ function LiveCard({ stream, onChanged }: { stream: LiveStreamRow; onChanged: () 
     setBusy(true);
     setProblem('');
     try {
-      await api.integrations.favouriteFollow(stream.provider, stream.providerAccountId, !stream.favourite);
+      await integrationsApi.favouriteFollow(stream.provider, stream.providerAccountId, !stream.favourite);
       onChanged();
     } catch (error) {
       setProblem((error as Error).message);

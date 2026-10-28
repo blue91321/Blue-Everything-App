@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api, type ImportResult, type VaultSecret, type VaultStatus, type VaultSummary } from '@app/api';
+import { vaultApi, type ImportResult, type VaultSecret, type VaultStatus, type VaultSummary } from './vault-api';
 import { useAsync } from '@app/useAsync';
 import { relative } from '@app/format';
 
@@ -7,7 +7,7 @@ import { relative } from '@app/format';
 const MIN_MASTER_PASSWORD = 12;
 
 export function Vault() {
-  const status = useAsync(() => api.vault.status(), [], ['vault']);
+  const status = useAsync(() => vaultApi.status(), [], ['vault']);
   const [pendingShares, setPendingShares] = useState<{ a: string; b: string } | null>(null);
   const state = status.data;
 
@@ -68,7 +68,7 @@ function SetUpVault({
     setBusy(true);
     setError('');
     try {
-      const result = await api.vault.setup(password, withRecovery);
+      const result = await vaultApi.setup(password, withRecovery);
       // Clear the password from state the moment it is no longer needed.
       setPassword('');
       setConfirm('');
@@ -241,7 +241,7 @@ function UnlockVault({ status, onDone }: { status: VaultStatus; onDone: () => vo
     setBusy(true);
     setError('');
     try {
-      await api.vault.unlock(password);
+      await vaultApi.unlock(password);
       setPassword('');
       onDone();
     } catch (cause) {
@@ -298,7 +298,7 @@ function RecoverVault({ onDone, onCancel }: { onDone: () => void; onCancel: () =
     setBusy(true);
     setError('');
     try {
-      await api.vault.recover(shareA, shareB, next);
+      await vaultApi.recover(shareA, shareB, next);
       onDone();
     } catch {
       setError('Those two shares did not open the vault. Check for typos — they are not case sensitive.');
@@ -347,14 +347,14 @@ function OpenVault({
   onLocked: () => void;
   onShares: (shares: { a: string; b: string }) => void;
 }) {
-  const items = useAsync(() => api.vault.items(), [], ['vault']);
+  const items = useAsync(() => vaultApi.items(), [], ['vault']);
   const [query, setQuery] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
 
   const lock = useCallback(async () => {
-    await api.vault.lock();
+    await vaultApi.lock();
     onLocked();
   }, [onLocked]);
 
@@ -459,7 +459,7 @@ function VaultDanger({
     setBusy(true);
     setError('');
     try {
-      const result = await api.vault.regenerateRecovery();
+      const result = await vaultApi.regenerateRecovery();
       setConfirmingKit(false);
       // Handed to the parent so a background refresh cannot unmount the only
       // screen these codes appear on.
@@ -475,7 +475,7 @@ function VaultDanger({
     setBusy(true);
     setError('');
     try {
-      await api.vault.destroy(deletePassword);
+      await vaultApi.destroy(deletePassword);
       setDeletePassword('');
       setDeleting(false);
       onDestroyed();
@@ -606,7 +606,7 @@ function EntryDetail({ item, onClose, onChanged }: { item: VaultSummary; onClose
   // as the panel showing them.
   useEffect(() => {
     let live = true;
-    api.vault.secret(item.id).then((value) => {
+    vaultApi.secret(item.id).then((value) => {
       if (live) setSecret(value);
     }, () => {});
     return () => {
@@ -688,7 +688,7 @@ function EntryDetail({ item, onClose, onChanged }: { item: VaultSummary; onClose
             <span className="meta">delete for good?</span>
             <button
               className="btn subtle danger"
-              onClick={() => api.vault.remove(item.id).then(() => { onChanged(); onClose(); })}
+              onClick={() => vaultApi.remove(item.id).then(() => { onChanged(); onClose(); })}
             >
               yes
             </button>
@@ -739,7 +739,7 @@ function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported:
     setCsv(text);
     setBusy(true);
     try {
-      setPreview(await api.vault.importCsv(text, false));
+      setPreview(await vaultApi.importCsv(text, false));
     } catch (cause) {
       setPreview(null);
       setError(cause instanceof Error ? cause.message : 'could not read that file');
@@ -752,7 +752,7 @@ function ImportPanel({ onClose, onImported }: { onClose: () => void; onImported:
     setBusy(true);
     setError('');
     try {
-      const result = await api.vault.importCsv(csv, true, includeDuplicates);
+      const result = await vaultApi.importCsv(csv, true, includeDuplicates);
       setDone(result);
       // Drop the file contents from memory the moment they're no longer needed.
       setCsv('');
@@ -891,8 +891,8 @@ function EntryEditor({
     setBusy(true);
     setError('');
     try {
-      if (item) await api.vault.update(item.id, { title, username, url, password, notes });
-      else await api.vault.create({ title, username, url, password, notes });
+      if (item) await vaultApi.update(item.id, { title, username, url, password, notes });
+      else await vaultApi.create({ title, username, url, password, notes });
       onSaved();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'could not save');

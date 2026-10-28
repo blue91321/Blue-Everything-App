@@ -37,7 +37,7 @@
  * this same thread, which is what makes a koffi callback safe here: nothing is
  * ever invoked from a thread V8 has not heard of.
  */
-import koffi from 'koffi';
+import koffi from 'koffi';
 import { getNotificationState, NotificationState } from './win32.js';
 import { OVERLAY_GRID, placementCell } from '@everything/shared';
 
@@ -481,18 +481,6 @@ function loadImage(path: string): { bitmap: unknown; width: number; height: numb
 
   imageCache.set(path, result);
   return result;
-}
-
-/**
- * Could that picture be decoded, and at what size?
- *
- * Drawing failure is otherwise silent — `drawAvatar` just leaves the gutter
- * empty — so this is how the agent can report "that file could not be read"
- * rather than leaving you to wonder why your avatar never appears.
- */
-export function probeAvatar(path: string): { width: number; height: number } | null {
-  const image = loadImage(path);
-  return image ? { width: image.width, height: image.height } : null;
 }
 
 /** Drop a cached image so a replaced file is picked up rather than remembered. */

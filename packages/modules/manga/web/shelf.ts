@@ -24,9 +24,13 @@ export interface ShelfRow {
   lastReleaseAt?: number | null;
   lastReadAt?: number | null;
   position?: { chapter: number } | null;
+  /** Your rating, 1 to 10, or null. */
+  rating?: number | null;
 }
 
-export type SortKey = 'read' | 'catchup' | 'updated' | 'title' | 'added';
+export type SortKey = 'read' | 'catchup' | 'updated' | 'title' | 'added' | 'rating';
+/** Every order but Rating: what Rating falls back on, after the rated ones. */
+export type ThenKey = Exclude<SortKey, 'rating'>;
 
 export const SORT_LABEL: Record<SortKey, string> = {
   read: 'Last read',
@@ -34,7 +38,23 @@ export const SORT_LABEL: Record<SortKey, string> = {
   updated: 'Last updated',
   title: 'Title',
   added: 'Recently added',
+  rating: 'Rating',
 };
+
+/*
+ * The order Rating falls back on: the one you had before choosing it. Kept
+ * per device beside the sort itself.
+ */
+export const THEN_KEY = 'manga.library-sort-then';
+
+export function storedThen(): ThenKey {
+  try {
+    const v = localStorage.getItem(THEN_KEY);
+    return v && v in SORT_LABEL && v !== 'rating' ? (v as ThenKey) : 'read';
+  } catch {
+    return 'read';
+  }
+}
 
 /*
  * Remembered per device, like the folded note folders: it is a view of one
@@ -147,13 +167,25 @@ export function storedFavFirst(): boolean {
  * starred, the rest. A new chapter outranks the star because it is the box
  * about what has moved, and a starred series with nothing new is waiting for
  * nothing; the star then orders each half.
+ *
+ * **Rating** puts every rated series first, highest first, and equal ratings
+ * in `then`'s order: the sort you had before choosing Rating. The unrated ones
+ * follow in that same order, and only they take the boxes, as asked: a 10 you
+ * rated stays above a series with a new chapter you have not rated.
  */
 export function sorted<T extends ShelfRow>(
   list: T[],
   key: SortKey,
   newFirst: boolean,
-  favFirst = false
+  favFirst = false,
+  then: ThenKey = 'read'
 ): T[] {
+  if (key === 'rating') {
+    const isRated = (s: ShelfRow) => typeof s.rating === 'number';
+    // Stable, so equal ratings keep `then`'s order.
+    const rated = sorted(list.filter(isRated), then, false).sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+    return [...rated, ...sorted(list.filter((s) => !isRated(s)), then, newFirst, favFirst)];
+  }
   const byTitle = (a: ShelfRow, b: ShelfRow) => a.title.localeCompare(b.title);
   const desc = (f: (s: ShelfRow) => number | null | undefined) => (a: ShelfRow, b: ShelfRow) =>
     (f(b) ?? 0) - (f(a) ?? 0) || byTitle(a, b);

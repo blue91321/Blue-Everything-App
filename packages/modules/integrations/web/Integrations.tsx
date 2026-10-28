@@ -19,7 +19,7 @@
  * been removed rather than kept as a monument to the research.
  */
 import { useEffect, useState } from 'react';
-import { api } from '@app/api';
+import { Editable } from '@app/ui-text';
 import { showingSection } from '@app/nav';
 import { Connections } from './Connections';
 import { Following } from './Following';
@@ -108,7 +108,8 @@ export function Integrations({
             className={`tab${tab === t.id ? ' on' : ''}`}
             onClick={() => setTab(t.id)}
           >
-            {t.label}
+            {/* The same id as the menu's entry for this tab, so renaming one renames both. */}
+            <Editable id={`screen:integrations#${t.id}`} fallback={t.label} inButton />
           </button>
         ))}
       </div>
@@ -169,9 +170,4 @@ export function relativeTime(at: number | null | undefined): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
-}
-
-/** Shared by every tab that can kick off a sync. */
-export async function runSync(provider: string, capabilities?: string[]) {
-  return (await api.integrations.sync(provider, capabilities)).outcomes;
 }

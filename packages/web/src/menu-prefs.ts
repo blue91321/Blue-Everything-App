@@ -136,17 +136,6 @@ export function resetHome(): void {
   save();
 }
 
-/** Back to every default, in one place. */
-export function resetShown(): void {
-  prefs = { menu: {}, home: {} };
-  try {
-    localStorage.removeItem(KEY);
-  } catch {
-    // Nothing stored to remove.
-  }
-  announce();
-}
-
 /** The entries App last published, re-rendering whoever asks when they or the choices change. */
 export function useMenuEntries(): MenuEntry[] {
   const [, bump] = useState(0);

@@ -1,0 +1,231 @@
+/* Edit mode: renaming text and moving sections (edit-mode.ts, ui-text.tsx). Part of styles.css; see the order there. */
+
+/* The way in, under the menu's list. */
+.drawer-edit {
+  margin: 4px 10px 8px;
+  text-align: left;
+}
+
+/*
+ * Text you can rename. Dashed rather than solid so it reads as "this can be
+ * changed" and not as a box drawn round it for emphasis; marked again once you
+ * have changed it, so what is yours and what is the app's can be told apart.
+ */
+.ui-editable {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+  cursor: text;
+}
+
+.ui-editable.changed {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/*
+ * The wording the build found (UiText) is nearly every line on a screen, so
+ * its outline is fainter, and full strength under the pointer: a screen of
+ * solid dashes would hide the screen.
+ */
+.ui-editable.ui-auto {
+  outline-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.ui-editable.ui-auto:hover {
+  outline-color: var(--accent);
+}
+
+/*
+ * Hidden text hides the element it sits in (the grey line, not half of it).
+ * The marker is an empty span left where the text was; see ui-text.tsx.
+ */
+body:not(.editing) :has(> [data-ui-hidden]) {
+  display: none !important;
+}
+
+/* In edit mode it stays, faded and struck through, so it can be shown again. */
+body.editing :has(> [data-ui-hidden]) {
+  opacity: 0.45;
+}
+
+body.editing [data-ui-hidden] {
+  text-decoration: line-through;
+}
+
+.ui-editable:focus-visible {
+  outline-style: solid;
+}
+
+/* The editor: a small card beside the text, over everything, the ☰ and drawer included. */
+.ui-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+}
+
+.ui-editor {
+  position: fixed;
+  z-index: 111;
+  width: min(320px, calc(100vw - 16px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.ui-editor input {
+  width: 100%;
+}
+
+/*
+ * The bar while editing: top right, on the ☰'s line and clear of it, so it is
+ * on every screen whatever that screen draws of its own.
+ */
+.edit-bar {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + var(--menu-top));
+  right: calc(env(safe-area-inset-right) + 10px);
+  z-index: 45;
+  max-width: calc(100vw - 76px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 4px 4px 12px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.edit-bar-text {
+  min-width: 0;
+}
+
+.edit-bar .btn {
+  border-radius: 999px;
+}
+
+.edit-bar-pen {
+  display: none;
+}
+
+/*
+ * On a phone the bar is one button, ✎ Done, so it does not cover the title
+ * beside it (Home's name sits on this line); the outlines say the rest.
+ */
+@media (max-width: 600px) {
+  .edit-bar {
+    padding: 3px;
+  }
+
+  .edit-bar-text {
+    display: none;
+  }
+
+  .edit-bar-pen {
+    display: inline;
+  }
+}
+
+/* A section in edit mode: a bar to move it by, and the section as usual under it. */
+.edit-frame {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px 8px;
+  margin-bottom: 12px;
+}
+
+.edit-frame.dragging {
+  border-color: var(--accent);
+  opacity: 0.7;
+}
+
+.edit-frame-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.edit-frame-label {
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The handle. `touch-action: none` on the handle alone, so a drag can begin on
+ * a phone while the page still scrolls everywhere else (see `reorder.ts`).
+ */
+.edit-grip {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  padding: 2px 8px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.dragging .edit-grip {
+  cursor: grabbing;
+  color: var(--accent);
+}
+
+/* What could be added back. */
+.edit-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.edit-offer .meta {
+  width: 100%;
+}
+
+/* Home's tiles: each in a cell, so edit mode can put a handle and a ✕ on it. */
+.home-cell {
+  position: relative;
+  display: grid;
+  min-width: 0;
+}
+
+.home-cell.dragging {
+  opacity: 0.6;
+}
+
+.home-grip {
+  position: absolute;
+  top: -6px;
+  left: -4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 4px;
+  font-size: 14px;
+}
+
+.edit-remove {
+  position: absolute;
+  top: -6px;
+  right: -2px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}

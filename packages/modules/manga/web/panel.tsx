@@ -16,8 +16,9 @@ import { useAsync } from '@app/useAsync';
 import { goTo } from '@app/nav';
 import { Cover } from './Cover';
 import { ageOf, manga } from './manga-api';
-import { sorted, storedFavFirst, storedNewFirst, storedSort } from './shelf';
+import { sorted, storedFavFirst, storedNewFirst, storedSort, storedThen } from './shelf';
 import { Tile } from './Tile';
+import './manga.css';
 
 /**
  * Two panels, one module, chosen by the id the Dashboard asks for.
@@ -73,7 +74,7 @@ function ShelfPanel() {
   const away = new Set((data.libraries ?? []).filter((l) => l.hidden).map((l) => l.id));
   const shown = data.series.filter((s) => !s.libraries?.some((id) => away.has(id)));
   const picked = show === 'favourites' ? shown.filter((s) => s.favourite) : shown;
-  const list = sorted(picked, order, newFirst, favFirst).slice(0, SHELF_TILES);
+  const list = sorted(picked, order, newFirst, favFirst, storedThen()).slice(0, SHELF_TILES);
 
   if (data.series.length === 0) {
     return (

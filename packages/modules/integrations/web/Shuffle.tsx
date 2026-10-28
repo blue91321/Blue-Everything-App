@@ -18,7 +18,7 @@
  * one queue, so there is one set of choices. Voice plays with them too.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type ShuffleSettings } from '@app/api';
+import { integrationsApi, type ShuffleSettings } from './integrations-api';
 import { useAsync } from '@app/useAsync';
 import { isMobile } from '@app/device';
 
@@ -37,7 +37,7 @@ const BOOSTS = [10, 5, 3, 2, 1.5];
 const DAMPS = [0.5, 0.25, 0.1];
 
 export function Shuffle() {
-  const info = useAsync(() => api.integrations.shuffleSources(), [], ['integrations']);
+  const info = useAsync(() => integrationsApi.shuffleSources(), [], ['integrations']);
   // Null means "every list", so a playlist made later is in without ticking it.
   const [picks, setPicks] = useState<string[] | null>(() =>
     stored('spotify-shuffle-picks', null, (v): v is string[] | null => v === null || (Array.isArray(v) && v.every((x) => typeof x === 'string')))
@@ -121,7 +121,7 @@ export function Shuffle() {
       timer.current = null;
       const send = outgoing.current;
       outgoing.current = {};
-      void api.integrations
+      void integrationsApi
         .setShuffleSettings(send)
         .catch((error: unknown) => setProblem(error instanceof Error ? error.message : String(error)))
         .finally(() => {
@@ -239,7 +239,7 @@ export function Shuffle() {
   };
 
   const stop = async (pause: boolean) => {
-    await api.integrations.stopShuffle(pause);
+    await integrationsApi.stopShuffle(pause);
     info.reload();
   };
 
@@ -249,7 +249,7 @@ export function Shuffle() {
     setDone(null);
     try {
       setDone(
-        await api.integrations.shuffle(mode, picks ? chosen.map((s) => s.id) : undefined, order, effectiveGap, {
+        await integrationsApi.shuffle(mode, picks ? chosen.map((s) => s.id) : undefined, order, effectiveGap, {
           recent: recent.within > 0 ? recent : undefined,
           fresh: fresh.after > 0 ? fresh : undefined,
         }, isMobile() ? 'phone' : 'computer')
@@ -264,7 +264,7 @@ export function Shuffle() {
 
   const boost = async (kind: 'song' | 'artist', id: string, weight: number) => {
     try {
-      await api.integrations.setShuffleWeight(kind, id, weight);
+      await integrationsApi.setShuffleWeight(kind, id, weight);
       info.reload();
     } catch (error) {
       setProblem(error instanceof Error ? error.message : String(error));

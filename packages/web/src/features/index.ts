@@ -280,9 +280,6 @@ export function prepareOffline(): void {
     .catch(() => undefined);
 }
 
-/** Present in this build. Being *enabled* is the server's call, not ours. */
-export const installedFeatureIds: string[] = webFeatures.map((f) => f.id);
-
 /**
  * Every panel this build can draw, from features that are switched on.
  *

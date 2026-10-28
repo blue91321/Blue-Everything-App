@@ -16,6 +16,7 @@ import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { goTo } from '@app/nav';
 import { ageOf, weather } from './weather-api';
+import './weather.css';
 
 export default function WeatherPanel() {
   /*

@@ -18,6 +18,7 @@
  * this file changing.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { Editable } from '@app/ui-text';
 import { Cover } from './Cover';
 import { Icon } from './Icons';
 import { COMMON_TAGS, FIRST_TAGS, isFirstTag, loadHiddenTags, saveHiddenTags } from './hidden-tags';
@@ -228,7 +229,7 @@ export function Browse({
       <div className="tabs" role="tablist">
         {subs.map((s) => (
           <button key={s} role="tab" aria-selected={sub === s} className={`tab${sub === s ? ' on' : ''}`} onClick={() => setSub(s)}>
-            {subLabel(s)}
+            <Editable id={`tab:manga.browse:${s}`} fallback={subLabel(s)} inButton />
           </button>
         ))}
         {sub !== 'search' && !keptSelected && (

@@ -10,12 +10,12 @@
  * So the list is a **record of what actually ran here**, not a list to maintain.
  * Rows appear because something was seen; the choices on them are yours.
  */
-import { serverPc } from '../device';
+import { serverPc } from '../../device';
 import { useState } from 'react';
-import { api, type Game, type Session } from '../api';
-import { useAsync } from '../useAsync';
-import { Toggle } from '../controls';
-import { relative } from '../format';
+import { api, type Game, type Session } from '../../api';
+import { useAsync } from '../../useAsync';
+import { Toggle } from '../../controls';
+import { relative } from '../../format';
 
 /** What each `source` means, said plainly on the row. */
 const SOURCE_LABEL: Record<string, string> = {

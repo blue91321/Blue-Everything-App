@@ -1,0 +1,318 @@
+/* Buttons, fields, switches and the pairing screen. Part of styles.css; see the order there. */
+
+/* ---------- controls ---------- */
+
+input,
+textarea,
+select {
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  /* 16px keeps iOS Safari from zooming the viewport on focus. */
+  font: 16px/1.4 inherit;
+  font-family: inherit;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 88px;
+}
+
+/* A tick box is not a text field.
+
+   The rule above styles every `input` as one — full width, 12px of padding —
+   which is right for the text boxes this app is mostly made of and catastrophic
+   for a checkbox: it stretched to fill its flex row and squeezed the label
+   beside it until the text wrapped one character per line. Nothing caught it
+   sooner because the playlist boxes are the first native checkboxes in the app;
+   everything else uses the `.toggle` switch.
+
+   `flex: none` matters as much as the width: inside a `.row` the box would
+   otherwise be a flex item free to grow again. */
+input[type='checkbox'],
+input[type='radio'] {
+  width: auto;
+  flex: none;
+  padding: 0;
+  margin: 0;
+  /* Draws the tick in the theme's accent rather than the browser's blue. */
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+input[type='checkbox']:disabled,
+input[type='radio']:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+button {
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn {
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  white-space: nowrap;
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.btn.subtle {
+  background: none;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 6px 8px;
+}
+
+.btn.danger {
+  color: var(--danger);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+/*
+ * A link wearing a button.
+ *
+ * `.btn` was written for `<button>`, which brings the font rules and a box of
+ * its own; an anchor is inline, underlined, and inherits whatever size the text
+ * around it had. It has to be a real `<a href>` rather than a click handler for
+ * the reason the `everything:` and `discord:` links already are — Chromium
+ * treats an anchor navigation as a user gesture far more readily than a
+ * scripted one, and drops the scripted kind silently.
+ */
+/*
+ * A line of `.meta` that is a warning rather than a note.
+ *
+ * The archive uses it for chapters it could not fetch: a gap in a backup has to
+ * look different from a count, because "18 of 20" and "two are missing and will
+ * not come" are not the same sentence.
+ */
+.meta.warn {
+  color: var(--danger);
+}
+
+a.btn {
+  display: inline-flex;
+  align-items: center;
+  font-family: inherit;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+/* Big round check target — the most-tapped control in the app. */
+.check {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: none;
+  color: var(--ok);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.check.done {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: var(--bg);
+}
+
+.quality {
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.quality.prime {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.banner {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+/* ---------- pairing ---------- */
+
+.pair {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 48px 20px;
+}
+
+.pair h1 {
+  font-size: 24px;
+  margin: 0 0 8px;
+}
+
+.pair p {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Input level meter on the Voice screen. Answers "is this microphone hearing
+   me at all", which is the first thing to check and the hardest to guess at.
+   Scaled x4 because speech RMS sits around 0.1-0.25 and a linear 0-1 bar would
+   barely twitch. */
+.level {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.level-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+.anchor {
+  width: 40px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.anchor:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.anchor.on {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-text);
+}
+
+/* Collapsible sections on the Voice screen. `<details>` rather than hand-rolled
+   state, so keyboard and screen-reader behaviour comes from the browser. */
+.group {
+  margin-bottom: 12px;
+}
+
+.group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  padding: 6px 2px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  user-select: none;
+}
+
+.group > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A caret drawn here rather than the default marker, so it can rotate. */
+.group > summary::before {
+  content: '▸';
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+
+.group[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.group > summary:hover {
+  color: var(--text);
+}
+
+.group > summary .meta {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group > summary::before {
+    transition: none;
+  }
+}
+
+/*
+ * The accent swatches on the Settings screen.
+ *
+ * Each carries its own `data-accent`, so it inherits the real `--accent` from
+ * the blocks at the top of this file rather than repeating the hex values. A
+ * second copy of the palette here would be one more thing to keep in step, and
+ * the first colour to drift would be the one nobody looks at twice.
+ */
+.swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swatch[aria-pressed='true'] {
+  /* A ring rather than a thicker border, so the circle doesn't change size and
+     shuffle the row when the selection moves. */
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+}
+
+.swatch:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.swatch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

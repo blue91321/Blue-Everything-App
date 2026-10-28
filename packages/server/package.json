@@ -7,8 +7,6 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
-    "migrate": "drizzle-kit push",
-    "generate": "drizzle-kit generate",
     "pair": "tsx src/cli/pair.ts",
     "smoke": "tsx src/cli/smoke.ts",
     "instance-check": "tsx src/cli/instance-check.ts",

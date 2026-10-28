@@ -208,7 +208,3 @@ export function mediaIsPlaying(now = Date.now()): boolean {
   const reading = audioRecentlyPlaying(now);
   return reading.available && reading.playing;
 }
-
-export function disposeAudio(): void {
-  cached?.dispose();
-}

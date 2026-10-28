@@ -1,0 +1,265 @@
+/* The right-click and New menus, and the Packages tab. Part of styles.css; see the order there. */
+
+/* ---------- the right-click menu ---------- */
+
+/*
+ * `position: fixed` because it is placed from `clientX/clientY`, which are
+ * viewport coordinates — an absolutely positioned copy inside a scrolled card
+ * would land somewhere else entirely.
+ */
+.context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 150px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+}
+
+.context-menu button {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.context-menu button:hover:not(:disabled),
+.context-menu button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.context-menu button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-menu button.danger {
+  color: var(--urgent, #e5484d);
+}
+
+.context-menu button.danger:hover:not(:disabled) {
+  background: var(--urgent, #e5484d);
+  color: #fff;
+}
+
+/* A whole panel row that is a button. Resets what <button> assumes. */
+/*
+ * A whole panel row that is a button — or, for the live panel, a link.
+ *
+ * Resets what each element type assumes: `font`, `color`, `width` and
+ * `text-align` for the button, and `text-decoration` for the anchor. That last
+ * one only became necessary when the live panel arrived: these rules were
+ * written for the friends panel, where a `<button>` is never underlined, so a
+ * link inheriting the browser's default underlined every title in the column.
+ */
+.panel-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.panel-row:hover,
+.panel-row:focus-visible {
+  border-color: var(--accent);
+}
+
+.panel-settings {
+  width: 100%;
+  margin-top: 8px;
+}
+
+/*
+ * "We brought you here." Without it, arriving at a settings section is
+ * indistinguishable from the tab you clicked happening to open on it.
+ */
+/*
+ * The two Dashboard pickers, side by side and the same width.
+ *
+ * They configure the two columns of one screen, so they are shown as two
+ * columns — stacked, they read as two unrelated settings and the second sits
+ * below the fold on a laptop.
+ *
+ * A **container** query, not a media one. What decides whether two columns fit
+ * is the width this screen actually has, and docking the menu takes 260px of
+ * it without the window changing at all — so a viewport query would keep two
+ * columns while the drawer squeezed them to nothing. That is the mistake the
+ * notes screen made and the fix it landed on.
+ *
+ * `align-items: start` so the shorter card keeps its own height instead of
+ * stretching to match its neighbour, which would put a long run of empty card
+ * under whichever list is shorter.
+ */
+.settings-pair-wrap {
+  /*
+   * The container is the *wrapper*, not the grid. A `@container` rule styles
+   * descendants of the container, never the container itself — putting both on
+   * one element is a rule that silently never applies, and the layout stays
+   * stacked at every width with nothing saying why.
+   */
+  container: settings-pair / inline-size;
+}
+
+.settings-pair {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+
+@container settings-pair (min-width: 760px) {
+  .settings-pair {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* The sections inside carry their own margins; the grid owns the spacing. */
+.settings-pair > section {
+  margin: 0;
+  min-width: 0;
+}
+
+/*
+ * Reordering by dragging, in the Dashboard pickers.
+ *
+ * The arrows stay and are still the keyboard's way — this is the pointer's.
+ * `touch-action: none` is what lets a drag start on a phone at all, and it is
+ * on the grip alone: on the whole row it would mean the list could not be
+ * scrolled past.
+ */
+.picker-grip {
+  flex: none;
+  padding: 0 .35rem;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.picker-row.dragging {
+  background: var(--surface-raised);
+  border-radius: 8px;
+}
+
+.picker-row.dragging .picker-grip {
+  cursor: grabbing;
+  color: var(--accent);
+}
+
+.flash {
+  animation: flash 1.4s ease-out;
+}
+
+@keyframes flash {
+  0%, 60% { box-shadow: 0 0 0 2px var(--accent); border-radius: 10px; }
+  100% { box-shadow: 0 0 0 2px transparent; border-radius: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash { animation: none; outline: 2px solid var(--accent); }
+}
+
+/*
+ * Red, and deliberately not `var(--accent)` — the same argument the presence
+ * dots make. "Live" is a colour people have already learned from every service
+ * that has ever had one, and re-teaching it per accent would make the one mark
+ * on the row that carries meaning the one you cannot read at a glance.
+ */
+.live-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e5484d;
+}
+
+.star {
+  flex: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 5px;
+  color: var(--muted, #8b90a0);
+}
+
+.star.on {
+  /* The accent, unlike the live dot — nothing is learned about the colour of a
+     favourite, so it may as well match whatever the app is set to. */
+  color: var(--accent);
+}
+
+.star:hover:not(:disabled),
+.star:focus-visible {
+  background: var(--surface-raised);
+  color: var(--accent);
+}
+
+/* Stacked panels need a gap between them, and a rule to read as separate. */
+.dash-panel > :not(:first-child) {
+  margin-top: 18px;
+}
+
+.dash-panel > .panel-settings {
+  margin-top: 12px;
+}
+
+/* ---- Packages ---------------------------------------------------------- */
+
+/*
+ * The two halves of the Packages tab. An `h3` rather than another `h2`, because
+ * the tab already has one and these sit under it — the built-ins and the ones
+ * you installed are two groups of the same thing, not two screens.
+ */
+.pkg-head {
+  margin: 20px 0 2px;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pkg-head:first-of-type {
+  margin-top: 4px;
+}
+
+/*
+ * Drop a zip here.
+ *
+ * Dashed, because a dashed border is the one shape that reads as "put something
+ * in me" without a word of explanation — the same convention every upload
+ * target on the web has taught. Centred text, since the whole box is the
+ * target and left-aligning it would suggest the words were the control.
+ */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 18px 14px;
+  text-align: center;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+/*
+ * While a file is over it. The accent, so the feedback is unmissable — a drag
+ * is held rather than clicked, and a target that does not visibly arm leaves
+ * you unsure whether letting go will do anything.
+ */
+.dropzone.dragging {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}

@@ -587,6 +587,11 @@ export const settings = sqliteTable('settings', {
    * than the one real phrase it would otherwise be forced onto.
    */
   wakeDecoys: text('wake_decoys').notNull().default(''),
+  /**
+   * Cosine similarity, in percent, a speaker embedding must reach to count as
+   * you. Strict on purpose: a false accept logs a habit you didn't do, which is
+   * quietly wrong data, while a false reject only means saying it again.
+   */
   speakerThreshold: integer('speaker_threshold_pct').notNull().default(55),
 
   /**
@@ -1356,9 +1361,6 @@ export const schema = {
   integrationTaskLinks,
   liveStreams,
 };
-
-/** Used by the health check to prove the database is actually reachable. */
-export const healthProbe = sql`select 1`;
 
 /**
  * Games this machine has seen, and what to do about each.

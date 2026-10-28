@@ -1,0 +1,160 @@
+/* The drawer, the ☰ and the page around each screen. Part of styles.css; see the order there. */
+
+/* ---------- drawer + shell ---------- */
+
+.drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--drawer-width);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  z-index: 30;
+  /* Off-canvas by default; App.tsx overrides this inline while dragging. */
+  transform: translateX(-100%);
+  transition: transform 0.22s ease;
+  padding-top: env(safe-area-inset-top);
+}
+
+.shell.desktop .drawer {
+  transform: none;
+  transition: none;
+}
+
+.drawer-head {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  padding: 18px 18px 12px;
+}
+
+.drawer nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 10px;
+  flex: 1;
+}
+
+.drawer nav button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  padding: 12px;
+  cursor: pointer;
+}
+
+/*
+ * Settings sits at the foot of the list, not in it.
+ *
+ * `nav` is already a flex column with `flex: 1`, so one `margin-top: auto`
+ * takes up every spare pixel above this item and pins it to the bottom
+ * whatever else is in the menu. That matters because the list grows: each
+ * feature adds a tab, and Settings drifting down the middle of a list of
+ * things you use daily is how it becomes hard to find.
+ */
+/*
+ * Settings tabs.
+ *
+ * Scrolls sideways rather than wrapping, so four or five of them stay on one
+ * line on a phone instead of becoming a two-row block that pushes the content
+ * down. `scrollbar-width: none` because a scrollbar under four words is noise.
+ */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: 0 0 auto;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 15px;
+  padding: 10px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.on {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.drawer nav button.pinned {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  padding-top: 14px;
+}
+
+.drawer nav button:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.drawer nav button[aria-current='true'] {
+  background: var(--surface-raised);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.glyph {
+  width: 20px;
+  text-align: center;
+  font-size: 15px;
+}
+
+.drawer-foot {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 20;
+  transition: opacity 0.22s ease;
+}
+
+.shell.desktop {
+  padding-left: var(--drawer-width);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer,
+  .backdrop {
+    transition: none;
+  }
+}

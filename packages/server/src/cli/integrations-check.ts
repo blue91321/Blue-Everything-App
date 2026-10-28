@@ -932,5 +932,56 @@ console.log('\nA status has a shelf life; a name does not');
   check('a stopped agent is reported before its snapshot decays', PRESENCE_TRUSTED_MS < LOCAL_PRESENCE_STALE_MS);
 }
 
+console.log("\nSpotify's desktop-app bug: what counts as news, and where Play goes");
+
+{
+  const { soundsFixed, newsIn, isWebPlayer, isStaff } = await import(
+    '../../../modules/integrations/server/providers/desktop-bug-rules.js'
+  );
+  const { pickDevice } = await import('../../../modules/integrations/server/providers/spotify-shuffle.js');
+
+  // Wishes, questions and the workaround post all say "fixed"; none is a report.
+  for (const line of [
+    'Hopefully this gets fixed soon.',
+    'Is it fixed yet?',
+    "It's still not fixed on 1.3.7.",
+    'Workaround that fixed this for me: play the track through its album instead of using uris',
+    'Spotify, please get this fixed',
+  ]) {
+    check(`not a fix: "${line}"`, soundsFixed(line) === null);
+  }
+  for (const line of ['Seems to be fixed in 1.3.7.100.', 'Works again after today\'s update!', 'This is resolved for me on Windows 11.']) {
+    check(`a fix: "${line}"`, soundsFixed(line) !== null);
+  }
+
+  check('staff are staff', isStaff('🎵 Staff.'));
+  check('a volunteer Star is not staff', !isStaff('★ Star ★'));
+
+  const reply = (id: number, label: string, body: string) => ({ id, at: '2026-10-26T00:00:00Z', by: `u${id}`, label, body, url: `u/${id}` });
+  const thread = { accepted: false, closed: false };
+  const news = newsIn(thread, thread, [
+    reply(1, '', '<p>Same here, please fix.</p>'),
+    reply(2, '★ Star ★', '<p>Have you tried reinstalling the app?</p>'),
+    reply(3, '★ Star ★', '<p>Thanks, I have passed this on to the team.</p>'),
+    reply(4, '🎵 Staff.', '<p>Hi all, thanks for the reports.</p>'),
+    reply(5, '', '<p>Update: works again on 1.3.8!</p>'),
+  ], 'thread');
+  check('only the three worth a reminder are news', news.map((n) => n.url).join() === 'u/3,u/4,u/5', JSON.stringify(news.map((n) => n.url)));
+  check('the first look says nothing about the thread itself', newsIn({ accepted: true, closed: true }, null, [], 'thread').length === 0);
+  check('an answer accepted since last time is news', newsIn({ accepted: true, closed: false }, thread, [], 'thread')[0]?.why === 'accepted');
+
+  check('the Web Player is the Web Player', isWebPlayer({ name: 'Web Player (Microsoft Edge)' }));
+  check('the desktop app is not', !isWebPlayer({ name: 'DESKTOP-AQO6LHD' }));
+
+  const desktop = { name: 'DESKTOP-AQO6LHD', type: 'Computer', is_active: true };
+  const webTab = { name: 'Web Player (Microsoft Edge)', type: 'Computer', is_active: false };
+  const phone = { name: 'iPhone', type: 'Smartphone', is_active: false };
+  check('normally the active computer gets Play from the PC', pickDevice([desktop, webTab, phone], false, 'computer') === desktop);
+  check('while the bug lasts, the Web Player does', pickDevice([desktop, webTab, phone], false, 'computer', true) === webTab);
+  check('  ...even over music on the desktop app, which the shuffle would only stop', pickDevice([desktop, webTab], true, 'computer', true) === webTab);
+  check('  ...but Play from the phone still goes to the phone', pickDevice([desktop, webTab, phone], false, 'phone', true) === phone);
+  check('  ...and with no Web Player open, the desktop app is still tried', pickDevice([desktop, phone], false, 'computer', true) === desktop);
+}
+
 console.log(failures === 0 ? '\nAll good.\n' : `\n${failures} failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

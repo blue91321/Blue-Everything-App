@@ -26,10 +26,10 @@ let failures = 0;
 
 function check(what: string, ok: boolean): void {
   if (ok) {
-    console.log(`  [32m✓[0m ${what}`);
+    console.log(`  \x1b[32m✓\x1b[0m ${what}`);
   } else {
     failures += 1;
-    console.log(`  [31m✗[0m ${what}`);
+    console.log(`  \x1b[31m✗\x1b[0m ${what}`);
   }
 }
 
@@ -339,7 +339,7 @@ try {
 
 console.log('');
 if (failures > 0) {
-  console.log(`[31m${failures} check${failures === 1 ? '' : 's'} failed.[0m\n`);
+  console.log(`\x1b[31m${failures} check${failures === 1 ? '' : 's'} failed.\x1b[0m\n`);
   process.exit(1);
 }
-console.log('[32mAll package checks passed.[0m\n');
+console.log('\x1b[32mAll package checks passed.\x1b[0m\n');

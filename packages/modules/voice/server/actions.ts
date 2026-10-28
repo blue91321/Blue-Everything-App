@@ -653,12 +653,3 @@ export async function runCommand(
     }
   }
 }
-
-/** Validates a target the way the schema does, for the CLI checks. */
-export function targetIsValid(kind: VoiceCommandKind, target: string | null): boolean {
-  if (kind === 'hotkey') return parseHotkey(target ?? '') !== null;
-  if (kind === 'habit') return Boolean(target);
-  if (kind === 'launch') return isLaunchTarget(target ?? '');
-  if (kind === 'music') return ['shuffle', 'random', 'queue', 'stop'].includes(target ?? '');
-  return true;
-}

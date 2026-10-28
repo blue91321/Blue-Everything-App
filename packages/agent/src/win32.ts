@@ -55,8 +55,6 @@ export const NotificationState = {
   APP_FULL_SCREEN: 7,
 } as const;
 
-export type NotificationStateValue = (typeof NotificationState)[keyof typeof NotificationState];
-
 export const notificationStateName = (v: number): string =>
   Object.entries(NotificationState).find(([, n]) => n === v)?.[0] ?? `UNKNOWN(${v})`;
 

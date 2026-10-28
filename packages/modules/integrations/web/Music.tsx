@@ -20,9 +20,10 @@
  */
 import { serverPc, thePc } from '@app/device';
 import { useState } from 'react';
-import { api } from '@app/api';
+import { integrationsApi } from './integrations-api';
 import { useAsync } from '@app/useAsync';
 import { Shuffle } from './Shuffle';
+import { DesktopBug } from './DesktopBug';
 import { ProviderCard } from './Connections';
 
 export function Music({ local }: { local: boolean }) {
@@ -30,10 +31,10 @@ export function Music({ local }: { local: boolean }) {
   const [busy, setBusy] = useState('');
   // How many artists are drawn; a library can have hundreds.
   const [shown, setShown] = useState(25);
-  const music = useAsync(() => api.integrations.music(), [], ['integrations']);
-  const collections = useAsync(() => api.integrations.collections(), [], ['integrations']);
-  const shuffle = useAsync(() => api.integrations.shuffleSources(), [], ['integrations']);
-  const providers = useAsync(() => api.integrations.list(), [], ['integrations']);
+  const music = useAsync(() => integrationsApi.music(), [], ['integrations']);
+  const collections = useAsync(() => integrationsApi.collections(), [], ['integrations']);
+  const shuffle = useAsync(() => integrationsApi.shuffleSources(), [], ['integrations']);
+  const providers = useAsync(() => integrationsApi.list(), [], ['integrations']);
 
   if (music.loading || shuffle.loading) return <div className="empty">loading…</div>;
   if (music.error) return <div className="empty">Could not load: {music.error.message}</div>;
@@ -90,6 +91,7 @@ export function Music({ local }: { local: boolean }) {
   return (
     <>
       <Shuffle />
+      <DesktopBug />
       {/*
         By artist, folded away. It was by genre, and Spotify stopped giving out
         genres in 2026, so a Spotify library was one bar reading
@@ -155,7 +157,7 @@ export function Music({ local }: { local: boolean }) {
                 disabled={!local || busy === collection.id}
                 onChange={(e) => {
                   setBusy(collection.id);
-                  void api.integrations
+                  void integrationsApi
                     .setCollectionIgnored(collection.id, e.target.checked)
                     .then(() => collections.reload())
                     .finally(() => setBusy(''));

@@ -16,18 +16,61 @@ nudges land at better moments.
 ## Architecture
 
 ```
-Windows Electron agent  ──┐
-  · tray + global hotkey  │
+Windows agent (Node)  ────┐
+  · tray + global hotkeys │
   · attention sensor      ├──►  Fastify + SQLite  ◄── Tailscale ── iPhone PWA
-  · Windows toasts        │      (runs on the PC)          · web push
-  · push-to-talk voice   ─┘      · tasks/habits/time/notes  · quick capture
+  · popup above games     │      (runs on the PC)          · web push
+  · voice                ─┘      · tasks/habits/time/notes  · quick capture
                                  · nudge queue
 ```
 
-- `packages/agent` — headless Node service. Owns all Win32 introspection and local toasts.
+- `packages/agent` — headless Node service. Owns all Win32 introspection, the tray and the popup.
 - `packages/server` — Fastify + SQLite (Drizzle). The only writer of the database.
 - `packages/web` — React PWA. Served by the server on the same origin; also the Windows UI in a browser.
 - `packages/shared` — types and Zod schemas shared by all three.
+- `packages/modules/<id>` — the shipped packages (manga, voice, vault, integrations, weather, trips, push).
+
+**For a map rather than a history, read [ARCHITECTURE.md](ARCHITECTURE.md)**,
+and the README in each package. This file is the record of why; those say
+where.
+
+### Where a package's code lives (2026-10-27)
+
+Everything a package needs is in its folder, so deleting the folder takes all of
+it. That was not quite true until this date, and was fixed in one pass:
+
+- **Its API client** is `web/<id>-api.ts` (`integrationsApi`, `voiceApi`,
+  `vaultApi`, `manga`, `weather`, `trips`), going through core's `apiRequest`.
+  Core's `api.ts` had carried about sixty routes for integrations, voice and the
+  vault, which core never called.
+- **Its styles** are `web/<id>.css`, imported by its `view.tsx`, `panel.tsx` and
+  `offline.tsx`, so they load with those chunks and after core's. 326 rules
+  moved out of core's stylesheet, chosen by a script that took a rule when its
+  selector named a class only that package's source uses. Verified by computing
+  every element's style on every screen and tab against the old stylesheet:
+  identical, apart from a manga rating badge whose rule was newer than the
+  comparison. A package's `:root` property (`--manga-new`) goes with it.
+- **Core's stylesheet** is `styles.css` importing `styles/*.css` in cascade
+  order; `make-icons.mjs` reads it with the imports inlined, and its
+  undeclared-property check covers the packages' sheets too.
+
+The large files were split in the same pass, line for line (a script compared
+every non-import line before and after): manga's server routes into
+`server/routes/<group>.ts` with `routes/shared.ts` for the closures several
+groups used, which now log through `useLogger`; `Settings.tsx` into
+`views/settings/`, one file per tab; `shared/src/index.ts` into topic files it
+re-exports; and `api.ts`'s row shapes into `api-types.ts`, re-exported.
+
+**`shared` could only be split because `make-icons.mjs` now runs under
+`node --import tsx`.** Plain `node` strips types but does not resolve `./x.js`
+to the `.ts` beside it, so while the icon script ran under plain node,
+`shared/src/index.ts` had to stay one file with no imports of its own. It said
+so in a comment at its foot.
+
+**`npm run checks`** (`scripts/run-checks.mjs`) is the one list of suites with
+no hardware or network in them. `.github/workflows/checks.yml` runs it on every
+push and pull request, and `release.yml` before a release. Nothing ran on push
+before this, which is how the vault's API check sat failing unnoticed.
 
 ## Where this is heading: every platform, and the server in Docker
 
@@ -1928,6 +1971,35 @@ and More, with the two countdowns behind More.
   on a dashed ring those grow each dash by half its width at both ends until the
   gaps close and the cog is a ring.
 
+### Finding sources, and a chapter from somewhere else
+
+**No source yet → Find sources** (`find-sources.ts`): each series without a
+source is searched for by its title and old names, in your languages, and
+linked only where a result's title is the same once `titleKey` has folded it;
+of several, the source the library already uses most. One at a time with a
+pause, Suwayomi's idle timer pushed out, in the background with progress on
+the card. It replaces the retired import's matcher for any unlinked series.
+
+**A kept chapter the source will not give whole is fetched elsewhere**
+(`tryElsewhere` in `archive.ts`, `chapterElsewhere` in `index.ts`, which the
+reader's "read from another source" also uses). After `MAX_TRIES` it is looked
+for on other sources, ranked by how many of the chapters around it each also
+has, and one must agree with at least one neighbour; the series' own partial
+pages go, so a chapter is never half one scan and half another. Found on
+Eleceed 3.1: two MangaFire pages are PNGs over 10MB and arrive cut off at 10MB
+every time. No other source has a 3.1 (MangaFire alone splits chapter 3), so a
+**part** may be kept as the whole chapter it is in: Atsumaru's chapter 3, 113
+pages, matching five neighbours. The Archive row says so.
+
+**A page already in the reading cache is copied, not fetched**
+(`cachedPageAnywhere` in `page-cache.ts`): keeping a series you were just
+reading takes those chapters off this disk. By path alone, since Suwayomi's
+path carries its chapter id, and only a whole picture. The host's own cache
+only: a friend's copy's cache is its own folder, which the host does not read.
+
+**The archive's writes retry a refused rename** for up to ~3s: the same run hit
+`EPERM` renaming `series.json` mid-chapter, with the app in a OneDrive folder.
+
 ### Bringing a library in from Manga Reader: retired
 
 The importer for Manga Reader's iMazing backup was removed on 2026-10-23,
@@ -1940,6 +2012,15 @@ marks, the old app's names in `altTitles`, and each series' `origin` (the site
 and title it came from). A series still without a source is under the
 Library's **No source yet** filter, and a cover there opens the search for one,
 which is how any series is linked by hand.
+
+**The rest of the old history is searchable** (`old-history.ts`). The import
+took the 898 favourites and left 1,295 series opened and never starred. On
+retiring it, the old reader was recovered from git once, outside the app, and
+run on the backup still on the Desktop, writing
+`data/manga-old-history.json` (2,183 titles: sites, chapters read, the
+furthest, when last opened). History's search box looks through this app's
+history and then this, marking what you follow now; one you do not follow
+searches your sources for it. Read-only; a copy without the file has none.
 
 ### Installing a package, the way you would a texture pack
 
@@ -2106,8 +2187,7 @@ leaves nothing behind that could be "newer" than anything.
 
 **Its first version shipped with `stdio: 'ignore'` and no logging**, so when the
 first restart failed the app was left stopped with not one line written anywhere.
-Output now goes to `logs
-estart.log` through PowerShell's own `*>>` — not a
+Output now goes to `logs\restart.log` through PowerShell's own `*>>` — not a
 `>>` on the cmd line, because `start /b` hands the child cmd's handles and cmd's
 were `ignore`. That is written down two sections above, about the tray, and was
 reproduced here anyway.
@@ -2319,6 +2399,103 @@ A task due later today has no nudge yet — the sweep only queues within an hour
 of the due time. Showing "Nothing queued" while a task is due in two hours is
 false, so the Dashboard also lists what *will* queue, marked `later` with the
 time it'll fire.
+
+### Edit mode: renaming and moving things on the screen itself
+
+**✎ Edit screens**, at the foot of the menu, on the PC and the phone. While it
+is on, a bar sits at the top right (on a phone just **✎ Done**), outlined text
+can be renamed, and sections that can move have a ⠿. Asked for as part of
+working on the app without seeing a line of code; the code editor and the
+blueprints (a clickable map of the app, then node graphs that make it do
+things) are to follow.
+
+**Saved as data, not as source.** That was the choice offered and taken: a
+change works from the phone, shows at once on every device, and survives an
+update, at the cost of not being in git. Rewriting the `.tsx` would have meant
+the PC only and a rebuild per word.
+
+**Text** (`ui-text.tsx`, the server's `ui-text.ts`, `data/ui-text.json`): each
+piece of text the app lets you rename is drawn through `UiText` or `Editable` with a stable
+id and the app's own wording as the fallback, and only what you changed is
+stored, so a default reworded later still reaches what you never touched. The
+ids are `screen:<id>` (the menu, Home and the page title share it),
+`screen:<id>#<section>`, `group:<id>`, `block:<block id>` (a Dashboard heading,
+which the Settings picker also shows) and `<screen>:<thing>` for the rest.
+`PUT /api/ui-text` takes `{ id, text }`, `null` or blank for the original; any
+paired device, since it is your data like a habit's name, announced as
+`ui-text`. `smoke` covers it with a probe id it removes again.
+
+**Every piece of wording in the source, found by the build** (2026-10-28).
+The first version was opt-in per piece of text, wrapped by hand, and reached
+the menu, Home, page titles and the Dashboard's headings; reported as "very
+limited", which it was. `packages/web/ui-text-plugin.mjs` is a Babel plugin
+Vite runs on every `.tsx`, the app's and the shipped packages', and it draws
+text written inside an ordinary element (`<p className="meta">Last
+checked</p>`, `{busy ? 'Saving…' : 'Save'}`) through `UiText`, with the id
+`t:<file>:<hash of the words>`. 1,579 pieces of text, for **5.9KB** gzipped on
+the main bundle (124.1 → 130.0).
+
+**What kept it safe is "written in the source".** The objection to a
+page-wide "click any text" was that it cannot tell the heading "Due today" from
+a task called that. The build can: a task's title arrives in a variable
+(`{task.title}`), and nothing in a variable is touched. The cost is the same
+rule from the other side: wording kept in a list (`{ id: 'general', label:
+'General' }`, rendered as `{entry.label}`) is not reached either, so the tab
+bars on Settings, Notes, Voice, Manga, Browse and Connections are wrapped in
+`Editable` by hand (`tab:<screen>:<id>`, and Connections' tabs use the menu's
+section ids, so one rename does both).
+
+Left alone on purpose: text inside a component (`<Section>Text</Section>`),
+which may need a string; `<option>`, `<textarea>`, SVG text, `<code>` and
+`<pre>`, where an element in place of the text breaks it; anything inside
+`data-ui-fixed`, which is how ✎ Edit screens cannot be hidden; and edit mode's
+own files. Outside edit mode `UiText` is the bare text, no element, so the DOM
+is what it always was. **The id is the words, not the line**, so moving a line
+keeps your change and rewording it in the source starts it afresh; the same
+words twice in one file share a change, which is what renaming "due" on every
+task row should do.
+
+**Hiding hides the line it sits in.** Asked for the grey help text. A hidden
+`UiText` leaves an empty `<span data-ui-hidden hidden>`, and
+`body:not(.editing) :has(> [data-ui-hidden])` hides its parent, so a hint
+built as `Last checked {when}` goes whole rather than leaving `{when}`
+standing. In edit mode the line is drawn faded and struck through, which is the
+way back: click it, **Show it again**. Stored beside the wording
+(`hidden` in `ui-text.json`; `PUT /api/ui-text` takes `{ id, hidden }`).
+Only build-found text offers Hide: an `Editable` is a screen's or a tab's name,
+and a screen leaves the menu or Home in their own ways.
+
+**A click on text inside a button renames it, so the editor offers Press it**,
+which does what the click would have done outside edit mode. Without it, edit
+mode could not change tab, since a tab is nearly all label.
+
+**The editor is a small card beside the text, not typing in place**, because
+much of what can be renamed is inside a button: an input there cannot take
+focus reliably, and Space or Enter press the button. Text inside a button gets
+no tab stop of its own; the keyboard's way to a screen's name is its page
+title, which is the same id. A click on the outlined text renames, and the rest
+of the button (a menu entry's icon) still opens the screen, so you can move
+between screens while editing.
+
+**Moving** goes through `reorder.ts`, lifted out of `OrderedPicker` so Settings,
+the Dashboard and Home share one drag: pointer events on a grip, the order held
+as a draft until the save comes back, nothing written for a drag that ends
+where it began. It finds the drop place from the items' boxes, nearest when the
+pointer is between them, which is what makes a grid (Home) work as well as a
+list. The Dashboard writes the same `dashboardBlocks` and `dashboardPanels` the
+Settings pickers do, and Home the same per-device `homeList`, so the two ways
+cannot disagree. In edit mode an empty section still shows, since one you
+cannot see is one you cannot move, and what is not on the screen is offered
+underneath to add back.
+
+**Being in edit mode is not saved**, per device and per visit: a reload coming
+back in it would leave every label a click from a rename.
+
+Verified in the browser pane against the running server with the new route
+simulated and the Dashboard's writes intercepted, so nothing real changed:
+a heading renamed and put back, ↓ and a mouse drag writing the right order, and
+at phone width a touch drag on Home, ✕ and its offer back, a tile's name
+opening the editor rather than the screen, and no sideways scroll.
 
 ### Right-click to get to the thing that edits it
 
@@ -2761,8 +2938,9 @@ Three things still cannot be served: the Windows shortcut's `.ico`, the
 extension's toolbar icons, and the `dist/` fallbacks referenced before any
 JavaScript runs. `npm run icons -w @everything/web` builds those from the
 defaults, and takes `--accent` / `--shape` to match a changed setting. It
-imports `drawIcon` straight from the server — Node strips the types — so there
-is one definition of what a triangle looks like rather than two that disagree.
+imports `drawIcon` straight from the server, running under `node --import tsx`,
+so there is one definition of what a triangle looks like rather than two that
+disagree.
 
 `packages/web/scripts/make-icons.mjs` generates them at build time with a small
 hand-rolled PNG encoder — no image library, no checked-in binaries. The mark is
@@ -2939,7 +3117,10 @@ that is invisible until it isn't, and the server had no net under it.
 - **Never run `drizzle-kit generate`.** Snapshots stop at `0007`; every later
   migration was written by hand, so it compares against a months-old schema and
   writes a migration re-creating tables that exist. Migrations are written by
-  hand, with an increasing `when` (see the memory note).
+  hand, with an increasing `when` (see the memory note). **Nor `drizzle-kit
+  push`**, which rewrites the database to match `schema.ts` directly and can
+  drop columns. Both were npm scripts (`generate`, and `migrate` for push) and
+  were removed on 2026-10-27; the app applies its migrations at boot.
 
 - **Never commit real data.** `data/`, `*.db`, `.env`, `agent.config.json`,
   `features.json`, `modules/` (installed packages, **not** `packages/modules/`,
@@ -2955,7 +3136,7 @@ that is invisible until it isn't, and the server had no net under it.
   like one that is working.
 - The agent is read-only about the system, **with one deliberate exception**. It
   observes windows and processes; it does not close, kill, or manipulate them.
-  `packages/agent/src/features/voice/actions.ts` breaks that rule on purpose so a voice command
+  `packages/modules/voice/agent/actions.ts` breaks that rule on purpose so a voice command
   can press a hotkey or open a site — decided 2026-08-06. It is the only file
   allowed to, and it is the most dangerous code here: a mis-heard phrase does
   not write a wrong row, it presses keys into whatever window has focus. Keep
@@ -3524,7 +3705,7 @@ Three things there are easy to get wrong:
 `$ErrorActionPreference = 'Stop'`, and Windows PowerShell 5.1 turns each line a
 native program writes to stderr into an error, but only when the output is
 redirected. In a console it passes through, so `Blue Everything.cmd` was fine,
-while the tray's Restart, which sends everything to `logs	ray.log`, died at
+while the tray's Restart, which sends everything to `logs\tray.log`, died at
 vite's "rendering chunks" on a harmless dynamic-import warning: after the stop,
 before any start, so the app was left stopped. npm goes through `Invoke-Npm`
 now, which lowers the preference for that call and leaves failure to
@@ -4207,7 +4388,6 @@ npm run dev -w @everything/web         # PWA with hot reload, proxying /api to :
 
 npm run doctor -w @everything/agent    # verify the Win32 layer is healthy
 npm run bench -w @everything/agent     # what one poll costs
-npm run toast -w @everything/agent     # prove notifications reach the screen
 npm run tray-try -w @everything/agent  # show the tray icon, without running the agent
 npm run overlay-try -w @everything/agent   # show the popup — core, so it survives deleting voice
 npm run sound-try -w @everything/agent     # hear the generated notification tones
@@ -4232,9 +4412,10 @@ npm run features-check   # prove each one can be switched off and deleted
 npm run modules-check -w @everything/server  # the zip reader, and installing a package
 npm run publish-check    # is this repo safe to make public?
 npm run typecheck        # all three TypeScript packages, server included
+npm run checks           # every suite above that needs no hardware or network
 ```
 
-The voice CLIs live inside the feature (`src/features/voice/cli/`), so they stop
+The voice CLIs live inside the package (`packages/modules/voice/agent/cli/`), so they stop
 existing when it does. That is correct: `npm run voice-setup` failing on an
 install with no voice is a better answer than a setup script for a feature that
 is not there.
@@ -5120,7 +5301,7 @@ contradict each other because **the derived side always wins on counts** —
 `counts.has` rather than `counts.set`, so a declared folder that has since been
 filled shows its real number.
 
-Three consequences worth knowing:
+Two consequences worth knowing:
 
 - **Its ancestors are declared too.** A folder at `a/b/c` implies `a` and `a/b`,
   and without them the tree renders a child indented under a parent that is not
@@ -5128,8 +5309,6 @@ Three consequences worth knowing:
 - **The declarations move with the notes.** `moveDeclaredFolders` runs inside the
   rename route, or moving an empty folder would appear to do nothing and moving
   a full one would leave a ghost at the old path.
-- **The declarations move with the notes.** `moveDeclaredFolders` runs inside
-  the rename route, or moving an empty folder would appear to do nothing.
 
 **The name is typed in the tree, not in a `prompt`.** A modal dialogue sits in
 front of the thing you are adding to, so you cannot see where the folder is
@@ -5394,7 +5573,7 @@ before any of this, 100.4KB bundled, **93.3KB** fetched, with the screen itself
 ## Password vault
 
 `npm run vault-check -w @everything/server` proves the cryptography. Run it
-before trusting any change to `src/features/vault/`.
+before trusting any change to `packages/modules/vault/`.
 
 **No crypto dependencies.** Argon2id and AES-256-GCM both come from Node's
 built-in `crypto`, which is OpenSSL. Node 24 exposes Argon2 directly, so there
@@ -5493,7 +5672,7 @@ inside a password, a newline inside either.
 
 ### The browser extension
 
-`packages/extension` — Manifest V3, loaded unpacked from `brave://extensions`
+`packages/modules/vault/extension` — Manifest V3, loaded unpacked from `brave://extensions`
 with developer mode on. Pair it under **Settings → Browser extension**.
 
 **No background worker and no content scripts.** Nothing runs until the toolbar
@@ -6430,8 +6609,9 @@ generated rather than committed. A picture of your own is uploaded to
 `data/avatar.<ext>` — beside the database, not in it, because a settings row
 read on every page load has no business carrying an image — and the agent
 downloads it once per `avatarVersion`. GDI+ decodes it, since `LoadImageW` only
-understands BMP and nobody has a BMP. `probeAvatar()` exists because a failed
-decode is otherwise silent: the gutter just stays empty.
+understands BMP and nobody has a BMP. A failed decode is silent: the gutter just
+stays empty. (`probeAvatar()` was meant to report it, and nothing ever called
+it; it was removed with the other unused exports on 2026-10-27.)
 
 ### It is a conversation, not a receipt
 
@@ -8082,6 +8262,26 @@ because the API cannot empty a queue.** The song playing is started again as the
 What was coming next (the rest of an album or playlist) goes, the song carries
 on with at most a blip, and the session waits until the first of its own songs
 plays. Songs queued by hand in Spotify cannot be removed by any app, and stay.
+
+**Waiting for Spotify to fix the desktop app** (`spotify-desktop-bug.ts`,
+rules in `desktop-bug-rules.ts`, a card under Shuffle on the Music tab). The
+desktop app's refusal below is Spotify's bug, on Windows and Mac since its
+autumn updates, with a forum thread and no answer from Spotify
+(`THREAD_URL`); the Web Player, the phone and the Linux app are not affected.
+While it stands (Play has met it, or the thread is being watched, and no fix
+seen), `pickDevice` sends a Play from the PC to a Web Player if one is open,
+even over music on the desktop app. Three ways to learn it is fixed: the
+thread is read once a day while watching, through the forum's public JSON API
+(two requests; an hourly tick asks whether a day has passed), and a reminder
+goes through the nudge queue for a reply from staff (`🎵 Staff.`), a volunteer
+Star saying it is known or passed on (Stars are a third of all replies, mostly
+general advice), a reply that reads as a fix, or the thread answered or closed;
+**Test the desktop app** sends one song on its own (refused while anything
+plays: a pass moves the music, a fail clears what was paused); and a Play the
+desktop app takes after the refusal was seen marks it fixed and says so. The
+first read takes a baseline, and "fixed" in a sentence that hopes, asks,
+negates or mentions a workaround does not count: run over the thread's 17
+replies, none counted.
 
 **Which device: where you pressed Play, not Spotify's "active" one.**
 Spotify's active device is the last one that played, paused or not, so Play on

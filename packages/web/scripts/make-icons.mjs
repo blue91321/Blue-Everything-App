@@ -2,7 +2,7 @@
  * Generates the icons that have to exist as files on disk.
  *
  *   npm run icons -w @everything/web
- *   node scripts/make-icons.mjs --accent green --shape triangle
+ *   node --import tsx scripts/make-icons.mjs --accent green --shape triangle
  *
  * Most of the app's icons are no longer built here — the PWA manifest, the
  * favicon and the home-screen icon are rendered per request by the server, so
@@ -17,11 +17,12 @@
  * does, because writing into the repo and busting the Windows icon cache is a
  * lot of machinery for an icon most people see once.
  *
- * The drawing itself is imported from the server rather than reimplemented.
- * Node strips the types on the way in, so there is one definition of what a
- * triangle looks like instead of two that quietly disagree.
+ * The drawing itself is imported from the server rather than reimplemented,
+ * so there is one definition of what a triangle looks like instead of two that
+ * quietly disagree. Run under `node --import tsx` (see `npm run icons`), which
+ * resolves the server's and shared's TypeScript imports as the server does.
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { drawIcon, encodeIco } from '../../server/src/icon.ts';
@@ -59,7 +60,10 @@ if (!LOGO_SHAPES.includes(shape) || shape === 'image') {
  * slightly different blue from the app it belongs to is exactly the sort of
  * thing nobody notices for months.
  */
-const css = readFileSync(resolve(here, '../src/styles.css'), 'utf8');
+/** A stylesheet with its `@import`s read in, as the build inlines them. */
+const readCss = (file) =>
+  readFileSync(file, 'utf8').replace(/@import\s+'([^']+)';/g, (_, part) => readCss(resolve(dirname(file), part)));
+const css = readCss(resolve(here, '../src/styles.css'));
 const drift = [];
 
 for (const name of ACCENT_COLORS) {
@@ -93,19 +97,37 @@ if (drift.length > 0) {
  * above — invisible until somebody happens to look at the one screen where it
  * shows — so it is refused in the same place, at build time.
  */
-const declared = new Set([...css.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((m) => m[1]));
+/*
+ * Packages carry their own stylesheets (`packages/modules/<id>/web/*.css`) and
+ * use core's properties, so the check reads them all: a package naming a colour
+ * nothing declares is the same silent hole.
+ */
+const modulesDir = resolve(here, '../../modules');
+const stylesheets = [{ name: 'styles.css', text: css }];
+for (const id of existsSync(modulesDir) ? readdirSync(modulesDir) : []) {
+  const webDir = resolve(modulesDir, id, 'web');
+  if (!existsSync(webDir)) continue;
+  for (const file of readdirSync(webDir).filter((f) => f.endsWith('.css'))) {
+    stylesheets.push({ name: `${id}/web/${file}`, text: readFileSync(resolve(webDir, file), 'utf8') });
+  }
+}
+
+const declared = new Set(stylesheets.flatMap(({ text }) => [...text.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((m) => m[1])));
 const undeclared = new Map();
 
-for (const use of css.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*(,|\))/g)) {
-  // A fallback — `var(--x, red)` — is a deliberate default rather than a typo,
-  // and stays legal whether or not the property is ever declared.
-  if (use[2] === ',') continue;
-  if (declared.has(use[1])) continue;
-  undeclared.set(use[1], (undeclared.get(use[1]) ?? 0) + 1);
+for (const { name: sheet, text } of stylesheets) {
+  for (const use of text.matchAll(/var\(\s*(--[a-zA-Z0-9-]+)\s*(,|\))/g)) {
+    // A fallback — `var(--x, red)` — is a deliberate default rather than a typo,
+    // and stays legal whether or not the property is ever declared.
+    if (use[2] === ',') continue;
+    if (declared.has(use[1])) continue;
+    const key = `${use[1]} in ${sheet}`;
+    undeclared.set(key, (undeclared.get(key) ?? 0) + 1);
+  }
 }
 
 if (undeclared.size > 0) {
-  console.error('\nstyles.css uses custom properties that nothing declares:\n');
+  console.error('\nThe stylesheets use custom properties that nothing declares:\n');
   for (const [name, count] of undeclared) {
     console.error(`  ! ${name} — used ${count} time${count === 1 ? '' : 's'}, never defined`);
   }
@@ -147,10 +169,15 @@ const ico = encodeIco([16, 32, 48, 256].map((size) => ({ size, png: draw(size) }
 writeFileSync(resolve(assetsDir, 'everything.ico'), ico);
 console.log(`  ${'everything.ico'.padEnd(22)} 16/32/48/256  ${(ico.length / 1024).toFixed(1)} KB`);
 
-// The browser extension's toolbar icon, from the same mark.
-const extensionIcons = resolve(here, '../../extension/icons');
-mkdirSync(extensionIcons, { recursive: true });
-for (const size of [16, 32, 48, 128]) {
-  writeFileSync(resolve(extensionIcons, `icon-${size}.png`), draw(size));
+// The browser extension's toolbar icon, from the same mark. The extension is
+// part of the vault package, so a build with that package deleted has none.
+// (It was written to `packages/extension`, where the extension lived before it
+// moved, so that folder was updated and the real icons never were.)
+const extensionIcons = resolve(here, '../../modules/vault/extension/icons');
+if (existsSync(dirname(extensionIcons))) {
+  mkdirSync(extensionIcons, { recursive: true });
+  for (const size of [16, 32, 48, 128]) {
+    writeFileSync(resolve(extensionIcons, `icon-${size}.png`), draw(size));
+  }
+  console.log(`  ${'extension icons'.padEnd(22)} 16/32/48/128\n`);
 }
-console.log(`  ${'extension icons'.padEnd(22)} 16/32/48/128\n`);

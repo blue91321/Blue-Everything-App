@@ -1,0 +1,155 @@
+/* Theme and accent: the colours everything else is drawn in. Part of styles.css; see the order there. */
+
+/*
+ * Theme and accent are two independent axes.
+ *
+ *   <html data-theme="dark|light">   the surfaces
+ *   <html data-accent="blue|…">      the one colour on top of them
+ *
+ * Kept apart because they are chosen separately in Settings, and because
+ * folding them together would mean eight accents × two themes = sixteen blocks
+ * to keep in step. This way each accent declares two lines per theme and
+ * nothing else has to know it exists.
+ *
+ * Both attributes are stamped on <html> before React mounts (see index.html),
+ * so there is no flash of the wrong theme on a cold load.
+ */
+
+:root {
+  --radius: 12px;
+  --gap: 12px;
+  /* Must match DRAWER_WIDTH in useEdgeDrawer.ts. */
+  --drawer-width: 260px;
+}
+
+/* ---- surfaces ---------------------------------------------------- */
+
+/*
+ * Dark is the default, and is what an unattributed document gets. `system`
+ * resolves to one of these two in JS rather than via a media query here — the
+ * stored setting has three values and CSS would only know about two of them,
+ * so the resolution belongs in one place and that place is `theme.ts`.
+ */
+:root,
+:root[data-theme='dark'] {
+  --bg: #14161c;
+  --surface: #1c1f27;
+  --surface-raised: #232734;
+  /* A chapter you have read or started: lighter than a row, and than a row's hover. */
+  --row-read: #2b303d;
+  --row-read-hover: #343a49;
+  --border: #2b303c;
+  --text: #e8e9ed;
+  --muted: #8b90a0;
+  --danger: #ff6b6b;
+  --ok: #5fd18c;
+
+  /*
+   * Presence, deliberately **not** the accent.
+   *
+   * Everything else on screen follows the accent, and these must not: green
+   * means online in every chat client on this machine, and re-teaching that per
+   * accent would make the one row of colour that carries meaning the one you
+   * cannot read at a glance. With the accent applied, choosing red would have
+   * made every online friend look busy.
+   *
+   * Declared twice like the accents, and for the same reason — these are read
+   * against `#14161c` here and against white below, and no single hex is legible
+   * on both.
+   */
+  --presence-in-game: #4d9bff;
+  --presence-online: #43b581;
+  --presence-away: #e5b04a;
+  --presence-dnd: #f04747;
+  --presence-offline: #6a7080;
+
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-raised: #eef0f4;
+  --row-read: #e9edf3;
+  --row-read-hover: #dde2ea;
+  --border: #dcdfe6;
+  --text: #1a1c22;
+  --muted: #666c7a;
+  --danger: #c92a2a;
+  --ok: #2b8a3e;
+
+  /* Darkened until each reads on white — the pale dark-theme greens and yellows
+     disappear against it, which is exactly the case a single shared value gets
+     wrong on precisely one screen. */
+  --presence-in-game: #1a73e8;
+  --presence-online: #1f9254;
+  --presence-away: #b07d10;
+  --presence-dnd: #d13438;
+  --presence-offline: #8b90a0;
+
+  color-scheme: light;
+}
+
+/* ---- accents ------------------------------------------------------ */
+
+/*
+ * Two values each: the colour, and what stays legible on top of it.
+ *
+ * The dark-theme accents are light enough to read against #14161c; the
+ * light-theme ones are darkened until they carry white text. That is why each
+ * accent appears twice rather than once with an opacity trick — a single hex
+ * cannot satisfy both, and the version that "mostly works" is the one that
+ * makes a button label unreadable on exactly one screen.
+ */
+
+/*
+ * Two things about these selectors are load-bearing.
+ *
+ * **They are not scoped to `:root`.** Any element carrying `data-accent` gets
+ * its own `--accent`, which is what lets the swatches on the Settings screen
+ * paint themselves from the real palette instead of a second copy that can
+ * drift. Written as `:root[data-accent=…]` they matched only <html>, and every
+ * swatch came out the same colour as the current accent.
+ *
+ * **The dark defaults live in `:root` alone, never `:root[data-theme='dark']`.**
+ * That pairing is specificity (0,2,0) and would outrank `[data-accent='amber']`
+ * at (0,1,0) — so with `data-theme` always set by the boot script, the default
+ * blue beat every accent and choosing a colour did nothing at all. The light
+ * overrides below are deliberately (0,2,0) so they *do* outrank the dark set.
+ */
+
+:root {
+  --accent: #4c8dff;
+  --accent-text: #0b1020;
+}
+
+[data-accent='blue'] { --accent: #4c8dff; --accent-text: #0b1020; }
+[data-accent='amber'] { --accent: #ffb454; --accent-text: #14161c; }
+[data-accent='green'] { --accent: #5fd18c; --accent-text: #0d1a12; }
+[data-accent='teal'] { --accent: #3fc9c2; --accent-text: #08191a; }
+[data-accent='purple'] { --accent: #a78bfa; --accent-text: #14102a; }
+[data-accent='pink'] { --accent: #f472b6; --accent-text: #23101a; }
+[data-accent='red'] { --accent: #ff7a7a; --accent-text: #200c0c; }
+[data-accent='grey'] { --accent: #9aa3b8; --accent-text: #14161c; }
+
+[data-theme='light'][data-accent='blue'] { --accent: #1b62d4; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='amber'] { --accent: #b96f00; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='green'] { --accent: #1f7a4d; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='teal'] { --accent: #10727a; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='purple'] { --accent: #6d43d4; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='pink'] { --accent: #b83280; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='red'] { --accent: #c92a2a; --accent-text: #ffffff; }
+[data-theme='light'][data-accent='grey'] { --accent: #4a5262; --accent-text: #ffffff; }
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Stops iOS bouncing the whole page when a list is scrolled to its end. */
+  overscroll-behavior-y: none;
+}

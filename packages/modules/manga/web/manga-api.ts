@@ -60,6 +60,37 @@ export interface SeriesSummary {
   kept?: boolean;
 }
 
+/** What was read in Manga Reader, from the backup — see `old-history.ts` on the server. */
+export interface OldHistorySearch {
+  available: boolean;
+  total: number;
+  matches: Array<{
+    title: string;
+    sites: string[];
+    chaptersRead: number;
+    furthest: number | null;
+    lastChapter: string | null;
+    lastReadAt: number | null;
+    favourite: boolean;
+    /** The series in your library now, if it is. */
+    following: string | null;
+  }>;
+}
+
+/** Finding a source for every series without one — see `find-sources.ts` on the server. */
+export interface FindSourcesState {
+  running: boolean;
+  total: number;
+  done: number;
+  linked: number;
+  notFound: number;
+  failed: number;
+  recent: string[];
+  finishedAt: number | null;
+  problem: string | null;
+  unlinked: number;
+}
+
 /** A source left out of searching and browsing. */
 export interface IgnoredSource {
   id: string;
@@ -460,6 +491,10 @@ export interface ArchiveProgress {
   /** Chapter numbers complete on the PC — see the server's `archive.ts`. */
   savedChapters: number[];
   /** Who asked for it to be kept: `you`, or friends' copies by name. Absent from an older server. */
+  /** Chapters saved from another source because the series' own would not give them whole. */
+  fromElsewhere?: Array<{ sourceName: string; count: number }>;
+  /** Parts (3.1) kept as the whole chapter they are in (3), from another source. */
+  asWhole?: Array<{ number: number; whole: number; sourceName: string }>;
   keptFor?: string[];
 }
 
@@ -484,6 +519,8 @@ export interface CollectionRules {
 export const manga = {
   list: () => call<Library>('/api/manga'),
   history: () => call<{ entries: HistoryEntry[] }>('/api/manga/history'),
+  /** Manga Reader's history, searched by title — see `old-history.ts` on the server. */
+  oldHistory: (q: string) => call<OldHistorySearch>(`/api/manga/old-history?q=${encodeURIComponent(q)}`),
   search: (q: string) => call<{ results: Candidate[] }>(`/api/manga/search?q=${encodeURIComponent(q)}`),
   add: (candidate: Candidate) =>
     call<SeriesSummary>('/api/manga', { method: 'POST', body: JSON.stringify(candidate) }),
@@ -537,6 +574,10 @@ export const manga = {
       method: 'PUT',
       body: JSON.stringify({ chapters }),
     }),
+  findSources: {
+    get: () => call<FindSourcesState>('/api/manga/find-sources'),
+    start: () => call<FindSourcesState>('/api/manga/find-sources', { method: 'POST' }),
+  },
   setReleaseTasks: (on: boolean) =>
     call<{ releaseTasks: boolean }>('/api/manga/release-tasks', { method: 'PUT', body: JSON.stringify({ on }) }),
 

@@ -5,6 +5,27 @@ workspaces, the browser extension, and the six shipped packages. They are one
 app released as one thing. See **Versions** in `CLAUDE.md` for why, and for the
 files `npm version` does not touch.
 
+## Unreleased
+
+- **Edit screens reaches nearly all the app's text now**, not only names and headings: grey help lines, labels, buttons, empty-list messages and the tabs, on every screen. Your own things (tasks, notes, manga titles) are never offered. **Hide** takes a line you don't need off the screen; edit mode still shows it faded, so you can click it and choose Show it again. Text inside a button opens the editor when clicked; **Press it** does what the button does, so you can still change tab while editing.
+- **Edit screens.** Open the menu and press ✎ Edit screens. Outlined text can then be renamed: screen names in the menu and on Home, page titles, and the Dashboard's headings. Sections can be dragged by ⠿, or moved with ↑ ↓, or taken off with ✕: the Dashboard's sections and side panels, and the tiles on Home. What isn't on the screen is offered underneath to add back. Your wording is saved on the PC, so every device shows it and updates keep it; "Use the original" puts any of it back.
+- Code tidy-up. 32 unused functions and types were removed. Four source files git had been treating as binary are plain text again, and publish-check now refuses a stray control character in any source file, not just scripts. Two npm scripts that could damage the database (`migrate`, `generate`) are gone. The vault's API check had been failing unnoticed; it now passes and runs on every release, with the trips check.
+- Fixed: in Manga → History, series you read without following showed their title instead of their cover.
+- Fixed: `npm run icons` wrote the browser extension's icons to an old folder, so the extension's real icons never updated.
+- **Each package now carries all of its own code.** The integrations, voice and vault packages' API clients, and 326 style rules for manga, integrations, weather and voice, had lived in the core app; deleting a package left them behind. A package's styles now load with its screen, so the main stylesheet is about half the size (28KB). Nothing looks different: every screen was compared element by element.
+- The largest files are split up: manga's server routes into seven files by area, Settings into one file per tab, the shared definitions by topic, and the core stylesheet into nine parts. Nothing about how they work changed.
+- New guides for working on the code: `ARCHITECTURE.md` (a map of the app) and a short README in each package. The checks now run on every push, not only before a release, and `npm run checks` runs them all locally.
+
+- **Spotify's desktop app bug.** Since its October update, Spotify's desktop app refuses songs sent to it one at a time, which the shuffle needs. While that lasts, Play sends the shuffle to the Web Player (open.spotify.com) if it's open. A card under Shuffle on the Music tab can watch Spotify's forum thread about it once a day and remind you when Spotify replies or someone reports a fix, and has a button to test the desktop app yourself. If Play finds the desktop app working again, it tells you.
+
+- Keeping a series you've just been reading copies the chapters already in the reading cache instead of downloading them again.
+- **Search on the History tab.** It also searches what you read in Manga Reader (the 1,295 series you opened there but never favourited, recovered once from the backup still on your Desktop), with how far you got and whether you follow it now. Tap one you don't follow to search your sources for it.
+- Manga covers are kept by your browser for 30 days instead of one, so the phone's Library stops fetching every cover again each day.
+- Sort the manga library by **Rating**: rated series first, highest first, then everything else in the order you had before. New chapters on top and Favourites on top apply only to the unrated part. Your rating now shows in the bottom-right corner of each cover.
+- **Find sources** on the Library's No source yet filter: searches for each series by its title and links it only where the title is exactly the same, preferring the source you use most.
+- A chapter kept on the PC that its source won't give whole is now fetched from another source, chosen by which one numbers the chapters around it the same way. When no other source has a part chapter (like 3.1), it keeps the whole chapter that part belongs to. Eleceed is now complete: two pages of 3.1 always arrived cut off on MangaFire.
+- Fixed: downloading into the Local collection could stop partway when Windows briefly locked a file (OneDrive, for one).
+
 ## 0.6.0
 
 - A manga page already being fetched is now shared with anyone else asking for it: two people opening the same chapter at once took more than twice as long, because every page went to the site twice. Friends' copies fetch through yours, so it covers them too.

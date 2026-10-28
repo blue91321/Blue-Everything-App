@@ -57,13 +57,30 @@ import { useButtonMenu } from '@app/ContextMenu';
 import { Icon } from './Icons';
 import type { SeriesSummary } from './manga-api';
 import { Tile } from './Tile';
+import { manga, type FindSourcesState } from './manga-api';
 /*
  * The ordering lives in `shelf.ts` so the Dashboard card can use it without
  * importing this screen — see the note at the top of that file. Re-exported
  * because several other files already take these from here, and moving a file
  * should not mean editing every importer.
  */
-import { FAV_FIRST_KEY, NEW_FIRST_KEY, SORT_KEY, SORT_LABEL, hasNew, notAnswering, sorted, sourceHasNothing, sourceLabel, storedSort, toCatchUp, type SortKey } from './shelf';
+import {
+  FAV_FIRST_KEY,
+  NEW_FIRST_KEY,
+  SORT_KEY,
+  SORT_LABEL,
+  THEN_KEY,
+  hasNew,
+  notAnswering,
+  sorted,
+  sourceHasNothing,
+  sourceLabel,
+  storedSort,
+  storedThen,
+  toCatchUp,
+  type SortKey,
+  type ThenKey,
+} from './shelf';
 export { hasNew, notAnswering, sourceHasNothing, sourceLabel, toCatchUp, type SortKey };
 
 export type Show = 'all' | 'starred' | 'kept' | 'new' | 'broken' | 'empty' | 'unlinked';
@@ -149,6 +166,8 @@ export function Library({
   onFilter: (text: string) => void;
 }) {
   const [sort, setSort] = useState<SortKey>(storedSort);
+  // What Rating falls back on, after the rated ones: the order chosen before it.
+  const [then, setThen] = useState<ThenKey>(storedThen);
   const [newFirst, setNewFirst] = useState(() => stored(NEW_FIRST_KEY) !== '0');
   const [favFirst, setFavFirst] = useState(() => stored(FAV_FIRST_KEY) === '1');
   const [show, setShow] = useState<Show>(storedShow);
@@ -178,8 +197,12 @@ export function Library({
 
   const sortMenu = useButtonMenu(() => [
     ...(Object.keys(SORT_LABEL) as SortKey[]).map((key) => ({
-      label: `${key === sort ? '✓ ' : ' '}${SORT_LABEL[key]}`,
+      label: `${key === sort ? '✓ ' : ' '}${SORT_LABEL[key]}${key === 'rating' ? `, then ${SORT_LABEL[sort === 'rating' ? then : sort].toLowerCase()}` : ''}`,
       onSelect: () => {
+        if (key === 'rating' && sort !== 'rating') {
+          setThen(sort);
+          keep(THEN_KEY, sort);
+        }
         setSort(key);
         keep(SORT_KEY, key);
       },
@@ -244,8 +267,8 @@ export function Library({
           (show === 'unlinked' && !s.source)) &&
         (tag === null || (s.tags ?? []).includes(tag))
     );
-    return sorted(matching, sort, newFirst, favFirst);
-  }, [series, filter, sort, newFirst, favFirst, show, tag, shelf, hiddenShelves]);
+    return sorted(matching, sort, newFirst, favFirst, then);
+  }, [series, filter, sort, then, newFirst, favFirst, show, tag, shelf, hiddenShelves]);
 
   const fresh = counts.new;
   /*
@@ -384,6 +407,8 @@ export function Library({
         </p>
       )}
 
+      {show === 'unlinked' && counts.unlinked > 0 && <FindSources />}
+
       <div className="manga-lib-grid">
         {shown.slice(0, limit).map((s) => (
           <Tile
@@ -431,3 +456,69 @@ function ShowMore({ left, onMore }: { left: number; onMore: () => void }) {
   );
 }
 
+/**
+ * Find sources for everything under "No source yet": a search per series by
+ * its title, linked only on an exact match (`find-sources.ts`). It runs in the
+ * background, so this asks how it is going every few seconds while it runs,
+ * and the library fills in as it links.
+ */
+function FindSources() {
+  const [state, setState] = useState<FindSourcesState | null>(null);
+  const [problem, setProblem] = useState('');
+  useEffect(() => {
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = () =>
+      manga.findSources.get().then(
+        (s) => {
+          if (stop) return;
+          setState(s);
+          if (s.running) timer = setTimeout(ask, 3000);
+        },
+        () => {}
+      );
+    void ask();
+    return () => {
+      stop = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [state?.running]);
+
+  const start = async () => {
+    setProblem('');
+    try {
+      setState(await manga.findSources.start());
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
+  };
+
+  const s = state;
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div className="row between" style={{ alignItems: 'center', gap: 8 }}>
+        <div className="grow">
+          <div className="title">Find sources for these</div>
+          <div className="meta">
+            {s?.running
+              ? `Searching: ${s.done} of ${s.total} done, ${s.linked} linked so far.`
+              : 'Searches your sources for each by its title, and links one only where the title is exactly the same. Roughly ten seconds a series, in the background: you can carry on reading.'}
+          </div>
+        </div>
+        <button className="btn primary" disabled={!s || s.running} onClick={() => void start()}>
+          {s?.running ? 'Searching…' : 'Find sources'}
+        </button>
+      </div>
+      {s?.running && <progress max={s.total || 1} value={s.done} style={{ width: '100%', marginTop: 8 }} />}
+      {s && !s.running && s.finishedAt && (
+        <p className="meta" style={{ marginTop: 8 }}>
+          Last run: {s.linked} linked, {s.notFound} not found under the same name
+          {s.failed ? `, ${s.failed} the sources would not answer for` : ''}. {s.unlinked} still have no source; a cover
+          here opens the search to find one by hand.
+        </p>
+      )}
+      {s && s.recent.length > 0 && <p className="meta">Linked: {s.recent.join(', ')}</p>}
+      {(problem || s?.problem) && <p className="banner">{problem || s?.problem}</p>}
+    </div>
+  );
+}

@@ -21,7 +21,7 @@
  *     rejected login with an error page that does not say why.
  */
 import { useState } from 'react';
-import { api, type CredentialFieldInfo, type ProviderInfo } from '@app/api';
+import { integrationsApi, type CredentialFieldInfo, type ProviderInfo } from './integrations-api';
 
 export function Credentials({ provider, reload }: { provider: ProviderInfo; reload: () => void }) {
   const [values, setValues] = useState<Record<string, string>>({});
@@ -42,7 +42,7 @@ export function Credentials({ provider, reload }: { provider: ProviderInfo; relo
       // Only what was actually typed. Untouched fields are omitted rather than
       // sent blank, which is what keeps a set secret from being wiped by
       // somebody correcting the id above it.
-      await api.integrations.saveCredentials(provider.id, Object.fromEntries(edited));
+      await integrationsApi.saveCredentials(provider.id, Object.fromEntries(edited));
       setValues({});
       setSaved(true);
       reload();
@@ -59,7 +59,7 @@ export function Credentials({ provider, reload }: { provider: ProviderInfo; relo
     try {
       // Explicit empty string, which the route reads as "clear it" — as
       // distinct from omitting the key, which means "leave it".
-      await api.integrations.saveCredentials(provider.id, { [key]: '' });
+      await integrationsApi.saveCredentials(provider.id, { [key]: '' });
       setValues((v) => ({ ...v, [key]: '' }));
       reload();
     } catch (error) {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { api, type Game, type Habit, type VoiceCommand, type VoiceCommandKind } from '@app/api';
+import { api, type Game, type Habit } from '@app/api';
+import { voiceApi, type VoiceCommand, type VoiceCommandKind } from './voice-api';
 import { useAsync } from '@app/useAsync';
 import { Toggle } from '@app/controls';
 
@@ -154,10 +155,10 @@ function readCollapsed(): Set<string> {
  * support and the open/closed semantics for free.
  */
 export function VoicePhrases() {
-  const commands = useAsync(() => api.voice.commands(), [], ['settings', 'habits']);
+  const commands = useAsync(() => voiceApi.commands(), [], ['settings', 'habits']);
   // Only the agent can answer "does the model know this word", because only it
   // has the model loaded.
-  const status = useAsync(() => api.voice.status(), [], ['settings']);
+  const status = useAsync(() => voiceApi.status(), [], ['settings']);
   const habits = useAsync(() => api.habits.list(), [], ['habits']);
   const games = useAsync(() => api.games.list(), [], ['games']);
   const [adding, setAdding] = useState(false);
@@ -257,7 +258,7 @@ export function VoicePhrases() {
           <button
             className="btn subtle danger"
             aria-label={`Remove ${command.label ?? command.kind}`}
-            onClick={() => api.voice.removeCommand(command.id).then(reload)}
+            onClick={() => voiceApi.removeCommand(command.id).then(reload)}
           >
             remove
           </button>
@@ -423,8 +424,8 @@ function CommandEditor({
     };
 
     try {
-      if (command) await api.voice.updateCommand(command.id, payload);
-      else await api.voice.createCommand(payload);
+      if (command) await voiceApi.updateCommand(command.id, payload);
+      else await voiceApi.createCommand(payload);
       onDone(realKind);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'could not save');

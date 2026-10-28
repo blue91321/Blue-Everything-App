@@ -13,7 +13,7 @@
  * what it said yesterday. It syncs on demand, like a playlist.
  */
 import { useMemo, useState } from 'react';
-import { api, type FollowRow } from '@app/api';
+import { integrationsApi, type FollowRow } from './integrations-api';
 import { useAsync } from '@app/useAsync';
 import { CATEGORY_LABELS, relativeTime } from './Integrations';
 
@@ -49,7 +49,7 @@ export function Following() {
   const [sort, setSort] = useState<Sort>('inPlaylists');
   const [search, setSearch] = useState('');
 
-  const view = useAsync(() => api.integrations.follows(), [], ['integrations']);
+  const view = useAsync(() => integrationsApi.follows(), [], ['integrations']);
 
   const shown = useMemo(() => {
     const rows = view.data?.follows ?? [];
@@ -321,7 +321,7 @@ function LinkPanel({ row, all, onChanged }: { row: FollowRow; all: FollowRow[]; 
                 <button
                   className="btn subtle"
                   disabled={busy}
-                  onClick={() => void run(() => api.integrations.setPrimaryFollow(account.id))}
+                  onClick={() => void run(() => integrationsApi.setPrimaryFollow(account.id))}
                 >
                   Make main
                 </button>
@@ -330,7 +330,7 @@ function LinkPanel({ row, all, onChanged }: { row: FollowRow; all: FollowRow[]; 
                 className="btn subtle"
                 disabled={busy}
                 title="Take this one out, leaving the rest joined"
-                onClick={() => void run(() => api.integrations.unlinkFollow(account.id))}
+                onClick={() => void run(() => integrationsApi.unlinkFollow(account.id))}
               >
                 Unlink
               </button>
@@ -365,7 +365,7 @@ function LinkPanel({ row, all, onChanged }: { row: FollowRow; all: FollowRow[]; 
              * does it: a row's `id` is a group key, the two are strings called
              * `id` a few lines apart, and passing the wrong one typechecks.
              */
-            onClick={() => void run(() => api.integrations.linkFollows(row.accounts[0].id, other.accounts[0].id))}
+            onClick={() => void run(() => integrationsApi.linkFollows(row.accounts[0].id, other.accounts[0].id))}
           >
             {other.provider}: {other.name}
           </button>

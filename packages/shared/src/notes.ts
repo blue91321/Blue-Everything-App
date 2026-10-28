@@ -103,7 +103,7 @@ export function extractWikiLinks(body: string): WikiLink[] {
  * Nested tags (`#work/urgent`) are kept whole, which is what Obsidian does, and
  * the tree is built from the slashes by whoever displays them.
  */
-const TAG = /(^|[\s([{,;:!?'"])#([A-Za-zÀ-￿][\wÀ-￿/-]*)/g;
+const TAG = /(^|[\s([{,;:!?'"])#([A-Za-zÀ-\uffff][\wÀ-\uffff/-]*)/g;
 
 export function extractTags(body: string): string[] {
   const found = new Set<string>();
@@ -228,7 +228,7 @@ const RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 
 export function safeFileName(title: string, fallback = 'note'): string {
   const cleaned = title
-    .replace(/[<>:"/\\|?* -]/g, ' ')
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[. ]+$/, '');
@@ -457,7 +457,7 @@ export function parseInline(text: string): Inline[] {
       continue;
     }
 
-    const tag = /^#([A-Za-zÀ-￿][\wÀ-￿/-]*)/.exec(rest);
+    const tag = /^#([A-Za-zÀ-\uffff][\wÀ-\uffff/-]*)/.exec(rest);
     if (tag && (i === 0 || /[\s([{,;:!?'"]/.test(text[i - 1]))) {
       flush();
       out.push({ kind: 'tag', tag: tag[1].replace(/\/+$/, '') });

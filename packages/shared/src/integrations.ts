@@ -294,11 +294,6 @@ export interface CredentialField {
   secret?: boolean;
 }
 
-/** The env vars a provider will read if its fields are left blank. */
-export function envVarsFor(provider: ProviderId): string[] {
-  return PROVIDERS[provider].credentials.map((field) => field.envVar);
-}
-
 /* ------------------------------------------------------------------ */
 
 export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
@@ -855,9 +850,6 @@ export const FOLLOW_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter(
   (p) => p.capabilities.follows && p.capabilities.follows.status !== 'unavailable'
 ).map((p) => p.id);
 
-/** Providers whose presence the agent gathers, because only this PC can see it. */
-export const LOCAL_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter((p) => p.reach === 'local').map((p) => p.id);
-
 /**
  * Providers that can say who is on air.
  *
@@ -874,17 +866,6 @@ export const LOCAL_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter((p) => p.reach
 export const LIVE_PROVIDERS: ProviderId[] = PROVIDER_LIST.filter(
   (p) => p.capabilities.live && p.capabilities.live.status !== 'unavailable'
 ).map((p) => p.id);
-
-/**
- * Whether a capability is worth showing a control for.
- *
- * `unavailable` still gets rendered — as an explanation, not a button. Hiding it
- * would mean the screen answers "can I see my Battle.net friends?" with silence,
- * and silence reads as "not built yet", which sends you looking.
- */
-export function capabilityIsUsable(spec: CapabilitySpec | undefined): boolean {
-  return spec !== undefined && spec.status !== 'unavailable';
-}
 
 /* ------------------------------------------------------------------ */
 /* Presence                                                            */
@@ -1059,7 +1040,6 @@ export type ReportedFriend = LocalPresence['friends'][number];
 /* ------------------------------------------------------------------ */
 
 export const MEDIA_KINDS = ['track', 'video'] as const;
-export const mediaKindSchema = z.enum(MEDIA_KINDS);
 export type MediaKind = (typeof MEDIA_KINDS)[number];
 
 /**
@@ -1077,7 +1057,6 @@ export type MediaKind = (typeof MEDIA_KINDS)[number];
  * `FOLLOW_KINDS`.
  */
 export const COLLECTION_KINDS = ['playlist', 'saved'] as const;
-export const collectionKindSchema = z.enum(COLLECTION_KINDS);
 export type CollectionKind = (typeof COLLECTION_KINDS)[number];
 
 
@@ -1095,13 +1074,7 @@ export type CollectionKind = (typeof COLLECTION_KINDS)[number];
  * category counts on the Music tab were quietly including them.
  */
 export const FOLLOW_KINDS = ['channel', 'artist'] as const;
-export const followKindSchema = z.enum(FOLLOW_KINDS);
 export type FollowKind = (typeof FOLLOW_KINDS)[number];
-
-export const FOLLOW_KIND_LABELS: Record<FollowKind, string> = {
-  channel: 'Subscribed',
-  artist: 'Following',
-};
 
 export interface FollowedAccount {
   provider: ProviderId;
@@ -1171,7 +1144,6 @@ export const MUSIC_CATEGORIES = [
   'spoken',
   'unknown',
 ] as const;
-export const musicCategorySchema = z.enum(MUSIC_CATEGORIES);
 export type MusicCategory = (typeof MUSIC_CATEGORIES)[number];
 
 export const MUSIC_CATEGORY_LABELS: Record<MusicCategory, string> = {
@@ -1415,7 +1387,6 @@ export const credentialsSchema = z.object({
   clientId: z.string().max(400).optional(),
   clientSecret: z.string().max(400).optional(),
 });
-export type CredentialsInput = z.infer<typeof credentialsSchema>;
 
 /** Two friend rows, on different services, that are one person. */
 export const linkFriendsSchema = z.object({
@@ -1457,7 +1428,6 @@ export const LIVE_STALE_MS = 30_000;
  * default to 0 rather than 1.
  */
 export const LIVE_SCOPES = ['all', 'favourites'] as const;
-export type LiveScope = (typeof LIVE_SCOPES)[number];
 
 /** How long a `local` provider's snapshot stays believable once the agent stops reporting. */
 export const LOCAL_PRESENCE_STALE_MS = 5 * 60_000;

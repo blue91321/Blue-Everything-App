@@ -12,11 +12,11 @@
  * feature, so it stays in `views/` with the rest of core: the screen that
  * *removes* a broken package must exist whatever is installed.
  */
-import { serverPc } from '../device';
+import { serverPc } from '../../device';
 import { useRef, useState } from 'react';
-import { api, type ModuleInfo, type Session } from '../api';
-import { useAsync } from '../useAsync';
-import { Toggle } from '../controls';
+import { api, type ModuleInfo, type Session } from '../../api';
+import { useAsync } from '../../useAsync';
+import { Toggle } from '../../controls';
 
 /** Bytes in the unit that fits, the same idea as the gauge editor's spans. */
 function formatBytes(bytes: number): string {

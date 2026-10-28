@@ -1,0 +1,498 @@
+/*
+ * The integrations package's styles, which go when the package does. Imported
+ * by its screen and its Dashboard panels, so they load with those, after core's
+ * styles.css: a rule here wins a tie with a core rule of the same specificity.
+ */
+
+/* ---- the presence dot --------------------------------------------- */
+
+/*
+ * A coloured dot on the corner of the avatar, the way every chat client does
+ * it. On the avatar rather than beside the name because that is where the eye
+ * already is when scanning a list of faces, and it costs no width in a row that
+ * already carries a name, a game, a chip and a button.
+ */
+.avatar-wrap {
+  position: relative;
+  flex: none;
+  line-height: 0;
+}
+
+.presence-dot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--presence-offline);
+  /* Against the card, not the avatar — a dot sitting directly on a busy
+     profile picture loses its edge and stops reading as a status light. */
+  border: 2px solid var(--surface);
+  box-sizing: border-box;
+}
+
+.presence-dot.presence-in-game { background: var(--presence-in-game); }
+.presence-dot.presence-online { background: var(--presence-online); }
+.presence-dot.presence-away { background: var(--presence-away); }
+.presence-dot.presence-dnd { background: var(--presence-dnd); }
+.presence-dot.presence-offline { background: var(--presence-offline); }
+
+/*
+ * Playing, but away — the away colour, carrying a ring of the in-game one.
+ *
+ * **The fill is yellow and that is the load-bearing half.** The whole reason
+ * this state exists is that a blue dot was read as "available" for somebody
+ * sitting AFK in a match, so it must belong to the away family at a glance;
+ * anything else reintroduces the mistake. The ring adds the second fact rather
+ * than replacing the first — a game is running — and composes two colours that
+ * are already learned instead of inventing a seventh nobody could read.
+ *
+ * Drawn with an inset shadow rather than a border, because the border is
+ * already spoken for: it is the surface-coloured outline that keeps every dot
+ * legible against a busy avatar.
+ */
+.presence-dot.presence-in-game-away {
+  background: var(--presence-away);
+  box-shadow: inset 0 0 0 2px var(--presence-in-game);
+}
+
+/*
+ * "I cannot tell" is drawn hollow rather than in a sixth colour.
+ *
+ * Discord returns its friends list with no presence on it at all, and any
+ * filled dot would be a claim about somebody nobody can vouch for — grey would
+ * say offline, which is the specific thing that state exists to avoid saying.
+ */
+.presence-dot.presence-unknown {
+  background: transparent;
+  border-color: var(--muted);
+}
+
+/*
+ * The same dot, inline in a filter button.
+ *
+ * Its own class rather than a modifier on `.presence-dot`, because that one is
+ * absolutely positioned and unsetting `position`, `inset`, `border` and the
+ * ring on top of it is more rules than simply saying what this is. Both share
+ * the `presence-*` colour classes, which is the part that must not drift.
+ */
+.status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--presence-offline);
+  vertical-align: baseline;
+}
+
+.status-dot.presence-in-game { background: var(--presence-in-game); }
+.status-dot.presence-online { background: var(--presence-online); }
+.status-dot.presence-away { background: var(--presence-away); }
+.status-dot.presence-dnd { background: var(--presence-dnd); }
+.status-dot.presence-offline { background: var(--presence-offline); }
+
+.status-dot.presence-unknown {
+  background: transparent;
+  border: 1.5px solid var(--muted);
+  box-sizing: border-box;
+}
+
+/*
+ * A status that is switched off.
+ *
+ * Dimmed and struck through rather than hidden or recoloured: the count has to
+ * stay readable, because "offline 133" is the number that tells you what
+ * switching it back on would cost. Opacity alone was not enough to read as
+ * *off* at a glance on a row of six.
+ */
+.btn.status-off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.btn.status-off .status-dot {
+  text-decoration: none;
+}
+
+/* A provider row on the Services tab, collapsed until you open it.
+
+   `list-style: none` plus the ::marker rule removes the browser's default
+   triangle, which sits at the far left of a flex row and pushes the glyph out
+   of line. The chevron is drawn on the right instead, where the eye already is
+   after reading the name. */
+.card.provider > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.card.provider > summary::-webkit-details-marker {
+  display: none;
+}
+
+.card.provider > summary::marker {
+  content: '';
+}
+
+.card.provider > summary::after {
+  content: '⌄';
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+  transition: transform 120ms ease;
+}
+
+.card.provider[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.card.provider > summary:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---------- a friend row that does not squash ---------- */
+
+/*
+ * The chip and the buttons were holding their width while the name and status
+ * column shrank around them, so at a narrow width the text broke into two or
+ * three ragged lines beside a full-width "steam + discord".
+ *
+ * Two rules do it: the text column refuses to go below a readable width, and the
+ * row is allowed to wrap — so the trailing controls drop underneath rather than
+ * squeezing what is worth reading. Nothing is hidden, which the alternative
+ * (hiding the chip below a breakpoint) would have done to the one place that
+ * says which services a merged row came from.
+ */
+.friend-row {
+  flex-wrap: wrap;
+}
+
+.friend-text {
+  /* `min-width: 0` is what actually lets the ellipsis happen: a flex child
+     defaults to `min-width: auto`, which refuses to shrink below its content. */
+  min-width: 0;
+  flex-basis: 12rem;
+}
+
+/* Once wrapped, the controls sit under the text rather than under the avatar. */
+.friend-row > .chip,
+.friend-row > .btn,
+.friend-row > a.btn {
+  flex: none;
+}
+
+/* ---------- who is on air ---------- */
+
+.live-card {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.live-card:hover,
+.live-card:focus-visible {
+  border-color: var(--accent);
+}
+
+.live-thumb {
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--surface-raised);
+}
+
+/* The star beside a live row. A sibling of the link, never nested inside it. */
+.live-card-wrap .live-card {
+  border: none;
+  padding: 0;
+  background: none;
+  min-width: 0;
+}
+
+/* ---------- lists use the width, rather than stretching across it -------- */
+
+/*
+ * A wide window should hold *more* rows, not longer ones.
+ *
+ * Uncapping the page fixed "too narrow" and immediately created its opposite: at
+ * 1900px a task row was 1284px wide with its title on a 1222px line, a tick box
+ * at one end and a date at the other. Putting a cap back would bring the old
+ * complaint with it, and "a larger fixed number is still a fixed number" is
+ * already written down here as the reason not to.
+ *
+ * So the rows flow into columns. The window decides how many — one on a phone,
+ * two on a laptop, three or four on an ultrawide — with no breakpoint to pick
+ * and nothing to configure.
+ *
+ * ### Two selectors, because lists come in two shapes
+ *
+ * The Dashboard puts its cards straight into a `section`. Tasks wraps each row
+ * in an unclassed `div` so the card and its actions travel together, and puts
+ * those in the section instead. Both are lists; neither can see the other's
+ * shape. Keying on both is honest about what is actually in the markup — the
+ * alternative was threading a class through every component that renders a list,
+ * which is a wider change to say the same thing.
+ *
+ * `+ .card` and `> div > .card` also mean a section holding a *single* row does
+ * not flow. One card alone in a column beside empty space reads as a mistake.
+ */
+.app section:has(> .card + .card),
+.app section:has(> div:not(.card-grid) > .card) {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+  gap: var(--gap);
+  align-items: start;
+}
+
+/*
+ * ### A screen is not a list, and Connections is the case that proves it
+ *
+ * The rule above keys on a section whose *children* are cards, which is true of
+ * the Dashboard and of Tasks: there the section holds a list and very little
+ * else. The Connections tabs put a whole screen in one section — a tab strip, a
+ * search box, two rows of filter chips, a counts line, a Refresh button, and
+ * then the friends. Every one of those became a 420px grid cell. The search box
+ * ended up beside the tabs, the status chips wrapped mid-row with "discord 91"
+ * alone on the next line, and the *"Away — signed in, but not answering"*
+ * heading sat in a column of its own with friends flowing past it.
+ *
+ * So a list that shares its section with controls says which part is the list,
+ * and the section itself stays in ordinary flow. That also fixes the heading
+ * problem by construction rather than by adding a third selector: a group
+ * heading is outside its `.card-grid`, so there is nothing for it to be a cell
+ * of.
+ *
+ * **`:not(.card-grid)` on the wrapped selector above is what keeps the two
+ * apart.** `> div > .card` exists for the Tasks shape, where each row is an
+ * unclassed `div` holding a card and its actions — and it would match straight
+ * through a `.card-grid` as well, making the section a grid of grids.
+ */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+  gap: var(--gap);
+  /*
+   * `stretch`, where the rule above uses `start`, and the difference is what is
+   * being lined up. A task row's height is its own content and there is nothing
+   * beside it to agree with. These are cards of two to four lines standing in a
+   * row, and letting each keep its natural height leaves the row with ragged
+   * bottoms — which reads as the layout having gone wrong rather than as people
+   * having different amounts to say.
+   */
+  align-items: stretch;
+}
+
+/*
+ * The gap does the spacing now. `.card` carries `margin-bottom: 8px` for the
+ * stacked case, which inside a grid adds to the gap on one axis only — 20px
+ * down and 12px across, for rows that are meant to sit on a square lattice.
+ */
+.card-grid > .card {
+  margin-bottom: 0;
+}
+
+/*
+ * Everything that is not a row spans the lot: the heading above them, the
+ * "nothing due" line that replaces them, the capture form at the top. Without
+ * this a heading takes one cell and the first row sits beside it, which reads as
+ * a layout accident rather than a list.
+ *
+ * Named rather than `:not(.card)`, because in the wrapped shape the rows
+ * themselves are unclassed divs — excluding by what they are not would span the
+ * rows and flow the headings, which is precisely backwards.
+ *
+ * **`.tabs`, `.meta` and `.row` joined the list from the Connections screens**,
+ * where each is a control rather than a row: a tab strip, a group heading, and a
+ * line of filter chips. The tab strip was the one that gave it away — on Music
+ * and Services it measured 444px inside a 1356px section, a row of five links
+ * squeezed into one column of a grid it has no business being in. A tab strip is
+ * never a list item, on any screen, so it spans wherever it appears.
+ */
+.app section:has(> .card + .card) > h2,
+.app section:has(> .card + .card) > p,
+.app section:has(> .card + .card) > form,
+.app section:has(> .card + .card) > .empty,
+.app section:has(> .card + .card) > .banner,
+.app section:has(> .card + .card) > .tabs,
+.app section:has(> .card + .card) > .meta,
+.app section:has(> .card + .card) > .row,
+.app section:has(> div:not(.card-grid) > .card) > h2,
+.app section:has(> div:not(.card-grid) > .card) > p,
+.app section:has(> div:not(.card-grid) > .card) > form,
+.app section:has(> div:not(.card-grid) > .card) > .empty,
+.app section:has(> div:not(.card-grid) > .card) > .banner,
+.app section:has(> div:not(.card-grid) > .card) > .tabs,
+.app section:has(> div:not(.card-grid) > .card) > .meta,
+.app section:has(> div:not(.card-grid) > .card) > .row {
+  grid-column: 1 / -1;
+}
+
+/*
+ * The Shuffle card's boost browser (Connections → Music). A scrolling box of
+ * rows, each a name that gives way and a picker that keeps its size: the first
+ * version was a flex row with nothing stopping a long name, which ran under
+ * the picker on a phone.
+ */
+.shuffle-list {
+  display: grid;
+  gap: 0.15rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.25rem;
+}
+
+.shuffle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0.4rem;
+}
+
+.shuffle-row:nth-child(even) {
+  background: var(--surface-raised);
+}
+
+.shuffle-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shuffle-boosts > summary {
+  cursor: pointer;
+  padding: 0.4rem 0;
+}
+
+/* The Shuffle card's settings: one folded line, then sections. */
+.shuffle-settings {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.shuffle-settings > summary {
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.shuffle-section {
+  margin-top: 0.9rem;
+}
+
+.shuffle-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.shuffle-group + .shuffle-group {
+  margin-top: 0.6rem;
+}
+
+.shuffle-group-head {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin-bottom: 0.3rem;
+}
+
+.shuffle-group-all {
+  font-size: 0.85rem;
+}
+
+.shuffle-group-all button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+
+/* A list as a chip you tap: on in the accent, off as an outline. */
+.shuffle-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.shuffle-chip {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.shuffle-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.shuffle-chip.on .meta {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.shuffle-chip.off {
+  opacity: 0.45;
+  cursor: default;
+  border-style: dashed;
+}
+
+.shuffle-recency {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+/* The Music card's "Shuffle is on" bar. */
+.shuffle-on {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+}
+
+.shuffle-on-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+
+.shuffle-on-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.shuffle-on-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.shuffle-how {
+  margin-top: 0.6rem;
+}

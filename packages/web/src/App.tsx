@@ -19,6 +19,9 @@ import { Logo, type LogoShape } from './Logo';
 import { Offline } from './Offline';
 import { ConnectivityBanner } from './ConnectivityBanner';
 import { Home } from './Home';
+import { Editable, TextEditorHost } from './ui-text';
+import { setEditMode, useEditMode } from './edit-mode';
+import { EditBar } from './EditBar';
 import { tapWordmark, useWordmark } from './wordmark';
 import { onDataChange } from './live';
 import { onNavigate, onSectionShown } from './nav';
@@ -191,6 +194,8 @@ export function App() {
   }, []);
   // Re-render when the choices in Settings change.
   useMenuEntries();
+  // Edit mode: outlined text renames, ⠿ moves. See edit-mode.ts.
+  const editing = useEditMode();
   /** Text for the destination's search box — see `NavRequest.search`. */
   const [search, setSearch] = useState<string | null>(null);
   /**
@@ -691,7 +696,7 @@ export function App() {
                     <span className="glyph" aria-hidden="true">
                       {row.group.glyph}
                     </span>
-                    {row.group.label}
+                    <Editable id={`group:${row.group.id}`} fallback={row.group.label} inButton />
                     <span className="group-twist" aria-hidden="true">
                       {open ? '▾' : '▸'}
                     </span>
@@ -719,12 +724,20 @@ export function App() {
                   <span className="glyph" aria-hidden="true">
                     {e.glyph}
                   </span>
-                  {e.label}
+                  <Editable id={`screen:${e.id}`} fallback={e.label} inButton />
                   {sectionsLive[e.id] && <span className="live-dot" title="On now" aria-label="on now" />}
                 </button>
               );
             })}
         </nav>
+        {/*
+          Edit mode's way in, here because the menu is on every screen and on the
+          phone too. Its way out is the bar it puts at the top of the screen.
+          `data-ui-fixed` keeps its own words from being renamed or hidden.
+        */}
+        <button className="btn subtle drawer-edit" data-ui-fixed aria-pressed={editing} onClick={() => setEditMode(!editing)}>
+          ✎ {editing ? 'Done editing' : 'Edit screens'}
+        </button>
         <div className="drawer-foot">{session.local ? 'This PC' : 'Connected device'}</div>
       </aside>
 
@@ -766,7 +779,9 @@ export function App() {
 
       <div className="app">
         <header className="top">
-          <h1>{current.label}</h1>
+          <h1>
+            <Editable id={`screen:${current.id}`} fallback={current.label} />
+          </h1>
         </header>
 
         <ConnectivityBanner />
@@ -774,6 +789,7 @@ export function App() {
         {current.id === 'home' && (
           <Home
             items={homeTiles(entries.filter((e) => e.id !== 'home')).map((e) => ({ ...e, live: sectionsLive[e.id] === true }))}
+            everything={entries.filter((e) => e.id !== 'home')}
             onOpen={(id) => go(id)}
             logo={logo}
           />
@@ -826,6 +842,8 @@ export function App() {
           onDone={() => void checkSession()}
         />
       )}
+      <TextEditorHost />
+      {editing && <EditBar />}
     </div>
   );
 }

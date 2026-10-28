@@ -1,0 +1,326 @@
+/* Cards, lists, headings and the rest of what a screen is made of. Part of styles.css; see the order there. */
+
+/* ---------- content ---------- */
+
+/*
+ * The page follows the window, and nothing here caps it.
+ *
+ * It was 720px — "a comfortable measure for a task list", which was true of the
+ * app when a task list was most of it. Two screens had already argued their way
+ * out with `:has()` escapes, and the Notes one reached the conclusion this now
+ * applies everywhere: *a larger fixed number is still a fixed number.* 1700px on
+ * a 3440px monitor leaves 1500px of nothing, which is the same complaint one
+ * step further out.
+ *
+ * So the container is uncapped and the measures live on the things that are
+ * about reading — `.md` prose at 90ch, and the list rule below. A cap on the
+ * page solves neither problem and creates a third.
+ */
+.app {
+  max-width: none;
+  margin: 0 auto;
+  padding: 0 var(--gap) 48px;
+  padding-top: env(safe-area-inset-top);
+}
+
+header.top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0 12px;
+}
+
+header.top h1 {
+  font-size: 20px;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+section {
+  margin-bottom: 24px;
+}
+
+section > h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+/*
+ * A just-ticked item stays in place for a moment before moving to the finished
+ * section. Fading it as it waits makes the eventual move read as "this is on
+ * its way out" rather than "the list jumped".
+ */
+.card.settling {
+  opacity: 0.55;
+  transition: opacity 1.4s ease;
+}
+
+.card.muted {
+  border-style: dashed;
+  opacity: 0.8;
+}
+
+.title.struck {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+/* Finished work: visible, scrollable-to, but clearly out of the way. */
+.done-area {
+  opacity: 0.65;
+  margin-top: 32px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.done-area:hover,
+.done-area:focus-within {
+  opacity: 1;
+}
+
+.done-area .card {
+  background: none;
+}
+
+.row-actions {
+  margin-top: -6px;
+  margin-bottom: 8px;
+}
+
+/* Compact -/count/+ control for adjusting a habit's tally. */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+}
+
+.stepper .btn {
+  padding: 4px 10px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.stepper .btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.stepper .count {
+  /*
+   * A fixed width, not a minimum, and wide enough for "100%" — which is what a
+   * full gauge reads. It was `min-width: 22px`, for a single digit, which was
+   * enough while the stepper only ever counted: a gauge going 99% → 100% shoved
+   * both buttons sideways as you watched, and the button and the box it becomes
+   * were different widths, so the stepper shrank the instant you started typing.
+   * Measured at 117px then 108px before this.
+   */
+  width: 52px;
+  text-align: center;
+  /* Tabular figures so 1 and 8 are the same width: without it the stepper
+     twitches on every change, which is very visible next to a fixed border. */
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+}
+
+/*
+ * The value, as a button. Styled back down to look like the text it replaced —
+ * it is a control, and it should say so on hover and focus rather than sitting
+ * there looking like one all the time between two buttons that already do.
+ */
+.stepper .count-edit {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 4px;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.stepper .count-edit:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+/* Never `outline: none`: this is the only way to reach the control without a
+   mouse, so the ring is the whole affordance for anybody using one. */
+.stepper .count-edit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.stepper .count-edit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/*
+ * The box it becomes. Deliberately the same metrics as the button above, so
+ * swapping one for the other does not move the two stepper buttons a pixel —
+ * a control that jumps as you start typing reads as a misclick.
+ */
+.stepper .count-input {
+  width: 52px;
+  /*
+   * Border-box, like everything else here. `content-box` was the first attempt
+   * and added the padding and border on top, so the stepper grew by ten pixels
+   * the instant you started typing — measured at 108px then 118px.
+   */
+  box-sizing: border-box;
+  padding: 3px 4px;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.stepper .count-input:focus {
+  outline: none;
+}
+
+/* On/off switch. A checkbox reads as "tick this to agree"; a switch reads as
+   "this is currently on", which is what these settings actually are. */
+.toggle {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 27px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.toggle .knob {
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.toggle.on {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.toggle.on .knob {
+  transform: translateX(19px);
+  background: var(--accent-text);
+}
+
+.toggle:disabled {
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle,
+  .toggle .knob {
+    transition: none;
+  }
+}
+
+/* Step-by-step device instructions. */
+.guide ol {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.guide li {
+  margin-bottom: 16px;
+}
+
+.guide li::marker {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.snippet {
+  display: block;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  font-size: 13px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  overflow-x: auto;
+  white-space: pre;
+  user-select: all;
+}
+
+.ok-text {
+  color: var(--ok);
+}
+
+.diagnostics {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 4px;
+}
+
+.diagnostics .meta {
+  overflow-wrap: anywhere;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.row.between {
+  justify-content: space-between;
+}
+
+/* For lists of unknown length — voice phrases, mostly — where a fixed row would
+   push the last one off the edge on a phone. */
+.row.wrap {
+  flex-wrap: wrap;
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.meta.urgent {
+  color: var(--danger);
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 14px;
+  padding: 8px 0;
+}

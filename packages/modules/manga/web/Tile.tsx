@@ -95,6 +95,12 @@ export function Tile({
         <span className="manga-lib-cover">
           <Cover path={s.coverPath} title={s.title} fill />
           {fresh && <span className="manga-lib-new">{catchUp > 1 ? `${catchUp} NEW` : 'NEW'}</span>}
+          {/* Your rating, bottom right, where nothing else sits. */}
+          {typeof s.rating === 'number' && (
+            <span className="manga-lib-rating" aria-label={`Rated ${s.rating} of 10`}>
+              ★ {s.rating}
+            </span>
+          )}
           {/*
             The time matters as much as the message. "Not answering" reads as a
             claim about right now, and it is a claim about whenever it was last

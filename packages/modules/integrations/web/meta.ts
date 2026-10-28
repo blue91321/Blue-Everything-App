@@ -22,9 +22,9 @@ export const meta: FeatureMeta = {
       onHome: 'ready',
       // Connected, and allowed to start playback: what Play needs.
       // Both read the small status route; asked together, api.ts makes them one request.
-      ready: () => import('@app/api').then(({ api }) => api.integrations.spotifyStatus().then((s) => s.connected && s.canPlay)),
+      ready: () => import('./integrations-api').then(({ integrationsApi }) => integrationsApi.spotifyStatus().then((s) => s.connected && s.canPlay)),
       // Shuffle is on: the session is keeping the queue topped up.
-      live: () => import('@app/api').then(({ api }) => api.integrations.spotifyStatus().then((s) => s.active)),
+      live: () => import('./integrations-api').then(({ integrationsApi }) => integrationsApi.spotifyStatus().then((s) => s.active)),
       // Asked again only when Spotify's side changes, not on every habit tick.
       watch: ['integrations'],
     },

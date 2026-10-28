@@ -76,6 +76,16 @@ function Row({ series, onChanged, onHost }: { series: ArchiveProgress; onChanged
             {series.failed} chapter{series.failed === 1 ? '' : 's'} could not be fetched
           </span>
         )}
+        {(series.asWhole ?? []).map((w) => (
+          <span className="meta" key={`w${w.number}`}>
+            Chapter {w.number} is kept as the whole of chapter {w.whole} from {w.sourceName}, which has it in one
+          </span>
+        ))}
+        {(series.fromElsewhere ?? []).map((f) => (
+          <span className="meta" key={f.sourceName}>
+            {f.count} chapter{f.count === 1 ? '' : 's'} from {f.sourceName}, where this source would not give {f.count === 1 ? 'it' : 'them'} whole
+          </span>
+        ))}
         {(series.keptFor ?? []).some((who) => who !== 'you') && (
           <span className="meta">
             {/* Names come from the host, already as this person sees them: "you", or a display name. */}

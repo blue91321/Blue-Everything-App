@@ -52,13 +52,14 @@ import { explainFailure, findJars, portOf } from '../process.js';
 import { BATCH, checkEvery, dueForCheck, pollable, RECENT_SLOTS, RETRY_SLOTS, seriesUrl } from '../releases.js';
 import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiChanges } from '../browse.js';
 import { thumbPath } from '../present.js';
-import { betterTitle, retitleFromSource } from '../titles.js';
+import { betterTitle, retitleFromSource, titleKey } from '../titles.js';
 import { sorted } from '../../web/shelf.js';
 import { fetchPage, pagesInFlight, PageFetchError, sharedPage, SLOW_FAILURE_MS } from '../page-fetch.js';
 import { glideDistance, glideStep, MAX_SPEED, releaseVelocity, STOP_SPEED } from '../../web/glide.js';
 import { normaliseTags } from '../tags.js';
 import { DEFAULT_HIDDEN_TAGS, hasTag, hiddenBy, tagsForLevel } from '../mature.js';
 import { extensionUsage } from '../extension-usage.js';
+import { pickSource } from '../find-sources.js';
 import { chapterFolder, mendManifest, nextInQueue, pickEdition, type ArchiveManifest, type QueueItem } from '../archive.js';
 import { mkdirSync as mkdirTmp, mkdtempSync, readdirSync as listTmp, rmSync as rmTmp, writeFileSync as writeTmp } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1278,6 +1279,49 @@ console.log('\nfavourites and new chapters on top, in four groups');
   check('new only: the star moves nothing', order(true, false) === 'c new, d fav new, f fav new, a plain, b fav, e plain', order(true, false));
   check('favourites only: new moves nothing', order(false, true) === 'b fav, d fav new, f fav new, a plain, c new, e plain', order(false, true));
   check('neither: the order alone', order(false, false) === 'a plain, b fav, c new, d fav new, e plain, f fav new', order(false, false));
+}
+
+console.log('\nfinding a source for a series without one');
+{
+  const match = (title: string, sourceName: string) => ({ id: `${sourceName}:${title}`, title, sourceName }) as never;
+  const names = new Set(['The Dungeon Painter', 'Dungeon-eul Geurineun Hwaga'].map(titleKey));
+  const usage = new Map([
+    ['Asura Scans (EN)', 40],
+    ['MangaFire (EN)', 200],
+  ]);
+  const found = pickSource(names, [match('The Dungeon Painter', 'Asura Scans (EN)'), match('the dungeon painter!', 'MangaFire (EN)')], usage) as unknown as { sourceName: string } | null;
+  check('of exact matches, the source the library uses most', found?.sourceName === 'MangaFire (EN)', found?.sourceName ?? 'none');
+  check('an old name counts as the same series', pickSource(names, [match('Dungeon-eul Geurineun Hwaga', 'Asura Scans (EN)')], usage) !== null);
+  check('a near miss is not taken', pickSource(names, [match('The Dungeon Painter 2', 'MangaFire (EN)')], usage) === null);
+}
+
+console.log('\nsorting by rating');
+{
+  type Row = Parameters<typeof sorted>[0][number];
+  const row = (title: string, rating: number | null, fresh = false, favourite = false) =>
+    ({ title, rating, favourite, latestNumber: fresh ? 10 : 5, readUpTo: 5, position: null }) as unknown as Row;
+  const list = [
+    row('a unrated new', null, true),
+    row('b rated 7', 7),
+    row('c rated 9', 9),
+    row('d unrated', null),
+    row('e rated 7', 7),
+    row('f unrated fav', null, false, true),
+  ];
+  const order = (newFirst: boolean, favFirst: boolean) =>
+    sorted(list, 'rating', newFirst, favFirst, 'title')
+      .map((s) => s.title)
+      .join(', ');
+  check(
+    'the rated first, highest first, equal ratings in the order before',
+    order(false, false).startsWith('c rated 9, b rated 7, e rated 7'),
+    order(false, false)
+  );
+  check(
+    'the boxes apply only after the rated ones',
+    order(true, true) === 'c rated 9, b rated 7, e rated 7, a unrated new, f unrated fav, d unrated',
+    order(true, true)
+  );
 }
 
 console.log('\na mouse drag slides on after letting go');

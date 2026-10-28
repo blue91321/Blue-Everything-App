@@ -111,9 +111,8 @@ const ALLOWED = [
   ['packages/server/src/cli/smoke.ts', /100\.64\.0\.9/, 'a test fixture proving forwarded headers are refused'],
   ['packages/server/src/cli/smoke.ts', /desktop-abc\.tail1234\.ts\.net/, 'an obviously-invented hostname in a test'],
   ['packages/server/src/routes/connect.ts', /100\.64\.0\.0/, 'documentation of the CGNAT range'],
-  ['packages/server/src/features/vault/crypto.ts', /[A-Z0-9]{32}/, 'the Crockford base32 alphabet'],
-  ['packages/server/src/vault/crypto.ts', /[A-Z0-9]{32}/, 'the Crockford base32 alphabet'],
-  ['packages/shared/src/index.ts', /[a-z0-9]{36}/, 'a character set for share encoding'],
+  ['packages/modules/vault/server/crypto.ts', /[A-Z0-9]{32}/, 'the Crockford base32 alphabet'],
+  ['packages/shared/src/voice-commands.ts', /[a-z0-9]{36}/, 'the letters and digits a hotkey may end on'],
   ['scripts/publish-check.mjs', /./, 'this file describes the patterns it looks for'],
 ];
 
@@ -240,8 +239,14 @@ for (const path of tracked.filter((p) => p.endsWith('.ps1'))) {
  * the rule is the general one rather than a check per byte — tab, newline and a
  * CR that is part of a CRLF are the only control bytes a script has any use
  * for, and anything else in one got there by accident.
+ *
+ * The same accident reached the TypeScript and the docs (2026-10-27): two
+ * imports ending `\r\r\n`, regexes holding raw 0x00–0x1f bytes instead of
+ * `\x00`, and CLAUDE.md naming `logs` + CR + `estart.log`. Git treats a file
+ * with a lone CR or a NUL as binary, so its changes showed as "Binary files
+ * differ" and could not be reviewed. So every text file is held to it.
  */
-for (const path of tracked.filter((p) => /\.(ps1|cmd|bat)$/i.test(p))) {
+for (const path of tracked.filter((p) => /\.(ps1|cmd|bat|ts|tsx|mts|mjs|js|css|json|md|html|yml)$/i.test(p))) {
   const bytes = readFileSync(resolve(repo, path));
   let at = -1;
   for (let i = 0; i < bytes.length && at < 0; i++) {
@@ -254,9 +259,9 @@ for (const path of tracked.filter((p) => /\.(ps1|cmd|bat)$/i.test(p))) {
     const b = bytes[at];
     problems.push(
       `${path} has a control byte at ${at} (0x${b.toString(16).padStart(2, '0')}) that is not a line ending — ` +
-        (b === 0x0d
+        (b === 0x0d && /\.(ps1|cmd|bat)$/i.test(path)
           ? 'PowerShell ends the line there, so what follows is run rather than read'
-          : 'it is almost certainly an escape sequence written as the byte it names')
+          : 'it is almost certainly an escape sequence written as the byte it names (write \\x0d, \\x00 and so on instead)')
     );
   }
 }

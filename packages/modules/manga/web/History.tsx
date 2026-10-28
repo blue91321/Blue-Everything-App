@@ -9,12 +9,12 @@
  * Tapping a line opens that series' chapter list; the one you are partway
  * through goes straight back to the page, like Continue.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAsync } from '@app/useAsync';
 import { Cover } from './Cover';
 import { chapterText } from './judge';
 import { sourceLabel } from './Library';
-import { manga, type HistoryEntry } from './manga-api';
+import { manga, type HistoryEntry, type OldHistorySearch } from './manga-api';
 
 function dayOf(at: number, now: Date): string {
   const d = new Date(at);
@@ -36,8 +36,11 @@ function dayOf(at: number, now: Date): string {
 export function History({
   onOpen,
   onGlimpse,
+  onSearchSources,
 }: {
   onOpen: (seriesId: string, carryOn: boolean) => void;
+  /** Search your sources for a title: for something read in Manga Reader that you do not follow. */
+  onSearchSources?: (title: string) => void;
   /**
    * Open something read but not followed.
    *
@@ -57,6 +60,12 @@ export function History({
   const history = useAsync(() => manga.history(), []);
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState('');
+  /*
+   * Search: what History lists, by title, and Manga Reader's history below it
+   * (`old-history.ts`), which holds the series opened there and never brought
+   * in. Not remembered: a search is a question you are asking now.
+   */
+  const [q, setQ] = useState('');
 
   /**
    * Take one thing out of History.
@@ -85,14 +94,9 @@ export function History({
   if (history.loading) return <p className="empty">loading…</p>;
   if (history.error) return <p className="banner">Could not load: {history.error.message}</p>;
 
-  const entries = history.data?.entries ?? [];
-  if (entries.length === 0) {
-    return (
-      <div className="card">
-        <p className="empty">Nothing read yet. Chapters you finish, and where you stopped, are listed here.</p>
-      </div>
-    );
-  }
+  const all = history.data?.entries ?? [];
+  const needle = q.trim().toLowerCase();
+  const entries = needle ? all.filter((e) => e.title.toLowerCase().includes(needle)) : all;
 
   const days: Array<{ day: string; entries: HistoryEntry[] }> = [];
   for (const e of entries) {
@@ -104,7 +108,21 @@ export function History({
 
   return (
     <div className="manga-history">
+      <input
+        className="manga-history-search"
+        type="search"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search what you have read"
+        aria-label="Search history"
+      />
       {problem && <p className="banner">{problem}</p>}
+      {all.length === 0 && !needle && (
+        <div className="card">
+          <p className="empty">Nothing read yet. Chapters you finish, and where you stopped, are listed here.</p>
+        </div>
+      )}
+      {needle && entries.length === 0 && <p className="empty">Nothing in this app's history matches “{q.trim()}”.</p>}
       {days.map((d) => (
         <section key={d.day}>
           <h2>{d.day}</h2>
@@ -175,6 +193,74 @@ export function History({
           </div>
         </section>
       ))}
+      {needle.length >= 2 && <OldHistory q={q.trim()} onOpen={(id) => onOpen(id, false)} onSearchSources={onSearchSources} />}
     </div>
+  );
+}
+
+/**
+ * Manga Reader's history, for what was typed: the series read there, with how
+ * far, and whether you follow it here now. One you follow opens its chapter
+ * list; one you do not searches your sources for it.
+ */
+function OldHistory({
+  q,
+  onOpen,
+  onSearchSources,
+}: {
+  q: string;
+  onOpen: (seriesId: string) => void;
+  onSearchSources?: (title: string) => void;
+}) {
+  const [found, setFound] = useState<OldHistorySearch | null>(null);
+  useEffect(() => {
+    let alive = true;
+    // A moment after typing stops, not on every key.
+    const timer = setTimeout(() => {
+      manga.oldHistory(q).then((r) => alive && setFound(r), () => alive && setFound(null));
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [q]);
+
+  if (!found || !found.available) return null;
+  return (
+    <section>
+      <h2>Read in Manga Reader</h2>
+      <div className="card">
+        {found.matches.length === 0 ? (
+          <p className="empty">
+            Nothing in Manga Reader's history matches “{q}” ({found.total} series there).
+          </p>
+        ) : (
+          found.matches.map((m) => (
+            <div key={m.title} className="manga-history-row">
+              <button
+                className="manga-history-open"
+                onClick={() => (m.following ? onOpen(m.following) : onSearchSources?.(m.title))}
+              >
+                <span className="manga-row-text">
+                  <span className="title truncate">{m.title}</span>
+                  <span className="meta">
+                    {m.chaptersRead > 0
+                      ? `${m.chaptersRead} chapter${m.chaptersRead === 1 ? '' : 's'} read${m.furthest !== null ? `, up to ${chapterText(m.furthest)}` : ''}`
+                      : 'Opened, no chapter finished'}
+                    {m.sites.length > 0 ? ` · ${m.sites.join(', ')}` : ''}
+                    {m.following ? ' · in your library' : ' · not following: tap to find it'}
+                  </span>
+                </span>
+                {m.lastReadAt && (
+                  <span className="meta manga-history-time">
+                    {new Date(m.lastReadAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </span>
+                )}
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
   );
 }

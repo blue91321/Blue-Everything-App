@@ -10,8 +10,8 @@
  * it exists and whether it is running.
  */
 import { useState } from 'react';
-import { api, type Person, type PersonInvite } from '../api';
-import { useAsync } from '../useAsync';
+import { api, type Person, type PersonInvite } from '../../api';
+import { useAsync } from '../../useAsync';
 
 const NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
 

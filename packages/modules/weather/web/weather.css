@@ -1,0 +1,115 @@
+/*
+ * The weather package's styles, which go when the package does. Imported by
+ * its screen and its Dashboard panel, so they load with those, after core's
+ * styles.css: a rule here wins a tie with a core rule of the same specificity.
+ */
+
+/* ---- The hourly weather graph ------------------------------------------ */
+
+/*
+ * The graph fits, always. It is drawn at the measured width of this box rather
+ * than at a fixed one — see `HourlyGraph.tsx` for why scrolling and scaling
+ * were both rejected. `min-width: 0` is what actually lets it shrink: this sits
+ * inside a flex card, and a flex child defaults to `min-width: auto` and refuses
+ * to go below its content, which is the whole reason a scrollbar appeared here
+ * in the first place.
+ */
+.hourly-wrap {
+  margin-top: 14px;
+  min-width: 0;
+  /* Belt and braces: if anything ever miscalculates by a pixel, it is clipped
+     rather than pushing a scrollbar onto the page. */
+  overflow: hidden;
+}
+
+.hourly {
+  display: block;
+}
+
+/*
+ * The line takes the accent, so the graph matches whatever colour the app is
+ * set to — it is decoration carrying a shape, not information carrying a
+ * meaning, which is the distinction the presence dots draw the other way.
+ */
+.hourly-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.hourly-dot {
+  fill: var(--accent);
+}
+
+.hourly-value {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hourly-axis {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+/*
+ * Night, as a band behind the line — and **darker** than the daylight either
+ * side of it, which the first version got backwards.
+ *
+ * It was `--muted` at low opacity, on the reasoning that a neutral grey is the
+ * least intrusive thing available. Grey over a dark card is *lighter* than the
+ * card, so the night hours were the bright part of the graph and the day was
+ * the dim one. Nobody reads a chart that way round.
+ *
+ * So it is black, at an opacity chosen per theme: enough to read as night at a
+ * glance, not so much that the line loses contrast against it.
+ */
+.hourly-night {
+  fill: #000;
+  opacity: 0.3;
+}
+
+/*
+ * Lighter on a light theme, in the sense that matters: 30% black over white is
+ * a heavy grey slab that would dominate the card, while over the dark theme's
+ * near-black it is a gentle deepening. Same intent, different arithmetic —
+ * exactly why the accents are declared twice as well.
+ */
+:root:not([data-theme='dark']) .hourly-night {
+  opacity: 0.09;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hourly-night {
+    opacity: 0.3;
+  }
+}
+:root[data-theme='dark'] .hourly-night {
+  opacity: 0.3;
+}
+
+/*
+ * Rain keeps its own blue rather than the accent, for the same reason green
+ * means online: it is carrying meaning that is learned from every other weather
+ * app, and an amber accent would make a downpour look like a warning about
+ * something else.
+ */
+.hourly-rain {
+  fill: #4c9be8;
+  opacity: 0.55;
+}
+
+/* Darker against a light background, where the pale blue washes out. */
+:root:not([data-theme='dark']) .hourly-rain {
+  fill: #2f7fd0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hourly-rain {
+    fill: #4c9be8;
+  }
+}
+:root[data-theme='dark'] .hourly-rain {
+  fill: #4c9be8;
+}

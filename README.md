@@ -14,7 +14,7 @@ and there is not going to be. If you want to run it, you run your own copy.
 ```
 Windows agent  ──┐
  · attention sensor │
- · Windows toasts   ├──►  Fastify + SQLite  ◄── Tailscale ── iPhone PWA
+ · popups and tray  ├──►  Fastify + SQLite  ◄── Tailscale ── iPhone PWA
  · voice listener  ─┘      (runs on your PC)         · web push
                            · tasks/habits/notes      · quick capture
                            · nudge queue
@@ -118,20 +118,21 @@ Voice is off by default — it is the only feature that holds a microphone open,
 so it should be something you switched on rather than something you find
 already running.
 
-## Checking your work
+## Working on the code
+
+[ARCHITECTURE.md](ARCHITECTURE.md) is the map: where everything is, how a
+nudge travels from the agent to your screen, and the few rules the code keeps.
+Each package has a short README of its own.
 
 Each risky subsystem has a script that proves it, because the failures here are
-quiet ones:
+quiet ones. These run on every push, and you can run them yourself:
 
 ```bash
-npm run smoke         -w @everything/server   # the nudge engine holds and releases
-npm run vault-check   -w @everything/server   # the cryptography
-npm run vault-api     -w @everything/server   # the vault over HTTP
-npm run import-check  -w @everything/server   # the CSV reader
-npm run voice-check   -w @everything/server   # the phrase matcher
-npm run features-check -w @everything/server  # features can be switched off and deleted
-npm run doctor        -w @everything/agent    # the Win32 layer
-npm run bench         -w @everything/agent    # what one poll costs
+npm run typecheck        # server, agent and web
+npm run checks           # every suite that needs no hardware or network
+npm run features-check   # each package can still be switched off and deleted
+npm run doctor -w @everything/agent   # the Win32 layer
+npm run bench  -w @everything/agent   # what one poll costs
 ```
 
 ## Leanness
@@ -140,19 +141,19 @@ This runs forever on a gaming PC, so cost is a measured constraint.
 
 | | Naive | Here |
 | --- | --- | --- |
-| Resident memory | 150–250MB (Electron) | **55MB**, or 212MB with voice on |
+| Resident memory | 150–250MB (Electron) | **55MB**, about 120MB with voice on |
 | DB rows/day | ~43,000 | **~1,500** |
 | CPU | 0.26% of a core | **~0.002%** typical |
 
-Voice is the one thing that breaks this budget, and it breaks it badly — an
-always-on wake word means the acoustic model, decoding graph and speaker model
-all stay resident. Switching it off gives it back (198MB → 75MB, measured);
-deleting it gives back the disk too. That trade is the reason the feature
-switches exist.
+Voice is the one thing that breaks this budget, and it does so in bursts: the
+wake word listener costs about 50MB while voice is on, and the command
+recogniser adds about 155MB from a wake word until ten minutes after the last
+command. Switching voice off gives all of it back; deleting it gives back the
+disk too. That trade is the reason the feature switches exist.
 
 ## Make it yours
 
-**Settings → Appearance** picks the theme (dark by default), one of eight accent
+**Settings → General** picks the theme (dark by default), one of eight accent
 colours, and the app mark — a pause glyph, circle, triangle, square, or your own
 picture. The accent applies to the icon too, so the tab, the taskbar and your
 phone's home screen all match the app.

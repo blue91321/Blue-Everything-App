@@ -19,6 +19,7 @@
  * same bar at every width without knowing the drawer exists.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Editable } from '@app/ui-text';
 import { useNow } from '@app/clock';
 import { useAsync } from '@app/useAsync';
 import { pushStep } from '@app/view-history';
@@ -41,6 +42,7 @@ import { resendRecent } from './reading-log';
 import { openAtLoad } from './open-chapter';
 import { repaintSoon } from './take-screen';
 import { manga, type SeriesSummary } from './manga-api';
+import './manga.css';
 
 type Tab = 'browse' | 'library' | 'history' | 'downloads' | 'more';
 
@@ -492,6 +494,10 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
                 setReading(id);
               }}
               onGlimpse={(e) => setGlimpsing(e)}
+              onSearchSources={(title) => {
+                setBrowseSearch({ query: title, at: Date.now() });
+                goTab('browse');
+              }}
             />
           )}
 
@@ -541,7 +547,7 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
               }}
             >
               {t.id === 'downloads' ? <DownloadsIcon /> : <t.icon />}
-              <span>{t.label}</span>
+              <span><Editable id={`tab:manga:${t.id}`} fallback={t.label} inButton /></span>
             </button>
           ))}
         </nav>

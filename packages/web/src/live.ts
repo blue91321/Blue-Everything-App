@@ -37,6 +37,7 @@ export type ChangeScope =
   | 'integrations'
   | 'packages'
   | 'games'
+  | 'ui-text'
   | 'all';
 
 type Listener = (scope: ChangeScope) => void;

@@ -187,10 +187,6 @@ export function onChoiceMade(handler: (id: string) => void): void {
   onChoice = handler;
 }
 
-export function onDismissed(handler: () => void): void {
-  onDismiss = handler;
-}
-
 export function stopPopups(): void {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = null;
