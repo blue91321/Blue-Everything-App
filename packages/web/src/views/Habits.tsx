@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { goTo } from '../nav';
 import { api, type Habit, type HabitMode } from '../api';
 import { HabitGauge } from '../Gauge';
 import { spanLabel } from '../format';
@@ -478,7 +479,6 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
   const [startTime, setStartTime] = useState(
     habit.reminderStartMinute === null ? '' : minuteToTime(habit.reminderStartMinute)
   );
-  const [phrases, setPhrases] = useState<string[]>(habit.voicePhrases);
   const [push, setPush] = useState<boolean | null>(habit.pushToPhone === null ? null : Boolean(habit.pushToPhone));
 
   // Same reasoning as the task editor: loaded by the thing that needs it, only
@@ -501,7 +501,6 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
       reminderEveryMinutes: reminder > 0 ? reminder : null,
       reminderStartMinute: startTime ? timeToMinute(startTime) : null,
       ...(canChoosePush ? { pushToPhone: push } : {}),
-      voicePhrases: phrases.map((p) => p.trim()).filter(Boolean),
     });
     onSaved();
     onClose();
@@ -814,9 +813,8 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
       )}
 
       {/* Phrases only mean something if there is a listener. With voice off
-          this is an editor for a field nothing reads — and worse, it says
-          "saying one of these ticks it off", which would be untrue. */}
-      {featureEnabled('voice') && <VoicePhrases habitName={name} phrases={phrases} onChange={setPhrases} />}
+          this would describe commands that cannot be heard. */}
+      {featureEnabled('voice') && <SpokenFor habit={habit} />}
 
       <div className="row" style={{ marginTop: 10 }}>
         <button className="btn primary" onClick={save}>
@@ -831,75 +829,51 @@ function HabitEditor({ habit, onClose, onSaved }: { habit: Habit; onClose: () =>
 }
 
 /**
- * What you can say to tick this habit off.
+ * What you can say to tick this habit off, and where each is changed.
  *
- * Phrases are matched on meaningful words rather than exactly, and past tenses
- * are folded — so "drink water" already covers "I drank some water". The list
- * is for genuinely different wordings ("had a glass"), not for spelling out
- * every grammatical variation, and the copy says so because otherwise the
- * natural instinct is to type twenty of them.
+ * A voice command is a blueprint now: a "When I say" box leading to "Tick a
+ * habit". So this lists the ones that tick this habit, each opening where it
+ * is edited, and makes a new one with the tick already wired. The box that was
+ * here wrote a column voice had stopped reading, so phrases typed into it did
+ * nothing; they were made into blueprints once.
  */
-function VoicePhrases({
-  habitName,
-  phrases,
-  onChange,
-}: {
-  habitName: string;
-  phrases: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const [draft, setDraft] = useState('');
+function SpokenFor({ habit }: { habit: Habit }) {
+  const [problem, setProblem] = useState('');
+  const spoken = habit.spoken ?? [];
 
-  function add() {
-    const trimmed = draft.trim().toLowerCase();
-    if (!trimmed || phrases.includes(trimmed)) return;
-    onChange([...phrases, trimmed]);
-    setDraft('');
+  async function make() {
+    setProblem('');
+    try {
+      const { edit } = await api.habits.newSpoken(habit.id);
+      goTo(edit.screen, { focus: edit.focus });
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
   }
 
   return (
     <div style={{ marginTop: 12 }}>
       <div className="title">Say it out loud</div>
       <div className="meta" style={{ marginTop: 4 }}>
-        With voice switched on, saying your wake word and then one of these ticks off {habitName || 'this habit'}.
-        Tense and filler words don't matter — "drink water" already catches "I just drank some water". Add
-        another only for a genuinely different wording.
+        {spoken.length === 0
+          ? `Nothing ticks ${habit.name} by voice yet.`
+          : `With voice on, saying your wake word and then one of these ticks off ${habit.name}.`}
       </div>
-
-      {phrases.length > 0 && (
-        <div className="row wrap" style={{ marginTop: 8 }}>
-          {phrases.map((phrase) => (
-            <button
-              key={phrase}
-              className="btn subtle"
-              aria-label={`Remove phrase ${phrase}`}
-              onClick={() => onChange(phrases.filter((p) => p !== phrase))}
-            >
-              {phrase} ✕
-            </button>
-          ))}
+      {spoken.map((command) => (
+        <div className="row" key={command.edit.focus + command.label} style={{ marginTop: 6 }}>
+          <span className="grow meta">
+            <strong>{command.label}</strong>: {command.phrases.map((p) => `"${p}"`).join(', ') || 'no phrases yet'}
+            {!command.enabled && ' · off'}
+          </span>
+          <button className="btn subtle" onClick={() => goTo(command.edit.screen, { focus: command.edit.focus })}>
+            Open
+          </button>
         </div>
-      )}
-
-      <div className="row" style={{ marginTop: 8 }}>
-        <div className="grow">
-          <input
-            value={draft}
-            placeholder="drink water"
-            aria-label="New voice phrase"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                add();
-              }
-            }}
-          />
-        </div>
-        <button className="btn" disabled={!draft.trim()} onClick={add}>
-          Add
-        </button>
-      </div>
+      ))}
+      <button className="btn" style={{ marginTop: 8 }} onClick={() => void make()}>
+        {spoken.length ? 'Another voice command for it' : 'Make a voice command for it'}
+      </button>
+      {problem && <div className="banner">{problem}</div>}
     </div>
   );
 }

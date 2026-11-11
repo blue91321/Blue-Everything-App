@@ -12,7 +12,8 @@
  * What is in it, and nothing else:
  *
  *   - the agent (`packages/agent`) and the code it shares (`packages/shared`);
- *   - the agent halves of the packages that have one (voice, integrations),
+ *   - the agent halves of the packages that have one (voice, integrations,
+ *     blueprints),
  *     which the agent finds at `packages/modules/<id>/agent` as it always has;
  *   - the app's own Node (`runtime/node`) and only the libraries the agent
  *     uses, found by following their package.json files from the agent's;
@@ -61,6 +62,13 @@ const wanted = [
   'packages/modules/voice/package.json',
   'packages/modules/integrations/agent/',
   'packages/modules/integrations/package.json',
+  // Its agent half hears hotkeys and presses keys, and reads the key rules from
+  // the one file of the screen's that has no imports.
+  'packages/modules/blueprints/agent/',
+  'packages/modules/blueprints/web/keys.ts',
+  'packages/modules/blueprints/web/sound-design.ts',
+  'packages/modules/blueprints/web/speech.ts',
+  'packages/modules/blueprints/package.json',
   'assets/everything.ico',
   'scripts/desktop.ps1',
   'scripts/app-id.ps1',

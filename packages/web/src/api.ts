@@ -458,6 +458,8 @@ export const api = {
 
   habits: {
     list: () => request<Habit[]>('/api/habits'),
+    /** A voice command that ticks this habit, and where to finish it. */
+    newSpoken: (id: string) => post<{ edit: { screen: string; focus: string } }>(`/api/habits/${encodeURIComponent(id)}/spoken`, {}),
     create: (payload: {
       name: string;
       mode?: HabitMode;
@@ -672,6 +674,7 @@ export const api = {
       dndUntil?: number | null;
       remindersEnabled?: boolean;
       soundEnabled?: boolean;
+      soundVolume?: number;
       soundWake?: string;
       soundOk?: string;
       soundMiss?: string;
@@ -681,6 +684,7 @@ export const api = {
       voiceEnabled?: boolean;
       wakeWord?: string;
       wakeDecoys?: string;
+      wakeAlikes?: string;
       requireKnownSpeaker?: boolean;
       speakerThreshold?: number;
       voiceInputDevice?: string | null;

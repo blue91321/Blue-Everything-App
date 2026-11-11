@@ -70,7 +70,11 @@ export async function connectRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    for (const list of Object.values(networkInterfaces())) {
+    // Listening on this PC only (the default), no other address reaches it, so
+    // offering the home network's or the raw tailnet address would be a link
+    // that never loads.
+    const loopbackOnly = ['127.0.0.1', 'localhost', '::1'].includes(config.HOST);
+    for (const list of loopbackOnly ? [] : Object.values(networkInterfaces())) {
       for (const net of list ?? []) {
         if (net.family !== 'IPv4' || net.internal) continue;
         const url = `http://${net.address}:${config.PORT}`;

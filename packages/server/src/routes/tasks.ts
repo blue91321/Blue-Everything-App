@@ -10,6 +10,7 @@ import {
 import { db } from '../db/client.js';
 import { projects, tasks } from '../db/schema.js';
 import { happenedAt } from '../happened-at.js';
+import { happenings } from '../happenings.js';
 
 /**
  * Pin an all-day due date to the end of that day.
@@ -76,6 +77,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
       .insert(tasks)
       .values({ ...rest, ...normaliseDue(body), ...normalisePush(body) })
       .returning();
+    if (created) happenings.say('task-added', { taskId: created.id, title: created.title });
     return reply.code(201).send(created);
   });
 
@@ -95,6 +97,9 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     // When it was finished — which, replayed from an offline phone, was then.
     const completedAt = body.status === 'done' ? happenedAt(request) : body.status ? null : undefined;
 
+    // Read first only when finishing, so "was it already done" can be answered.
+    const before = body.status === 'done' ? (await db.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, id)))[0] : undefined;
+
     const { dueIsAllDay, pushToPhone, ...rest } = body;
     const [updated] = await db
       .update(tasks)
@@ -107,6 +112,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
       .where(eq(tasks.id, id))
       .returning();
 
+    if (updated && before && before.status !== 'done') happenings.say('task-done', { taskId: updated.id, title: updated.title });
     return updated ?? reply.code(404).send({ error: 'no such task' });
   });
 

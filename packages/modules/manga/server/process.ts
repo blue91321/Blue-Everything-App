@@ -82,6 +82,19 @@ export function bundledJava(): string | null {
 }
 
 /**
+ * What to start Suwayomi with: the bundled Java's labeled copy when the
+ * launcher made one (`Blue Everything Manga.exe`, so Task Manager says whose
+ * 700MB it is: see `node-runtime.ps1`), else the bundled Java, else one on PATH.
+ * The copy sits in the same folder, so it is the same Java.
+ */
+export function javaToStart(): string {
+  const java = bundledJava();
+  if (!java) return 'java';
+  const labeled = join(dirname(java), 'Blue Everything Manga.exe');
+  return process.platform === 'win32' && existsSync(labeled) ? labeled : java;
+}
+
+/**
  * Suwayomi's temporary files, inside the app's data rather than the system's,
  * with the parts that only grow cleared each time the app starts it.
  *
@@ -265,6 +278,16 @@ export type ManagedState =
   | { state: 'failed'; problem: string };
 
 /**
+ * What to do each time the managed Suwayomi comes up (started or adopted): tell
+ * it where its FlareSolverr is, which changes each time this server starts.
+ * Hooks rather than an import, since `flaresolverr.ts` needs this file.
+ */
+const upHooks: Array<() => void | Promise<void>> = [];
+export function whenSuwayomiUp(hook: () => void | Promise<void>): void {
+  upHooks.push(hook);
+}
+
+/**
  * One manager for the process, like `popup.ts` owning the one overlay.
  *
  * Two owners would eventually both spawn, and the second would fail against the
@@ -328,9 +351,14 @@ class SuwayomiProcess {
      * dozen Suwayomis in one second, every one but the first quitting because
      * the port was taken.
      */
-    this.starting = this.adoptOrLaunch(jarPath, baseUrl, mode).finally(() => {
-      this.starting = null;
-    });
+    this.starting = this.adoptOrLaunch(jarPath, baseUrl, mode)
+      .then((state) => {
+        if (state.state === 'running') for (const hook of upHooks) void Promise.resolve(hook()).catch(() => undefined);
+        return state;
+      })
+      .finally(() => {
+        this.starting = null;
+      });
     return this.starting;
   }
 
@@ -402,7 +430,7 @@ class SuwayomiProcess {
         // The Java that setup downloaded into the app's folder, when there is
         // one: a PC with an older Java installed must never be asked to run a
         // jar that needs 21, which is exactly how the first other PC failed.
-        bundledJava() ?? 'java',
+        javaToStart(),
         [
           `-Dsuwayomi.tachidesk.config.server.port=${port}`,
           /*

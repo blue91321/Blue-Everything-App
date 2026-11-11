@@ -37,6 +37,7 @@ const SECTION_TAB: Record<string, TabId> = {
   'menu-drawer': 'general',
   'menu-home': 'general',
   'desktop-icon': 'devices',
+  reminders: 'notifications',
 };
 
 export function Settings({

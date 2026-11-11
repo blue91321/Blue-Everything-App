@@ -42,6 +42,7 @@ import { readZip, stripCommonPrefix, ZipError } from './zip.js';
 import { parseJsonText } from './json.js';
 import { featuresFilePath } from './features.js';
 import { installedModulesRoot, modulesStateFile, shippedModulesRoot } from './paths.js';
+import { isGuest } from './config.js';
 
 /**
  * The one definition of where packages live, exported rather than re-derived.
@@ -595,6 +596,11 @@ export async function registerModules(app: FastifyInstance): Promise<void> {
 
     if (!mod.manifest) {
       app.log.warn(`package ${mod.id}: on, but its manifest is not usable — skipped`);
+      continue;
+    }
+    if (mod.manifest.hostOnly && isGuest) {
+      loadErrors.set(mod.id, 'runs on the host’s copy only');
+      app.log.info(`package ${mod.id}: host only, not loaded on a copy`);
       continue;
     }
     if (!mod.manifest.server) {

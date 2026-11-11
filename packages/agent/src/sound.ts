@@ -33,7 +33,7 @@ import koffi from 'koffi';
 import { writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_TONE, SOUND_EVENTS, TONES, wav, type SoundName, type ToneName } from '@everything/shared/sound';
+import { DEFAULT_TONE, SOUND_EVENTS, TONES, wav, type Blip, type SoundName, type ToneName } from '@everything/shared/sound';
 
 /*
  * Re-exported so the CLIs and the rest of the agent carry on importing `sound.js`
@@ -47,6 +47,9 @@ export type { Blip, SoundName, ToneName } from '@everything/shared/sound';
 const winmm = koffi.load('winmm.dll');
 
 const PlaySoundW = winmm.func('int __stdcall PlaySoundW(const char16_t *sound, void *module, uint32_t flags)');
+/** MCI: plays what PlaySound cannot (an .mp3), and says how long it is. */
+const mciSendStringW = winmm.func('uint32_t __stdcall mciSendStringW(const char16_t *command, void *answer, uint32_t length, void *window)');
+const mciGetErrorStringW = winmm.func('int __stdcall mciGetErrorStringW(uint32_t code, void *text, uint32_t length)');
 
 const SND_ASYNC = 0x0001;
 const SND_FILENAME = 0x00020000;
@@ -75,21 +78,36 @@ export function toneFor(event: SoundName): ToneName {
   return chosen[event];
 }
 
-/** Written once per process, reused after. */
-const files = new Map<ToneName, string>();
+/** How loud the app's tones are, 0 to 100, from settings. Half until told: they were too loud at full. */
+let volume = 50;
 
-function fileFor(tone: ToneName): string {
-  const cached = files.get(tone);
+export function setSoundVolume(next: number): void {
+  if (Number.isFinite(next)) volume = Math.max(0, Math.min(100, Math.round(next)));
+}
+
+/** Written once per process, reused after. */
+const files = new Map<string, string>();
+
+/** A tone at a volume, 0 to 100, as a WAV: the palette's own gains scaled by it. */
+export function toneWav(tone: ToneName, loudness: number): Uint8Array {
+  const scale = Math.max(0, Math.min(100, loudness)) / 100;
+  return wav((TONES[tone] as readonly Blip[]).map((b) => ({ ...b, gain: (b.gain ?? 0.7) * scale })));
+}
+
+function fileFor(tone: ToneName, loudness: number): string {
+  const key = `${tone}-${loudness}`;
+  const cached = files.get(key);
   if (cached) return cached;
 
-  const path = join(tmpdir(), `everything-tone-${tone}.wav`);
-  // Keyed by *tone*, not by event, so two events set to the same tone share one
-  // file — and changing an event's tone is a lookup rather than a rewrite.
-  // Rewritten on a fresh process even if it exists, so editing the palette here
-  // takes effect on restart rather than being masked by a stale temp file.
-  if (!existsSync(path) || !files.has(tone)) writeFileSync(path, wav(TONES[tone]));
+  const path = join(tmpdir(), `everything-tone-${key}.wav`);
+  // Keyed by tone and volume, not by event, so two events set to the same tone
+  // share one file — and changing an event's tone is a lookup rather than a
+  // rewrite. Rewritten on a fresh process even if it exists, so editing the
+  // palette here takes effect on restart rather than being masked by a stale
+  // temp file.
+  if (!existsSync(path) || !files.has(key)) writeFileSync(path, toneWav(tone, loudness));
 
-  files.set(tone, path);
+  files.set(key, path);
   return path;
 }
 
@@ -123,13 +141,85 @@ export function playSound(name: SoundName): void {
  * having to pretend an event happened, and so `none` is handled in exactly one
  * place: an empty tone is silence, not a zero-length WAV that clicks.
  */
-export function playTone(tone: ToneName): void {
-  if (TONES[tone].length === 0) return;
+export function playTone(tone: ToneName, loudness = volume): void {
+  if (TONES[tone].length === 0 || loudness <= 0) return;
   try {
-    PlaySoundW(fileFor(tone), null, SND_ASYNC | SND_FILENAME | SND_NODEFAULT);
+    PlaySoundW(fileFor(tone, Math.round(loudness)), null, SND_ASYNC | SND_FILENAME | SND_NODEFAULT);
   } catch {
     // Deliberately silent, in both senses.
   }
+}
+
+/**
+ * A WAV made by somebody else (a blueprint's own sound), played as a tone is:
+ * written once to a temp file named by its contents, so playing the same
+ * sound again is only a lookup. Throws, unlike `playTone`: whoever asked for
+ * it is waiting to hear whether it played.
+ */
+export function playWavBytes(bytes: Uint8Array): void {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i += 7) hash = Math.imul(hash ^ bytes[i]!, 0x01000193) >>> 0;
+  const path = join(tmpdir(), `everything-sound-${hash.toString(16)}-${bytes.length}.wav`);
+  if (!existsSync(path)) writeFileSync(path, bytes);
+  playWavFile(path);
+}
+
+/** A .wav already on disk, played without waiting for it. */
+export function playWavFile(path: string): void {
+  if (!PlaySoundW(path, null, SND_ASYNC | SND_FILENAME | SND_NODEFAULT)) throw new Error('Windows would not play it');
+}
+
+function mci(command: string): string {
+  const answer = Buffer.alloc(512);
+  const code = mciSendStringW(command, answer, 256, null);
+  if (code) {
+    const text = Buffer.alloc(512);
+    mciGetErrorStringW(code, text, 256);
+    throw new Error(text.toString('utf16le').replace(/\0[\s\S]*$/, '') || `MCI error ${code}`);
+  }
+  return answer.toString('utf16le').replace(/\0[\s\S]*$/, '');
+}
+
+let played = 0;
+
+/**
+ * A .wav or .mp3 on disk, through MCI, which plays both (PlaySound plays only
+ * WAV) and says how long it is. Each play opens its own device, so two can
+ * overlap, and closes it a moment after it ends. Returns the length in ms.
+ * The caller checks the path; a `"` in it would end MCI's quoting early.
+ */
+export function playSoundFile(path: string, loudness = 100): number {
+  if (path.includes('"')) throw new Error('a path with " in it cannot be played');
+  const alias = `everything_sound_${++played}`;
+  mci(`open "${path}" type mpegvideo alias ${alias}`);
+  let length = 0;
+  try {
+    mci(`set ${alias} time format milliseconds`);
+    length = Number(mci(`status ${alias} length`)) || 0;
+    // 0 to 1000; a file that cannot be turned down (some cannot) plays as it is.
+    try {
+      mci(`setaudio ${alias} volume to ${Math.round(Math.max(0, Math.min(100, loudness)) * 10)}`);
+    } catch {
+      // As loud as it is.
+    }
+    mci(`play ${alias}`);
+  } catch (error) {
+    try {
+      mci(`close ${alias}`);
+    } catch {
+      // Already gone.
+    }
+    throw error;
+  }
+  const close = setTimeout(() => {
+    try {
+      mci(`close ${alias}`);
+    } catch {
+      // Already gone.
+    }
+  }, Math.min(10 * 60_000, length || 60_000) + 1000);
+  close.unref();
+  return length;
 }
 
 /** Used by the CLI to hear them all without waiting for the real events. */

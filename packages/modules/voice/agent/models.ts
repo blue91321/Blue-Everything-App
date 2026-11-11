@@ -16,6 +16,7 @@
  * once it is whole.
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
@@ -82,11 +83,18 @@ async function fetchAll(onProgress: (progress: ModelProgress) => void): Promise<
 
     // Counted as it arrives, so the screen can show a number that moves.
     const counted = Readable.fromWeb(response.body as import('node:stream/web').ReadableStream<Uint8Array>);
+    const hash = createHash('sha256');
     counted.on('data', (chunk: Buffer) => {
+      hash.update(chunk);
       done += chunk.length;
       onProgress({ done, total, what: item.what });
     });
     await pipeline(counted, createWriteStream(`${file}.part`));
+    // Pinned in `voice-paths.ts`: anything else is not the model that was measured.
+    if (hash.digest('hex') !== item.sha256) {
+      rmSync(`${file}.part`, { force: true });
+      throw new Error(`${item.what} did not match its checksum, so it was not used`);
+    }
     renameSync(`${file}.part`, file);
 
     if (item.into === null) {

@@ -4,7 +4,7 @@
  */
 import { serverPc } from '../../device';
 import { useState } from 'react';
-import { api, type Session, type UpdateCheck } from '../../api';
+import { api, apiRequest, type Session, type UpdateCheck } from '../../api';
 import { InstalledPackages } from './InstalledPackages';
 import { useAsync } from '../../useAsync';
 import { Toggle } from '../../controls';
@@ -82,6 +82,8 @@ export function PackagesTab({ session }: { session: Session }) {
         Optional parts of the app. Switching one off unregisters its API routes, hides its tab, and stops
         the agent loading it — you get the memory and the disk back, not just the menu entry.
       </div>
+
+      <ConfigurationCard />
 
       {/* Absent on a server older than per-package versions. */}
       {data.appVersion && (
@@ -265,5 +267,165 @@ export function PackagesTab({ session }: { session: Session }) {
 
       <InstalledPackages session={session} />
     </section>
+  );
+}
+
+type ConfigurationState = {
+  configuration: 'everything' | 'just-manga';
+  kind: 'git' | 'release';
+  canSwitch: boolean;
+  why: string | null;
+  leftOut: string[];
+};
+
+/**
+ * Everything or Just Manga, and the button to switch, both ways. A release
+ * install downloads the other one (backing your data up first); a clone
+ * switches the other packages off or back on. Either way the app restarts.
+ * See `routes/configuration.ts`.
+ *
+ * **Three confirmations, on purpose**, since it changes what the whole install
+ * is: the button only opens an explanation, which has to be ticked as read;
+ * then the new configuration's name has to be typed; then the browser asks one
+ * last time. The server refuses a switch that does not carry the typed name,
+ * so a stray or old request cannot do it either.
+ */
+function ConfigurationCard() {
+  const state = useAsync(() => apiRequest<ConfigurationState>('/api/configuration'), [], ['settings']);
+  const [step, setStep] = useState<'idle' | 'explain' | 'type'>('idle');
+  const [understood, setUnderstood] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState('');
+  const data = state.data;
+  // Absent on a server older than the switch.
+  if (!data) return null;
+  const manga = data.configuration === 'just-manga';
+  const to = manga ? 'everything' : 'just-manga';
+  const toName = manga ? 'Everything' : 'Just Manga';
+  const phrase = toName.toUpperCase();
+  const matches = typed.trim().replace(/\s+/g, ' ').toUpperCase() === phrase;
+  const what: string[] =
+    data.kind === 'release'
+      ? manga
+        ? [
+            'Your data is backed up first (to the backups folder).',
+            'The newest full app is downloaded and installed over this one.',
+            'The app stops while it installs, and starts again by itself.',
+            'Your manga, reading history and settings stay.',
+          ]
+        : [
+            'Your data is backed up first (to the backups folder).',
+            'The newest manga-only app is downloaded and installed over this one.',
+            `Everything but Manga is removed from the app's folder: ${data.leftOut.join(', ') || 'the other parts'}. Their data stays, and comes back if you switch again.`,
+            'The app stops while it installs, and starts again by itself.',
+          ]
+      : manga
+        ? ['The parts it switched off are switched back on.', 'The app restarts by itself.']
+        : [
+            `These are switched off, their folders kept: ${data.leftOut.join(', ') || 'everything but Manga'}.`,
+            'Switching back to Everything turns exactly those on again.',
+            'The app restarts by itself.',
+          ];
+
+  const cancel = () => {
+    setStep('idle');
+    setUnderstood(false);
+    setTyped('');
+  };
+
+  async function go() {
+    if (!matches || !understood) return;
+    if (!confirm(`Last check: switch this install to ${toName} now? The app will restart.`)) return;
+    setBusy(true);
+    setSaid('');
+    try {
+      const done = await apiRequest<{ how: 'download' | 'restart' }>('/api/configuration', {
+        method: 'POST',
+        body: JSON.stringify({ to, confirmed: phrase }),
+      });
+      cancel();
+      setSaid(
+        done.how === 'download'
+          ? 'Downloading and installing. The app stops and comes back by itself; logs/update.log says how it went.'
+          : 'Restarting. The app comes back by itself in a few seconds.'
+      );
+    } catch (error) {
+      setSaid((error as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="row between" style={{ gap: 12, flexWrap: 'wrap' }}>
+        <div className="grow">
+          <div className="title">{manga ? 'Just Manga' : 'Everything'}</div>
+          <div className="meta" style={{ marginTop: 4 }}>
+            {manga ? 'The manga reader on its own.' : 'The whole app.'}
+          </div>
+        </div>
+        {step === 'idle' && (
+          <button className="btn" disabled={busy || !data.canSwitch} title={data.why ?? undefined} onClick={() => setStep('explain')}>
+            Switch to {toName}…
+          </button>
+        )}
+      </div>
+      {!data.canSwitch && data.why && <div className="meta" style={{ marginTop: 6 }}>Not from here: {data.why}.</div>}
+
+      {step !== 'idle' && (
+        <div className="config-switch" style={{ marginTop: 10 }}>
+          <div className="title">Switching to {toName} will:</div>
+          <ul className="meta">
+            {what.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <label className="row" style={{ gap: '.5rem', alignItems: 'flex-start' }}>
+            <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} disabled={busy} />
+            <span>I have read this and want to switch.</span>
+          </label>
+          {step === 'explain' ? (
+            <div className="row" style={{ gap: '.4rem', marginTop: 8 }}>
+              <button className="btn" disabled={!understood} onClick={() => setStep('type')}>
+                Continue
+              </button>
+              <button className="btn subtle" onClick={cancel}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <form
+              style={{ marginTop: 8 }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void go();
+              }}
+            >
+              <label className="meta" htmlFor="config-phrase">
+                To confirm, type <strong>{phrase}</strong>
+              </label>
+              <div className="row" style={{ gap: '.4rem', marginTop: 4, flexWrap: 'wrap' }}>
+                <input
+                  id="config-phrase"
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                  autoComplete="off"
+                  disabled={busy}
+                  autoFocus
+                />
+                <button className="btn primary" type="submit" disabled={busy || !understood || !matches}>
+                  Switch to {toName}
+                </button>
+                <button className="btn subtle" type="button" onClick={cancel} disabled={busy}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+      {said && <div className="meta" style={{ marginTop: 6 }}>{said}</div>}
+    </div>
   );
 }

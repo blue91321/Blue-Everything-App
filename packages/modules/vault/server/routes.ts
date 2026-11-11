@@ -10,7 +10,7 @@ import {
   vaultSetupSchema,
   vaultUnlockSchema,
 } from '@everything/shared';
-import { changes } from '@everything/server/module-api';
+import { changes, routePath } from '@everything/server/module-api';
 import { combineShares, decodeShare } from './crypto.js';
 import { isDuplicate, readExport } from './import.js';
 import * as session from './session.js';
@@ -41,7 +41,8 @@ function requireUnlocked(reply: FastifyReply): Buffer | null {
 
 export async function vaultRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('onRequest', async (request, reply) => {
-    if (!request.url.startsWith('/api/vault')) return;
+    // The matched route, not the URL as sent: see `routePath`.
+    if (!routePath(request).startsWith('/api/vault')) return;
     assertMayUseVault(request, reply);
   });
 

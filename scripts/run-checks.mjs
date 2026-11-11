@@ -25,6 +25,8 @@ const SERVER = [
   'import-check',
   'voice-check',
   'weather-check',
+  'code-check',
+  'blueprints-check',
 ];
 
 const runs = [

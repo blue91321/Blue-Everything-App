@@ -1,0 +1,12 @@
+-- Other ways the wake word comes out when you say it, which count as it.
+--
+-- The keyword spotter listens for the wake word as the model expects it said.
+-- Said a little differently ("jervis" for "jarvis"), it does not fire at all:
+-- measured on synthesised speech, "hey jervis" and "hey jurvis" woke nothing,
+-- and woke it every time once "jervis" was listened for too, while "service",
+-- "nervous" and "deserve this" still did not. The opposite of a decoy: a hit
+-- on one of these is the wake word.
+--
+-- Empty by default. They are learned from what the Voice screen's test hears
+-- you say, or typed, because the ones that matter are how you say it.
+ALTER TABLE `settings` ADD `wake_alikes` text DEFAULT '' NOT NULL;

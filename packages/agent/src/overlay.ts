@@ -134,6 +134,9 @@ const WndProcProto = koffi.proto(
 
 const GetModuleHandleW = kernel32.func('void * __stdcall GetModuleHandleW(const char16_t *name)');
 const RegisterClassExW = user32.func('uint16_t __stdcall RegisterClassExW(const void *wc)');
+// A system cursor by its number (MAKEINTRESOURCE), so the name is an integer.
+const LoadCursorW = user32.func('void * __stdcall LoadCursorW(void *instance, uintptr_t name)');
+const IDC_HAND = 32649;
 const CreateWindowExW = user32.func(
   'void * __stdcall CreateWindowExW(uint32_t exStyle, const char16_t *className, const char16_t *windowName, uint32_t style, int x, int y, int w, int h, void *parent, void *menu, void *instance, void *param)'
 );
@@ -163,6 +166,25 @@ const EnumDisplayMonitors = user32.func(
 );
 const MonitorFromWindow = user32.func('void * __stdcall MonitorFromWindow(void *hwnd, uint32_t flags)');
 const GetForegroundWindow = user32.func('void * __stdcall GetForegroundWindow()');
+/*
+ * For a box to type in (2026-11-04). The window refuses focus however it is
+ * shown or clicked, which is what keeps a game playing under it; taking the
+ * keyboard is something done on purpose, only when the box is clicked, and
+ * handing it back to the window that had it is done the same way.
+ */
+const SetForegroundWindow = user32.func('int __stdcall SetForegroundWindow(void *hwnd)');
+const SetFocus = user32.func('void * __stdcall SetFocus(void *hwnd)');
+const IsWindow = user32.func('int __stdcall IsWindow(void *hwnd)');
+const SetCursor = user32.func('void * __stdcall SetCursor(void *cursor)');
+const ScreenToClient = user32.func('int __stdcall ScreenToClient(void *hwnd, _Inout_ void *point)');
+const OpenClipboard = user32.func('int __stdcall OpenClipboard(void *hwnd)');
+const CloseClipboard = user32.func('int __stdcall CloseClipboard()');
+const GetClipboardData = user32.func('void * __stdcall GetClipboardData(uint32_t format)');
+const GlobalLock = kernel32.func('void * __stdcall GlobalLock(void *mem)');
+const GlobalUnlock = kernel32.func('int __stdcall GlobalUnlock(void *mem)');
+const lstrlenW = kernel32.func('int __stdcall lstrlenW(void *text)');
+const IDC_IBEAM = 32513;
+const CF_UNICODETEXT = 13;
 
 // DrawText lives in user32, not gdi32 — it is a layout helper built on top of
 // GDI rather than a GDI primitive, and looking for it in the obvious library
@@ -221,6 +243,10 @@ const SWP_SHOWWINDOW = 0x0040;
 const WM_PAINT = 0x000f;
 const WM_LBUTTONDOWN = 0x0201;
 const WM_KEYDOWN = 0x0100;
+const WM_CHAR = 0x0102;
+const WM_ACTIVATE = 0x0006;
+const WM_KILLFOCUS = 0x0008;
+const WM_SETCURSOR = 0x0020;
 const WM_DESTROY = 0x0002;
 const PM_REMOVE = 0x0001;
 const TRANSPARENT = 1;
@@ -263,6 +289,8 @@ const COLOR = {
   good: rgb(0x5f, 0xd1, 0x8c),
   bad: rgb(0xff, 0x6b, 0x6b),
   button: rgb(0x23, 0x27, 0x34),
+  /** The box to type in: a shade darker than the window, as a field is. */
+  field: rgb(0x14, 0x16, 0x1c),
 };
 
 /**
@@ -300,6 +328,11 @@ const LINE_HEIGHT = 22;
 /** The ✕ in the top corner. Square, and big enough to hit without aiming. */
 const CLOSE_SIZE = 22;
 const BUTTON_HEIGHT = 30;
+const INPUT_HEIGHT = 32;
+/** The line under the box saying how it works. */
+const INPUT_HINT = 18;
+/** What the box holds at most; a question's answer, not an essay. */
+const INPUT_MAX = 500;
 
 const wide = (value: string): string => value;
 
@@ -408,6 +441,14 @@ export interface OverlayContent {
   title: string;
   lines?: OverlayLine[];
   choices?: OverlayChoice[];
+  /** A colour of its own for the title, `#rrggbb`. Without one, the app's accent. */
+  accent?: string;
+  /**
+   * A box to type in. **It takes the keyboard only once it is clicked**, so a
+   * question that comes up mid-game is something to answer when you choose,
+   * and pressing keys meant for the game never lands in it.
+   */
+  input?: { placeholder?: string; text?: string };
 }
 
 /**
@@ -499,6 +540,10 @@ export interface OverlayPlacement {
 export interface Overlay {
   show(content: OverlayContent): void;
   hide(): void;
+  /** The box has the keyboard: it was clicked, and nothing has been sent or clicked away from since. */
+  readonly typing: boolean;
+  /** What is typed in the box so far. */
+  inputText(): string;
   /** Where to appear, and what face to wear. Applied on the next `show`. */
   configure(next: { placement?: OverlayPlacement; avatar?: Avatar }): void;
   readonly visible: boolean;
@@ -517,6 +562,10 @@ export class OverlayUnavailable extends Error {}
 export function createOverlay(handlers: {
   onChoice: (id: string) => void;
   onDismiss: () => void;
+  /** Enter in the box. The keyboard has already gone back to whatever had it. */
+  onSubmit?: (text: string) => void;
+  /** Escape in the box: giving up on the question. */
+  onCancel?: () => void;
 }): Overlay {
   const instance = GetModuleHandleW(null);
   const className = 'EverythingOverlay';
@@ -544,6 +593,84 @@ export function createOverlay(handlers: {
   let shown = false;
   let destroyed = false;
 
+  /* --- the box to type in ---------------------------------------- */
+
+  let inputBox: { top: number; bottom: number } | null = null;
+  let typed = '';
+  let typing = false;
+  /** The window that had the keyboard before the box took it, to give it back to. */
+  let before: unknown = null;
+
+  const same = (a: unknown, b: unknown) => !!a && !!b && koffi.address(a) === koffi.address(b);
+
+  /** Take the keyboard, because the box was clicked. Allowed: the click was this window's input. */
+  function startTyping(): void {
+    if (typing) return;
+    const front = GetForegroundWindow();
+    before = front && !same(front, hwnd) ? front : null;
+    SetForegroundWindow(hwnd);
+    SetFocus(hwnd);
+    typing = true;
+    InvalidateRect(hwnd, null, 1);
+  }
+
+  /** Give the keyboard back to the game, or whatever had it. */
+  function stopTyping(giveBack: boolean): void {
+    if (!typing) return;
+    typing = false;
+    const back = before;
+    before = null;
+    if (giveBack && back && IsWindow(back)) SetForegroundWindow(back);
+    if (shown) InvalidateRect(hwnd, null, 1);
+  }
+
+  /** What is on the clipboard as text, for Ctrl+V. Nothing if it holds no text. */
+  function clipboardText(): string {
+    if (!OpenClipboard(hwnd)) return '';
+    try {
+      const handle = GetClipboardData(CF_UNICODETEXT);
+      if (!handle) return '';
+      const pointer = GlobalLock(handle);
+      if (!pointer) return '';
+      try {
+        const length = Math.min(lstrlenW(pointer), INPUT_MAX);
+        const decoded = koffi.decode(pointer, 'char16_t', length) as unknown;
+        return typeof decoded === 'string' ? decoded : Array.isArray(decoded) ? String.fromCharCode(...(decoded as number[])) : '';
+      } finally {
+        GlobalUnlock(handle);
+      }
+    } catch {
+      return '';
+    } finally {
+      CloseClipboard();
+    }
+  }
+
+  function onChar(code: number): void {
+    if (code === 13) {
+      const text = typed;
+      stopTyping(true);
+      handlers.onSubmit?.(text);
+      return;
+    }
+    if (code === 27) {
+      stopTyping(true);
+      handlers.onCancel?.();
+      return;
+    }
+    if (code === 8) typed = Array.from(typed).slice(0, -1).join('');
+    // Ctrl+Backspace: the last word.
+    else if (code === 127) typed = typed.replace(/\S*\s*$/, '');
+    // Ctrl+V. One line: a newline would read as Enter in the typed answer.
+    else if (code === 22) typed = (typed + clipboardText().replace(/[\r\n\t]+/g, ' ')).slice(0, INPUT_MAX);
+    else if (code >= 32 && typed.length < INPUT_MAX) typed += String.fromCharCode(code);
+    else return;
+    InvalidateRect(hwnd, null, 1);
+  }
+
+  /** Whether a point in the window is on the box. */
+  const onInput = (y: number) => !!inputBox && y >= inputBox.top && y <= inputBox.bottom;
+
   /* --- the window procedure ------------------------------------- */
 
   const onMessage = (hwnd: unknown, msg: number, wparam: number, lparam: number): number => {
@@ -567,13 +694,43 @@ export function createOverlay(handlers: {
 
       const hit = buttons.find((button) => y >= button.top && y <= button.bottom);
       if (hit) handlers.onChoice(hit.id);
+      // With a box, a click anywhere else on it is the click that means "let me type".
+      else if (inputBox) startTyping();
       else handlers.onDismiss();
       return 0;
     }
 
-    if (msg === WM_KEYDOWN && wparam === VK_ESCAPE) {
-      handlers.onDismiss();
+    if (msg === WM_CHAR) {
+      if (typing) onChar(Number(wparam));
       return 0;
+    }
+
+    // Typing, Escape arrives as a character too, and is handled there.
+    if (msg === WM_KEYDOWN && wparam === VK_ESCAPE) {
+      if (!typing) handlers.onDismiss();
+      return 0;
+    }
+
+    // Clicked away, to the game or anywhere: the box lets go, keeping what is typed.
+    if (msg === WM_KILLFOCUS || (msg === WM_ACTIVATE && (Number(wparam) & 0xffff) === 0)) {
+      if (typing) {
+        typing = false;
+        before = null;
+        InvalidateRect(hwnd, null, 1);
+      }
+      return Number(DefWindowProcW(hwnd, msg, wparam, lparam));
+    }
+
+    // An I-beam over the box, so it reads as somewhere to type before it is clicked.
+    if (msg === WM_SETCURSOR && inputBox) {
+      const point = koffi.alloc(POINT, 1);
+      GetCursorPos(point);
+      ScreenToClient(hwnd, point);
+      const at = koffi.decode(point, POINT) as { x: number; y: number };
+      if (onInput(at.y)) {
+        SetCursor(LoadCursorW(null, IDC_IBEAM));
+        return 1;
+      }
     }
 
     if (msg === WM_DESTROY) return 0;
@@ -594,7 +751,14 @@ export function createOverlay(handlers: {
     cbWndExtra: 0,
     hInstance: instance,
     hIcon: null,
-    hCursor: null,
+    /*
+     * The hand, because a click anywhere on it does something: picks a choice
+     * or closes it. It was null, which tells Windows nothing, so the pointer
+     * kept the "starting up" spinner from when the agent was launched (this
+     * thread polls with PeekMessage and never calls GetMessage, which is what
+     * ends that feedback), and the popup looked like it was still loading.
+     */
+    hCursor: LoadCursorW(null, IDC_HAND),
     hbrBackground: null,
     lpszMenuName: null,
     lpszClassName: wide(className),
@@ -636,6 +800,8 @@ export function createOverlay(handlers: {
 
   const titleFont = font(16, 600);
   const bodyFont = font(15, 400);
+  const hintFont = font(12, 400);
+  const fieldBrush = CreateSolidBrush(COLOR.field);
   // Segoe UI Emoji is what makes a built-in avatar a colour glyph rather than
   // an outline, and it costs nothing to ship.
   const avatarFont = CreateFontW(-32, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, wide('Segoe UI Emoji'));
@@ -684,8 +850,12 @@ export function createOverlay(handlers: {
 
     let y = PADDING;
 
+    // A popup can bring its own colour: a blueprint's "Show a popup" picks one.
+    const own = content.accent ? accentFromHex(content.accent) : null;
+    const accent = own ?? COLOR.accent;
+
     SelectObject(hdc, titleFont);
-    SetTextColor(hdc, COLOR.accent);
+    SetTextColor(hdc, accent);
     DrawTextW(
       hdc,
       wide(content.title),
@@ -740,6 +910,35 @@ export function createOverlay(handlers: {
       y += LINE_HEIGHT * (tall ? 2 : 1);
     }
 
+    if (inputBox) {
+      // A frame in the accent while it has the keyboard, so which is listening is plain.
+      const frame = typing ? CreateSolidBrush(accent) : null;
+      FillRect(hdc, rectAt(PADDING, inputBox.top, client.right - PADDING, inputBox.bottom), frame ?? borderBrush);
+      if (frame) DeleteObject(frame);
+      FillRect(hdc, rectAt(PADDING + 1, inputBox.top + 1, client.right - PADDING - 1, inputBox.bottom - 1), fieldBrush);
+      SelectObject(hdc, bodyFont);
+      const placeholder = content.input?.placeholder || (typing ? 'Type here' : 'Click here to type');
+      // The end of a long answer is the part being typed, so that is what shows.
+      const tail = typed.length > 38 ? `…${typed.slice(-37)}` : typed;
+      SetTextColor(hdc, typed ? COLOR.text : COLOR.muted);
+      DrawTextW(
+        hdc,
+        wide(typed ? `${tail}${typing ? '|' : ''}` : typing ? `|  ${placeholder}` : placeholder),
+        -1,
+        rectAt(PADDING + 8, inputBox.top, client.right - PADDING - 8, inputBox.bottom),
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS
+      );
+      SelectObject(hdc, hintFont);
+      SetTextColor(hdc, COLOR.muted);
+      DrawTextW(
+        hdc,
+        wide(typing ? 'Enter sends it · Esc gives up · click away to come back to it' : 'Your game keeps the keyboard until you click the box'),
+        -1,
+        rectAt(PADDING, inputBox.bottom + 2, client.right - PADDING, inputBox.bottom + 2 + INPUT_HINT),
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS
+      );
+    }
+
     for (const button of buttons) {
       FillRect(hdc, rectAt(PADDING, button.top, client.right - PADDING, button.bottom), buttonBrush);
       SetTextColor(hdc, COLOR.text);
@@ -760,7 +959,8 @@ export function createOverlay(handlers: {
   function heightFor(next: OverlayContent): number {
     const lines = (next.lines ?? []).reduce((total, line) => total + (line.text.length > 44 ? 2 : 1), 0);
     const choices = (next.choices ?? []).length;
-    const text = PADDING * 2 + LINE_HEIGHT + 4 + lines * LINE_HEIGHT + choices * (BUTTON_HEIGHT + 6);
+    const input = next.input ? INPUT_HEIGHT + INPUT_HINT + 10 : 0;
+    const text = PADDING * 2 + LINE_HEIGHT + 4 + lines * LINE_HEIGHT + input + choices * (BUTTON_HEIGHT + 6);
     // A one-line result beside a 44px face would otherwise clip the face.
     return avatar.kind === 'none' ? text : Math.max(text, PADDING * 2 + AVATAR_SIZE);
   }
@@ -982,6 +1182,14 @@ export function createOverlay(handlers: {
       return shown;
     },
 
+    get typing() {
+      return typing;
+    },
+
+    inputText(): string {
+      return typed;
+    },
+
     configure(next): void {
       if (next.placement) placement = next.placement;
       if (next.avatar) avatar = next.avatar;
@@ -993,6 +1201,16 @@ export function createOverlay(handlers: {
 
       const height = heightFor(next);
       let top = PADDING + LINE_HEIGHT + 4 + (next.lines ?? []).reduce((t, l) => t + (l.text.length > 44 ? 2 : 1), 0) * LINE_HEIGHT;
+      if (next.input) {
+        inputBox = { top: top + 2, bottom: top + 2 + INPUT_HEIGHT };
+        typed = (next.input.text ?? '').slice(0, INPUT_MAX);
+        top += INPUT_HEIGHT + INPUT_HINT + 10;
+      } else {
+        // Something without a box replacing one that had the keyboard hands it back.
+        stopTyping(true);
+        inputBox = null;
+        typed = '';
+      }
       buttons = (next.choices ?? []).map((choice) => {
         const button = { id: choice.id, top, bottom: top + BUTTON_HEIGHT };
         top += BUTTON_HEIGHT + 6;
@@ -1011,9 +1229,12 @@ export function createOverlay(handlers: {
 
     hide(): void {
       if (destroyed || !shown) return;
+      // Going while it has the keyboard: back to the game, not to nowhere.
+      stopTyping(true);
       ShowWindow(hwnd, SW_HIDE);
       shown = false;
       buttons = [];
+      inputBox = null;
       setRate(200);
     },
 
@@ -1024,7 +1245,7 @@ export function createOverlay(handlers: {
       DestroyWindow(hwnd);
       // Fonts and brushes are GDI handles, and leaking them across a long-lived
       // process is exactly the sort of thing that has no symptom until it does.
-      for (const handle of [titleFont, bodyFont, avatarFont, background, borderBrush, buttonBrush]) DeleteObject(handle);
+      for (const handle of [titleFont, bodyFont, hintFont, avatarFont, background, borderBrush, buttonBrush, fieldBrush]) DeleteObject(handle);
       for (const cached of imageCache.values()) if (cached) DeleteObject(cached.bitmap);
       imageCache.clear();
       koffi.unregister(wndProc);

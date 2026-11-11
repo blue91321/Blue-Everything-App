@@ -388,13 +388,16 @@ export function Library({
       {show === 'broken' && shown.length > 0 && (
         <p className="meta">
           When it was last asked — which for something you have not opened in a while may be a day or two
-          ago. A failed check is retried within the hour. Tap one to find it on another source.
+          ago. A failed check is retried within the hour, and a series whose source has failed for two days is
+          switched to another source that has it, unless that is off (More). Tap one to find it on another source
+          now.
         </p>
       )}
       {show === 'empty' && shown.length > 0 && (
         <p className="meta">
-          The source answered and has no chapters for this — usually the wrong entry was linked, or it has
-          been taken off that source. Tap one to find it on another.
+          The source no longer has these: the site has taken the page down (a 404), or it answers with no
+          chapters, which is usually the same thing or the wrong entry linked. Asked again once a day in case
+          it comes back. Tap one to find it on another source, or switch them all below.
         </p>
       )}
 
@@ -407,14 +410,15 @@ export function Library({
         </p>
       )}
 
-      {show === 'unlinked' && counts.unlinked > 0 && <FindSources />}
+      {show === 'unlinked' && counts.unlinked > 0 && <FindSources mode="unlinked" />}
+      {show === 'empty' && counts.empty > 0 && <FindSources mode="gone" />}
 
       <div className="manga-lib-grid">
         {shown.slice(0, limit).map((s) => (
           <Tile
             key={s.id}
             series={s}
-            onOpen={() => (show === 'broken' ? onCompare(s) : onOpen(s))}
+            onOpen={() => (show === 'broken' || show === 'empty' ? onCompare(s) : onOpen(s))}
             onDetails={() => onDetails(s)}
             onCompare={() => onCompare(s)}
             onRemove={() => onRemove(s)}
@@ -462,7 +466,7 @@ function ShowMore({ left, onMore }: { left: number; onMore: () => void }) {
  * background, so this asks how it is going every few seconds while it runs,
  * and the library fills in as it links.
  */
-function FindSources() {
+function FindSources({ mode }: { mode: 'unlinked' | 'gone' }) {
   const [state, setState] = useState<FindSourcesState | null>(null);
   const [problem, setProblem] = useState('');
   useEffect(() => {
@@ -487,37 +491,53 @@ function FindSources() {
   const start = async () => {
     setProblem('');
     try {
-      setState(await manga.findSources.start());
+      setState(await manga.findSources.start(mode));
     } catch (error) {
       setProblem((error as Error).message);
     }
   };
 
   const s = state;
+  const switching = mode === 'gone';
+  // The server runs one search at a time; one of the other kind going is said, and this waits.
+  const mine = !s?.mode || s.mode === mode;
+  const busyElsewhere = Boolean(s?.running && !mine);
   return (
     <div className="card" style={{ marginBottom: 12 }}>
       <div className="row between" style={{ alignItems: 'center', gap: 8 }}>
         <div className="grow">
-          <div className="title">Find sources for these</div>
+          <div className="title">{switching ? 'Switch these to another source' : 'Find sources for these'}</div>
           <div className="meta">
-            {s?.running
-              ? `Searching: ${s.done} of ${s.total} done, ${s.linked} linked so far.`
-              : 'Searches your sources for each by its title, and links one only where the title is exactly the same. Roughly ten seconds a series, in the background: you can carry on reading.'}
+            {s?.running && mine
+              ? `Searching: ${s.done} of ${s.total} done, ${s.linked} ${switching ? 'switched' : 'linked'} so far.`
+              : busyElsewhere
+                ? `Already ${s!.mode === 'gone' ? 'switching sources' : 'finding sources'} for other series; this can start when that finishes.`
+                : switching
+                  ? 'These sources have taken the series down, or never had chapters for it. This searches your other sources for each by its title and switches it where the title is exactly the same and the new source really has chapters, preferring one that reaches as far as you have read. Your read chapters and your place carry over. About fifteen seconds a series, in the background.'
+                  : 'Searches your sources for each by its title, and links one only where the title is exactly the same. Roughly ten seconds a series, in the background: you can carry on reading.'}
           </div>
         </div>
         <button className="btn primary" disabled={!s || s.running} onClick={() => void start()}>
-          {s?.running ? 'Searching…' : 'Find sources'}
+          {s?.running && mine ? 'Searching…' : switching ? 'Switch sources' : 'Find sources'}
         </button>
       </div>
-      {s?.running && <progress max={s.total || 1} value={s.done} style={{ width: '100%', marginTop: 8 }} />}
-      {s && !s.running && s.finishedAt && (
+      {s?.running && mine && <progress max={s.total || 1} value={s.done} style={{ width: '100%', marginTop: 8 }} />}
+      {s && !s.running && s.finishedAt && mine && (
         <p className="meta" style={{ marginTop: 8 }}>
-          Last run: {s.linked} linked, {s.notFound} not found under the same name
-          {s.failed ? `, ${s.failed} the sources would not answer for` : ''}. {s.unlinked} still have no source; a cover
-          here opens the search to find one by hand.
+          {switching ? (
+            <>
+              Last run: {s.linked} switched, {s.notFound} with no other source that has them under the same name
+              {s.failed ? `, ${s.failed} the sources would not answer for` : ''}. {s.gone ?? 0} still need one; a cover here opens the search to choose by hand.
+            </>
+          ) : (
+            <>
+              Last run: {s.linked} linked, {s.notFound} not found under the same name
+              {s.failed ? `, ${s.failed} the sources would not answer for` : ''}. {s.unlinked} still have no source; a cover here opens the search to find one by hand.
+            </>
+          )}
         </p>
       )}
-      {s && s.recent.length > 0 && <p className="meta">Linked: {s.recent.join(', ')}</p>}
+      {s && s.recent.length > 0 && mine && <p className="meta">{switching ? 'Switched' : 'Linked'}: {s.recent.join(', ')}</p>}
       {(problem || s?.problem) && <p className="banner">{problem || s?.problem}</p>}
     </div>
   );

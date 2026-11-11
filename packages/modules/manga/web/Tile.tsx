@@ -110,7 +110,7 @@ export function Tile({
           {s.error && (
             <span
               className="manga-lib-warn"
-              title={`${s.error}${s.checkedAt ? ` — when last asked, ${ageOf(s.checkedAt, Date.now())}` : ''}`}
+              title={`${s.error}${s.checkedAt ? ` — when last asked, ${ageOf(s.checkedAt, Date.now())}` : ''}. Open it to find a new source.`}
             >
               !
             </span>

@@ -10,6 +10,9 @@
  * behind the live gate, and counts — then checks the real thing still wakes it,
  * said normally, said fast, and run into a command.
  *
+ * `WAKE_ALIKES="jervis,jervice"` adds sound-alikes, which count as the wake
+ * word, and checks each one wakes it as well as that nothing else does.
+ *
  * `EVERYTHING_WAKE_THRESHOLD` (default 0.25) and `EVERYTHING_WAKE_SCORE`
  * (default 1.0) are read by the spotter, so a change to either can be measured
  * here before anybody lives with it.
@@ -23,7 +26,11 @@ import { cleanUp, say, spot } from './speech-test.js';
 
 const WAKE = (process.env.WAKE_WORD || 'hey jarvis').toLowerCase();
 const DECOYS = (process.env.WAKE_DECOYS ?? '').split(',').map((w) => w.trim()).filter(Boolean);
-const PHRASES = [...new Set([WAKE, wakeWordRequired(WAKE).join(' '), ...DECOYS])];
+const ALIKES = (process.env.WAKE_ALIKES ?? '').split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+// As the listener gives them: each on its own, and after the wake word's leading words.
+const LEAD = WAKE.split(/\s+/).slice(0, WAKE.split(/\s+/).length - wakeWordRequired(WAKE).length).join(' ');
+const ALIKE_PHRASES = ALIKES.flatMap((a) => (LEAD ? [a, `${LEAD} ${a}`] : [a]));
+const PHRASES = [...new Set([WAKE, wakeWordRequired(WAKE).join(' '), ...ALIKE_PHRASES, ...DECOYS])];
 
 /** Nothing here is addressed to the app. None of it should wake anything. */
 const CHATTER = [
@@ -43,6 +50,11 @@ const CHATTER = [
   'charlie was asking about it earlier',
   'hey are you coming to dinner tonight',
   'jars of jam are in the cupboard',
+  // Near the sound-alikes, which is where they would cost something.
+  'the service was slow tonight',
+  'i get nervous before these',
+  'you deserve this one',
+  'jerry is coming over later',
 ];
 
 const isWake = (phrase: string) => !DECOYS.includes(phrase);
@@ -61,12 +73,17 @@ try {
 
   console.log('\nand the real thing must still work:\n');
   let missed = 0;
-  for (const [label, text, rate] of [
+  const cases: Array<[string, string, number]> = [
     ['normal', WAKE, 1],
     ['fast', WAKE, 3],
     ['run together', `${WAKE} i drank two waters`, 1],
     ['name only', wakeWordRequired(WAKE).join(' '), 1],
-  ] as const) {
+    ...ALIKES.flatMap((alike) => [
+      [`said "${alike}"`, LEAD ? `${LEAD} ${alike}` : alike, 1] as [string, string, number],
+      [`"${alike}" fast`, `${LEAD ? `${LEAD} ` : ''}${alike} drink water`, 3] as [string, string, number],
+    ]),
+  ];
+  for (const [label, text, rate] of cases) {
     const hit = spot(say(text, rate), PHRASES).find((h) => isWake(h.phrase));
     if (!hit) missed++;
     console.log(`  ${hit ? 'fires ' : 'MISSES'}  ${label.padEnd(13)} "${text}"${hit ? `  at ${hit.atMs}ms` : ''}`);

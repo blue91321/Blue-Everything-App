@@ -1,7 +1,7 @@
 {
   "name": "blue-everything",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "license": "MIT",
   "workspaces": [
     "packages/*"
@@ -24,6 +24,9 @@
   "overrides": {
     "@esbuild-kit/core-utils": {
       "esbuild": "^0.25.12"
-    }
+    },
+    "glob": "14.0.3",
+    "minimatch": "11.0.3",
+    "@isaacs/nonrecursive-glob-match": "1.0.3"
   }
 }

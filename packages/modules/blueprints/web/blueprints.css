@@ -1,0 +1,2142 @@
+/*
+ * The Blueprints screen. Two columns when there is room, judged by the screen's
+ * own width as the Code screen does; narrower, the list or the open blueprint
+ * with a way back.
+ *
+ * The four kinds of box are told apart by their heads, as in Unreal: events
+ * red, checks grey, logic violet, actions in the accent. Red and violet are
+ * fixed hues for the reason the rain keeps its blue: "where it starts" should
+ * not change with the accent. So is the green of an answer's wire, which has
+ * to read as a different kind of wire whatever the accent is.
+ */
+.bp-screen {
+  container: bp-screen / inline-size;
+  min-width: 0;
+}
+/* Declared on the editors drawn into body too (the timeline, a drawn sound), which are outside the screen and would otherwise draw these as nothing. */
+.bp-screen,
+.bp-tl-overlay {
+  --bp-event: #c2413b;
+  --bp-logic: #7c5cc4;
+  --bp-value: #3a9e6e;
+  --bp-number: #2f8fb8;
+}
+
+.bp-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@container bp-screen (min-width: 820px) {
+  .bp-columns {
+    grid-template-columns: clamp(200px, 22cqi, 300px) minmax(0, 1fr);
+  }
+
+  .bp-back {
+    display: none;
+  }
+}
+
+@container bp-screen (max-width: 819.98px) {
+  .bp-columns.has-open > .bp-side {
+    display: none;
+  }
+
+  .bp-columns:not(.has-open) > .bp-main {
+    display: none;
+  }
+}
+
+.bp-side,
+.bp-main,
+.bp-editor {
+  min-width: 0;
+}
+
+.bp-new {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.bp-templates {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.bp-template {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bp-template:hover {
+  border-color: var(--accent);
+}
+
+.bp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bp-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.bp-list-item:hover,
+.bp-list-item.current {
+  background: var(--surface-raised);
+}
+
+.bp-list-item.current {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.bp-list-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+}
+
+.bp-dot.on {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.bp-dot.stopped {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* Switched on and waiting for something, like its game being open: ringed, not filled. */
+.bp-dot.idle {
+  border-color: var(--presence-away);
+  box-shadow: inset 0 0 0 2px var(--presence-away);
+  background: transparent;
+}
+
+/* Switched on but nothing can start it, like voice being off: hollow and dashed. */
+.bp-dot.disabled {
+  border-style: dashed;
+}
+
+.bp-side-foot {
+  margin: 10px 8px;
+}
+
+.bp-pick {
+  margin-top: 12px;
+}
+
+/* ---- the bar over the board ------------------------------------------ */
+
+.bp-back {
+  margin-bottom: 8px;
+}
+
+.bp-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.bp-name {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+/* The bar's boxes take the width they need, so the folder and "test from" sit beside the name. */
+.bp-bar select {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 16em;
+}
+
+.bp-saving {
+  min-width: 4.5em;
+}
+
+.bp-delete {
+  margin-left: auto;
+  color: var(--danger);
+}
+
+.bp-status {
+  margin: 6px 0 8px;
+}
+
+/* "Nudge me" while nudges are held: the one box that would do nothing visible. */
+.bp-held {
+  border-left: 3px solid var(--warn, var(--accent));
+  margin: 0 0 8px;
+}
+
+.bp-held p {
+  margin: 0 0 8px;
+}
+
+/* ---- the board -------------------------------------------------------- */
+
+/* Loops worth knowing about, above the board. */
+.bp-warnings {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.bp-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+
+.bp-warning > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.bp-warning.danger {
+  border-left-color: var(--danger);
+}
+
+.bp-warning.warn {
+  border-left-color: var(--accent);
+}
+
+.bp-warning button {
+  flex: none;
+  padding: 2px 10px;
+}
+
+/* A box in a loop that will be stopped, or that goes until stopped. */
+.bp-node.loop-danger {
+  box-shadow: 0 0 0 2px var(--danger);
+}
+
+.bp-node.loop-warn {
+  box-shadow: 0 0 0 2px var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* A Set box's name joined to the Variable box of the same name: dashed, as it carries no run. */
+.bp-link {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.bp-link.loose {
+  stroke: var(--accent);
+}
+
+.bp-link-pin {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border: 2px solid var(--muted);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.bp-link-pin.out {
+  right: -6px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.bp-link-pin.in {
+  left: -6px;
+  pointer-events: none;
+}
+
+.bp-link-pin.linked,
+.bp-link-pin.pending {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.bp-variable-now {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bp-variable-now .bp-note {
+  margin: 0;
+}
+
+.bp-variable-now button {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+/* Several wires from one way out: the order they run in, near where they leave. */
+/* The board takes the keyboard on a click (for Delete and Ctrl+C); the ring is for the keyboard only. */
+.bp-board:focus {
+  outline: none;
+}
+
+.bp-board:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.bp-board-wrap {
+  position: relative;
+}
+
+.bp-tools {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.bp-tools > * {
+  pointer-events: auto;
+}
+
+.bp-tools-gap {
+  flex: 1;
+  pointer-events: none;
+}
+
+.bp-board {
+  position: relative;
+  height: max(360px, calc(100dvh - 300px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--muted) 35%, transparent) 1px, transparent 1.2px);
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+
+.bp-board.panning {
+  cursor: grabbing;
+}
+
+.bp-board.connecting .bp-node {
+  cursor: copy;
+}
+
+.bp-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.bp-wires {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+}
+
+.bp-wire {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2.5;
+  pointer-events: none;
+}
+
+.bp-wire.ran {
+  stroke: var(--accent);
+  stroke-width: 3.5;
+}
+
+.bp-wire.chosen {
+  stroke: var(--text);
+  stroke-dasharray: 6 4;
+}
+
+.bp-wire.loose {
+  stroke: var(--accent);
+  stroke-dasharray: 6 4;
+}
+
+/* An answer going into a gate: thinner, and green. */
+.bp-wire.value {
+  stroke: var(--bp-value);
+  stroke-width: 1.8;
+}
+
+.bp-wire.value.ran {
+  stroke: var(--bp-value);
+  stroke-width: 2.8;
+}
+
+/* A number going into a counter: thin too, and blue. */
+.bp-wire.value.number,
+.bp-wire.value.number.ran {
+  stroke: var(--bp-number);
+}
+
+.bp-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.bp-wire-remove {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--danger);
+}
+
+.bp-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.bp-pending {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  z-index: 3;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 16px);
+  padding: 6px 8px 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+/* ---- a box ------------------------------------------------------------ */
+
+.bp-node {
+  position: absolute;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
+  font-size: 13px;
+}
+
+.bp-node.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.bp-node.lonely {
+  opacity: 0.6;
+}
+
+.bp-node.ran-failed {
+  outline: 2px solid var(--danger);
+}
+
+.bp-node.ran-yes,
+.bp-node.ran-no,
+.bp-node.ran-done,
+.bp-node.ran-started,
+.bp-node.ran-stopped {
+  box-shadow: 0 0 0 2px var(--accent), 0 4px 14px rgb(0 0 0 / 0.25);
+}
+
+.bp-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 26px 0 14px;
+  border-radius: 7px 7px 0 0;
+  cursor: move;
+  touch-action: none;
+}
+
+.kind-event .bp-head {
+  background: color-mix(in srgb, var(--bp-event) 30%, var(--surface));
+}
+
+.kind-branch .bp-head {
+  background: var(--surface-raised);
+}
+
+.kind-action .bp-head {
+  background: color-mix(in srgb, var(--accent) 26%, var(--surface));
+}
+
+.kind-logic .bp-head {
+  background: color-mix(in srgb, var(--bp-logic) 30%, var(--surface));
+}
+
+.bp-glyph {
+  flex: none;
+}
+
+.bp-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.bp-kind {
+  margin-right: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.bp-remove {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+
+.bp-remove:hover {
+  color: var(--danger);
+}
+
+/* The pins: a way in on the left of the head, ways out on the right edge. */
+.bp-in,
+.bp-out {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--text);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.bp-in {
+  left: -8px;
+  top: 11px;
+}
+
+.bp-out {
+  right: -8px;
+  top: 11px;
+  cursor: crosshair;
+}
+
+/* A bigger target than it looks, for a finger. */
+.bp-out::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+
+.bp-out:hover,
+.bp-out.pending {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.bp-outs {
+  padding: 0;
+}
+
+.bp-out-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 26px;
+  padding-right: 16px;
+  font-weight: 600;
+}
+
+.bp-out-row .bp-out {
+  top: 6px;
+}
+
+/* An answer comes out of a diamond, not a circle. */
+.bp-out.value {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border-color: var(--bp-value);
+  transform: rotate(45deg);
+}
+
+.bp-out-row .bp-out.value {
+  top: 7px;
+  right: -7px;
+}
+
+.bp-out.value:hover,
+.bp-out.value.pending {
+  background: var(--bp-value);
+  border-color: var(--bp-value);
+}
+
+/* A number comes out of a rounded square, and goes into one. */
+.bp-out.value.number {
+  border-radius: 4px;
+  border-color: var(--bp-number);
+  transform: none;
+}
+
+.bp-out.value.number:hover,
+.bp-out.value.number.pending {
+  background: var(--bp-number);
+  border-color: var(--bp-number);
+}
+
+/* A gate's lettered inputs, down the left of its rows. */
+.bp-port {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  margin-right: auto;
+  padding-left: 14px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.bp-port.wired {
+  color: var(--text);
+}
+
+.bp-port-pin {
+  position: absolute;
+  left: -7px;
+  top: 7px;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--bp-value);
+  border-radius: 2px;
+  background: var(--surface);
+  transform: rotate(45deg);
+}
+
+.bp-port.wired .bp-port-pin {
+  background: var(--bp-value);
+}
+
+.bp-port.number .bp-port-pin {
+  border-color: var(--bp-number);
+  border-radius: 4px;
+  transform: none;
+}
+
+.bp-port.number.wired .bp-port-pin {
+  background: var(--bp-number);
+}
+
+/* A bigger target than it looks, for a finger and for a dropped wire. */
+.bp-port::after {
+  content: '';
+  position: absolute;
+  inset: -2px -20px -2px -16px;
+}
+
+.bp-out-label {
+  white-space: nowrap;
+}
+
+.bp-result {
+  padding: 2px 14px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.ran-failed .bp-result {
+  color: var(--danger);
+}
+
+.bp-fields {
+  display: grid;
+  gap: 8px;
+  padding: 8px 12px 12px;
+}
+
+.bp-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.bp-field-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.bp-field input,
+.bp-field select,
+.bp-field textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font-size: 13px;
+}
+
+.bp-field textarea {
+  resize: vertical;
+}
+
+.bp-keys {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bp-keys input {
+  flex: 1 1 auto;
+}
+
+.bp-keys button {
+  flex: none;
+  padding-inline: 8px;
+}
+
+.bp-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.bp-hint.warn {
+  color: var(--danger);
+}
+
+/* What a timed box will do, worked out: whether it lines up, and when next. */
+.bp-note {
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.bp-note.warn {
+  border-left-color: var(--danger);
+}
+
+/* ---- the Add menu ----------------------------------------------------- */
+
+.bp-menu {
+  position: absolute;
+  top: 48px;
+  left: 8px;
+  z-index: 4;
+  width: min(340px, calc(100% - 16px));
+  max-height: calc(100% - 56px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+.bp-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 6px;
+}
+
+.bp-menu-kind {
+  margin: 10px 4px 4px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.bp-menu-kind.kind-event {
+  color: var(--bp-event);
+}
+
+.bp-menu-kind.kind-action {
+  color: var(--accent);
+}
+
+.bp-menu-kind.kind-branch {
+  color: var(--muted);
+}
+
+.bp-menu-kind.kind-logic {
+  color: var(--bp-logic);
+}
+
+.bp-menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.bp-menu-item > span:last-child {
+  display: grid;
+  gap: 1px;
+}
+
+.bp-menu-item:hover {
+  background: var(--surface-raised);
+}
+
+/* ---- the last run ----------------------------------------------------- */
+
+.bp-runs {
+  margin-top: 10px;
+}
+
+.bp-runs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bp-runs-head h3 {
+  margin: 0;
+}
+
+.bp-steps {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.bp-step {
+  display: flex;
+  gap: 8px;
+}
+
+.bp-step-mark {
+  flex: none;
+  width: 1.2em;
+  text-align: center;
+  color: var(--accent);
+}
+
+.bp-step.no .bp-step-mark {
+  color: var(--muted);
+}
+
+.bp-step.failed .bp-step-mark,
+.bp-step.failed strong {
+  color: var(--danger);
+}
+
+.bp-runs-empty {
+  margin-top: 10px;
+}
+
+/* ---- Press keys on a timeline ----------------------------------------- */
+
+.bp-tl-field {
+  gap: 4px;
+}
+
+.bp-tl-field > button {
+  align-self: flex-start;
+}
+
+/* The box's picture: one thin row a key, scaled to the whole timeline. */
+.bp-tl-mini {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 60px;
+  background: var(--surface-raised);
+  border-radius: 4px;
+}
+
+.bp-tl-mini rect {
+  fill: var(--accent);
+}
+
+.bp-tl-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.bp-tl {
+  width: min(960px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  outline: none;
+}
+
+.bp-tl-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bp-tl-top h3 {
+  margin: 0;
+  margin-right: auto;
+}
+
+.bp-tl-span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bp-tl-help {
+  margin: 0;
+}
+
+/* Key column, the lane, and the remove button; the ruler shares the lane's column. */
+.bp-tl-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bp-tl-ruler-row,
+.bp-tl-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr) 32px;
+  gap: 10px;
+  align-items: start;
+}
+
+.bp-tl-ruler {
+  position: relative;
+  height: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bp-tl-tick {
+  position: absolute;
+  bottom: 2px;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bp-tl-tick:first-child {
+  transform: none;
+}
+
+.bp-tl-key {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bp-tl-ifup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.bp-tl-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.bp-tl-track {
+  position: relative;
+  height: 32px;
+  background: var(--surface-raised);
+  border-radius: 6px;
+}
+
+.bp-tl-bar {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  min-width: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 4px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+.bp-tl-bar:active {
+  cursor: grabbing;
+}
+
+.bp-tl-bar:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.bp-tl-bar.empty {
+  background: transparent;
+  border: 1px dashed var(--muted);
+  color: var(--muted);
+}
+
+/* Runs past the span shown: the cut end says so rather than looking finished. */
+.bp-tl-bar.beyond {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.bp-tl-bar-label {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  padding: 0 10px;
+}
+
+.bp-tl-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.bp-tl-handle::after {
+  content: '';
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+.bp-tl-handle.start {
+  left: 0;
+}
+
+.bp-tl-handle.end {
+  right: 0;
+}
+
+.bp-tl-times {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bp-tl-ms {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bp-tl-ms input {
+  width: 5em;
+  font-variant-numeric: tabular-nums;
+}
+
+.bp-tl-remove {
+  padding: 4px 8px;
+}
+
+.bp-tl-bottom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* On a phone the key sits above its lane rather than beside it. */
+@media (max-width: 640px) {
+  .bp-tl-ruler-row,
+  .bp-tl-row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+  .bp-tl-ruler-row > span:first-child {
+    display: none;
+  }
+  .bp-tl-key {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Belongs to the box above it, so it sits under it, indented. */
+.bp-tl-gap {
+  margin-left: 20px;
+}
+
+/* ---- Add a box: search and kinds -------------------------------------- */
+
+.bp-menu {
+  width: min(420px, calc(100% - 16px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bp-menu-search {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.bp-menu-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.bp-menu-kinds button {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.bp-menu-kinds button.on {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+.bp-menu-list {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.bp-menu-item.marked {
+  background: var(--surface-raised);
+}
+
+.bp-menu-glyph {
+  flex: none;
+  width: 1.4em;
+  text-align: center;
+}
+
+.bp-menu-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bp-menu-chip {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+}
+
+.bp-menu-chip.kind-event {
+  color: var(--bp-event);
+}
+
+.bp-menu-chip.kind-action {
+  color: var(--accent);
+}
+
+.bp-menu-chip.kind-branch {
+  color: var(--muted);
+}
+
+.bp-menu-chip.kind-logic {
+  color: var(--bp-logic);
+}
+
+/* Why it is listed when its name is not what was typed. */
+.bp-menu-because {
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.bp-menu-none {
+  padding: 8px 4px;
+}
+
+/* ---- folders on the list --------------------------------------------- */
+
+.bp-new-row {
+  display: flex;
+  gap: 6px;
+}
+
+.bp-new-row > button {
+  white-space: nowrap;
+}
+
+.bp-new-row .bp-new {
+  flex: 1 1 auto;
+}
+
+.bp-list-wrap {
+  border-radius: 8px;
+}
+
+/* Where a dragged blueprint would go: the folder it is over, or the whole list for the top. */
+.bp-list-wrap.drop-target,
+.bp-folder.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+.bp-list-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.bp-list-row.dragging {
+  opacity: 0.5;
+}
+
+.bp-grip {
+  flex: none;
+  padding: 0 2px 0 4px;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  opacity: 0.55;
+}
+
+.bp-grip:hover {
+  opacity: 1;
+}
+
+.bp-folder {
+  border-radius: 8px;
+}
+
+.bp-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bp-folder-head button {
+  border: 0;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 4px;
+}
+
+.bp-twist {
+  flex: none;
+  width: 22px;
+  color: var(--muted) !important;
+}
+
+.bp-folder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-weight: 600;
+}
+
+.bp-folder-act {
+  flex: none;
+  color: var(--muted) !important;
+  opacity: 0.6;
+}
+
+.bp-folder-act:hover {
+  opacity: 1;
+}
+
+.bp-folder-list {
+  padding-left: 14px;
+}
+
+.bp-folder-empty {
+  margin: 0 0 6px 40px;
+  font-size: 12px;
+}
+
+.bp-folder-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 4px 0;
+}
+
+/* ---- numbers wired in, sums, colours (2026-11-04) --------------------- */
+
+/* A way in's name is cut short rather than pushed into the output beside it. */
+.bp-port-label {
+  overflow: hidden;
+  max-width: 120px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bp-wired-in {
+  display: block;
+  padding: 5px 8px;
+  border: 1px dashed var(--bp-number);
+  border-radius: 6px;
+  color: var(--bp-number);
+  font-size: 12px;
+}
+
+.bp-wired-in.warn {
+  border-color: var(--danger, #e5534b);
+  color: var(--danger, #e5534b);
+}
+
+.bp-math {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+.bp-math.wrong {
+  border-color: var(--danger);
+}
+
+/* The Math field: a row of characters, with fractions stacked as Desmos draws them. */
+.mf {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: text;
+  overflow-x: auto;
+  font-size: 15px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mf.focused {
+  border-color: var(--accent);
+}
+
+.mf.wrong {
+  border-color: var(--danger);
+}
+
+/* The hidden box the keys go to: still focusable, so a phone's keyboard comes up. 16px so iOS does not zoom. */
+.bp-field .mf-input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  pointer-events: none;
+}
+
+.mf-row {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.mf-ch {
+  display: inline-block;
+  padding: 0 0.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mf-ch.space {
+  width: 0.3em;
+}
+
+.mf-frac {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  vertical-align: middle;
+  margin: 0 2px;
+  font-size: 0.92em;
+}
+
+.mf-num,
+.mf-den {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 1.2em;
+  padding: 0 3px;
+}
+
+.mf-num {
+  border-bottom: 1.5px solid currentColor;
+  padding-bottom: 2px;
+}
+
+.mf-den {
+  padding-top: 2px;
+}
+
+/* An exponent: smaller and raised, as written by hand. */
+.mf-sup {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: 1em;
+  margin-top: -0.35em;
+  padding: 0 1px;
+  font-size: 0.72em;
+  transform: translateY(-0.2em);
+}
+
+.mf-sup .mf-empty {
+  width: 0.6em;
+  height: 0.85em;
+}
+
+/* What is selected, by a drag or Shift with the arrows. */
+.mf-ch.sel,
+.mf-frac.sel,
+.mf-sup.sel {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 2px;
+}
+
+/* An empty top or bottom: a box to type into. */
+.mf-empty {
+  display: inline-block;
+  width: 0.7em;
+  height: 1em;
+  border: 1px dashed var(--muted);
+  border-radius: 2px;
+  opacity: 0.8;
+}
+
+.mf-caret {
+  display: inline-block;
+  width: 0;
+  height: 1.15em;
+  margin: 0 -0.75px;
+  border-left: 1.5px solid var(--accent);
+  animation: mf-blink 1.05s steps(1) infinite;
+}
+
+.mf-caret + .mf-empty {
+  margin-left: 1px;
+}
+
+@keyframes mf-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mf-caret {
+    animation: none;
+  }
+}
+
+.mf-placeholder {
+  color: var(--muted);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+
+.bp-math-says {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A box of your own colour: the head takes it, and the edge a little. */
+.bp-node.tinted {
+  border-color: color-mix(in srgb, var(--bp-tint, var(--accent)) 55%, var(--border));
+}
+
+.bp-node.tinted .bp-head {
+  background: color-mix(in srgb, var(--bp-tint, var(--accent)) 42%, var(--surface));
+}
+
+.bp-tint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px 0;
+}
+
+.bp-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.bp-swatch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bp-swatch.none {
+  background: var(--surface-raised);
+  color: var(--muted);
+}
+
+.bp-swatch.on {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+
+/* The browser's own picker, under a swatch you can see. */
+.bp-swatch.custom input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.bp-variables {
+  margin-top: 12px;
+}
+
+.bp-variables h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bp-variables ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bp-variables li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.bp-variable-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ▶ under a "Play a sound" box. */
+.bp-hear {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+/* A blueprint read from a shared picture, waiting to be added. */
+.bp-incoming {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  border-color: var(--accent);
+}
+
+.bp-incoming .warn {
+  color: var(--warn, var(--text));
+}
+
+.bp-incoming-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* A slider with its number beside it (a volume). */
+.bp-slider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bp-slider input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+.bp-slider input:not([type='range']) {
+  width: 4.5em;
+  flex: none;
+}
+
+/* A beep's or a sweep's sound: a picture on the box, a graph in the editor. */
+.bp-shape-mini {
+  width: 100%;
+  height: 40px;
+}
+.bp-shape-wave {
+  stroke: var(--bp-number);
+  stroke-width: 1;
+  fill: none;
+}
+.bp-shape-wave.ghost,
+.bp-shape-pitchline.ghost {
+  opacity: 0.35;
+}
+.bp-shape-pitch,
+.bp-shape-pitchline {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  fill: none;
+}
+.bp-shape-graph {
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  user-select: none;
+}
+.bp-shape-lane {
+  fill: var(--surface-raised);
+}
+.bp-shape-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.bp-shape-axis {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.bp-shape-envelope {
+  stroke: var(--text);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  fill: none;
+}
+.bp-shape-handle {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 2;
+  cursor: grab;
+}
+.bp-shape-handle.small {
+  r: 6px;
+  fill: var(--text);
+}
+.bp-shape-handle:focus-visible {
+  outline: none;
+  stroke: var(--text);
+  stroke-width: 3;
+}
+.bp-shape-kinds,
+.bp-shape-waves,
+.bp-shape-nums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.bp-shape-waves button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bp-shape-waves svg {
+  width: 48px;
+  height: 20px;
+}
+.bp-shape-waves path {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  fill: none;
+}
+.bp-shape-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.bp-shape-num input {
+  width: 5em;
+  padding: 4px 6px;
+}
+
+/* A drawn sound's lines, told apart by colour: mid tones that read on the dark lane and the light one. */
+.bp-shape-line,
+.bp-shape-point,
+.bp-shape-swatch {
+  --line: #5b8cff;
+}
+.c1.bp-shape-line, .c1.bp-shape-point, .c1.bp-shape-swatch { --line: #f0803c; }
+.c2.bp-shape-line, .c2.bp-shape-point, .c2.bp-shape-swatch { --line: #2fb67c; }
+.c3.bp-shape-line, .c3.bp-shape-point, .c3.bp-shape-swatch { --line: #d556c8; }
+.c4.bp-shape-line, .c4.bp-shape-point, .c4.bp-shape-swatch { --line: #c9a400; }
+.c5.bp-shape-line, .c5.bp-shape-point, .c5.bp-shape-swatch { --line: #22a9c4; }
+.c6.bp-shape-line, .c6.bp-shape-point, .c6.bp-shape-swatch { --line: #e8496b; }
+.c7.bp-shape-line, .c7.bp-shape-point, .c7.bp-shape-swatch { --line: #9a7cf2; }
+.bp-shape-line {
+  stroke: var(--line);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  fill: none;
+  opacity: 0.75;
+}
+.bp-shape-linegroup.picked .bp-shape-line,
+.bp-shape-mini .bp-shape-line {
+  stroke-width: 3;
+  opacity: 1;
+}
+.bp-shape-line.ghost {
+  opacity: 0.25;
+}
+.bp-shape-mini .bp-shape-line {
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+/* What a line is caught by: wider than it is drawn, so it can be grabbed. */
+.bp-shape-hit {
+  stroke: transparent;
+  stroke-width: 14;
+  fill: none;
+  cursor: move;
+}
+.bp-shape-point {
+  fill: var(--line);
+  stroke: var(--surface);
+  stroke-width: 2;
+  cursor: grab;
+}
+.bp-shape-point.picked {
+  stroke: var(--text);
+  stroke-width: 2.5;
+}
+.bp-shape-point:focus-visible {
+  outline: none;
+  stroke: var(--text);
+  stroke-width: 3;
+}
+.bp-shape-lane.hit {
+  cursor: copy;
+}
+.bp-shape-graph.drawing .bp-shape-lane.hit {
+  cursor: crosshair;
+}
+.bp-shape-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.bp-shape-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bp-shape-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--line);
+}
+.bp-shape-gain {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* What a point is caught by: invisible, wider than the dot. */
+.bp-shape-grip {
+  fill: transparent;
+  stroke: none;
+  cursor: grab;
+}
+.bp-shape-grip:focus-visible {
+  outline: none;
+  stroke: var(--text);
+  stroke-width: 2;
+}
+.bp-shape-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.bp-shape-overview {
+  cursor: pointer;
+}
+.bp-shape-window {
+  fill: var(--accent);
+  fill-opacity: 0.18;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  cursor: grab;
+}
+.bp-shape-window-end {
+  fill: transparent;
+  cursor: ew-resize;
+}
+
+/* The sound editor's tools: icon buttons, the one in hand marked in the accent. */
+.bp-shape-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+.bp-shape-tool svg,
+.bp-shape-status-tool svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.bp-shape-tool svg .fill,
+.bp-shape-status-tool svg .fill {
+  fill: currentColor;
+  stroke: none;
+}
+.bp-shape-tool.on {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+.bp-shape-tool:disabled {
+  opacity: 0.4;
+}
+.bp-shape-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  margin: 0 4px;
+}
+.bp-shape-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0;
+  min-height: 2.6em;
+}
+.bp-shape-status-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--accent);
+}
+/* Selected stretches of a line, drawn thicker over it. */
+.bp-shape-line.sel {
+  stroke-width: 5;
+  opacity: 1;
+}
+.bp-shape-box {
+  fill: var(--accent);
+  fill-opacity: 0.1;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+.bp-shape-box.erase {
+  fill: #e8496b;
+  stroke: #e8496b;
+}
+/* The pointer says what the tool in hand will do. */
+.bp-shape-graph .bp-shape-lane.hit,
+.bp-shape-graph .bp-shape-hit,
+.bp-shape-graph .bp-shape-grip {
+  cursor: default;
+}
+.bp-shape-graph.tool-grab .bp-shape-lane.hit,
+.bp-shape-graph.tool-grab .bp-shape-hit,
+.bp-shape-graph.tool-grab .bp-shape-grip,
+.bp-shape-graph.tool-select .bp-shape-grip,
+.bp-shape-graph.tool-select .bp-shape-hit,
+.bp-shape-graph.tool-point .bp-shape-grip {
+  cursor: grab;
+}
+.bp-shape-graph.tool-box .bp-shape-lane.hit,
+.bp-shape-graph.tool-box .bp-shape-hit,
+.bp-shape-graph.tool-box .bp-shape-grip,
+.bp-shape-graph.tool-line .bp-shape-lane.hit,
+.bp-shape-graph.tool-line .bp-shape-hit,
+.bp-shape-graph.tool-line .bp-shape-grip,
+.bp-shape-graph.tool-erase .bp-shape-lane.hit,
+.bp-shape-graph.tool-erase .bp-shape-hit,
+.bp-shape-graph.tool-erase .bp-shape-grip {
+  cursor: crosshair;
+}
+.bp-shape-graph.tool-point .bp-shape-lane.hit,
+.bp-shape-graph.tool-point .bp-shape-hit {
+  cursor: copy;
+}
+.bp-shape-graph.dragging,
+.bp-shape-graph.dragging * {
+  cursor: grabbing !important;
+}
+.bp-shape-graph.dragging.tool-box *,
+.bp-shape-graph.dragging.tool-line *,
+.bp-shape-graph.dragging.tool-erase * {
+  cursor: crosshair !important;
+}
+/* The right click menu. */
+.bp-shape-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 210px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.bp-shape-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  background: none;
+  border: 0;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.bp-shape-menu button:not(:disabled):hover {
+  background: var(--surface);
+}
+.bp-shape-menu button:disabled {
+  opacity: 0.45;
+}
+.bp-shape-menu hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+.bp-shape-harmonics {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bp-shape-harmonics input {
+  width: 3.5em;
+  padding: 4px 6px;
+}
+
+/* The voice editor: the pitch line over the sounds, a block each, and every sound to add. */
+.bp-voice-pitch {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  fill: none;
+  stroke-linejoin: round;
+}
+.bp-voice-pitch.auto {
+  stroke-dasharray: 6 4;
+}
+.bp-voice-dot {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.bp-voice-dot.picked {
+  stroke: var(--text);
+}
+.bp-voice-vowelband {
+  fill: var(--accent);
+  fill-opacity: 0.06;
+}
+.bp-voice-block rect:first-child {
+  fill: var(--block, #5b8cff);
+  fill-opacity: 0.35;
+  stroke: var(--block, #5b8cff);
+  stroke-width: 1;
+  cursor: pointer;
+}
+.bp-voice-block.picked rect:first-child {
+  fill-opacity: 0.7;
+  stroke: var(--text);
+  stroke-width: 2;
+}
+.bp-voice-block text {
+  fill: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.bp-voice-edge {
+  fill: transparent;
+  cursor: ew-resize;
+}
+.bp-voice-block.vowel,
+.bp-voice-sound.vowel {
+  --block: #5b8cff;
+}
+.bp-voice-block.hum,
+.bp-voice-sound.hum {
+  --block: #2fb67c;
+}
+.bp-voice-block.hiss,
+.bp-voice-sound.hiss {
+  --block: #c9a400;
+}
+.bp-voice-block.pop,
+.bp-voice-sound.pop {
+  --block: #f0803c;
+}
+.bp-voice-block.breath,
+.bp-voice-sound.breath {
+  --block: #9a7cf2;
+}
+.bp-voice-sounds {
+  font-family: ui-monospace, monospace;
+}
+.bp-voice-typed input {
+  font-family: ui-monospace, monospace;
+  width: 100%;
+}
+.bp-voice-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bp-voice-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.bp-voice-group > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.bp-voice-sound {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 52px;
+  padding: 3px 6px;
+  border-left: 3px solid var(--block);
+  line-height: 1.15;
+}
+.bp-voice-sound span {
+  font-size: 11px;
+  opacity: 0.75;
+}
+/* A graph keeps its height in a dialog taller than the screen: as a flex item it would be squeezed, and draw small in the middle. */
+.bp-tl > .bp-shape-graph {
+  flex-shrink: 0;
+}

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { dataDir } from '../paths.js';
 import { and, asc, desc, eq } from 'drizzle-orm';
@@ -24,6 +24,8 @@ import {
 import { db } from '../db/client.js';
 import { habitEntries, habits } from '../db/schema.js';
 import { happenedAt } from '../happened-at.js';
+import { happenings } from '../happenings.js';
+import { spokenCommands, spokenProvided } from '../spoken-port.js';
 
 /**
  * The bucket a moment belongs to: `2026-08-05` for daily habits, `2026-W32`
@@ -174,6 +176,7 @@ export async function recordHabitDone(
   const moved = habit.mode === 'gauge' ? gaugeAfterFill(habit, now, count) : null;
   if (moved) await db.update(habits).set(moved).where(eq(habits.id, habitId));
 
+  happenings.say('habit-done', { habitId, name: habit.name });
   return describeProgress({ ...habit, ...(moved ?? {}) }, now);
 }
 
@@ -268,6 +271,16 @@ export async function setHabitValue(
   return describeProgress(habit, now);
 }
 
+/**
+ * One habit's state now, by id: finished, wanted, and the line to say. For a
+ * package asking "is this habit done" the way the Dashboard does; null when
+ * there is no such habit.
+ */
+export async function habitProgress(habitId: string, now = Date.now()): Promise<HabitProgress | null> {
+  const [habit] = await db.select().from(habits).where(eq(habits.id, habitId));
+  return habit ? describeProgress(habit, now) : null;
+}
+
 /** The state of one habit, in the vocabulary every caller wants. */
 async function describeProgress(
   habit: typeof habits.$inferSelect,
@@ -337,6 +350,19 @@ function normalisePush(body: { pushToPhone?: boolean | null }) {
 }
 
 export async function habitRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * A new voice command that ticks this habit, for the habit editor: a
+   * blueprint whose "When I say" box leads to "Tick a habit". Answers where it
+   * is edited, which is somewhere this route does not need to know about.
+   */
+  app.post('/api/habits/:id/spoken', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const [habit] = await db.select({ id: habits.id, name: habits.name }).from(habits).where(eq(habits.id, id));
+    if (!habit) return reply.code(404).send({ error: 'no such habit' });
+    if (!spokenProvided()) return reply.code(409).send({ error: 'Voice commands are blueprints, and Blueprints is switched off.' });
+    return spokenCommands().create({ habit: habit.id, name: habit.name });
+  });
+
   app.get('/api/habits', async () => {
     const now = Date.now();
     const startOfToday = startOfTodayAt(now);
@@ -369,9 +395,21 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
           .limit(1);
         const lastDoneAt = lastEntry?.doneAt ?? null;
 
+        /*
+         * What ticks it by voice comes from the blueprints that do, through
+         * the spoken port, so this screen names no package. The column the
+         * habit editor used to write was not read by voice after commands got
+         * their own table; its phrases were made into blueprints once.
+         */
+        const spoken = spokenCommands()
+          .list()
+          .filter((command) => command.habits.includes(habit.id))
+          .map(({ label, phrases, enabled, edit }) => ({ label, phrases, enabled, edit }));
+
         return {
           ...habit,
-          voicePhrases: parsePhrases(habit.voicePhrases),
+          voicePhrases: spoken.filter((s) => s.enabled).flatMap((s) => s.phrases),
+          spoken,
           periodKey: key,
           doneThisPeriod: done,
           lastDoneAt,
@@ -645,6 +683,8 @@ export async function habitRoutes(app: FastifyInstance): Promise<void> {
     for (const old of Object.values(IMAGE_TYPES)) {
       await rm(imagePath(id, old), { force: true }).catch(() => {});
     }
+    // The folder may not exist yet: a fresh copy, or a suite with its own.
+    await mkdir(dataDir, { recursive: true });
     await writeFile(imagePath(id, extension), bytes);
 
     /*

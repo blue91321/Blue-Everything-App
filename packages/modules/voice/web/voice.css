@@ -48,3 +48,9 @@
   height: 100%;
   object-fit: cover;
 }
+
+/* The Commands tab's two halves: the blueprints, and voice's own. */
+.voice-commands-head {
+  margin: 14px 0 6px;
+  font-size: 0.95rem;
+}

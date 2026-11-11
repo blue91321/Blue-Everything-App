@@ -6,6 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import { changes } from '@everything/server/module-api';
 import { PageFetchError, sharedPage } from '../page-fetch.js';
+import { compressCached, qualityFrom } from '../compress.js';
 import { search, type Candidate } from '../mangadex.js';
 import { readSeries } from '../mangaupdates.js';
 import {
@@ -601,7 +602,7 @@ export function browseRoutes(app: FastifyInstance): void {
 
   /** One page image for the preview reader — checked exactly as the followed reader's are. */
   app.get('/api/manga/browse/page', async (request, reply) => {
-    const { p } = request.query as { p?: string };
+    const { p, q } = request.query as { p?: string; q?: string };
     if (!p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
       return reply.code(400).send({ error: 'not a page' });
     }
@@ -609,8 +610,13 @@ export function browseRoutes(app: FastifyInstance): void {
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
     try {
       // Asked again on a refusal before giving up, and shared — see `page-fetch.ts`.
-      const { body, type } = await sharedPage(`${ctx.url}${p}`);
-      return reply.header('content-type', type).header('cache-control', 'private, max-age=604800').send(body);
+      // Made smaller when asked, as the followed reader's are (`compress.ts`).
+      const { body, type } = await compressCached(p, await sharedPage(`${ctx.url}${p}`), qualityFrom(q));
+      return reply
+        .header('content-type', type)
+        .header('cache-control', 'private, max-age=604800')
+        .header('x-made-in', String(Math.round(reply.elapsedTime)))
+        .send(body);
     } catch (error) {
       // 504 when it timed out twice, so the reader knows waiting again will not help.
       const code = error instanceof PageFetchError && error.status === 504 ? 504 : 502;

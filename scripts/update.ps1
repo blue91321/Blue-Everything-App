@@ -68,6 +68,9 @@ function VersionOf([string]$text) {
 
 # The app's own Node, for npm below — see node-runtime.ps1.
 . (Join-Path $PSScriptRoot 'node-runtime.ps1')
+# Never inherited: the server and agent are given the labeled loader, which only
+# tsx's esbuild accepts, and Vite's build below would refuse it (node-runtime.ps1).
+Remove-Item Env:ESBUILD_BINARY_PATH -ErrorAction SilentlyContinue
 
 $current = (Get-Content (Join-Path $root 'package.json') -Raw | ConvertFrom-Json).version
 # Which download this is; a git clone or a release from before configurations is everything.

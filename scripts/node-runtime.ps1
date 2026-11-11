@@ -22,10 +22,11 @@ $script:NodeMajor = 24
   The oldest Node this app will run on. Raised by hand when Node ships a
   security release: the folder was only ever filled when node.exe was missing,
   so an install kept whatever Node it first downloaded for good (24.21.0 here
-  when 24.22.1 fixed security issues). An older one is replaced at the next
+  when 24.22.1 fixed security issues; 24.22.3, 2026-11-10, fixed nine High
+  ones in http, tls and http2). An older one is replaced at the next
   start, which on a restart is after the app has stopped and nothing holds it.
 #>
-$script:NodeMinimum = [version]'24.22.1'
+$script:NodeMinimum = [version]'24.22.3'
 $appRoot = Split-Path $PSScriptRoot -Parent
 $nodeDir = Join-Path $appRoot 'runtime\node'
 $nodeExe = Join-Path $nodeDir 'node.exe'
@@ -66,6 +67,18 @@ if (-not (Test-Path $nodeExe) -or $nodeTooOld) {
   New-Item -ItemType Directory -Force -Path $work | Out-Null
   $zip = Join-Path $work "$name.zip"
   Invoke-WebRequest -Uri "https://nodejs.org/dist/$version/$name.zip" -OutFile $zip
+  <#
+    Checked against the SHA-256 nodejs.org publishes for the release, as an
+    update is against its SHA256SUMS: a download cut short or altered on the
+    way is refused here rather than unpacked into the folder the app runs from.
+  #>
+  $sums = (Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/dist/$version/SHASUMS256.txt" -Headers @{ 'User-Agent' = 'blue-everything' }).Content
+  $want = ($sums -split "`n" | Where-Object { $_ -match "\s$([regex]::Escape("$name.zip"))\s*$" } | Select-Object -First 1) -replace '\s.*$', ''
+  $got = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash
+  if (-not $want -or $got -ne $want.ToUpperInvariant()) {
+    Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    throw "the Node.js download did not match the checksum nodejs.org publishes for $name.zip"
+  }
   Expand-Archive -Path $zip -DestinationPath $work -Force
 
   New-Item -ItemType Directory -Force -Path (Split-Path $nodeDir) | Out-Null
@@ -186,4 +199,96 @@ foreach ($pair in @(
 }
 catch {
   Write-Verbose "could not name the Node launchers: $($_.Exception.Message)"
+}
+
+<#
+  The rest of the app's processes, labeled the same way (2026-11-03).
+
+  Suwayomi is a Java program, so its 700MB showed in Task Manager as
+  "OpenJDK Platform binary", and its built-in browser as three rows of "Java
+  Chromium Embedded Framework (JCEF) Helper", nothing saying whose. Once manga
+  is set up:
+
+  - **Java** gets a labeled copy beside `java.exe`, `Blue Everything Manga.exe`
+    (the launcher is a few hundred KB, and finds Java by its own folder, so a
+    copy in the same folder is the same Java). The manga package starts it
+    when it is there. It is run once with `-version` before it is trusted.
+  - **The browser helpers** are started by Suwayomi's browser component by
+    their own file name, so they cannot be renamed: their description is
+    relabeled in place, with the original kept beside it. Not while one is
+    running (a restart that keeps Suwayomi up), and done again whenever an
+    update of the component brings an unlabeled one back.
+
+  And the agent's `esbuild.exe`, which `--import tsx` starts to read the
+  app's TypeScript: it carries no description at all, so Task Manager shows
+  its file name, and a hard link named `Blue Everything Loader.exe` is all it
+  needs. The agent and the server are pointed at it (`$LoaderExe`, as
+  ESBUILD_BINARY_PATH, set only around their launch). esbuild refuses a binary
+  of another version, and Vite's is another version: so the Code screen asks
+  tsx's esbuild for its syntax check, and start.ps1 and update.ps1 clear the
+  variable first, since a Restart from the tray or the app inherits it and
+  then builds with Vite.
+#>
+$script:LoaderExe = $null
+try {
+  $prevPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $data = Join-Path $appRoot 'packages\server\data'
+
+  $javaBin = Join-Path $data 'suwayomi-runtime\java\bin'
+  $java = Join-Path $javaBin 'java.exe'
+  if (Test-Path $java) {
+    $labeled = Join-Path $javaBin 'Blue Everything Manga.exe'
+    $source = Get-Item $java
+    $have = Get-Item $labeled -ErrorAction SilentlyContinue
+    $current = $have -and $have.VersionInfo.FileDescription -and $have.VersionInfo.FileDescription.Trim() -eq 'Blue Everything Manga' -and
+      $have.VersionInfo.ProductVersion -eq $source.VersionInfo.ProductVersion
+    if (-not $current) {
+      if ($have) { Remove-Item $labeled -Force -ErrorAction SilentlyContinue }
+      if (-not (Test-Path $labeled)) { & $nodeExe $namer $java $labeled 'Blue Everything Manga' *> $null }
+      if (Test-Path $labeled) {
+        $says = (& $labeled -version 2>&1 | Out-String)
+        if ($says -notmatch 'version') { Remove-Item $labeled -Force -ErrorAction SilentlyContinue }
+      }
+    }
+  }
+
+  $kcef = Join-Path $data 'suwayomi\bin\kcef'
+  $helper = Join-Path $kcef 'jcef_helper.exe'
+  $helperLabel = 'Blue Everything Manga browser'
+  if ((Test-Path $helper) -and ((Get-Item $helper).VersionInfo.FileDescription.Trim() -ne $helperLabel)) {
+    $running = Get-CimInstance Win32_Process -Filter "Name = 'jcef_helper.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.ExecutablePath -eq $helper }
+    if (-not $running) {
+      $patched = "$helper.labeled"
+      & $nodeExe $namer $helper $patched $helperLabel *> $null
+      if ((Test-Path $patched) -and (Get-Item $patched).VersionInfo.FileDescription.Trim() -eq $helperLabel) {
+        Copy-Item $helper "$helper.unlabeled" -Force
+        Move-Item $patched $helper -Force
+      }
+      Remove-Item $patched -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  $esbuild = Join-Path $appRoot 'node_modules\tsx\node_modules\@esbuild\win32-x64\esbuild.exe'
+  if (Test-Path $esbuild) {
+    $loader = Join-Path $nodeDir 'Blue Everything Loader.exe'
+    $source = Get-Item $esbuild
+    $have = Get-Item $loader -ErrorAction SilentlyContinue
+    # A link shares its size and time with esbuild.exe; one that does not was
+    # left behind by an update, and the old binary would refuse the new tsx.
+    if ($have -and ($have.Length -ne $source.Length -or $have.LastWriteTimeUtc -ne $source.LastWriteTimeUtc)) {
+      Remove-Item $loader -Force -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path $loader)) {
+      try { New-Item -ItemType HardLink -Path $loader -Target $esbuild -ErrorAction Stop | Out-Null } catch { }
+    }
+    if (Test-Path $loader) { $script:LoaderExe = $loader }
+  }
+}
+catch {
+  Write-Verbose "could not label Suwayomi or the loader: $($_.Exception.Message)"
+}
+finally {
+  $ErrorActionPreference = $prevPreference
 }

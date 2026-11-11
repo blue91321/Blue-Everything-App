@@ -45,6 +45,7 @@ import {
   voiceprintIsCurrent,
   wakeWordRequired,
 } from '@everything/shared';
+import { SpeechGate } from './gate.js';
 import { findMicrophone, listMicrophones, MicrophoneError, openMicrophone, rms, SAMPLE_RATE, type Microphone } from './mic.js';
 import {
   createCommandRecogniser,
@@ -92,26 +93,6 @@ export interface VoiceHeard {
   /** Started by the listen shortcut, not the wake word — the server needs to know. */
   manual?: boolean;
 }
-
-/**
- * Loud enough to be worth running speech recognition on.
- *
- * Measured on this machine: a quiet room reads ~0.002, ordinary speech peaks
- * around 0.05. 0.006 is three times the noise floor, so a silent room costs
- * nothing, but it does not need a confident voice to open the gate — clipping
- * the start of a soft delivery is the worst place to lose audio, because the
- * wake word is what comes first.
- */
-const SPEECH_FLOOR = 0.006;
-
-/**
- * Keep feeding for a moment after things go quiet.
- *
- * Speech dips to near silence between words, so cutting at the first quiet
- * block would clip the end off every phrase — and the spotter needs a few
- * frames *after* a keyword to be sure of it.
- */
-const HANGOVER_MS = 700;
 
 /** How often the buffers are drained. Matches the mic's ~100ms buffer size. */
 const POLL_MS = 100;
@@ -212,6 +193,8 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void, options: 
   let wokeAt = 0;
   let lastLoudAt = 0;
   let lastLevel = 0;
+  /** What is loud enough to listen to, and the half-second before it: see `gate.ts`. */
+  const gate = new SpeechGate();
   let builtFor = '';
   /** The wake word was heard and the "go ahead" tone has not played yet. */
   let toneDue = false;
@@ -283,7 +266,7 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void, options: 
    */
   function afterWake(text: string): string {
     const words = text.split(/\s+/).filter(Boolean);
-    const names = new Set(wakeWordRequired(config?.wakeWord || DEFAULT_WAKE_WORD));
+    const names = new Set([...wakeWordRequired(config?.wakeWord || DEFAULT_WAKE_WORD), ...alikeWords()]);
     let cut = -1;
     words.forEach((word, i) => {
       if (names.has(word)) cut = i;
@@ -299,7 +282,7 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void, options: 
    * and delivering it would answer a question nobody had asked yet.
    */
   function hasCommand(text: string): boolean {
-    const wakeWords = new Set((config?.wakeWord ?? '').toLowerCase().split(/\s+/).filter(Boolean));
+    const wakeWords = new Set([...(config?.wakeWord ?? '').toLowerCase().split(/\s+/).filter(Boolean), ...alikeWords()]);
     return text.split(/\s+/).some((word) => word && !wakeWords.has(word));
   }
 
@@ -319,11 +302,33 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void, options: 
   function wakePhrases(): string[] {
     const wakeWord = (config?.wakeWord || DEFAULT_WAKE_WORD).toLowerCase().trim();
     const required = wakeWordRequired(wakeWord).join(' ');
-    return [...new Set([wakeWord, required, ...(config?.wakeDecoys ?? [])].map((p) => p.trim().toLowerCase()).filter(Boolean))];
+    return [
+      ...new Set(
+        [wakeWord, required, ...alikePhrases(), ...(config?.wakeDecoys ?? [])].map((p) => p.trim().toLowerCase()).filter(Boolean)
+      ),
+    ];
   }
 
+  /**
+   * The sound-alikes as the spotter is given them: each on its own, and after
+   * the wake word's leading words ("hey jervis"), the two forms the wake word
+   * itself is given. Measured on synthesised speech: "hey jervis" woke nothing
+   * listened for as "hey jarvis", and woke it every time with these added.
+   */
+  function alikePhrases(): string[] {
+    const words = (config?.wakeWord || DEFAULT_WAKE_WORD).toLowerCase().trim().split(/\s+/);
+    const lead = words.slice(0, words.length - wakeWordRequired(words.join(' ')).length).join(' ');
+    return (config?.wakeAlikes ?? []).flatMap((alike) => (lead ? [alike, `${lead} ${alike}`] : [alike]));
+  }
+
+  function alikeWords(): string[] {
+    return (config?.wakeAlikes ?? []).flatMap((alike) => alike.split(/\s+/));
+  }
+
+  /** A hit on the wake word or one of its sound-alikes wakes it; a decoy does not. */
   function isWake(phrase: string): boolean {
-    return matchesWakeWord(phrase, config?.wakeWord || DEFAULT_WAKE_WORD);
+    if (matchesWakeWord(phrase, config?.wakeWord || DEFAULT_WAKE_WORD)) return true;
+    return alikePhrases().includes(phrase.trim().toLowerCase());
   }
 
   /**
@@ -498,7 +503,9 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void, options: 
     const level = rms(samples);
     lastLevel = level;
     if (level > peak) peak = level;
-    if (level >= SPEECH_FLOOR) lastLoudAt = now;
+    // Asked every block, awake or not, so the gate's idea of the room keeps up.
+    const step = gate.step(samples, level, now);
+    if (gate.loud(level)) lastLoudAt = now;
 
     if (phase === 'awake') {
       awake(samples, now);
@@ -506,7 +513,7 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void, options: 
     }
 
     // The gate. A quiet block is dropped before it reaches a model.
-    if (now - lastLoudAt > HANGOVER_MS) {
+    if (step.feed.length === 0) {
       stats.gated++;
       // Silence this long is an utterance boundary: nothing buffered belongs to
       // whatever is said next, and a fresh stream keeps the spotter's state
@@ -523,19 +530,26 @@ export function createVoiceListener(post: (heard: VoiceHeard) => void, options: 
     }
     stats.recognised++;
 
-    remember(samples);
-    const audio = toFloat(samples);
-    const hit = spotter!.accept(audio);
+    // Opening, this is the half-second before as well, so the start of a quiet
+    // "hey" is heard rather than cut off.
+    for (const block of step.feed) {
+      remember(block);
+      const audio = toFloat(block);
+      const hit = spotter!.accept(audio);
 
-    /*
-     * During a test, run the command recogniser alongside and report whatever
-     * words come back. Without this a failed test shows a twitching level meter
-     * and nothing else — and "it can't hear me" and "it hears me but not the
-     * wake word" need opposite fixes. The words arrive through `onFinal`.
-     */
-    if (testing(now) && !hit) ensureCommand().feed(audio);
+      /*
+       * During a test, run the command recogniser alongside and report whatever
+       * words come back. Without this a failed test shows a twitching level meter
+       * and nothing else — and "it can't hear me" and "it hears me but not the
+       * wake word" need opposite fixes. The words arrive through `onFinal`.
+       */
+      if (testing(now) && !hit) ensureCommand().feed(audio);
 
-    if (hit) wakeHeard(hit, now, level);
+      if (hit) {
+        wakeHeard(hit, now, level);
+        return;
+      }
+    }
   }
 
   /** Awake: everything goes to the command recogniser until it answers or the window shuts. */

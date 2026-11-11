@@ -12,6 +12,9 @@
  */
 import { vocabularyFor } from '../../../modules/voice/server/actions.js';
 import {
+  parseWakeAlikes,
+  soundKey,
+  soundsLikeWakeWord,
   ALWAYS_IN_VOCABULARY,
   cosineSimilarity,
   spokenAmount,
@@ -313,6 +316,12 @@ check('an unrelated joined word does not match', matchVoiceCommand('nevertheless
 // A one-word phrase has no joined form to speak of; it must not match on empty.
 check('a one-word phrase is unaffected', matchVoiceCommand('resuming', [{ id: 'r', phrases: ['resume'] }])?.id, 'r');
 
+// The recogniser writes "mic" as "mike" more often than not.
+const mic = [{ id: 'mute', phrases: ['mute my mic', 'mic back on'] }];
+check('"mike back on" matches "mic back on"', matchVoiceCommand('mike back on', mic)?.id, 'mute');
+check('"mute my microphone" matches "mute my mic"', matchVoiceCommand('mute my microphone', mic)?.id, 'mute');
+check('a phrase typed as "mike" matches "mic" too', matchVoiceCommand('mic back on', [{ id: 'm', phrases: ['mike back on'] }])?.id, 'm');
+
 console.log('\nSpecificity — a longer phrase beats a shorter one');
 const overlapping: VoiceCandidate[] = [
   { id: 'general', phrases: ['exercise'] },
@@ -374,6 +383,21 @@ console.log('');
 /* A decoy is a keyword beside the wake word and must never be matched as it. */
 check('a decoy never counts as the wake word', matchesWakeWord('harley', 'hey jarvis'), false);
 check('  ...nor does a two-word one', matchesWakeWord('harvest festival', 'hey jarvis'), false);
+
+/*
+ * Sound-alikes: how the wake word comes out when you say it. The key groups
+ * the spellings a recogniser writes for one name and keeps the first sound,
+ * which is what tells a name from the words around it.
+ */
+console.log('\nsounds like the wake word');
+check('jarvis, jervis, jervice and jurvis sound alike', ['jarvis', 'jervis', 'jervice', 'jurvis'].map(soundKey).join(), 'jrfs,jrfs,jrfs,jrfs');
+check('  ...and service, nervous and Javier do not', [soundKey('service'), soundKey('nervous'), soundKey('javier')].includes('jrfs'), false);
+check('"a jervice" offers "jervice"', soundsLikeWakeWord('a jervice', 'hey jarvis'), 'jervice');
+check('the wake word spelled right offers nothing', soundsLikeWakeWord('hey jarvis', 'hey jarvis'), null);
+check('nor does "the service was slow"', soundsLikeWakeWord('the service was slow', 'hey jarvis'), null);
+check('a two-word name is matched word for word', soundsLikeWakeWord('hey compewter', 'hey computer'), 'compewter');
+check('a short name offers nothing, its key matching too much', soundsLikeWakeWord('hey jo', 'hey bo'), null);
+check('the list is cleaned like the decoys', parseWakeAlikes(' Jervis, jervice,, jarvis ,JERVIS', 'jarvis').join('|'), 'jervis|jervice');
 
 
 

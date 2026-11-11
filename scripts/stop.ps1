@@ -90,12 +90,29 @@ $suwayomi = @()
 if (-not $KeepSuwayomi -and -not $Instance) {
   $suwayomi = @(Get-CimInstance Win32_Process |
     Where-Object {
-      $_.Name -match '^(java|javaw|jcef_helper)\.exe$' -and
+      $_.Name -match '^(java|javaw|jcef_helper|Blue Everything Manga)\.exe$' -and
       $_.CommandLine -and $_.CommandLine -match $escaped -and $_.CommandLine -match 'suwayomi'
     })
   # The JVM first: its helpers usually leave with it.
-  foreach ($p in ($suwayomi | Sort-Object { if ($_.Name -eq 'java.exe') { 0 } else { 1 } })) {
-    if ($p.Name -eq 'java.exe') { Write-Host "Stopping Suwayomi (pid $($p.ProcessId))" }
+  foreach ($p in ($suwayomi | Sort-Object { if ($_.Name -in 'java.exe', 'Blue Everything Manga.exe') { 0 } else { 1 } })) {
+    if ($p.Name -in 'java.exe', 'Blue Everything Manga.exe') { Write-Host "Stopping Suwayomi (pid $($p.ProcessId))" }
+    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+}
+
+<#
+  FlareSolverr, and the browser it runs, from the app's own folder: always,
+  -KeepSuwayomi or not. It is started only when a site asks for it and stopped
+  by the server that started it, so one still running here has lost its owner;
+  the next server starts its own when needed. The match is the program's path
+  under this checkout, so a FlareSolverr installed anywhere else is left alone.
+#>
+$flare = @()
+if (-not $Instance) {
+  $flareDir = [regex]::Escape((Join-Path $root 'packages\server\data\suwayomi-runtime\flaresolverr') + '\')
+  $flare = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath -match "^$flareDir" })
+  foreach ($p in $flare) {
+    if ($p.Name -eq 'flaresolverr.exe') { Write-Host "Stopping FlareSolverr (pid $($p.ProcessId))" }
     Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
   }
 }

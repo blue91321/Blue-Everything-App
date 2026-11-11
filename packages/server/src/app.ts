@@ -11,7 +11,7 @@ import { dirname, resolve } from 'node:path';
 import { ZodError } from 'zod';
 import { config, corsOrigins } from './config.js';
 import { VERSION } from './version.js';
-import { authenticate } from './auth.js';
+import { authenticate, routePath } from './auth.js';
 import { client } from './db/client.js';
 import { eventRoutes, registerChangeAnnouncer } from './events.js';
 import { attentionRoutes } from './routes/attention.js';
@@ -27,6 +27,7 @@ import { moduleRoutes } from './routes/modules.js';
 import { gameRoutes } from './routes/games.js';
 import { restartRoutes } from './routes/restart.js';
 import { updateRoutes } from './routes/update.js';
+import { configurationRoutes } from './routes/configuration.js';
 import { agentStartRoutes } from './routes/agent-start.js';
 import { desktopAppRoutes } from './routes/desktop-app.js';
 import { desktopIconRoutes } from './routes/desktop-icon.js';
@@ -108,6 +109,7 @@ export async function buildApp(): Promise<FastifyInstance> {
    */
   await app.register(restartRoutes);
   await app.register(updateRoutes);
+  await app.register(configurationRoutes);
   /*
    * Beside it, for the same reason: "the agent has stopped" is a state the app
    * has to be able to fix from inside, and a package must not be able to be the
@@ -186,7 +188,7 @@ async function registerWebApp(app: FastifyInstance): Promise<void> {
   // Single-page app: anything that isn't an API route or a real file is a
   // client-side route, so hand back the shell and let React sort it out.
   app.setNotFoundHandler((request, reply) => {
-    if (request.url.startsWith('/api/')) {
+    if (routePath(request).startsWith('/api/')) {
       return reply.code(404).send({ error: 'no such endpoint' });
     }
     /*

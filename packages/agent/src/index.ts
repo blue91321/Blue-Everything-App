@@ -28,7 +28,7 @@ import { agentConfig, assertConfigured } from './config.js';
 import { applyServerGames, registerExtraGames, setGameDetection } from './games.js';
 import * as popup from './popup.js';
 import { setAccent } from './overlay.js';
-import { setSoundEnabled, setTones } from './sound.js';
+import { setSoundEnabled, setSoundVolume, setTones } from './sound.js';
 import { createTray, desktopOnly, runAppScript, type Tray, type TrayCopy } from './tray.js';
 import { watchClosing } from './closing.js';
 
@@ -62,6 +62,14 @@ let offlineReported = false;
 
 /** Serialises reports so a slow response can't overlap the next tick. */
 let inFlight = false;
+/** Asked to check in now while a report was already out: look once more after it. */
+let lookAgain = false;
+
+/** Check in now: a blueprint has just queued a nudge, which shows on the next report. */
+function checkInNow(): void {
+  if (inFlight) lookAgain = true;
+  else monitor.checkNow();
+}
 
 /**
  * How long a nudge's popup stays up.
@@ -111,7 +119,7 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
   inFlight = true;
 
   try {
-    const { deliver, soundEnabled, accentHex, tones, gameDetectionEnabled, gamesVersion } = await client.report(
+    const { deliver, soundEnabled, soundVolume, accentHex, tones, gameDetectionEnabled, gamesVersion } = await client.report(
       toReport(snapshot, stoppingPoint)
     );
 
@@ -149,6 +157,7 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
     // A server that predates the column sends nothing; on rather than off is the
     // right reading of silence for a setting whose default is on.
     setSoundEnabled(soundEnabled ?? true);
+    setSoundVolume(soundVolume ?? 50);
     /*
      * The popup follows the app's accent. Applied on every heartbeat rather
      * than once at startup: picking a colour on the Settings screen should
@@ -195,6 +204,8 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
         lines: body ? [{ text: body, tone: nudge.escalated ? 'bad' : 'muted' }] : [],
         forMs: NUDGE_POPUP_MS,
         sound: 'nudge',
+        // An older server sends none, and the app's accent is the right answer then too.
+        accent: nudge.accent ?? undefined,
       });
 
       // The popup cannot fail the way a spawned process could, so there is no
@@ -215,6 +226,10 @@ monitor.on('tick', async (snapshot, stoppingPoint) => {
     }
   } finally {
     inFlight = false;
+    if (lookAgain) {
+      lookAgain = false;
+      setImmediate(() => monitor.checkNow());
+    }
   }
 });
 
@@ -313,6 +328,30 @@ if (integrationsEntry) {
     startIntegrations: (serverClient: typeof client, log: (message: string) => void) => typeof integrations;
   };
   integrations = startIntegrations(client, (message: string) => console.log(`[${clock()}] ${message}`));
+}
+
+/* ------------------------------------------------------------------ */
+/* Blueprints — the hotkeys that start one, and the keys one presses   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A blueprint runs on the server, which cannot hear a key or press one. So
+ * this half listens for the hotkeys the server names and presses the keys it
+ * asks for, and nothing else. Same presence check as the two above.
+ */
+let blueprintKeys: { stop(): void } | null = null;
+
+const blueprintsEntry = moduleAgentEntry('blueprints');
+if (blueprintsEntry) {
+  const { startBlueprints } = (await import(pathToFileURL(blueprintsEntry).href)) as {
+    startBlueprints: (serverClient: typeof client, log: (message: string) => void, checkNow: () => void) => typeof blueprintKeys;
+  };
+  blueprintKeys = startBlueprints(
+    client,
+    (message: string) => console.log(`[${clock()}] ${message}`),
+    // A blueprint just queued a nudge: check in now so it shows now.
+    checkInNow
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -423,6 +462,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     // microphone open.
     voice?.stop();
     integrations?.stop();
+    blueprintKeys?.stop();
     popup.stopPopups();
     console.log('\nagent stopped.');
     process.exit(0);

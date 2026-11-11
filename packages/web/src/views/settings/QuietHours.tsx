@@ -57,7 +57,7 @@ export function QuietHours() {
   const pausedUntil = current.dndUntil && current.dndUntil > Date.now() ? current.dndUntil : null;
 
   return (
-    <section>
+    <section id="reminders">
       <h2>Reminders</h2>
 
       <div className="card">

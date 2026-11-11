@@ -75,16 +75,18 @@ export interface VoiceStatus {
     peak: number;
     at: number;
     wouldMatch: { habitName: string | null; phrase: string } | null;
+    /** Sounded like the wake word and did not wake it: the words written for it. */
+    soundsLike?: string | null;
   }[];
 }
 
-export type VoiceCommandKind = 'habit' | 'note' | 'url' | 'hotkey' | 'media' | 'launch' | 'pause' | 'cancel' | 'music';
+/** Voice's own two. Everything else a phrase can do is a blueprint's. */
+export type VoiceCommandKind = 'pause' | 'cancel';
 
 export interface VoiceCommand {
   id: string;
   kind: VoiceCommandKind;
   phrases: string[];
-  /** Habit id, URL, or key combo, depending on `kind`. */
   target: string | null;
   pauseMinutes: number | null;
   /** Server-derived display name when none was set by hand. */
@@ -95,12 +97,31 @@ export interface VoiceCommand {
   sortOrder: number;
 }
 
+/** A "When I say" box in a blueprint, as the Commands tab lists it. */
+export interface SpokenCommand {
+  id: string;
+  phrases: string[];
+  /** The blueprint's name. */
+  label: string;
+  enabled: boolean;
+  allowFollowUp: boolean;
+  /** Where it is edited: a screen and the focus that opens it there. */
+  edit: { screen: string; focus: string };
+}
+
+export interface VoiceCommands {
+  own: VoiceCommand[];
+  spoken: SpokenCommand[];
+  /** Whether Blueprints is running, so an empty list can say why. */
+  blueprints: boolean;
+}
+
 /** What `/api/voice/test` says a sentence would do. Nothing is written. */
 export interface VoiceTest {
   heard: string;
   tokens: string[];
   count: number;
-  match: { id: string; phrase: string; score: number; habitName: string | null } | null;
+  match: { id: string; phrase: string; score: number; habitName: string | null; would?: string } | null;
   /**
    * Set when the sentence is several commands joined by "and", in the order
    * they would run. `match` is null whenever this is present — a chain is not
@@ -109,7 +130,7 @@ export interface VoiceTest {
    * Optional because a server older than chaining sends neither field.
    */
   chain?:
-    | { phrase: string; kind: VoiceCommandKind; habitName: string | null; count: number }[]
+    | { phrase: string; kind: string; habitName: string | null; count: number; would?: string }[]
     | null;
 }
 
@@ -123,7 +144,9 @@ export const voiceApi = {
     test: (text: string) => post<VoiceTest>('/api/voice/test', { text }),
     forgetVoice: () => request<void>('/api/voice/enrol', { method: 'DELETE' }),
     status: () => request<VoiceStatus>('/api/voice/status'),
-    commands: () => request<VoiceCommand[]>('/api/voice/commands'),
+    commands: () => request<VoiceCommands>('/api/voice/commands'),
+    /** A new blueprint with a "When I say" box, and where to open it. */
+    newBlueprint: () => post<{ edit: { screen: string; focus: string } }>('/api/voice/commands/blueprint', {}),
     createCommand: (payload: Partial<VoiceCommand>) => post<VoiceCommand>('/api/voice/commands', payload),
     updateCommand: (id: string, payload: Partial<VoiceCommand>) =>
       patch<VoiceCommand>(`/api/voice/commands/${id}`, payload),

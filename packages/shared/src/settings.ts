@@ -2,7 +2,7 @@
  * The settings row, and the one decision about whether it is quiet now.
  */
 import { z } from 'zod';
-import { MAX_VOICE_FOLLOW_UP_SECONDS, overlayPlacementSchema, wakeDecoysSchema, wakeWordSchema } from './voice.js';
+import { MAX_VOICE_FOLLOW_UP_SECONDS, overlayPlacementSchema, wakeAlikesSchema, wakeDecoysSchema, wakeWordSchema } from './voice.js';
 import { isGlobalHotkey } from './voice-commands.js';
 
 /* ------------------------------------------------------------------ */
@@ -111,6 +111,8 @@ export const updateSettingsSchema = z.object({
   remindersEnabled: z.boolean().optional(),
   /** A short tone with each popup. On by default; see the schema. */
   soundEnabled: z.boolean().optional(),
+  /** How loud the app's tones are, 0 to 100. */
+  soundVolume: z.number().int().min(0).max(100).optional(),
   /*
    * Which tone each moment gets, by name. Validated as a bounded string rather
    * than an enum of tone names: the palette lives in the agent, which is the
@@ -128,6 +130,7 @@ export const updateSettingsSchema = z.object({
   voiceEnabled: z.boolean().optional(),
   wakeWord: wakeWordSchema.optional(),
   wakeDecoys: wakeDecoysSchema.optional(),
+  wakeAlikes: wakeAlikesSchema.optional(),
   requireKnownSpeaker: z.boolean().optional(),
   speakerThreshold: z.number().min(0).max(1).optional(),
   /**

@@ -28,6 +28,7 @@
  * That is a narrower claim than the one this comment made before sources
  * existed, and it is narrower on purpose — it is the honest version.
  */
+import { isQuality, type Quality } from './compress.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -114,6 +115,17 @@ export type Series = SeriesIds & {
   checkedAt: number | null;
   /** Why the last check failed, if it did. Kept beside the data it could not replace. */
   error: string | null;
+  /**
+   * Since when its checks have been failing: set by `write` the moment `error`
+   * appears and cleared the moment it goes, so every path that records a
+   * failure keeps it right without knowing it exists. What the two-day rule
+   * for switching sources counts from (`SWITCH_AFTER_MS`).
+   */
+  failingSince?: number;
+  /** The last time an automatic switch was tried and found nothing, so it is tried again daily rather than every sweep. */
+  switchTriedAt?: number;
+  /** The source it was switched away from, when and why: said on its page for a while, so a switch is never a mystery. */
+  switchedFrom?: { sourceName: string; at: number; why: string; automatic: boolean };
   addedAt: number;
   /**
    * Starred, so it can be picked out of a library of hundreds.
@@ -285,6 +297,33 @@ export interface MangaLibrary {
  * shelf card and its "landed lately", and the task and reminder a new chapter
  * raises. Hidden wins over any visible shelf it is also on — see `hidden`.
  */
+/** Which series a new chapter notifies about — see `Store.releaseNudgesFor`. */
+export interface ReleaseScope {
+  favourites: boolean;
+  shelves: string[];
+}
+
+/**
+ * The scope as stored: null (every series) when nothing is chosen, and shelves
+ * that no longer exist dropped. Choosing nothing reads as "every series"
+ * rather than "none", because none is what the off switch beside it is for.
+ */
+export function cleanReleaseScope(raw: unknown, libraries: Array<{ id: string }>): ReleaseScope | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as { favourites?: unknown; shelves?: unknown };
+  const known = new Set(libraries.map((l) => l.id));
+  const shelves = Array.isArray(r.shelves) ? [...new Set(r.shelves.filter((id): id is string => typeof id === 'string' && known.has(id)))] : [];
+  const favourites = r.favourites === true;
+  return favourites || shelves.length ? { favourites, shelves } : null;
+}
+
+/** Whether a new chapter of this series notifies, by the scope alone (the off switch and hidden shelves are asked separately). */
+export function inReleaseScope(scope: ReleaseScope | null, series: { favourite?: boolean; libraries?: string[] }): boolean {
+  if (!scope) return true;
+  if (scope.favourites && series.favourite === true) return true;
+  return scope.shelves.some((id) => series.libraries?.includes(id) === true);
+}
+
 export function isPutAway(store: { libraries: MangaLibrary[] }, series: { libraries?: string[] }): boolean {
   if (!series.libraries?.length) return false;
   return store.libraries.some((l) => l.hidden === true && series.libraries!.includes(l.id));
@@ -453,11 +492,26 @@ export type Store = {
    */
   releaseNudges: boolean;
   /**
+   * Which series a new chapter notifies about, when `releaseNudges` is on:
+   * null for every one you follow, else your favourites, the series on the
+   * named shelves, or both (either is enough). Asked for on 2026-11-09. Only
+   * the notification is narrowed: every chapter is still recorded, and the
+   * task switch is its own. A hidden shelf still wins (`isPutAway`).
+   */
+  releaseNudgesFor: ReleaseScope | null;
+  /**
    * Whether installed extensions update themselves once a day while Suwayomi
    * is running. On unless switched off, which is what it always did; off, they
    * update only from the button on Manage extensions.
    */
   autoUpdateExtensions: boolean;
+  /**
+   * Whether a series whose source has failed for two days running is switched
+   * to another source that has it (`autoSwitch` in `find-sources.ts`). On
+   * unless switched off on More; asked for on 2026-11-09 when MangaHub shut
+   * apps out and 192 series stopped updating at once.
+   */
+  autoSwitchSources: boolean;
   /**
    * Rules that add to the Local collection by themselves (`autoKeep` in
    * `index.ts`, run by the release sweep): every favourite, and anything you
@@ -471,6 +525,12 @@ export type Store = {
    * share. See `/api/manga/host/ratings`.
    */
   shareRatingsWithCopies: boolean;
+  /**
+   * How the Local collection keeps pictures: as the source sent them, or made
+   * smaller (`compress.ts`). Only chapters kept from then on; what is kept
+   * already stays as it is. The host's, since only the host writes the store.
+   */
+  archiveQuality: Quality;
   /**
    * The source the Browse tab lists from, and whose results a search puts first.
    * An opaque source id; one that is no longer installed is simply not found,
@@ -562,10 +622,13 @@ function emptyStore(): Store {
     shelfNewFirst: true,
     shelfFavFirst: false,
     releaseNudges: true,
+    releaseNudgesFor: null,
     autoUpdateExtensions: true,
+    autoSwitchSources: true,
     autoKeepFavourites: false,
     autoKeepMinRating: null,
     shareRatingsWithCopies: false,
+    archiveQuality: 'original',
     browseSource: null,
     libraries: [],
     glimpses: [],
@@ -632,10 +695,13 @@ function readStored(): Store {
       archiveFolder:
         typeof parsed.archiveFolder === 'string' && parsed.archiveFolder.trim() ? parsed.archiveFolder : null,
       releaseNudges: parsed.releaseNudges !== false,
+      releaseNudgesFor: cleanReleaseScope(parsed.releaseNudgesFor, Array.isArray(parsed.libraries) ? parsed.libraries : []),
       autoUpdateExtensions: parsed.autoUpdateExtensions !== false,
+      autoSwitchSources: parsed.autoSwitchSources !== false,
       autoKeepFavourites: parsed.autoKeepFavourites === true,
       autoKeepMinRating: isRating(parsed.autoKeepMinRating) ? parsed.autoKeepMinRating : null,
       shareRatingsWithCopies: parsed.shareRatingsWithCopies === true,
+      archiveQuality: isQuality(parsed.archiveQuality) ? parsed.archiveQuality : 'original',
       browseSource: typeof parsed.browseSource === 'string' && parsed.browseSource ? parsed.browseSource : null,
       glimpses: Array.isArray(parsed.glimpses)
         ? parsed.glimpses.map((g) => ({
@@ -673,6 +739,12 @@ function readStored(): Store {
         totalChapters: s.totalChapters ?? null,
         checkedAt: s.checkedAt ?? null,
         error: s.error ?? null,
+        /*
+         * A row already failing before `failingSince` existed counts from when its
+         * source last answered: MangaHub's series had been failing for a day when
+         * this shipped, and starting them all at "now" would have hidden that.
+         */
+        ...(s.error && typeof s.failingSince !== 'number' ? { failingSince: s.sourceCheckedAt ?? s.checkedAt ?? Date.now() } : {}),
         coverUrl: s.coverUrl ?? null,
         source: s.source ?? null,
         sourceChapter: s.sourceChapter ?? null,
@@ -706,6 +778,13 @@ function readStored(): Store {
  * POSIX, so the file is either the old one or the new one.
  */
 export function write(next: Store): void {
+  // When each series started failing, kept here so every way of recording a failure keeps it: see `Series.failingSince`.
+  const now = Date.now();
+  for (const s of next.series) {
+    if (s.error) {
+      if (typeof s.failingSince !== 'number') s.failingSince = now;
+    } else if (s.failingSince !== undefined) delete s.failingSince;
+  }
   mkdirSync(dataDir, { recursive: true });
   const tmp = `${STORE}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');

@@ -24,7 +24,7 @@
  */
 import { createReadStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { repoRoot } from '../paths.js';
@@ -59,6 +59,18 @@ function fetchFromRelease(): Promise<void> {
     const body = Buffer.from(await response.arrayBuffer());
     // A zip starts PK; anything else is an error page, not something to hand out.
     if (body.length < 1024 || body[0] !== 0x50 || body[1] !== 0x4b) throw new Error('GitHub sent something that is not a zip');
+    /*
+     * And it must be the zip the release says it is: its SHA256SUMS.txt, the
+     * file `update.ps1` checks an update against. This is code a friend's PC
+     * will run, so a download that does not match is never handed out.
+     */
+    const sums = await fetch(`${RELEASES}/download/v${VERSION}/SHA256SUMS.txt`, { signal: AbortSignal.timeout(60_000) });
+    if (!sums.ok) throw new Error(`Version ${VERSION}'s release has no checksums to check the desktop app against (${sums.status})`);
+    const escaped = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const want = new RegExp(`^([0-9a-f]{64})\\s+\\*?${escaped}\\s*$`, 'im').exec(await sums.text())?.[1]?.toLowerCase();
+    if (!want || createHash('sha256').update(body).digest('hex') !== want) {
+      throw new Error('The desktop app from GitHub did not match its release\'s checksum, so it was not kept');
+    }
     mkdirSync(folder, { recursive: true });
     await writeFile(`${zipPath}.part`, body);
     renameSync(`${zipPath}.part`, zipPath);

@@ -22,6 +22,7 @@ const serverRoot = resolve(dirname(here), '../..');
 const instancesDir = resolve(serverRoot, '../..', 'instances');
 const copyDir = resolve(instancesDir, NAME);
 const hostDb = resolve(serverRoot, 'data', 'instance-check-host.db');
+const hostData = resolve(serverRoot, 'data', 'instance-check-host-data');
 const role = process.argv[2] === 'host' || process.argv[2] === 'guest' ? process.argv[2] : 'run';
 const asHost = role === 'host';
 
@@ -32,7 +33,7 @@ const asHost = role === 'host';
  */
 if (role === 'run') {
   const removeAll = () => {
-    for (const target of [copyDir, hostDb, `${hostDb}-wal`, `${hostDb}-shm`]) {
+    for (const target of [copyDir, hostDb, `${hostDb}-wal`, `${hostDb}-shm`, hostData]) {
       rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     }
     if (existsSync(instancesDir) && readdirSync(instancesDir).length === 0) rmSync(instancesDir, { recursive: true });
@@ -53,6 +54,8 @@ if (role === 'run') {
 
 if (asHost) {
   process.env.DATABASE_URL = `file:${hostDb}`;
+  // Its own data folder beside that database, for the reason smoke has one.
+  process.env.DATA_DIR = hostData;
   process.env.EVERYTHING_INSTANCE = '';
 } else {
   process.env.EVERYTHING_INSTANCE = NAME;
@@ -97,6 +100,19 @@ if (asHost) {
 
   const tasks = await app.inject({ method: 'GET', url: '/api/tasks', headers: bearer(key) });
   check("a copy's key opens nothing but what copies share", tasks.statusCode === 403, `${tasks.statusCode}`);
+
+  /*
+   * The router decodes a path before matching it, so `/%61pi/tasks` is
+   * `/api/tasks`. Auth decided on the URL as sent let that through with no
+   * token at all until 2026-11-11 (`routePath` in `auth.ts`). A 401 here also
+   * proves the route was matched: the old code answered these with the data.
+   */
+  for (const url of ['/api/tasks', '/%61pi/tasks', '/api/t%61sks', '/%61%70%69/settings']) {
+    const res = await app.inject({ method: 'GET', url, headers: { host: 'desktop.example.ts.net' } });
+    check(`no token is refused however it is spelled: ${url}`, res.statusCode === 401, `${res.statusCode}`);
+  }
+  const spelled = await app.inject({ method: 'GET', url: '/%61pi/tasks', headers: bearer(key) });
+  check("  ...and a copy's key cannot spell its way out of its prefix", spelled.statusCode === 403, `${spelled.statusCode}`);
 
   const ask = await app.inject({
     method: 'POST',

@@ -38,6 +38,8 @@ export interface VoiceConfig {
    * to this payload has had.
    */
   wakeDecoys?: string[];
+  /** Other ways the wake word comes out when you say it, which count as it. */
+  wakeAlikes?: string[];
   /** The literal phrase words, for the can-this-be-heard check. */
   checkWords?: string[];
   version: string;
@@ -86,6 +88,8 @@ export interface AttentionResponse {
    * default for a setting that is on.
    */
   soundEnabled?: boolean;
+  /** How loud the app's tones are, 0 to 100. Absent from an older server. */
+  soundVolume?: number;
   /**
    * The app's accent colour, as `#rrggbb`.
    *
@@ -116,35 +120,22 @@ export interface AttentionResponse {
   tones?: Partial<Record<string, string>>;
 }
 
-/** Something for the agent to do on the machine you are sitting at. */
-export type VoiceAction =
-  | { do: 'open-url'; url: string }
-  | { do: 'press-keys'; keys: string }
-  | { do: 'media'; action: string }
-  /**
-   * Start a program. Resolved by the *server* from the games list, which this
-   * agent filled in by watching that executable run here — the stored command
-   * holds a name like `cs2.exe`, never a path.
-   *
-   * Either a path or a `steam://` address, since running a Steam game's binary
-   * directly is often the wrong thing. Exactly one is set.
-   */
-  | { do: 'launch'; path?: string; url?: string; name: string }
-  | { do: 'pause'; untilMs: number | null }
-  | { do: 'cancel' };
+/**
+ * What voice asks of the microphone. Everything a command does on the PC (keys,
+ * a website, a media key, a game) is a blueprint's, done by the blueprints half
+ * of the agent before the answer comes back.
+ */
+export type VoiceAction = { do: 'pause'; untilMs: number | null } | { do: 'cancel' };
 
 /** What the server did with something it was told was said. */
 export interface VoiceOutcome {
   outcome:
-    | 'habit-checked'
-    | 'note-added'
-    | 'opened'
-    | 'launched'
-    | 'keys-sent'
-    | 'media-sent'
+    /** A blueprint ran; `say` is what it did. */
+    | 'ran'
+    /** A blueprint matched and could not do it; `say` is why. */
+    | 'failed'
     | 'paused'
     | 'cancelled'
-    | 'captured-as-note'
     | 'ambiguous'
     /** Several commands in one sentence, joined by "and". See `steps`. */
     | 'chained'
@@ -166,10 +157,6 @@ export interface VoiceOutcome {
   choices?: { id: string; label: string }[];
   /** Whether this command lets the microphone stay open afterwards. */
   allowFollowUp?: boolean;
-  habitName?: string;
-  doneThisPeriod?: number;
-  target?: number;
-  met?: boolean;
 }
 
 export class ServerUnreachable extends Error {}
@@ -215,6 +202,17 @@ export class ServerClient {
     }
 
     return (await response.json()) as T;
+  }
+
+  /**
+   * A request to a package's own route, for a package's agent half.
+   *
+   * The blueprints half asks for its hotkeys and key presses this way. Methods
+   * named for each feature (`postPresence`, `voiceAgentReport`) are older; a
+   * package that is deletable has no business adding one to core each time.
+   */
+  send<T>(path: string, init: RequestInit = {}, timeoutMs = 5000): Promise<T> {
+    return this.request<T>(path, init, timeoutMs);
   }
 
   report(payload: AttentionReport): Promise<AttentionResponse> {

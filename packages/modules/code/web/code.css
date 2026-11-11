@@ -1,0 +1,445 @@
+/*
+ * The Code screen. Two columns when there is room for both, judged by the
+ * screen's own width (a container query, for the reason the notes screen
+ * gives: docking the menu takes 260px without the window changing). Narrower,
+ * it is the phone's arrangement: the list, or the open file with a Back.
+ */
+.code-screen {
+  container: code-screen / inline-size;
+  min-width: 0;
+}
+
+.code-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  border-left: 3px solid var(--accent);
+}
+
+.code-banner > span:first-child {
+  flex: 1 1 240px;
+}
+
+.code-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@container code-screen (min-width: 820px) {
+  .code-columns {
+    grid-template-columns: clamp(220px, 24cqi, 340px) minmax(0, 1fr);
+  }
+
+  .code-side {
+    position: sticky;
+    top: 8px;
+    max-height: calc(100dvh - 16px);
+    overflow: auto;
+  }
+
+  .code-back,
+  .code-browse {
+    display: none;
+  }
+}
+
+@container code-screen (max-width: 819.98px) {
+  .code-columns.has-open > .code-side {
+    display: none;
+  }
+
+  .code-columns:not(.has-open) > .code-main {
+    display: none;
+  }
+}
+
+.code-side {
+  min-width: 0;
+}
+
+.code-search {
+  width: 100%;
+  margin-bottom: 6px;
+}
+
+.code-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.code-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.code-row:hover {
+  background: var(--surface-raised);
+}
+
+.code-row.current {
+  background: var(--surface-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.code-row.folder {
+  color: var(--muted);
+}
+
+.code-map-link {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.code-twist {
+  width: 14px;
+  flex: none;
+  font-size: 1.1em;
+  line-height: 1;
+}
+
+.code-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-mark {
+  flex: none;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.code-side-foot {
+  margin: 8px 6px;
+}
+
+.code-main {
+  min-width: 0;
+}
+
+/* ---- the map -------------------------------------------------------- */
+
+.code-map h2 {
+  margin-top: 0;
+}
+
+.code-browse {
+  margin-bottom: 8px;
+}
+
+.code-parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.code-part {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.code-part:hover {
+  border-color: var(--accent);
+}
+
+.code-part-summary {
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.code-docs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.code-docs .code-row {
+  width: auto;
+  border: 1px solid var(--border);
+}
+
+/* ---- an open file --------------------------------------------------- */
+
+.code-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.code-title {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.code-title h2 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.code-path {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.code-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.code-facts {
+  margin: 6px 0;
+}
+
+.code-notice p {
+  margin: 0 0 6px;
+}
+
+.code-notice p:last-child {
+  margin-bottom: 0;
+}
+
+.code-notice.ok {
+  border-left-color: var(--ok);
+}
+
+.code-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---- the editor ----------------------------------------------------- */
+
+.code-editor {
+  --code-line: 20px;
+  display: flex;
+  align-items: flex-start;
+  height: calc(100dvh - 210px);
+  min-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 13px;
+  line-height: var(--code-line);
+  tab-size: 2;
+}
+
+.code-gutter,
+.code-paint,
+.code-input {
+  margin: 0;
+  padding: 8px 10px;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: 0;
+  tab-size: inherit;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.code-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  min-height: 100%;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--muted);
+  background: var(--surface-raised);
+  border-right: 1px solid var(--border);
+  user-select: none;
+}
+
+.code-body {
+  position: relative;
+  flex: 1 0 auto;
+  min-height: 100%;
+}
+
+.code-paint {
+  min-width: 100%;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.code-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  box-sizing: border-box;
+}
+
+.code-input::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: transparent;
+}
+
+/* The picture is behind, or too large to draw: show the text box's own text. */
+.code-body.plain .code-paint {
+  color: transparent;
+}
+
+.code-body.plain .code-input {
+  color: var(--text);
+}
+
+.code-body.plain .code-input::selection {
+  color: var(--text);
+}
+
+/*
+ * Colours by kind, from the app's own palette so they follow the theme and
+ * the accent. Strings and comments get fixed hues of their own, the way the
+ * rain keeps its blue: those two are read by colour in every editor there is.
+ */
+.tk-comment {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tk-string {
+  color: #8fbf6a;
+}
+
+.tk-number {
+  color: #d19a66;
+}
+
+.tk-keyword,
+.tk-heading {
+  color: var(--accent);
+}
+
+.tk-heading {
+  font-weight: 700;
+}
+
+.tk-type {
+  color: #56b6c2;
+}
+
+.tk-fn {
+  color: #82aaff;
+}
+
+.tk-tag {
+  color: #e06c75;
+}
+
+.tk-key {
+  color: #c792ea;
+}
+
+.tk-punct {
+  color: var(--muted);
+}
+
+:root[data-theme='light'] .tk-string {
+  color: #3d7a1c;
+}
+
+:root[data-theme='light'] .tk-number {
+  color: #a65a12;
+}
+
+:root[data-theme='light'] .tk-type {
+  color: #157a86;
+}
+
+:root[data-theme='light'] .tk-fn {
+  color: #2d5bd1;
+}
+
+:root[data-theme='light'] .tk-tag {
+  color: #b5303c;
+}
+
+:root[data-theme='light'] .tk-key {
+  color: #7d3ab8;
+}
+
+/* ---- what changed --------------------------------------------------- */
+
+.code-diff {
+  display: block;
+  height: auto;
+  max-height: calc(100dvh - 210px);
+  padding: 6px 0;
+}
+
+.code-diff-line {
+  display: flex;
+  min-width: max-content;
+}
+
+.code-diff-number {
+  flex: none;
+  width: 4.5em;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--muted);
+  user-select: none;
+}
+
+.code-diff-sign {
+  flex: none;
+  width: 1.5em;
+  text-align: center;
+  user-select: none;
+}
+
+.code-diff-text {
+  font: inherit;
+  white-space: pre;
+  padding-right: 12px;
+}
+
+.code-diff-line.added {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+
+.code-diff-line.removed {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+}

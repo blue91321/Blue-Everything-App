@@ -80,6 +80,7 @@ import { dataDir, nameFor } from '@everything/server/module-api';
 import { read } from './library.js';
 import { sharedPage } from './page-fetch.js';
 import { cachedPageAnywhere } from './page-cache.js';
+import { compress } from './compress.js';
 
 /** Where an archive goes when nothing else has been chosen. */
 export const DEFAULT_ARCHIVE_ROOT = join(dataDir, 'manga-archive');
@@ -1040,7 +1041,13 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
      * source forever.
      */
     const fromCache = cachedPageAnywhere(path);
-    const { body, type } = fromCache ?? (await sharedPage(`${baseUrl}${path}`));
+    /*
+     * Made smaller first when the collection is set to (`archiveQuality`,
+     * `compress.ts`). Read per page, so changing it takes effect on the next
+     * page rather than the next chapter; a page that would not come out
+     * smaller is kept as it came.
+     */
+    const { body, type } = await compress(fromCache ?? (await sharedPage(`${baseUrl}${path}`)), read().archiveQuality);
 
     /*
      * Numbered from the source's own page path rather than from the loop, so a

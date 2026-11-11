@@ -404,6 +404,8 @@ export const nudges = sqliteTable(
      * task has since been deleted would have nothing to inherit from.
      */
     pushToPhone: integer('push_to_phone').notNull().default(1),
+    /** The popup title's colour, `#rrggbb`, from a blueprint's "Nudge me". Null is the app's accent. */
+    accent: text('accent'),
     state: text('state').notNull().default('pending'),
     snoozeUntil: integer('snooze_until'),
     deliveredAt: integer('delivered_at'),
@@ -489,6 +491,8 @@ export const settings = sqliteTable('settings', {
    * fastest way to make someone turn the whole app off instead.
    */
   soundEnabled: integer('sound_enabled').notNull().default(1),
+  /** How loud the app's tones are, 0 to 100. Half by default: they were too loud at full. */
+  soundVolume: integer('sound_volume').notNull().default(50),
 
   /**
    * Which tone each moment gets, by name from the agent's palette.
@@ -587,6 +591,12 @@ export const settings = sqliteTable('settings', {
    * than the one real phrase it would otherwise be forced onto.
    */
   wakeDecoys: text('wake_decoys').notNull().default(''),
+  /**
+   * Other ways the wake word comes out when *you* say it, which count as it:
+   * "jervis" for "jarvis". Comma-separated, listened for beside the wake word,
+   * and the opposite of a decoy, since a hit on one wakes it. See 0053.
+   */
+  wakeAlikes: text('wake_alikes').notNull().default(''),
   /**
    * Cosine similarity, in percent, a speaker embedding must reach to count as
    * you. Strict on purpose: a false accept logs a habit you didn't do, which is

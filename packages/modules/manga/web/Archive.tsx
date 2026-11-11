@@ -20,6 +20,7 @@ import { thePc } from '@app/device';
 import { useState } from 'react';
 import { useAsync } from '@app/useAsync';
 import { manga, type ArchiveProgress, type CollectionRules } from './manga-api';
+import { QualityChoice } from './QualityChoice';
 
 /** Bytes as something a person can hold in their head. */
 export function sizeLabel(bytes: number): string {
@@ -238,6 +239,24 @@ export function CollectionRulesCard() {
             <span>or higher</span>
           </label>
           <p className="meta">A few series are added each time new chapters are checked, so a long list fills in over a few hours.</p>
+
+          {r.archiveQuality !== undefined && (
+            <>
+              <h3>Picture size</h3>
+              <QualityChoice
+                label="How big the pictures the Local collection keeps are"
+                value={r.archiveQuality}
+                onPick={(q) => void set({ archiveQuality: q === 'auto' ? 'original' : q })}
+              />
+              <p className="meta">
+                {r.compressionAvailable === false
+                  ? `This install cannot make pictures smaller, so pages are kept as they came.`
+                  : r.archiveQuality === 'original'
+                    ? 'Pages are kept exactly as the source sent them.'
+                    : `Pages are made smaller as they are kept, which saves space on ${thePc()} and cannot be undone for those pages. Chapters kept already stay as they are.`}
+              </p>
+            </>
+          )}
 
           <h3>Share my ratings</h3>
           <label className="row" style={{ gap: 8 }}>

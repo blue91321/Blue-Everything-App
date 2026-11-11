@@ -75,12 +75,20 @@ const RELEASES = 'https://github.com/k2-fsa/sherpa-onnx/releases/download';
  * The versions are the ones that were measured, and they are pinned for that
  * reason: a different keyword model is a different false-wake rate, and the
  * numbers in CLAUDE.md are about these.
+ *
+ * **So is each file's SHA-256**, and `models.ts` refuses a download that does
+ * not match. The release assets carry no checksum of their own (they predate
+ * GitHub recording one), so these were taken on 2026-11-11 from a fresh
+ * download whose unpacked models were byte for byte the ones this PC had been
+ * running since the spike. A model is parsed by native code in the agent, so a
+ * file swapped on the way is not something to hand it.
  */
 export const VOICE_DOWNLOADS = [
   {
     what: 'the wake word spotter (gigaspeech, 3.3M)',
     url: `${RELEASES}/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2`,
     bytes: 17_626_723,
+    sha256: 'f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a',
     into: 'wake',
     /*
      * The int8 copies. 5MB against 14MB for the full ones, and the false-wake
@@ -98,6 +106,7 @@ export const VOICE_DOWNLOADS = [
     what: 'the command recogniser (kroko, English)',
     url: `${RELEASES}/asr-models/sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06.tar.bz2`,
     bytes: 57_267_600,
+    sha256: 'c8676e5ff9ac2a85296e53ee0fd4d5fb1db6770e7a7647166eeafe349ade6834',
     into: 'command',
     files: {
       'encoder.onnx': 'encoder.onnx',
@@ -111,6 +120,7 @@ export const VOICE_DOWNLOADS = [
     // "recongition" is the release tag's own spelling.
     url: `${RELEASES}/speaker-recongition-models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx`,
     bytes: 26_485_263,
+    sha256: 'c59158379255ad66e161679cca6af8d52d51e389e3224ab7d7a7baae295c2db5',
     into: null,
     files: { 'speaker.onnx': null },
   },

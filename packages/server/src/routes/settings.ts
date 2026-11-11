@@ -44,13 +44,8 @@ export function parseHiddenProviders(stored: string): string[] {
   }
 }
 
-async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
-  const windowsDnd = currentWindowsDnd();
-  // Generated on first read so the phone always has a key to subscribe with.
-  // `null` when the push feature is switched off or absent — the screen says so
-  // rather than offering a subscribe button that could never work.
-  const publicKey = await phones().vapidPublicKey();
-  const reason = quietReason(new Date(), {
+function quietFrom(row: Awaited<ReturnType<typeof getSettings>>, windowsDnd: boolean) {
+  return quietReason(new Date(), {
     quietHoursEnabled: Boolean(row.quietHoursEnabled),
     quietStartMinute: row.quietStartMinute,
     quietEndMinute: row.quietEndMinute,
@@ -59,6 +54,24 @@ async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
     remindersEnabled: Boolean(row.remindersEnabled),
     windowsDnd,
   });
+}
+
+/**
+ * Why nudges are being held right now, or null when they are not. Exported for
+ * the blueprints package, whose "Nudge me" writes a nudge that this would keep
+ * from ever showing, so its run log can say so instead of "Nudged".
+ */
+export async function currentQuietReason() {
+  return quietFrom(await getSettings(), currentWindowsDnd());
+}
+
+async function describe(row: Awaited<ReturnType<typeof getSettings>>) {
+  const windowsDnd = currentWindowsDnd();
+  // Generated on first read so the phone always has a key to subscribe with.
+  // `null` when the push feature is switched off or absent — the screen says so
+  // rather than offering a subscribe button that could never work.
+  const publicKey = await phones().vapidPublicKey();
+  const reason = quietFrom(row, windowsDnd);
 
   // The private half must never leave the server. The voiceprint is dropped for
   // a different reason — it isn't secret, it's just 192 floats that no screen
@@ -124,6 +137,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         followWindowsDnd: toInt(body.followWindowsDnd),
         remindersEnabled: toInt(body.remindersEnabled),
         soundEnabled: toInt(body.soundEnabled),
+        soundVolume: body.soundVolume,
         soundWake: body.soundWake,
         soundOk: body.soundOk,
         soundMiss: body.soundMiss,
@@ -138,6 +152,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
         ...(body.voiceEnabled === true ? { voicePausedUntil: null } : {}),
         wakeWord: body.wakeWord?.trim().toLowerCase(),
         wakeDecoys: body.wakeDecoys?.trim().toLowerCase(),
+        wakeAlikes: body.wakeAlikes?.trim().toLowerCase(),
         requireKnownSpeaker: toInt(body.requireKnownSpeaker),
         speakerThreshold:
           body.speakerThreshold === undefined ? undefined : Math.round(body.speakerThreshold * 100),

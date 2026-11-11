@@ -28,7 +28,7 @@ Windows agent (Node)  ────┐
 - `packages/server` — Fastify + SQLite (Drizzle). The only writer of the database.
 - `packages/web` — React PWA. Served by the server on the same origin; also the Windows UI in a browser.
 - `packages/shared` — types and Zod schemas shared by all three.
-- `packages/modules/<id>` — the shipped packages (manga, voice, vault, integrations, weather, trips, push).
+- `packages/modules/<id>` — the shipped packages (manga, voice, vault, integrations, weather, trips, push, code, blueprints).
 
 **For a map rather than a history, read [ARCHITECTURE.md](ARCHITECTURE.md)**,
 and the README in each package. This file is the record of why; those say
@@ -293,6 +293,26 @@ group added later folded too. A folded group still shows the screen you are on,
 so the mark saying where you are is never folded away.
 Verified in the browser: folded, the menu lost Weather and Trips and kept the
 heading; opened on Trips and folded, Trips stayed, marked as current.
+
+**Command** holds Voice, Blueprints and Code (2026-11-03), declared the same
+way, with a drawn glyph: `icon:command`, a command block, from core's
+`Glyph.tsx`, which draws any `icon:<name>` it knows and shows every other glyph
+as text. A package names a drawn glyph as it names an emoji.
+
+**And you can arrange them like folders** (`menu-folders.ts`, per device like
+the rest of the menu's choices). What the packages declare is the default;
+what is stored is what you changed: where you put a screen (a folder, or the
+top of the menu), the folders you made, and the package folders you removed.
+A screen you never moved follows its package. In ✎ Edit screens each screen
+has a grip, dragged onto a folder (its heading or anything in it) to put it
+there, or anywhere else in the menu to take it out; a folder has a ✕, which
+moves what was in it to the top rather than taking it away; **＋ New folder**
+makes an empty one, drawn while editing so there is somewhere to drop; and a
+folder is renamed by its heading, as any heading is (`group:<id>`, shared by
+every device). Settings → General → Folders in the menu does the same from a
+list, for a keyboard. A section goes with its screen, and Settings, pinned to
+the foot, has no grip. Verified with real pointer drags in the browser pane:
+Blueprints out of Command and back, a folder made and removed.
 
 ### Both columns are chosen side by side
 
@@ -973,6 +993,33 @@ than how they are derived, so it passed against the broken code** — it builds
 the offsets through the real function now, with a twenty-second gap between the
 open and the prefetch, which is the thing that was wrong.
 
+**And the next chapter is fetched onto the device too** (2026-11-11,
+`holdNext` in `manga-api.ts`). Reported as the next chapter taking a moment to
+load, before and during Endless. The server's half was working: the log for
+*As Written In the Lewd Notebook* showed chapter 10's page list in 29ms and
+each page in 14ms, from disk. What was slow was the other leg. Its pages are 3
+to 5MB, 42MB a chapter, and the device only started on them when the chapter
+opened. So once every page of the chapter being read is in, the reader fetches
+the next one's page list and pages, one at a time in order, and opening it
+takes them (`manga.reader.pages` and `.page`, each handed over once). The next
+chapter is the copy Next and finishing open (`nextId`, from `shownCopy` on the
+chapter list). Limits:
+
+- **One chapter, up to 32MB** (`HOLD_BYTES`). It is held in memory beside the
+  chapter on screen and any carried above it, which matters on a phone. The
+  pages past the cap load as before, three at a time from the moment the
+  chapter opens.
+- **The same setting as the server's.** The page list carries `readAhead`, so
+  0 is off on the device too.
+- **Never for a chapter saved on the device**, and not from one, nor for a
+  preview. It stops once the chapter is opened, so the reader and the loop do
+  not fetch the same pages.
+
+Asking for the page list counts as opening the chapter on the server, so the
+server's own read-ahead moves one on. Verified in the browser pane with writes
+blocked: opening chapter 13 fetched its pages, then chapter 14's list and its
+first 7 of 9 pages; Next opened 14 asking only for pages 8 and 9.
+
 **Shelves** (More → Shelves) group the library however you like, and
 **membership is many-to-many**. A series could have belonged to one shelf like a
 file to a folder, which is simpler to build and answers "which one is this in"
@@ -1185,6 +1232,16 @@ NEW badge, the catch-up count and "last updated" carry on; only the nudge is
 skipped. Switching off also expires the ones already waiting, because "I don't
 want these" said while four sit on the Dashboard means those four as well.
 
+**And narrowed to some series** (2026-11-09, `releaseNudgesFor`): every
+series you follow, or only your favourites, the series on the shelves you
+pick, or both, either being enough (`inReleaseScope` in `library.ts`, which
+`manga-check` asserts). Only the nudge is narrowed: the chapter is recorded
+and the task switch is its own. A hidden shelf still wins, and is greyed in the
+list. Choosing nothing is stored as every series (`cleanReleaseScope`), since
+none is the off switch's job, so the screen does not save "only some" until a
+box is ticked and says so; a removed shelf drops out of it the same way.
+Narrowing expires the waiting nudges it now leaves out, as switching off does.
+
 **Browse hides tags you choose** in Popular and Latest, per device
 (`hidden-tags.ts`). **Ecchi, Mature and Adult** always come first and are on
 unless switched off; any other tag (BL, Romance) is added from quick picks, your
@@ -1280,6 +1337,67 @@ now, and `manga-check` asserts twenty unaskable series leave all the slots to
 five that can be asked. Found
 after Suwayomi was stopped for a few minutes: 11 rows, 10 of them fine the
 moment their chapter lists were opened.
+
+**A 404 is gone, not "not answering"** (2026-11-07). 21 series read "source
+not answering", every one "HTTP error 404" from MangaFox or Mangahere, which
+answered for their other 345: the site had taken those series down (fanfox.net
+itself answers 404 for *Return to Player* and 200 for *Solo Leveling*).
+`goneFromSource` in `web/shelf.ts` (a 404 or "no chapters") is the one rule:
+the Library files both under **Source has nothing for it**, and `dueForCheck`
+asks a gone series once a day in the ordinary queue rather than in a retry
+slot. A cover in that filter now opens the search for another source, as it
+says it does. **Switch sources** on that filter (`switchAll` in
+`find-sources.ts`, the same run as Find sources with `mode: 'gone'`) searches
+your other sources for each by its title and switches it only where the title
+is exactly the same, the source is another one, and asking it for chapters
+gives some; of up to three such, most-used first, one reaching as far as you
+have read beats one that does not (`pickReplacement`). Read marks and the place
+are by chapter number, so they carry over. Linking by hand now clears the old
+source's error too, which a working new source otherwise wore until its first
+check. Probed read-only on four of the 26 before shipping: each had two or
+three replacements, and *F-Class Destiny Hunter*'s 84-chapter Asura copy would
+be passed over for a 125-chapter one, being read to 99.
+
+**FlareSolverr, on demand and locked down** (2026-11-09, `flaresolverr.ts`,
+More → Cloudflare helper). Asked for when MangaHub put its site behind a
+Cloudflare check, under two rules from Blake: nothing runs without a reason,
+and no open port without measures and stopgaps. Suwayomi is told *this server*
+is its FlareSolverr (`/manga/flaresolverr/<secret>/v1`, through its settings,
+never a command line); the real one starts only when Suwayomi asks, on
+127.0.0.1 and a random port, and stops ten minutes after its last request. The
+door needs this PC (`isTrustedLocal`, exported from `module-api` for it), no
+browser headers, and a secret new each start; `refusal` passes on only the
+commands Suwayomi sends, for public http(s) sites, with names looked up so one
+pointing at this PC, the home network or the tailnet is refused. Leftovers are
+killed by `stop.ps1` (always, by path) and by the next server (by pid file).
+Install and remove are local-only; the 378 MB download is checked against the
+SHA-256 GitHub publishes, and it takes **882 MB** unpacked (its own Chrome).
+Verified: 404 from the tailnet address, with a wrong secret, with an Origin and
+through a forwarding header; listening on 127.0.0.1 only; started by
+Suwayomi's first request and passing the check on mangahub.io's own pages.
+**It did not rescue MangaHub**: the extension reads `api.mghcdn.com`, which in a
+real browser answers "This app does not have permission to access the website
+content", so MangaHub is shutting apps out, not merely checking for a browser;
+and Mangakakalot.fun's feed is JSON, which FlareSolverr hands back wrapped in a
+page (`flareSolverrAsResponseFallback` then fails to parse). Removed again the same
+day on Blake's word (the code stays: More → Install puts it back); the first
+removal hit EPERM on a OneDrive folder, so removing retries now.
+
+**Two days of failing, then a new source** (2026-11-09), asked for with "explain
+to the user what will happen if a source doesn't respond for 2 days, and give a
+button to automatically find a new source". `Series.failingSince` is kept by
+`write` alone (set when `error` appears, cleared when it goes), so every path
+that records a failure keeps it right; a row already failing when it shipped
+counts from its source's last answer. `autoSwitch` (from the sweep, four series
+a sweep, oldest failure first, only while Suwayomi is already up) switches a
+series failing for two days (`SWITCH_AFTER_MS`, `dueForSwitch`) by `switchOne`,
+the same rules as Switch sources; one that finds nothing is tried again a day
+later (`switchTriedAt`), and a switch is recorded (`switchedFrom`) and said on
+the page for two weeks. On unless switched off on More (`autoSwitchSources`).
+The series' page (`SourceTrouble.tsx`) says which case it is (gone, or not
+answering since when), what will happen and when, with **Find a new source
+now** (`POST /api/manga/:id/switch-source`, `switchNow`) and **Choose one** (the
+comparison).
 
 **Eligibility and priority are different things**, and that is the part worth
 keeping: a queue where everything is due is a queue where "sooner" means
@@ -1936,6 +2054,251 @@ The Library needed none of this — it scrolls with the window and has always ha
 the scrollbar, drawing sixty tiles at a time with a *Show more* button behind
 the observer that adds the next sixty.
 
+#### Scroll or pages, and carrying on (2026-11-11)
+
+Asked for as a choice in the reader between scrolling and pages, pages being
+"specifically for Japanese manga made to be in a book where you can see two
+pages at once", with infinite scroll for the strip and an automatic swap. All
+of it is in the gear, first, and per device (`reader-prefs.ts`): `mode`,
+`autoMode`, `infinite`, `rightToLeft`. Scroll stays the default; the other
+three switches start off, right to left starts on.
+
+**Pages** is a sheet per page or pair, the
+document snapping to each (`html.manga-snap`, `scroll-snap-type: y
+mandatory`), so the window still does the scrolling and the resume, jump,
+counter and position machinery is the strip's. Pages are found by
+`data-page` rather than as the strip's children, since they now sit inside
+sheets (`pageEls`), and a place resolves to its sheet's top (`placeY`). Two
+pages share a sheet when the screen is as wide as two pages of its height,
+less a tenth (`fitsTwo`): a desktop window and a phone held sideways, not a
+phone held upright. Arrow keys, Page Up/Down and Space turn sheets (left is
+next, right to left).
+
+**Fixed the same day, from reading on the PC.** Three things:
+
+- **Two never showed on the desktop.** `fitsTwo` asked for two pages at nine
+  tenths of the screen's height, and a window on half of the 3440×1440 monitor
+  (about 1720×1390) needs 1950px for that. It asks for seven tenths now, and
+  *Side by side* in the gear (`sideBySide`: when there is room, one page, two
+  pages) settles it by hand.
+- **Pairs were one off.** The first image was put alone like a cover, and on
+  *Tsuihousareru Tabi ni…* chapter 30.1 that split images 9 and 10, printed
+  pages 7 and 8, which face each other. A chapter's first page is nearly always
+  a right-hand page facing the second, so pairing now starts from the first;
+  the edges still move it where a picture is drawn across the gutter. Those two
+  pages have no picture across (their inner edges differ by 128 of 255), which
+  is why the edges could not rescue it. Printed page numbers would have; they
+  are not read.
+- **Dragging turns the page.** With *Drag the page to scroll* on, the page
+  follows a mouse drag with the snapping lifted, and letting go turns on or
+  back by the way it went (up for on; sideways as a book's page turns, rightwards
+  for on when reading right to left), a quick flick counting however short and
+  under 40px putting it back. The turn slides and then lands by hand if the
+  slide has not got there, since a smooth scroll does not run at all in a
+  window that is not drawing.
+
+Measured in the pane on that chapter: 1+2 … 9+10 at 1024×768; dragging up,
+rightwards, leftwards, a 20px nudge and down went to sheets 2, 3, 2, 2 and 1.
+
+**Then no dead space, as a strip has none.** Asked for as the page filling
+nearly the whole screen with the pages before and after showing above and
+below. A sheet is as tall as its pages, which fit the screen's height less 26px
+above and below (`--fit`), sheets 4px apart, and the screen snaps to the
+**middle** of each (`scroll-snap-align: center`, `centred` for the keys and the
+drag): at 768px tall a pair fills 26–742 with the pair before ending at 22 and
+the next starting at 746. A page too wide for its half is made smaller, never
+cut, and a page still coming keeps a page's shape (`aspect-ratio`).
+
+**The page size is pages mode's own** (`pagesZoom`, 40–100% of what fits the
+height), apart from the strip's width (`width`): the one slider sets whichever
+mode is showing. And **two side by side is the window's decision alone**: it
+asked of the width the strip setting left, so turning pages down to 60% turned
+two into one. At 50% two stay, a pair in the middle and the pairs either side
+filling the rest of the screen.
+
+**A long drag lands on the page nearest the middle.** Turning one page on or
+back is right while a page fills the screen; with pages made small, a drag
+passes several, and turning one from where it began threw most of it away. So
+a drag that ended nearer another page than the one it began on settles on the
+page nearest the middle of the screen, measured where a flick would have
+carried it (`glideDistance`, the strip's own slide), and a short one still
+turns one. Measured at 40% with three pages on screen: a slow 650px drag
+settled on the page nearest the middle as it was let go, a quick 180px flick
+went three past it, a 60px drag turned one, each landing dead centre.
+
+**One page is the default** (`spread`: one, two, or *Fit*, two when there is
+room). It is stored under a new key: the setting was `sideBySide` with *when
+there is room* as its default for a day, and since every save writes the whole
+set, every device that changed anything wrote that default as though chosen.
+
+**The gear is pictures** (`ReaderSettings.tsx`), asked for "in the pursuit of
+having it be as intuitive as possible": every choice a tile with a drawn
+picture (`Icons.tsx`: a strip, an open book, one page, two, a screen fitting
+them, arrows for the reading direction, a wand for *Auto*, a chain of two
+pages for *Endless*) and a word or two, chosen ones filled in the accent like
+the hide choices. What a choice does in full is its tooltip and its accessible
+name, not a paragraph on the panel; the hide countdowns are an icon and a row
+of numbers, *Never* drawn as ∞; the scrollbar and drag switches are tiles. Only
+what applies shows: *Endless* in Scroll, the page choices in Pages, *Shift* only
+while two pages are side by side.
+
+**Which pages pair** (`page-layout.ts`, no imports, asserted by
+`manga-check`): a wide page is a spread already and is alone, the page after
+one starts a new pair (as the printed sheet does), and the first page is alone
+from the first unless the pictures say otherwise. They are read by
+`page-analysis.ts`, one page at a time at 96px tall: shape, colour, and the
+brightness down each edge. Where a picture is drawn across the gutter, the two
+inner edges match (`seamJoined`, which ignores a plain margin, white or black,
+since nearly every page has one), so each way of pairing is scored by the
+joined seams it keeps together against those it splits (`chooseFirstAlone`),
+and a tie pairs from the first page. **Pages paired wrong? Move along one** in the
+gear shifts them by a page for that chapter, for what the edges cannot see. A
+layout that changes as pages are read (a wide page found, the pairs moving) puts
+you back on your page in a layout effect, as a width change always did.
+
+**Switching by itself** asks the series' **tags first** (`formatFromTags`,
+added the same evening on Blake's word): Long Strip or Webtoon is a strip
+whatever else is said, then Manga or 4-Koma a book, then Manhwa or Manhua a
+strip; Full Color decides nothing. The chapter list passes the library's tags
+and a series' page its source's genres, so on nearly every series it is decided
+as the chapter opens, before a page arrives. The offline shelf has none.
+
+Only with no telling tag are the pictures read: the first six pages of a series
+it has not seen (`contentKind`). Mostly tall slices are a strip; so are cuts the
+picture carries on across (`cutsCarryOn`, also asked for that evening: at three
+cuts in four or more that are not white paper meeting white paper, the line of
+pixels either side differs by under 13 of 255); page-shaped and mostly black
+and white is a book; page-shaped and coloured says nothing, since a manga's
+first pages are often colour, and the reader is left as it is.
+
+**The edges are the page's own outermost lines at full size**
+(`page-analysis.ts`, a crop of one row or column each), not the edge of the
+96px copy the colour is read from. The cut check first ran on the small copy
+and missed both webtoons it was tried on, because a "row" there is a band 15 to
+150 pixels deep. Measured at full size across the first seven images: Eleceed
+0, 0, 11 and Paladin Dad 2 to 5 at every cut; three manga 5 to 244, the closest
+*Maken Tsukai*, one cut in four under 13. What it
+found is kept per series (`rememberFormat`, the last 200), so the next chapter
+opens right at once and is not looked at again; picking Scroll or Pages while
+it is on is kept for that series the same way. Measured on the running app:
+*Skill Lender's Retrieving*, black-and-white pages with a colour spread first,
+went to Pages; Eleceed, slices at 0.04 wide to tall, stayed a strip.
+
+**Carrying on** (scroll mode): once a chapter is read to its end
+(`reachedTheEnd`, what makes Next finish it), it is finished as Next would
+finish it (`onFinished`, so the read is recorded and the host opens the next)
+and the next chapter opens **below** it. The one just read stays above, its
+pictures handed over rather than fetched again (`handedOff`, so the loader does
+not revoke them), and the chapters behind and this one are one keyed list, so
+the finished chapter's `<img>`s are the same elements before and after and are
+not decoded again. One stays behind (`KEEP_BEHIND`, two until the crash
+below); older ones go off the top. It stops, leaving the ordinary buttons, where Next would ask (a hole of
+a whole chapter) and while any page is missing. The controls stay down, and the
+"asking the source" line sits inside the new chapter, since anything above it
+would push the page you are reading.
+
+**It killed the page on an iPhone, by pixels, not bytes.** Reported as
+"something weird" after a long Endless run of *Divine Beast Kindergarten*; the
+server's log showed two fresh sessions 13 seconds apart at the moment chapter
+65 carried on into 66, then the reload reopening 65. Its pages are 200KB JPEGs
+of 800×3565: 8MB a chapter to fetch and **624MB a chapter once decoded**, and
+with two finished chapters above the one being read Safari held close to 2GB
+of pictures. Three changes:
+
+- **Pages far from the screen let go of their pixels** (`far-pages.ts`, scroll
+  mode only). Past three screens away a drawn page is given its own shape as an
+  `aspect-ratio` and its picture swapped for a one-pixel blank; within two it
+  gets it back, a decode from the blob still in memory rather than a fetch. The
+  shape keeps it exactly as tall, so nothing moves. Done to the DOM beside
+  React, which sets `src` only when a page's URL changes. Passes run on scroll
+  (at most every 250ms), on a resize and as a page loads; no timer. Pictures
+  held now follow the screen, not the number of chapters.
+- **One finished chapter above, not two.**
+- **The chapter to reopen after a reload is written as it opens**
+  (`rememberOpen` in `openChapter`), not in the effect after, because the page
+  is likeliest to die exactly then.
+
+Verified in the browser pane, writes blocked: at the top of chapter 66 (42
+pages, a 254,459px strip) 41 pages were released and the strip's height did not
+change; jumped to the middle, the two pages on screen were drawn and the page in
+view stayed at the same pixel; carrying on 66 → 67 → 68 left one chapter above
+each time, 83 of 88 pages released, and the reload record named 68.
+**Not verified**: memory on an iPhone itself.
+
+**Taking a chapter off the top moved Chrome a chapter up.** The first version
+scrolled back by the removed chapter's height, which is right in Safari and
+double in Chrome, whose scroll anchoring already keeps what you are looking at
+in place when something above it goes. Now the chapter just finished is
+measured before and after (`keepInPlace`) and the page moves by whatever it
+actually moved. Measured: before, the divider under the chapter being read went
+from 561px to 28,581px down the screen; after, 561 to 561, three times running.
+
+Verified in the browser pane with every write answered by a fake ok and this
+browser's storage put back after, so nothing real changed: two pages at
+1024×768 (a colour spread alone, then 2–3, right to left), one at 375×812 and
+two at 812×375, on the same page each time; the arrow keys; switching by
+itself both ways; and carrying on through four chapters with the counter, the
+chapter number and the read following. **Not verified**: snapping by touch on a
+phone, and how the pairing does across many real books (only the scoring rules
+are asserted).
+
+#### Smaller pictures (2026-11-11)
+
+Asked for as compression with "options for downloads on device, local
+collection, and normal reading", to save space and to read better on weak
+WiFi. **The PC makes the smaller copies** (`server/compress.ts`), because the
+connection is most of the point and a picture shrunk on the phone has already
+crossed it. A page route asked for `q=smaller` or `q=smallest` sends one; the
+archive keeps one when its setting says so.
+
+**sharp** (libvips) is the one dependency added for it, 0.35.5, about 29MB on
+disk. It is prebuilt for Windows, macOS and Linux on x64 and arm64, musl and
+Docker included, so it keeps the every-platform rule, and the lockfile carries
+every platform's build. It is imported on first use; one that will not load
+leaves every page as it came, and the collection card says so.
+
+| level | | a 600KB WebP strip | a 200KB JPEG |
+| --- | --- | --- | --- |
+| Smaller | up to 1200px wide, WebP 80 | about 290KB | about the same |
+| Smallest | up to 900px wide, WebP 60 | about 200KB | about 140KB |
+
+Measured on this PC's cache, about 250ms a page. Four rules:
+
+- **A copy that is not smaller is not sent**: an already-small JPEG re-encoded
+  can come out bigger, and goes as it came.
+- **WebP stops at 16383px a side**, so a taller strip is JPEG (mozjpeg); a GIF
+  is left alone, since it may move.
+- **Two at a time, two threads each, no libvips cache**, so a chapter asked for
+  at once on a gaming PC is a small thing. Copies made are remembered, up to
+  48MB in memory (`compressCached`), so a revisit or a second device does not
+  pay again; the page cache and archive keep what they had.
+- **Made from whatever copy the route found**, archive, cache or source, and
+  never written in its place.
+
+**Three settings, in three places:**
+
+- **Reading**, per device, in the gear's More (`quality.ts`, `QualityChoice`):
+  **Auto** (the default), Full, Smaller, Smallest. Auto measures how fast pages
+  arrive: each page over 60KB, its size over the time it spent travelling (the
+  server sends `x-made-in`, how long it spent first, a slow site included, which
+  is taken off) times how many were going at once, smoothed. Full at 1.5MB/s or
+  more, Smaller from 400KB/s, Smallest below. Its last reading is kept for half
+  an hour, so a reload on weak WiFi starts small. Every page fetch counts,
+  downloads included, through `fetchPage`.
+- **Saving to the device**, per device, on Downloads: Full, Smaller or Smallest
+  for chapters saved from then on. Saved under the page's own address whatever
+  size it came at, so the reader finds it.
+- **The Local collection**, the host's (`Store.archiveQuality`), on the
+  collection's card: applied to each page as it is kept, read per page so a
+  change takes effect at the next one. Lossy for good for those pages, and the
+  card says so; chapters kept already stay as they are. Hidden on a friend's
+  copy, whose collection is the host's.
+
+Verified: `manga-check` asserts the speed arithmetic and the compressor (a
+noisy 5.8MB PNG to a 1.3MB WebP, smallest smaller again, a wide page brought
+to 900px, a 20000px strip as JPEG, a PNG WebP cannot beat sent as it was, a GIF
+and a non-picture untouched).
+
 #### The gear, and what a web app cannot do from it
 
 `ReaderSettings.tsx`, shaped like the panel in the old app: sliders, then Reset
@@ -2284,7 +2647,7 @@ imported as a blob URL.**
 `<script src>` and a bare `import('/api/…')` send no Authorization header — the
 constraint that put the icons and the tones *outside* `/api/`. That escape is not
 available here: those are a colour and a sine wave, this is code from a package
-you installed, on a server that binds `0.0.0.0`. So it is fetched like any other
+you installed, on a server reachable from the tailnet. So it is fetched like any other
 API call and turned into a blob, the same move the habit pictures make with their
 bytes.
 
@@ -2405,9 +2768,8 @@ time it'll fire.
 **✎ Edit screens**, at the foot of the menu, on the PC and the phone. While it
 is on, a bar sits at the top right (on a phone just **✎ Done**), outlined text
 can be renamed, and sections that can move have a ⠿. Asked for as part of
-working on the app without seeing a line of code; the code editor and the
-blueprints (a clickable map of the app, then node graphs that make it do
-things) are to follow.
+working on the app without seeing a line of code; the **Code** screen and
+**Blueprints** (both below) came next.
 
 **Saved as data, not as source.** That was the choice offered and taken: a
 change works from the phone, shows at once on every device, and survives an
@@ -2496,6 +2858,994 @@ simulated and the Dashboard's writes intercepted, so nothing real changed:
 a heading renamed and put back, ↓ and a mouse drag writing the right order, and
 at phone width a touch drag on Home, ✕ and its offer back, a tile's name
 opening the editor rather than the screen, and no sideways scroll.
+
+### Code: the app's own source, inside the app
+
+`packages/modules/code/`, a package like any other, so deleting the folder
+takes it away. It opens on **Parts of the app**: a card per part, named and
+described by the first paragraph of its README, which opens that README with
+its folder unfolded. Then a tree of every file, a search, and an editor with
+line numbers and colouring. `npm run code-check -w @everything/server` proves
+the rules below.
+
+**Only what the repository ships is offered.** The list is `git ls-files`
+(tracked, plus new files git would not ignore), or `release-files.txt` in a
+release zip, so `data/`, the database, `.env`, the agent's token, installed
+packages and friends' copies are never on it, and a path not on it is refused
+before anything is opened. `SECRET` in `files.ts` refuses those again by name,
+because an ignore rule that silently stops matching has happened here twice.
+
+**Git is run, which the server otherwise does not do to the OS.** It is the
+same program on every platform, run with an argument list and no shell. Without
+it the list comes from `release-files.txt` and "changed since the last commit"
+is unknown; with neither, the screen says there is nothing to show. In Docker
+there is no checkout to edit, which is the honest answer there.
+
+**Reading is any of your devices; saving is this PC only.** The files are the
+public repository's, so reading is the owner's set the People routes use. A
+saved file is code this PC runs at the next start, so a device token that could
+save would be a way to run anything here: the rule installing a package
+follows. On a friend's copy the package does not load at all (`hostOnly` in the
+manifest, a field added for it), since a copy runs this checkout's code.
+
+**A save is checked first, for syntax only.** esbuild (already installed, tsx
+runs on it) parses `.ts`, `.tsx` and `.js` in milliseconds, and JSON is parsed
+as JSON. Types are not checked, because nothing that runs the app checks them
+either: what stops the server or the build is a file that does not parse, and a
+server that will not start cannot then be mended from this screen. The problem
+is shown with **Go to line** and **Save anyway**, as a reply rather than an
+error, since `apiRequest` keeps only an error's message.
+
+**And it is written only over the version that was opened.** Each open carries
+a SHA-1 of the bytes; a save against any other is refused with the version on
+disk, and the screen offers to load that or save over it on purpose. A file
+changed meanwhile in an editor, by git or by Claude is not silently undone.
+
+**The file's own conventions are kept.** The editor sees `
+` and no
+byte-order mark; the save puts back CRLF if the file had it (or every line
+would change in git's eyes) and the mark if it had one, and every `.ps1` gets a
+mark whatever, for the reason publish-check refuses one without.
+Migrations and the lockfile are read only, with the reason on screen: a
+migration that has run is never run again, so changing one changes nothing.
+
+**Nothing restarts on save.** The banner counts the files newer than the
+running server, from any editor, and offers core's Restart (`start.ps1`
+rebuilds the screens when their source is newer than the build).
+
+**The editor is a transparent text box over a coloured copy of its text**
+(`Editor.tsx`): typing, undo, selection, the phone keyboard and a screen reader
+are all the browser's own. Both are the size of the text inside one scrolling
+box, rather than a text box scrolling with a picture following it, because two
+scroll positions kept in step lag a frame. The colouring is `highlight.ts`, a
+few regular expressions per language and no imports: a wrong guess colours a
+line wrongly and never saves anything wrongly, and an editor library would be
+the largest dependency in the repo. It is drawn from a deferred copy of the
+text, and while that lags the text box shows its own text, so what is on screen
+is never the old text. Tab indents, through `execCommand('insertText')`,
+deprecated and still the only way to keep the browser's undo; **Esc then Tab
+leaves**, so the keyboard is never trapped. **What changed** is a line diff
+against the last commit, and **Put back as committed** fills the editor with it
+without saving.
+
+**`/api/code` is never kept offline**: the files change under it, and one is
+half a megabyte. The screen is 8.4KB gzipped and only loads when opened; the
+main bundle gained its menu entry.
+
+Verified in the browser pane against the running app: the map, a folder
+opening on a card, colouring on a `.ts` (text box and picture the same size and
+text), a save and its undoing on this package's README, a broken brace refused
+with the line it names and nothing written, the diff of a draft against the
+commit, and at 375px the map, the tree, a file with Back and no sideways
+scroll.
+
+### Blueprints: boxes and wires that make the app do things
+
+`packages/modules/blueprints/`, asked for as "blueprints like Unreal Engine",
+and chosen as *nodes that do things* (the app runs the graph) rather than
+nodes that write TypeScript, which would be far harder and far more fragile.
+A blueprint starts at a **When** box (red), goes through **Check** boxes that
+leave by *yes* or *no*, **Logic** boxes (violet) that decide from more than one
+thing, and **Do** boxes that do one thing and carry on. The boxes are
+`web/catalogue.ts`; `npm run blueprints-check -w @everything/server` proves the
+rules below.
+
+**Values travel as `{words}`, and one kind has a wire: yes or no.** An event
+*gives* `{game}`, `{habit}`, `{task}` or `{time}`, a repeat gives `{count}`,
+and any text box after it can use them ("Played {game} at {time}"). That was
+the only way at first, on the grounds that one idea is easier than two. A logic
+gate changed it (2026-10-29): AND over two checks needs both answers at once,
+which a run going one way or the other cannot give. So every check has an
+**Answer** pin, a diamond, and a gate's lettered inputs take them, drawn as a
+thinner green wire. It is Unreal's pure node: a gate asks its inputs when a run
+reaches it, so a check wired only into a gate is asked then. A diamond only
+wires into a gate's input and an input only takes a diamond, one answer each,
+so the two kinds cannot be crossed; `cleanGraph` refuses anything else, and a
+wire carrying an answer is marked by its `port`.
+
+**Core says what happened, and does not know who is listening**
+(`happenings.ts`). `changes` only says which part of the app moved, so every
+screen can refetch; a blueprint needs "this task was finished". The attention
+route says when the state changes or a stopping point arrives, `recordHabitDone`
+when a habit is ticked, and the tasks routes when one is added or finished
+(only on the change to done). With no listener an emit costs nothing, which is
+why the heartbeat can afford it. `habitProgress` joined `module-api` so a check
+asks a habit what the Dashboard asks it.
+
+**A gauge counts as done while it is above its reminder line.** A gauge is
+never *finished*: it drains the moment it is full. Asked "is Drink water done?"
+with `met`, every blueprint about a gauge would have gone the *no* way for ever.
+Found on the first test against the real habits.
+
+**The one timer** is for the timed boxes, *At a time of day* and *Every so
+often*: a single timeout to whichever is next due, re-armed on every change and
+at least every six hours, nothing with no such box. A time the PC slept through
+by more than ten minutes is skipped, not run late, because "at 9:00" at 11:00
+is a different instruction.
+
+**Every so often counts from one of three places**, asked for with options
+because "every 15 minutes" means different things (`web/schedule.ts`):
+
+- **Lined up with the clock**, counted from midnight, so 15 minutes is :00,
+  :15, :30, :45. That lines up with the hour only when the interval divides 60
+  (or, in hours, 24), and the box says which under itself: "lines up with the
+  hour", "the same times every day but not the same minutes each hour" (45,
+  90), or "starts again at midnight, the last gap is 5 minutes" (7). A day
+  always starts the count again, so an odd interval still begins each day the
+  same way.
+- **Starting at a time each day**, until another (9:10 to 17:00, or 22:00 to
+  02:00 across midnight); the end counts when it lands on one.
+- **From when the app starts, or the blueprint is switched on or its timed
+  boxes changed**, with the first run straight away or after the first wait.
+  Moving a box about does not restart the count; the start of the count is
+  kept in memory, since a restart is a new start anyway.
+
+All three can be limited to weekdays or weekends, and the fields a mode does
+not use are hidden (`showWhen` on a field). The note under the box lists the
+next times from the same arithmetic the server runs by, so the box cannot
+promise 9:15 and fire at 9:12. It shares the time-of-day box's one timeout;
+**a run missed while the PC slept is not made up**, only the latest one that
+came round in the last ten minutes runs. At most once a day: a longer
+interval is held to a day and the note says so.
+
+#### Macros: a hotkey in, keys out
+
+Asked for so a blueprint can be a macro (2026-10-29). **When: I press a
+hotkey** and **Do: Press keys**, plus a Logic section to build one with.
+
+**The keyboard is the agent's, never the server's.** The server is meant to
+move to Docker, which has no keyboard, and must not shell out to the OS. So
+the blueprints package has an agent half (`agent/index.ts`), loaded by the
+agent like voice and integrations, that long-polls `/api/blueprints/agent` for
+the hotkeys to register and the keys to press, presses them, and reports on its
+next ask; a hotkey it hears comes back on `/api/blueprints/hotkey`. Both are
+the agent's side only (this PC, the agent's key, or on a guest copy that
+person's devices), the rule voice's agent routes follow. A press reaches the
+keyboard in milliseconds, an idle agent asks every twenty seconds, and with the
+package switched off the agent asks every five minutes. **Press keys waits
+for the agent to say it pressed them**, up to five seconds, and fails in words
+when no agent has asked for 45 seconds, so a run never claims a press that did
+not happen. The desktop client's zip carries the agent half too.
+
+**Registering moved to core** (`agent/src/hotkeys.ts`, `agent/src/keys.ts` for
+the key table). Voice had its own registrar, and a second copy would define the
+same koffi structs twice, which throws at import time. Voice's `hotkeys.ts` is
+now a voice-shaped face on core's; checked after the move by asking Windows to
+register voice's two shortcuts again from another process and being refused,
+which only happens while something holds them.
+
+**A hotkey needs a modifier; keys to press do not.** Registering takes the key
+from every program, so a bare `e` or `f8` as a hotkey is refused, as voice's
+are. But a macro that presses `e` in a game is the point, and there is no
+misheard sentence to fear, so *Press keys* takes a bare key. Both go through
+`web/keys.ts` (no imports), whose key names `blueprints-check` holds to
+`HOTKEY_KEYS` and to the agent's table. Presses carry the scan code and the
+extended flag, since plenty of games read scan codes and ignore a press without
+one, and every key pressed is released in reverse even if something fails.
+**Hold down for** (30ms by default) exists because some games miss a press
+shorter than a frame. **Record** captures the keys from the browser by
+`event.code`, as voice's recorder does, and says why it will not take a bare key
+for a hotkey.
+
+**Pressed again while it is still going** is the hotkey box's choice: stops it
+(the default, which makes a repeat a toggle), starts it again, starts another
+alongside, or does nothing. Runs still going are kept in memory with an
+`AbortController` each, which is also how Stop on the screen, switching off,
+changing and deleting end them; ending one on purpose is a `stopped` step, not
+a failure.
+
+**A blueprint's own press does not start it again.** Pressing keys that are a
+registered hotkey sets that hotkey off, so one heard within half a second of
+the agent pressing those very keys is ignored. Without it, a blueprint pressing
+its own hotkey would start itself for ever. Runs started by a hotkey are a
+person, so the runaway guard does not count them: twenty presses of a macro in
+ten minutes is using it.
+
+#### Game macros: watched keys, sequences, switches, counts (2026-11-03)
+
+Asked for to replace an AutoHotkey script for Warframe (a melee slide on the
+side mouse button; on the left button, press 2 every 8 to 16 shots, toggled
+by F1), and to cost nothing outside the game. Four pieces:
+
+- **A hotkey can watch instead of take** (`listen: 'watch'`): any key, bare,
+  or a mouse button (`lbutton`, `rbutton`, `mbutton`, `xbutton1`, `xbutton2`,
+  `MOUSE_BUTTONS` in `web/keys.ts`), let through to the game, for one game.
+  **Not a low-level hook**, which is how AutoHotkey does it: a hook makes
+  every key and click on the PC wait for this process, and a Node thread
+  polling its queue would lag the mouse everywhere. `agent/watch.ts` asks
+  `GetAsyncKeyState` about those few keys every 10ms instead, only while the
+  server lists one, and **the server lists a watched key only while its game
+  is being played** (`listening` in the server, from the attention
+  happening, which wakes the agent when the list changes). A press counts
+  only with that game's window in front, asked by the agent at the moment
+  (the script's `IsWarframeActive`), since the list follows the game a
+  heartbeat late. **Letting go** is said too, and `release: 'stop'` ends the
+  run, which with a Repeat is "while I hold it". A registered hotkey can name
+  a game as well, and is only registered while it is played.
+- **Press keys plays a timeline** (`mode: 'timeline'`): a row per key, each a
+  bar from when it goes down (`at`) to when it comes up (`until`), in ms from
+  when the box runs, with **Only if I'm not holding it** (`ifUp`) per row,
+  which leaves your own W alone at both ends. **A skipped row skips its wait
+  too**: the next key goes down at once and everything after moves up by the
+  gap (`soonerIfSkipped`), because the script's `Sleep 20` followed `w down`
+  and so only happened when W was pressed. Reported the first evening, when a
+  held W still waited 20ms. *If I am, start the rest N ms sooner* is ticked
+  by default; unticked (`keepGap`) keeps to the clock. The order and timing
+  are `runTimeline` in `web/keys.ts`, which the agent hands the real keyboard
+  and `blueprints-check` a fake one, so both cases are asserted without a key
+  pressed. It first shipped as typed steps
+  (`hold w 20`, `wait 40`) and was replaced the same day on being asked for a
+  timeline to drag instead, on the model of a controller remapper's. The box
+  shows a small picture and opens `Timeline.tsx` over the screen (240px is no
+  room for a timeline), drawn into `body` and stopping its own pointer and key
+  events, since React carries a portal's events up to the board, which pans
+  and deletes. Bars are dragged by the middle or either end with pointer
+  events, snapping to 5ms (Alt for 1), typed exactly in the boxes under them,
+  or moved with the arrow keys; a row's key is typed or recorded, and a
+  modifier on its own (a bar of Ctrl) records by pressing and letting go.
+  Stored as JSON text in the field (`parseTimeline` in `web/keys.ts` cleans
+  it for the server, the box and the agent). The agent plays it whole
+  (`playTimeline`), each moment timed from the start rather than after the
+  last, a let-go before a press at the same moment, and lets go of whatever
+  is still down, in reverse, however it ends.
+- **Flip a switch / Is a switch on?**: named, shared by every blueprint, in
+  memory (all off when the app starts, as a script's variables are). The
+  screen's side column lists those on. `{switch}` is on or off after a flip.
+- **Counter** and **Random number** (Logic). They were one box, *Every so
+  many times*, until asked to be split the same day: a counter whose number
+  comes in by a wire, and a random number generator to feed it. See
+  **Numbers on a wire** below.
+
+**The run log is written at most once a second** (`record` schedules
+`flushLog`): a hotkey on the left button is a run per click, and a file
+write plus every screen refetching per click was the cost to avoid.
+
+Built as two blueprints, switched off: *Warframe: melee slide* and
+*Warframe: Cyte-09 reload*. `smoke` drives the flow with the agent played by
+hand: not watched at the desktop, watched in Warframe, the timeline sent
+whole, 2 pressed every second go while held, stopped on letting go, and the
+list emptied on leaving. **Not verified**: anything pressed into Warframe,
+since nothing here presses keys into a game being played.
+
+#### Logic: gates, repeats, sequences
+
+- **Logic gate**: AND, OR, NAND, NOR or XOR over 1 to 8 lettered inputs (NOR
+  of one is NOT), leaving by yes or no, with its own Answer so gates can feed
+  gates. An input with nothing wired in is left out; with none wired at all
+  the run fails and says so, and gates feeding each other in a circle fail
+  rather than hang. The step says which input said what: "OR of A no, B yes:
+  yes".
+- **Repeat**: every so many seconds (to a tenth) or minutes, a number of times
+  (up to 10,000) or until stopped, the first go straight away or after one
+  wait. *Each time* is run to its end on every go, then *After the last*.
+  "Until stopped" still stops at 100,000 goes. Only the first three goes are
+  written in the run log step by step, then a count ("Went 57 times of 100"),
+  and the log is shown as it goes at most every two seconds; a run keeps at
+  most 200 steps. A **Test** goes three times without the gaps, since a test of
+  "every second until stopped" would never come back.
+- **Sequence**: 2 to 8 outputs, each run to its end in turn.
+
+Cutting a gate's inputs or a sequence's outputs drops the wires on the pins that
+went (`keepWires`, which the board and `cleanGraph` share). **The no-wait loop
+rule became "fifty boxes with no pause"**: it was fifty steps a run, which a
+repeat of fifty goes would hit by doing exactly what it was asked. A Wait or a
+repeat's gap starts the count again, so a loop with a pause in it now runs until
+stopped, which is what "nudge, wait, check again" wants.
+
+**Found while testing, and older than this**: *Write in a note* appended a
+line by saving the body alone, and `saveNote` takes a missing title from the
+first line, so the log renamed itself "tick 1" and the next run started a new
+note. It sends the title and folder back with the body now. No blueprint here
+wrote notes, so nothing of yours was renamed.
+
+Verified against the running app with throwaway blueprints and a note, then
+deleted: Ctrl+Alt+Shift+F10 pressed through Windows started a repeat that wrote
+a line a second and pressing it again stopped it (four lines in 3.2s, then
+*stopped*); a Run repeating *Press keys* three times half a second apart, each
+reported pressed by the agent, with a second blueprint's hotkey on those same
+keys correctly not set off; on screen, an Answer tapped onto input A and
+another onto the gate itself landing on B, Test reading "OR of A no, B yes:
+yes" with four wires lit, a gate cut to one input losing B's wire, Record
+refusing a bare K and taking Ctrl+Alt+K, and no sideways scroll at 375px.
+**Not verified**: keys pressed into a game, since every press went to a
+combination something had registered, so that nothing reached whatever
+window was in front.
+
+**A new blueprint is off, and Test changes nothing.** Test asks the checks for
+real and has every action say what it *would* do; the board lights the path
+and the run is listed under it. **Run** works only from a *When I press Run*
+box, since starting *a match ends* by hand would be a match that did not end.
+
+**Nudges went through the queue, and no longer do** (2026-11-07). *Nudge me*
+wrote an ordinary nudge, so it waited for a good moment, kept quiet hours and
+went to the phone like any reminder. It is **Notification** now, asked for as
+"not tied to the nudge system but keep the UI": the same fields, but the app's
+popup on its own (`notices` in the server half, in memory). *Right now* shows
+at once; *as soon as I am free* and *at the next good break* wait, shown from
+the attention happening when it says so (`readyFor`: free and at the PC, or a
+stopping point or free with no game open), and give up after a day
+(`NOTICE_WAITS_MS`). **Stays on screen for** is the box's own time (2026-11-11,
+asked for in place of "Give up after (minutes)", when the popup was always up
+for 12 seconds): seconds, minutes, or *until I close it* (`staysFor` in
+`rules.ts`, 0 to the popup, which is how it already meant "stay up"). A box
+saved before keeps 12 seconds, its old time, since the unknown field is
+dropped as it is read. Reminders being off and quiet hours do not hold it, since it is not a
+reminder, so the banner below and its `HELD_BECAUSE` check went from the board.
+**Silent unless given a sound** (*Sound*, one of the app's tones, with a volume),
+because a blueprint often plays its own beside it. A restart forgets one
+waiting, as it ends a Wait. The type stays `nudge`, so saved blueprints keep it.
+The paragraphs below are its history as a nudge.
+
+**And it says when it cannot show** (2026-11-03). Going quiet outranks
+everything in the engine, a passed deadline included, so with reminders off
+a *Nudge me* wrote a nudge that waited and expired unseen while the run log
+said "Nudged". Reported as a "welcome" on coming back that never appeared:
+six of them in the queue, all `expired`, `attempts: 0`, with
+`reminders_enabled` at 0. Now the step asks core (`currentQuietReason`, in
+`module-api`) and says "…, but reminders are switched off, so it will not
+show", and the board has a banner over it while any *Nudge me* is on it and
+something is holding nudges, with **Turn reminders on** or **Resume now**
+where one press undoes it, and a link to Settings → Notifications → Reminders
+otherwise. The wording is `HELD_BECAUSE` in `catalogue.ts`, shared by both.
+
+**"Am I in a game" can name the game**, and so can *I start playing*
+(2026-11-03): a picker of every game on the list, empty for any. The game is
+the one the heartbeat says is in front, by exe. Core's attention happening now
+speaks when one game follows another with no stopping point between, or "I
+start playing Warframe" straight after League would never have been heard.
+
+**"Right now" is not a passed deadline.** It is written as a nudge whose
+deadline is the instant it starts, which breaks through as a deadline does,
+and the popup then said "(deadline passed)" in red over a welcome.
+`shouldDeliver` now delivers a deadline *equal* to `earliestAt` unescalated.
+Equal and not "no later": a task swept after it was already due has its
+deadline before its start, and that one is late. Trips' gate changes take the
+same path and lost the label too, rightly.
+
+**And it shows at once.** A nudge is delivered on the agent's heartbeat,
+which is 15s apart at the desk, so a hotkey's "Welcome" took up to that long.
+After writing one that may show now (*Right now* or *Whenever it can*, and
+nothing holding nudges), the step queues a `check` task on the long poll the
+agent half already holds open, and the agent ticks at once
+(`AttentionMonitor.checkNow`, and once more after a report already out). No
+timer and no polling: one report per nudge. Measured on this PC: 21ms and
+61ms from Run to delivered. *At the next good break* sends none, since a
+check now could not deliver it.
+
+**Found looking for more, the same day:**
+
+- **A wait added an abort listener it never took off**, so "Repeat every
+  second, until stopped" piled one onto the run's signal per go. `sleep`
+  removes it when the wait ends.
+- **Dragging a box stopped a running blueprint.** Saving compared the whole
+  graph, positions included, so moving a box while a repeat ran ended it as
+  "changed". `behaviour()` compares the graph without where boxes sit (or
+  wire ids). `smoke` covers both halves.
+- **`{game}` was the file name**: "Played {game}" wrote "Played warframe".
+  It is the games list's name now (`gameLabel`), in Test too.
+- **At the desktop read as busy.** The agent's "something covers the screen,
+  so you are busy" rule had no exception for the shell, which covers its
+  monitor too: with nothing open, "Am I… free" said no and a nudge waiting for
+  a good break waited on. It now skips `looksLikeSystemApp`, as discovery
+  already did.
+- **Not fixed, and not this app**: since 2026-10-28 the idle time on this PC
+  has never passed a few seconds, overnight included, resetting about every
+  5s. Nothing here injects input on a timer, so something else on the PC is,
+  and until it stops nobody is ever away, so *I come back* cannot fire.
+
+**Switched on is not the same as able to start** (2026-11-03). A blueprint
+whose only "When" was a phrase read **on**, in green, with voice off, and the
+Warframe macro read on all day. Each "When" box now says whether it could fire
+now (`live`), could once something it waits for comes (`idle`: its game
+opening, voice coming off pause, the app on the PC checking in), or cannot as
+things are set (`dead`: voice switched off or not installed, no keys or
+phrases, a key another program holds). The blueprint is **on** if any box is
+live, **idle** (a ringed dot) if the best is waiting, and **disabled** (a
+dashed one) if none can start it, with the reason in the line under its name
+(`statusOf` in the server, on `/api/blueprints` as `statuses`). Nothing that
+cannot fire is listened for already, so idle and disabled cost nothing. A
+watched key now waits for its game to be *open*, from the heartbeat's whole
+list of running games (`games`, added to core's attention happening, which
+also speaks when that list changes), rather than first in it. The screen is
+told when a status moves: a game opening or closing, the agent checking in
+after being away, and voice switched (it reads `settings`).
+
+**Adding a box is a search** (`web/search.ts`): by name, by what it does, and
+by the other things somebody might call it (`KEYWORDS`), so "while playing",
+"if playing" and "am I" find **Am I…**, "reload" finds the **Counter**
+and "afk" finds leaving the PC, and a box found by another word says which.
+The whole phrase in a name ranks first, then in another word, then every word
+of it somewhere in the box (by the start of a word, so "remi" works; a
+one-letter word only in names). Chips narrow it to a kind; arrows and Enter
+pick; empty, it lists them under their kinds as before. `blueprints-check`
+holds the searches asked about to their answers.
+
+**It cannot run away with itself.** "When a habit is ticked, tick a habit"
+would go round for ever. A run's actions carry its depth (`AsyncLocalStorage`),
+so what they set off starts other blueprints one deeper, never the same one,
+and nothing past three deep. A blueprint that runs 20 times in ten minutes
+switches itself off and says why (hotkey runs aside, see above). A wire looping
+back is allowed (nudge, wait, check again); fifty boxes in a row with no pause
+stop as a failure that says so.
+
+**A wait or a repeat is held in memory**, and a restart ends it with a step
+saying so. Changing, switching off or deleting the blueprint ends its runs,
+because carrying on would do what the blueprint no longer says, and **■ Stop**
+appears above the board while one is going.
+
+**The board** is pointer events throughout, so a finger works as a mouse does
+(`reorder.ts`'s lesson): drag a box by its head, drag from an output to a box,
+drag the background to pan, wheel or two fingers to zoom. Because a drag over
+a moving board on a phone is fiddly, **tapping an output then tapping a box**
+makes a wire too, and adding a box while an output is waiting joins it. Pin
+positions are arithmetic (every box is 240px wide and its outputs sit on fixed
+rows), so nothing is measured after rendering. One wire per output was the
+rule until 2026-11-05 (a run has to know where it goes next); a way out may
+now lead to several boxes, all started at once, below.
+
+#### Several boxes at once, several wires, and loops said (2026-11-05)
+
+Asked for as "options when I right-click a block for duplicating, copy,
+paste, and shift/ctrl click to add to the selection; for triggers and outputs
+multiple inputs and outputs, with a warning if something could get
+recursive".
+
+**What is selected is a set.** Shift or Ctrl and a click adds a box or takes
+it out; pressing any selected box keeps them all, so dragging one moves the
+lot, each from where it was by the same amount. A right-click on a box offers
+Duplicate, Copy, Cut, Paste, Select everything and Delete, for it or for
+everything selected with it; on the empty board, Paste here and Add a box
+here. The same are Ctrl+D, C, X, V, A and Delete, heard only while the board
+has the keyboard (it takes focus on a press) and nothing is being typed, so
+Ctrl+C in a text box still copies text. The menu is core's `useContextMenu`.
+**Copy keeps the boxes and the wires between them** in `localStorage`
+(`blueprints.clipboard`), per device, so it pastes into another blueprint;
+wires to boxes left behind are not copied. What is pasted gets new ids and is
+selected. The selection is kept in a ref as well as state, set at once,
+because a Shift-click straight after a click read the old one.
+
+**A way out can lead to several boxes**, and a box could always be led into
+from several. **They all start at once** (2026-11-06), each its own path
+carrying on by itself, and the way out is done when every path is. This
+was first built the other way, one after another top to bottom with a number
+on each wire, on the grounds that a run's steps, its no-pause count and a
+failure ending it are all about one path. It was confusing in use: a *Play a
+sound* wired beside the melee slide's hold-and-repeat loop never played,
+because the loop came first and only ended when the run did. So now:
+
+- **Each path counts its own boxes since a pause** (`Path` in `walk`), so a
+  Wait on one path does not excuse a loop with no pause on another; a split
+  path starts from its parent's count.
+- **A failure or a stop on one ends them all.** `end()` sets `over`, which
+  every other path checks before its next box and after the box it was in,
+  saying nothing more; `effects.halt()` (the server aborts the run's signal)
+  wakes one asleep in a Wait so it ends now rather than when the wait would.
+- **A Sequence still keeps its order**, being the box for exactly that: each
+  of its ways out runs to its end before the next.
+
+`nextAll` still lists the boxes top to bottom, only so the steps read the way
+the board does. `keepWires` keys a run wire by both its ends, so the same wire
+twice is kept once. A value wire is unchanged: one into each way in.
+
+**Loops are said above the board** (`loops.ts`, pure, asserted by
+`blueprints-check`). Loops of wires are found as strongly connected groups
+(Tarjan's), and each is one of: **no Wait or Ask in it** (red: a run stops
+itself after fifty boxes), **a Repeat leading back into itself** (red: every
+go starts another Repeat inside the last), or **waiting with no way out**
+(amber: it goes until ■ Stop). A loop that waits and has a check or an Ask
+that can leave it (the "again while I hold it" shape) is not warned about.
+(A wire into a loop that never ends used to be said to hold up the wires
+after it; with all of them starting at once it holds up none.) The boxes of a red or amber
+loop are outlined, and **Show** selects them. **Blueprints that set each
+other off** are said as well (`chainsBack`): ticking a habit sets off *When a
+habit is ticked*, adding a task *When a task is added*, among switched-on
+blueprints and this one as drawn. They cannot run away (a run never starts
+its own blueprint again, and nothing goes past three deep), so it is a note,
+not a refusal; a blueprint hearing only its own Do boxes is left out for the
+same reason.
+
+Verified in the browser pane on a throwaway blueprint, then deleted: Shift
+and Ctrl clicks adding and removing, Ctrl+D duplicating and selecting the
+copies, two selected boxes dragged together, the menu on a box acting on both,
+Copy and Paste carrying the two wires between the copies, Delete, the order
+numbers drawn, the server keeping both wires from one way out, and the
+warnings for a waiting loop and for the wire it holds up.
+
+#### Numbers on a wire: a Random number into a Counter (2026-11-03)
+
+**Counter** counts the runs that reach it and says yes on the Xth, then counts
+from 1 again; no the rest. X is its field, or a number wired into its **X**,
+which is read only when a count starts, so a **Random number** (8 to 16) wired
+in picks a new target each time round, which is the AutoHotkey script's
+reload. Counted per box across runs, in memory; a Test counts in a copy. The
+engine asks it like a check (`asked`), though it is filed under Logic.
+
+**A number is the third kind of wire**, beside the run's and the answer's: a
+blue line from a rounded square into a rounded square, where an answer is a
+green diamond into a diamond. `Output.number` and `Port.number` say which, and
+`keepWires` only joins the same kind, so a number cannot go into a gate's
+letter nor an answer into X. **Random number is `pure`**: it has no way in and
+no way on, and is only asked for its value (`numberOf` in the engine, through
+the `Inputs` a check is now handed), the way a gate asks its checks. Its step
+says what it picked. `Effects.number` lets a test hand in its own.
+
+**An old *Every so many times* is rebuilt as the two when read**
+(`splitEveryBoxes` in `cleanGraph`): the counter keeps the old box's id, so its
+wires and run log stay, and a Random number between the old two ends is added
+under it and wired into X; exactly-N becomes a counter alone. The Cyte-09
+macro converted that way, 8 to 16. `blueprints-check` holds the conversion,
+that reading it twice changes nothing, and the wire rules; `smoke` drives the
+Warframe macro with a random number into its counter.
+
+#### Maths, variables, colours and a popup you can type into (2026-11-04)
+
+Asked for as "more inputs for existing blocks, variable blocks and math
+similar to Desmos, colour pickers, and something that brings up an input in a
+notification I can type into if I click it, so it doesn't take away from the
+game if I trigger it by accident".
+
+**Sums are read by a parser of their own** (`web/maths.ts`, no imports), never
+`eval`: a text box that ran JavaScript would be a way to run anything on this
+PC from a phone. Desmos's reading: `2a` and `3(a+1)` multiply, `^` binds
+right to left, `-2^2` is −4, `mod` takes the divisor's sign, angles are
+radians (`30deg`), `e` is Euler's number, and a comparison is 1 or 0. Single
+letters are **inputs** and `{words}` are a run's words or variables. A sum that
+cannot be worked out fails the run in words (which letter has nothing wired,
+which word is not a number, dividing by zero), never Infinity or NaN.
+
+**Every number a box is filled in with has a way in** (`inputsOf`: the box's
+own ports, then `l-<letter>` per letter its sums use, then `f-<key>` per number
+field shown), except on a When box, which starts before a run has a value, and
+fields marked `wire: false` (a gate's count of inputs, a sequence's outputs, a
+Counter's times, which X does). The walk hands the server each box
+**resolved** (`resolve` in the engine): a wired number in place of the typed
+one, kept to the field's limits by `fieldValue`, and each sum worked out to its
+number, so the server reads a Wait's minutes the same however they came.
+**A sum half typed keeps its letters** (`lettersOf` falls back to the letter
+runs it can see): reading "a + b *" as no letters dropped the wires into them
+on the way to "a + b * 2". Found by typing one in the browser pane.
+
+**Math** is pure, like Random number; **Is it true that…** is a check the walk
+works out itself; **Set a variable** writes `data/blueprints-variables.json`
+a second after the last change (a running total that emptied on every restart
+would not be one), and a Test sets them in a copy. Variables fill in every
+text box as `{name}`, after the run's own words, and the side column lists
+them with a ✕ to forget one. A box's colour is `color` on the node, cosmetic,
+so `behaviour()` ignores it and recolouring stops no run. **Nudge me** has a
+colour field too, which is a field rather than cosmetic: it is stored on the
+queued nudge (`nudges.accent`, migration 0054) because the nudge may show an
+hour later, and the agent passes it to the popup's title. Null is the app's
+accent, which every other nudge keeps; a phone notification has no colour.
+
+**Show a popup** and **Ask me** go to the agent's half as tasks and use core's
+one popup. A popup carries its own `accent`. A question is a popup with a box
+(`input` on `OverlayContent`), and **the window still refuses focus however it
+is shown**: the box takes the keyboard only on a click on it
+(`SetForegroundWindow`, allowed because the click was this window's input),
+and Enter or Esc hands it back to the window that had it. Clicking away lets
+go and keeps what was typed. `popup.ask` keeps the question's place: something
+shown over it covers it and it comes back when that goes; something shown
+while you type waits until you send it; questions asked together go one after
+another. The answer comes back on `POST /api/blueprints/answer`, not on the
+next long poll, which may sit for twenty seconds, and an ask does not hold up
+the presses behind it. A run stopped while it asks takes the question off the
+screen (`unask`). `npm run ask-try -w @everything/agent` drives the real
+window with posted clicks and keys: typing, Enter, the keyboard back where it
+was, a timeout, covered and back. **Not verified**: a real click taking the
+keyboard, which a posted message cannot stand in for, and the popup over a
+game.
+
+#### Am I holding a key? (2026-11-05)
+
+Asked for as "a delay block so that if I am still holding a button after the
+delay it goes again". The delay was already there (Wait, in seconds); what was
+missing was the question, so **Am I holding a key?** is a check, `if-held`:
+any key, combination or mouse button, asked of the agent at the moment the
+run reaches it (`isHeld` in `agent/keys.ts`, `GetAsyncKeyState`, which only
+reads). Press keys, Wait, Am I holding it, Yes wired back to Press keys is
+"again while I hold it", and works for a registered hotkey, which reports no
+letting go, and for a key other than the one that started the run.
+
+It is the first agent task that answers with a value, so a `done` entry may
+carry `value` (a boolean only; a typed answer keeps its own route). A Test
+asks it for real, like every check. The loop is the existing rule's: a Wait
+resets the fifty-boxes count, and a hotkey's runs are not counted by the
+runaway guard. Also asked in the same message, and already so: Press keys'
+**Then** goes on only once the agent says the whole timeline has played (the
+step waits the timeline's length plus five seconds). `smoke` plays the agent
+by hand: held once, the wait, asked again, let go, the other way.
+
+#### Waits to the millisecond (2026-11-05)
+
+Asked for as "milliseconds and more decimal points for wait, for more control
+over how fast my macro loops". The box was the small part: a `ms` unit, and a
+step of 0.001 (`toStep` and `decimalsOf` in the catalogue, which rounded every
+decimal field to one place before). Running, a wait is held between 1 ms, so a
+loop always gives way, and a day.
+
+**The number on the box was not what happened.** Windows wakes a program's
+timers every 15.6 ms unless it asks for finer: measured here, asked for 1, 5
+or 10 ms a wait took 15.4, 16 or 25 took 30.8, 50 took 61.1. So a finer
+number alone would have changed nothing, and the same rounding was in the
+agent, where a 30 ms hold was 31 and a 20 ms gap on a timeline was 31.
+`timeBeginPeriod(1)` fixes it for the process that asks (per process since
+Windows 10), measured 5 ms to 5.1 and 20 to 20.1, and going back costs
+nothing.
+
+- **The agent** asks while it presses keys or plays a timeline (`finely` in
+  `agent/keys.ts`, counted) and gives it back after.
+- **The server half** asks during a wait under two seconds
+  (`server/fine-timer.ts`), which is the one Windows call in it: fenced to
+  Windows, koffi imported only there and only if it loads. Where it cannot be
+  had, the wait sleeps to 17 ms short and checks closely (`setImmediate`) for
+  the rest, which is on time too but cost over half a core during a loop of
+  20 ms waits; the finer timer costs none. Measured with it: 20 ms to 20.1,
+  50 to 50.4, at no processor time.
+
+The Repeat's gap was left as it was (a tenth of a second at least).
+
+#### Repeat in milliseconds, a Variable box, and percentages (2026-11-05)
+
+- **Repeat's gap** has the `ms` unit and three decimals Wait got, and is held
+  between 1 ms and a day (`everyMs`); it was a tenth of a second at least. It
+  goes through the same `sleep`, so the finer timer covers it.
+- **Variable** is a pure box like Random number: a name, no way in, and a
+  number on a wire, asked for when a box that wants it runs. A variable not
+  set yet, or holding words, fails the run in words. `variableName` moved to
+  `maths.ts` so the walk tidies a name by the same rule the store does.
+- **`%` is a percentage**, as Desmos reads it, where it had been remainder:
+  postfix, a hundredth (`50%`, `{hp}%`), and `of` after one is times
+  (`10% of {hp}`); `of` anywhere else is refused, saying where it goes.
+  Remainder is `mod(a, b)`. No blueprint here used `%`, checked before
+  changing it. Set a variable gained **Increase / Decrease it by a
+  percentage** (by 10 is ×1.1 or ×0.9), its own sum field, `percent`.
+- **A Variable box declares** (later the same day): a name, *What goes in it*
+  for whoever reads the blueprint, and *Starts at*, which stays as typed. Under
+  it, what the variable holds now and **Back to its start** (which forgets the
+  held value). A variable nobody has set reads as its start (`startOf` on the
+  server: this blueprint's box first, then any other's), so Add starts from
+  there rather than 0, and "Forget it" is now *Put it back to its start*. It
+  is never marked "not joined to a When box": it is read by name, not wired.
+- **The name is the link.** A Set a variable and a Variable box with the same
+  (tidied) name are one variable, and the board draws a dashed line from the
+  Set box's name to the Variable box's, worked out from the names, so nothing
+  is stored and renaming either moves it. Dragging from the pin beside a Set
+  box's name to a Variable box, or tapping one then the other, gives both one
+  name: the Set box's, else the Variable box's, else `variable_N`. The pins sit
+  beside the name boxes, measured after drawing (a field's height is the
+  layout's), unlike the run pins, which are arithmetic. A Set box's name offers
+  the variables there are. Verified in the browser pane: the line for a
+  matching pair, a drag joining two unnamed boxes as `variable_1`, a run
+  showing *Now: 10, changed from 8*, and Back to its start reading 8 again.
+- **A sum shows what it comes to, wires and all** (2026-11-06,
+  `web/preview.ts`). A Math box whose letters were wired said only "a, b come
+  in when it runs". Now each input is the values it can take (a Variable box
+  what it holds or its start, a Random number every whole number it can pick),
+  every combination is tried, and the box says "= 66.4 right now" or
+  "= 12 to 20, one of 9". Every value, not the two ends, because a sum need not
+  be largest at an end: `(a - 12)^2` over 8 to 16 is 0 to 16. Past 4,000
+  combinations the inputs are thinned to evenly spaced values with both ends
+  kept and it says "about"; a `random()` inside the sum is tried 40 times per
+  combination and says "about" too. A number field with a wire in it (a Wait's
+  time) says what the wire brings, kept to the field's step and limits. A
+  `{word}` the run gives waits for the run. Worked out on the board only, keyed
+  on the graph without positions so a drag does not redo it, and the sum is
+  parsed once (`evaluator` in `maths.ts`) rather than once per try.
+- **A Variable box can hold a percentage** (`as: 'percent'`). The number is
+  kept as typed, 123.5, shown with a % after it and in *Now*, and divided by
+  100 only where it leaves the box on a wire (`numberOf` and the preview), so a
+  Set a variable adding 10 makes it 133.5%, as anybody reading it would expect.
+  It is set by typing % after the start, in the box itself, and deleting the %
+  sets it back: a separate *It holds* dropdown was tried first and was not
+  found. The field is kept with the box but not drawn (`hidden` on a field).
+- **The Math field draws fractions** (2026-11-06, `web/math-doc.ts` and
+  `web/MathInput.tsx`). Asked for after `a/1.5*(1+b)` came out as
+  (a ÷ 1.5) × (1 + b), which is how the parser reads it and not how Desmos
+  does. Typing `/` takes what is just before the cursor (a run of letters and
+  digits, a bracket with its function name, or a fraction) as the top and puts
+  the cursor below the line, so what is typed next is underneath until →
+  leaves it; `/` again below the line nests, as in Desmos. **What is stored is
+  still text**, so the server and the parser are unchanged: a fraction is
+  written `top/bottom`, each half bracketed unless it is one number, name or
+  `{word}`, and the whole bracketed unless it is all there is. `fromText` reads
+  any sum back by the parser's own precedence (each `/` makes a fraction of
+  everything before it in its term), so a sum typed before this opens as what
+  it always worked out to, and `blueprints-check` holds both directions over a
+  dozen shapes. Opening a box never rewrites its text; only typing does.
+  The keys go to a hidden text box holding one space, so a phone's keyboard
+  comes up and its Backspace has something to delete; text and deletion are
+  taken from `beforeinput`, a word built by a phone keyboard at
+  `compositionend`, and anything that still reaches the box is taken from it
+  on `input`. The field is a div, not a label, or every click would go to the
+  hidden box. Verified in the browser pane: `a/1.5*(1+b)` typed drew a over
+  1.5·(1+b) and saved `a/(1.5*(1+b))`, → then `+2` went after the fraction,
+  Backspace went back into it, and a click beside the top put the cursor there.
+- **Exponents and selecting, the same day.** `^` makes a `sup` item, a raised
+  row after its base, which `toText` writes as `^p` with `p` bracketed unless
+  it is one number, letter, constant or `{word}` (the parser takes one thing as
+  a power, so `x^ab` is x^a times b). `fromText` finds a power by the parser's
+  own reading (`powerAt`: signs, one thing, its %, and a power of its own), so
+  `2^3^2`, `2^-1` and `e^(a+1)` open as they work out. `/` takes a base with
+  its power onto the top. A selection is an anchor caret beside the cursor and
+  is always whole things in the row they share, so from inside a fraction to
+  outside it takes the fraction; Shift+arrows step over a fraction or power
+  whole. A drag finds the row under the pointer by `data-row` and the place in
+  it by the midpoints of its things, with the pointer captured by the field.
+  **Typing under the line jumped out of it**, reported with this: a save's
+  echo arrived after more had been typed, the field took it for a change from
+  elsewhere, and read the older sum again with the cursor at the end. The field
+  now ignores any text it handed up itself, and the editor ignores a copy of
+  the blueprint older than its own last save (`newest`, by `updatedAt`).
+- **Mouse buttons are `mouse1` to `mouse5`** (2026-11-06): left, right,
+  middle, the side button nearer you, the other. Windows' names (`lbutton`,
+  `xbutton1`…) were the spelling before and are aliases now, so a saved
+  blueprint reads as the new name, and both agent tables answer to both in case
+  the server is older than the agent. Record takes all five, the left and right
+  too: it starts on a click of Record, so the next press is the one recorded,
+  and a press on Record itself is left to cancel. The hints listing the names
+  went, since Record shows them; so did the one under a Variable's start.
+- **Random number gives decimals too** (`gives: 'decimal'`, `places`).
+  `randomRange` and `pickRandom` in `engine.ts` are the one rule, used by the
+  run and by the board's preview: a decimal is counted in steps of its last
+  place, so the far end comes up as often as any value; whole numbers are those
+  between the ends (8.5 to 12 is 9 to 12, and 3.2 to 3.8 fails in words). A box
+  saved before the choice reads as whole. The ends take three decimals and go
+  to −100,000.
+- **Recording mouse4 went back a page.** Recording ends on the press, and the
+  listeners that cancelled what the buttons do went with it, so the let-go,
+  which is when Chromium goes back, got through. `swallowRelease` cancels that
+  button's let-go, click and menu for a moment after, and a `popstate` while
+  recording (and 1.5s after) goes forward again. Not verified with a real
+  side button: the browser pane cannot press one, and a made-up event never
+  goes back a page.
+- **Play a sound** (2026-11-06), asked for to hear that a blueprint is
+  working, then for clicks and "very customizable". Four kinds now: an app
+  tone (`playTone`, as nudges use), a click, a sound you draw, and a .wav or
+  .mp3 on the PC (a beep and a sweep were two more until 2026-11-07, below).
+  The middle two are drawn by `web/sound-design.ts` (no imports), which the
+  board's ▶ plays as a blob and the agent writes to a temp file named by its
+  contents and plays through `playWavBytes` in core's `sound.ts`: the same
+  bytes both ways, the click noise from a fixed seed so it is too. Clicks are
+  short decaying bursts, of noise (tap, snap) or of a pitch (tick, pop, wood);
+  the edged waves are kept down, being louder to the ear at the same peak; and
+  nothing plays past ten seconds. **A file must be a .wav or .mp3 on one of
+  the PC's own drives** (`localSoundPath`, checked on the server and again in
+  the agent): never `\\somewhere\x.mp3`, since Windows would sign in to that
+  machine to fetch it, and no `"`, which would end MCI's quoting. Files play
+  through MCI (`playSoundFile` in core's `sound.ts`, `mciSendStringW` from the
+  winmm already loaded), since PlaySound plays only WAV; MCI also says how long
+  the file is, which the agent hands back as the task's value, so *Goes on once
+  it has played* waits for a file too. Each play opens its own MCI device and
+  closes it a second after it ends. Verified on this PC: a quiet tap twice
+  reported played; a missing file and a network path each refused in words;
+  and an .mp3 of 1,385ms played with the run going on at about 1,450ms.
+- **Every sound has a volume, on a slider** (2026-11-07): `volume` on Play a
+  sound and on a Notification's tone, 0 to 100, 50 by default, a range input
+  beside the number (`slider` on a field, `SliderField` in `Canvas.tsx`);
+  letting go plays it. A file is turned down by MCI's `setaudio … volume`, a
+  tone by scaling the palette's gains in its WAV (`toneWav` in the agent, and
+  `?v=` on `/sounds/<tone>.wav` for the board), a drawn sound in its samples.
+  **The board's preview has the volume in the bytes, never in the audio
+  element**: an iPhone ignores `HTMLMediaElement.volume`, so a tone previewed
+  at 10% played at full there, reported as the slider doing nothing for tones
+  only. The app's own tones (nudges, voice) have a volume too,
+  `settings.sound_volume` (migration 0055), 50 by default because they were
+  too loud at full, under Settings → Notifications → Sounds, sent to the agent
+  on the attention heartbeat like `soundEnabled`.
+- **A sound you draw** (2026-11-07), asked for as "a custom sound that allows
+  me to add more than one point to the graph and even do overlapping lines".
+  It replaced the beep and the sweep, which were one line with two ends.
+  Up to 64 lines of up to 128 points (eight of 32 at first, a guess that
+  stopped harmonics and speech; raised the same day), each line with its own
+  wave and loudness and **each point with its own loudness** (`v`, 0 to 1,
+  written as a third number only when under full, moving straight from point
+  to point, drawn as the dot's opacity, set by a slider for the selected
+  points), kept as JSON text in `shape` (a field kind of its own, `sound`, cleaned by
+  `parseSoundShape`: in time order, 20 Hz to 12 kHz, at least 5 ms a line,
+  five seconds at most; two points at one moment are a jump). Between points
+  the pitch moves by equal steps of the ear and the phase carries on, so a
+  bend is smooth. Lines add up, and are turned down together only if they
+  would go past full, so one line alone is byte for byte the old beep, which
+  `blueprints-check` asserts. A box saved with a beep or a sweep is rebuilt as
+  one line as it is read (`upgradeFields` in `cleanGraph`, `shapeFromBeep`).
+  **The editor is worked with tools, as a drawing program is** (`SoundShape.tsx`,
+  `TOOLS`, rebuilt the same day on being asked for "tools like Photoshop"): grab
+  (H: the background scrolls, a line moves whole, a point moves alone), select
+  (V: a click takes a line or a point, Alt a segment; Ctrl adds or takes away,
+  Shift adds every point between it and the last one clicked; dragging what is
+  selected moves it; empty space draws a box), box select (M, with the same
+  Ctrl and Shift), new line (L: a drag from start to end, a click a short flat
+  line), new point (P: a click on a line selects it, a click on the selected
+  line puts a point exactly on it, beside it where the pointer is, and either
+  can be dragged at once) and erase (E: a click takes a point or a line, a drag
+  a box of points), with undo and redo (`past` and `future`, a hundred steps,
+  the lines and the fade, volume, times and gap). Icons, drawn in the text's
+  colour, with the name and key on hover and the tool in hand named, with what
+  it does, under the bar. **What is selected is a set of points** (`line:index`),
+  so a line, a segment and any run are one idea, and moving several goes
+  through `shifted`, which keeps each line in time order: a point never passes
+  a neighbour that is staying put. Right click a line, a point or the selection
+  for Cut, Copy, Paste (here, on empty space), Duplicate, Delete, Select the
+  whole line, Select all, Undo and Redo; ⋯ on the bar opens it for a phone. A
+  copy is the selected points of each line, kept in `localStorage`
+  (`blueprints.sound-clipboard`) so it pastes into another box's sound. **The
+  keys are heard by the window while the editor is open**, in the capture
+  phase and stopped only when used: a click on the graph or a menu item leaves
+  the keyboard on the page, so a listener on the dialog missed Ctrl+V, and
+  Ctrl+V there is the Blueprints screen's own paste, which imports a blueprint.
+  The old buttons (New line, Copy the line, Delete point, Delete line) and the
+  double click went. *Snap to notes* rounds pitches to semitones. Each dot is
+  caught by an invisible ring of 13 units round it, and New point's press on
+  empty space within 18 screen pixels of a dot takes that dot rather than
+  adding one. **Zoom and scroll**: the graph shows a window on the sound
+  (`View`, down to 20 ms), with a strip of the whole sound at its foot whose
+  window is dragged to scroll and by its ends to zoom; the wheel scrolls it,
+  Ctrl and the wheel (a trackpad pinch arrives as that) zoom at the pointer,
+  and −, ＋ and *All of it* sit by the tools. The view is frozen during a drag so nothing rescales under the
+  pointer; zoomed in past a tenth of a second, times snap to 1 ms, and the
+  lower lane draws the samples joined up rather than as columns. The box's
+  choice reads *Make your own sound*. **The
+  waveform in the lower lane had never drawn**: the editor is a portal into
+  `body`, outside `.bp-screen` where `--bp-number` was declared, so its stroke
+  was nothing. The four `--bp-*` colours are on `.bp-tl-overlay` too now.
+  **Harmonics and a spoken "hello"** (`sound-examples.ts`, asked for with
+  "I want to have harmonics and try to make it say hello"): *Harmonics up to
+  ×N* under the selected lines adds copies at 2, 3… N times the pitch, each
+  quieter by its number, stopping before 12 kHz. The menu offers two examples
+  in place of what is there (undoable): a whistled "hello", sine-wave speech,
+  three lines on the first three formants; and a voiced one, a line per
+  harmonic of a speaking pitch (26 lines of 27 points), each as loud as the
+  formants then let it be, a Lorentzian bump per formant. The "h" is breath,
+  which is noise, so it is only the vowel starting quietly. `addLine` now works
+  segment by segment, multiplying the pitch by a fixed step a sample rather
+  than raising to a power; the voiced example renders in 12 ms.
+  Verified in the browser pane on a throwaway blueprint, then deleted, with
+  real pointer and key presses: grab moving a line whole and a point alone,
+  Select's click and Shift-click range (3 of 4 points), the right click menu,
+  Ctrl+C, V, Z and Y, box select, a click with New line, New point on and
+  beside the selected line, and Erase by click and by box. **Formatting**: the
+  repo has no Prettier config, so `npx prettier` alone rewrites a file in
+  double quotes at 80 columns; this file was put back with
+  `--single-quote --print-width 180 --trailing-comma es5`.
+- **Text to speech** (2026-11-07), asked for as "a separate section in the
+  sound section for text to speech with a text field" after a drawn "hello"
+  proved too fiddly to make higher at the end. *Text to speech* on Play a
+  sound: the words (`say`, `{words}` filled in by the server before the PC
+  gets them), a voice (deep, man, woman, child, robot) and a speed. It is
+  `web/speech.ts`, with no imports (sound-design's one import is it, and the
+  desktop zip carries it): **formant synthesis**, as speech synthesisers
+  worked before recordings, a Rosenberg glottal pulse (its slope, as the lips
+  radiate it) and breath noise through four resonators in a row set to the
+  formants, with a peak-normalised resonator beside them for hiss (s, sh, f,
+  th) and a closure, burst and breath for a pop (p, t, k). 42 sounds, ARPAbet
+  named (`PHONEMES`), the formants the usual ones from Peterson and Barney and
+  Klatt. **Words to sounds**: a dictionary of about 200 common and awkward
+  words, then spelling rules (letter groups, a final e lengthening the vowel
+  before it, soft c and g, an open first syllable being long, -ed and -s by
+  what they follow), numbers said, a comma and a full stop pausing, and square
+  brackets giving sounds exactly (`[HH AH L OW1]`). The pitch falls through a
+  statement, lifts on stressed vowels and rises at a question's end
+  (`autoPitch`). The noise has a fixed seed, so the board and the PC make the
+  same bytes, which `blueprints-check` asserts. A sentence of ten words is
+  made in about 20 ms. Not a modern voice: it sounds like the speech chips of
+  the eighties, and English spelling defeats any short set of rules.
+  **The voice editor** (`VoiceEditor.tsx`, *Edit the voice* on the box): the
+  sounds as blocks as long as they last (click to pick and hear one, drag the
+  right edge to lengthen, Delete to remove, *Stressed* on a vowel), the pitch
+  line over them as dots (drag, click the lane to add, right click to remove;
+  dashed while automatic), the waveform, the sounds typed, and every sound in
+  a palette by group with a word that has it, a click playing it and adding it
+  after the picked one or swapping the picked one for it. Undo and redo; keys
+  heard by the window as in the sound editor. Kept as `voiceEdit` (a field
+  kind of its own, `voice`) for the words it was made for, at 100% speed and in
+  semitones from the voice's pitch, so speed and voice still apply; change the
+  words and the box says the edit no longer applies, with *Forget them*.
+  **A dialog taller than the screen squeezed its graph**: `.bp-tl` is a flex
+  column, so the SVG shrank in height and drew small in the middle; it is
+  `flex-shrink: 0` now. Verified: a real run on this PC said "Hello there" at
+  5% (the agent made the WAV and reported it played), and in the browser pane
+  the last pitch dot dragged up, OW lengthened by its edge, and AX swapped for
+  EH from the palette, all saved as one edit; no sideways scroll at 375px.
+- **Sharing as a picture** (2026-11-06), asked for as "png files where the
+  details are inside the data for the PNG and it shows as an image of the
+  blueprint". **Share** draws the board on a canvas (`share-draw.ts`, with the
+  board's own `outAt` and `inAt`, so wires land on the same pins), always dark
+  so a shared picture looks alike whoever made it, and `share-png.ts` writes the
+  blueprint into it as an `iTXt` chunk keyed `BlueEverythingBlueprint`: name,
+  graph, a format and a version. Any viewer shows the picture and ignores the
+  chunk. **Import** (or a PNG dropped on the list) finds the chunk, checks its
+  CRC, and offers the blueprint in a card that says how many boxes it has and
+  what it could do on this PC once switched on (press keys, open websites,
+  start games, listen for keys…), that habit boxes name the maker's habits, and
+  how many boxes are a kind this app lacks. Adding it makes an empty blueprint
+  and puts the graph on it, so the server cleans it box by box as any save is
+  cleaned; **it arrives switched off**, as every new blueprint does. Share asks
+  first when a box plays a file from this PC, since the path says where things
+  are here. No library: the chunk and its CRC are a page of code, the call the
+  icon and WAV writers made. Verified in the browser pane on the melee slide: a
+  2650×3258 picture of nine boxes and six wires, imported back as a switched-off
+  copy with every box, position, setting and wire the same, then deleted.
+  **Share ▾ and Import ▾** are one button each with a menu (core's
+  `useButtonMenu`): *As a file* or *To clipboard*, and *From a file* or *From
+  clipboard*. Four buttons side by side crowded the bar and wrapped the list's
+  top row. **The clipboard** (the same day). A browser re-encodes a picture put on the
+  clipboard and drops its chunks, so the picture alone cannot carry it there:
+  *To clipboard* writes the picture and a line of text in one `ClipboardItem`, so a chat
+  that takes pictures gets the picture and a text box gets the text. The text
+  is `toCode`: the name, so it reads as what it is, then `BEBP1.` and the
+  blueprint deflated (`CompressionStream`, `deflate-raw`) in base64url; the
+  melee slide is about 1,000 characters. `BEBP0.` is the same uncompressed,
+  for a browser without the stream. `fromCode` finds the code anywhere in a
+  pasted message. The two parts are handed to `ClipboardItem` as promises, so
+  the copy starts inside the click, which Safari insists on; a browser that
+  will not take the picture still gets the text. *From clipboard* reads it
+  (the code first, then a picture whose chunk survived), and **Ctrl+V** on the
+  screen does the same from the paste event, except in a text box, the Math
+  field or the board, where Ctrl+V pastes boxes. Not verified end to end: the
+  browser pane denies clipboard access outright. Ctrl+V was driven with a real
+  code made by `toCode` from the melee slide, and *From clipboard*'s refusal
+  says to use Ctrl+V instead.
+- **A window older than a box type now says so** instead of going blank. Found
+  testing this: the pane held the build from before the Variable box, opened a
+  blueprint with one, and `specOf(...)!` threw. The board is not drawn when a
+  blueprint has a box the screen does not know, because drawing the rest would
+  save it without that box at the first change; it says to reload instead.
+
+#### Folders on the list (2026-11-03)
+
+A folder is a name in `blueprints.json` (`folders`), and a blueprint names the
+one it is in (`folder`), so renaming moves nothing. They only arrange the side
+list: nothing about a run reads them, and moving a blueprint (`PUT` with only
+`folder`) changes nothing else, not even `updatedAt`, and starts and stops no
+runs. Folders come first, by name, then what is in none. Each folds, per
+device (`blueprints.folded`), and starts open; a folded one still shows the
+blueprint that is open. A blueprint moves by its ⠿ grip, onto a folder or
+anywhere else in the list to take it out (`web/List.tsx`, pointer events, the
+menu folders' way), or by the **Folder** box above the board, for a keyboard
+or a phone. **＋ Folder** names one in place; ✎ or a double click renames;
+✕ removes the folder and moves what was in it to the top. A folder the file
+no longer has puts what named it back at the top as it is read. Verified in
+the browser pane: made, dragged into and out of, renamed, the box, removed,
+with the eleven blueprints intact.
+
+**Stored like Trips**: `data/blueprints.json`, written to a temporary file and
+renamed, and a damaged file is refused rather than read as empty, since saving
+over it would lose everything built. The last 100 runs are a file of their own
+so the log churning does not rewrite the blueprints, and deleting a blueprint
+deletes its runs. Runs are announced under a scope core does not name
+(`blueprints`), which reaches only readers that ask for it, so a run does not
+refetch every other screen.
+
+Verified against the running app with throwaway blueprints, then deleted: a
+template fitted and tested (a missing habit stopping the run with the reason,
+then the right path once picked); a box dragged and a wire removed and pulled
+again, both saved; a "task added" box started by a real task with the right
+name and not by one without it; Run by hand, and refused from a non-button
+event; the runaway limit; and at phone width, no sideways scroll and wires made
+by two taps. **Not verified**: the attention events (a match ending), which
+need the agent and a game, and the time-of-day timer firing at its minute.
+*Every so often* was run for real: counted from switching on at one minute with
+the first run straight away, it ran at 0.0s and 60.0s.
 
 ### Right-click to get to the thing that edits it
 
@@ -3113,7 +4463,28 @@ that is invisible until it isn't, and the server had no net under it.
   back. drizzle-kit's loader pins an esbuild with a development-server advisory;
   an `overrides` entry gives it a patched one, and drizzle-kit still reads the
   schema. Majors not taken yet: Vite 8, TypeScript 7, koffi 3, sherpa-onnx 2,
-  @fastify/cors 11.
+  @fastify/cors 11. **sharp 0.35.5 added 2026-11-11** for smaller manga
+  pictures (`compress.ts`); it brought no advisory. **Three moderate ones
+  under `@fastify/static` cleared the same day**, by overrides rather than
+  its 10.1.10, which also reworks path authorization: `@fastify/static` is
+  pinned at 10.1.7, and the root `overrides` give it glob 14.0.3 (the first
+  fixed is 14.0.2), minimatch 11.0.3 (11.0.1) and minimatch's new
+  dependency `@isaacs/nonrecursive-glob-match` at 1.0.3. Each the oldest
+  fixed release at least two weeks old, since the newest were days old. The
+  glob code was never reachable here anyway: 10.1.7 globs only with
+  `wildcard: false`, and the app registers it with the default. `npm ls`
+  calls glob "invalid" (outside `^13`), as it does the esbuild override.
+  **npm 11 does not apply an override added after the lockfile exists**,
+  not even with the entries deleted or the parent reinstalled (reproduced in
+  a scratch project): only a fresh lockfile does. So the entries were built
+  in a scratch project with the overrides and spliced into this one, and a
+  later `npm install` keeps them. Deleting entries by hand is how glob,
+  minimatch and path-scurry briefly vanished from `node_modules` altogether,
+  with the server still running on its loaded copies; check `npm ls` after.
+  **Waiting, 2026-11-11**: fastify 5.12.8 (a medium advisory, GHSA-3qgw-9275-xf8w,
+  a crash through `handlerTimeout` on a streaming reply, which this app never
+  sets, so it is not exposed) and vite 6.4.6 (the build tool only), both under
+  two weeks old; take them from 2026-11-16 and 2026-11-23.
 - **Never run `drizzle-kit generate`.** Snapshots stop at `0007`; every later
   migration was written by hand, so it compares against a months-old schema and
   writes a migration re-creating tables that exist. Migrations are written by
@@ -3136,11 +4507,16 @@ that is invisible until it isn't, and the server had no net under it.
   like one that is working.
 - The agent is read-only about the system, **with one deliberate exception**. It
   observes windows and processes; it does not close, kill, or manipulate them.
-  `packages/modules/voice/agent/actions.ts` breaks that rule on purpose so a voice command
-  can press a hotkey or open a site — decided 2026-08-06. It is the only file
-  allowed to, and it is the most dangerous code here: a mis-heard phrase does
-  not write a wrong row, it presses keys into whatever window has focus. Keep
-  its guards intact and do not add a second such file without the same care.
+  The blueprints package's agent half breaks that rule on purpose:
+  `packages/modules/blueprints/agent/keys.ts` presses keys and `machine.ts`
+  opens a site, presses a media key or starts a game, for a blueprint and so
+  for a voice command. It is the most dangerous code here: a mis-heard phrase
+  does not write a wrong row, it presses keys into whatever window has focus.
+  Keep its guards intact (both files say what they are). It began as
+  `voice/agent/actions.ts`, decided 2026-08-06, and moved when voice's commands
+  became blueprints (2026-10-29); voice presses nothing now. Do not add another
+  such file without the same care. Registering hotkeys only listens, and is
+  core's (`agent/src/hotkeys.ts`).
 - Prefer boring, debuggable code. This app has one user and needs to survive
   being ignored for six months and then edited again.
 
@@ -3303,6 +4679,14 @@ install to the Home Screen, what's on, then notifications and quiet hours,
 last, in the order asked for. The host starts done, having been set up before
 it existed; **Settings → General → Go through setup again** starts it over.
 Kept per copy on the server, so every device of one person agrees.
+
+**The notifications step asks first whether they want any** (2026-11-09),
+for a friend here for the reader who wants nothing popping up. *No
+notifications* switches `remindersEnabled` off, the master switch every nudge
+obeys (going quiet outranks everything), so it covers manga's chapters too
+without core naming the package; *Yes* puts it back if *No* was pressed first,
+then offers Allow and quiet hours as before, and points at Manga → More for
+narrowing which series. Done waits for one of the two.
 
 **What's on is what shows, not what loads.** "Just the manga" (first, as
 asked) keeps Manga and Settings in the menu and on Home and opens on Manga;
@@ -3492,6 +4876,12 @@ looked like something to wait out. It is the one control here that needs an `x`
 as well as a `y` in the hit test: choice rows span the full width, so testing
 height alone was enough until something sat in a corner.
 
+**The pointer over it is the hand** (2026-11-03), since a click anywhere picks
+a choice or closes it. The window class had no cursor, which tells Windows
+nothing, so the pointer kept the "app starting" spinner from the agent's
+launch: that feedback ends when a thread calls `GetMessage`, and this one only
+ever peeks. It read as the popup still loading.
+
 **`show({forMs: 0})` means "stay up"; `hide(0)` means "hide now".** They are
 opposites and they briefly shared a code path, which drew the "Listening…"
 popup and hid it in the same frame. The symptom was not a missing popup — it
@@ -3658,7 +5048,7 @@ draw a real window without a browser engine, with less to justify because this
 draws nothing.
 
 The agent hosts it rather than the server, and that is load-bearing: the server
-binds `0.0.0.0`, ships a Dockerfile and is meant to move to a VPS. Win32 code in
+ships a Dockerfile and is meant to move to a VPS. Win32 code in
 it would end that. The agent is already the Windows-side process and already
 owns every `koffi` binding here.
 
@@ -3879,6 +5269,25 @@ window nobody could see through is a window nobody has to wait out. Verified by
 ending the agent and double-clicking: same server pid, new agent pid, one agent,
 and the watchdog never fired.
 
+**And the rest of what runs is labelled too** (2026-11-03, `node-runtime.ps1`).
+Suwayomi's Java (700MB) read "OpenJDK Platform binary" and its built-in
+browser three rows of "Java Chromium Embedded Framework (JCEF) Helper". Java
+gets a labelled copy beside `java.exe`, **Blue Everything Manga** (a launcher
+of a few hundred KB that finds Java by its own folder), which `javaToStart` in
+the manga package starts, once `-version` has proved it runs. The helpers are
+started by name by Suwayomi's browser component, so their description is
+relabelled in place (**Blue Everything Manga browser**), the original kept as
+`.unlabeled`, never while one runs. And tsx's `esbuild.exe`, which has no
+description at all and so shows its file name, gets a hard link,
+**Blue Everything Loader**, given to the server and the agent as
+ESBUILD_BINARY_PATH around their launch only. esbuild refuses a binary of
+another version, and Vite's is 0.25 to tsx's 0.28: so the Code screen's syntax
+check asks for tsx's esbuild, and `start.ps1` and `update.ps1` clear the
+variable before building, since a Restart from the app or the tray inherits
+it. Measured after a full restart: every process under this folder carries a
+Blue Everything name. Friends' copies read Blue Everything Server, like yours:
+a third 90MB copy of Node to tell them apart was not worth it.
+
 What is *not* labelled is the app window: that is Brave or Edge with
 `--app=http://127.0.0.1:8787`, so its memory belongs to the browser and its name
 always will. It is still findable by that command line, and worth counting
@@ -4095,7 +5504,12 @@ now impossible rather than explained.
   is replaced at the next start that finds nothing running from the folder,
   moved aside rather than deleted so a locked file cannot leave half a Node.
   Tested on a copy: 24.15.0 became 24.22.1; a second start downloaded nothing;
-  a copy held open by a running node was left alone with a line saying so. A git clone downloads it on
+  a copy held open by a running node was left alone with a line saying so.
+  Raised to **24.22.3** on 2026-11-10's security release (nine High fixes in
+  http, tls and http2), taken at once: the two-week rule below is about npm
+  packages, and a Node security release is the reason the floor exists. **The
+  download is checked against the release's `SHASUMS256.txt`** from nodejs.org
+  before it is unpacked, as an update is against its own sums. A git clone downloads it on
   first run; a release zip already has it and every dependency (`--bundle` in
   `package-release.mjs`), leaving out only npm's four links to the app's own
   packages — a zip cannot hold a link — which `start.ps1` makes with
@@ -4105,6 +5519,11 @@ now impossible rather than explained.
   `packages/server/data/suwayomi-runtime/`, then management on, Suwayomi
   started, and the extension repository added — a fresh Suwayomi lists nothing
   until one is. The launcher prefers that Java whenever it exists. About 210MB.
+  **Both are checked against their publisher's SHA-256** (2026-11-11): Java is
+  found through Adoptium's asset list, which carries each build's checksum,
+  rather than its download redirect, and the jar against the `digest` GitHub
+  records for each release asset. A mismatch, or no checksum given, is
+  refused before anything is unpacked or started. The jar this PC had matched.
 - **Java's folder must not be called `jre`.** Named that, Suwayomi started,
   migrated and then died setting up GraphQL ("The configured packages do not
   contain any valid classes: [suwayomi.tachidesk.graphql]") under Temurin's JRE
@@ -4294,7 +5713,10 @@ Voice screen when nothing can listen. The server hands out
 and kept there. A browser download sends no token, so the button asks for a
 two-minute ticket and the browser fetches `/download/desktop-app?ticket=…`,
 outside `/api/` like the icons. Verified: a ticket downloaded the 62MB zip whole,
-and no ticket or a made-up one is refused (`smoke`).
+and no ticket or a made-up one is refused (`smoke`). **One fetched from GitHub
+is checked against the release's `SHA256SUMS.txt`** before it is kept
+(2026-11-11), the file `update.ps1` checks an update against, since it is code
+a friend's PC will run; verified against 0.6.0's, and a flipped byte refused.
 
 Verified: built here, unzipped into a scratch folder, signed in to the `test`
 copy over its Tailscale https address with a code, and the copy reported the
@@ -4321,6 +5743,24 @@ out (the deleted level `features-check` proves boots), writes
 built whole, so their screens' code is in the bundle and never offered, being
 from packages that are not there. Verified: built, unzipped and booted on a
 spare port, it ran manga and push and opened on Manga.
+
+**And it switches from inside the app** (2026-11-03, Settings → Packages,
+`routes/configuration.ts`), both ways, local-only, never on a friend's copy. A
+release install runs `update.ps1 -Configuration`, which backs up and installs
+the newest release of the other kind. A git clone has no download to swap and
+its folders are git's, so it switches the packages Just Manga leaves out *off*,
+recording which were on (`data/configuration-before.json`), writes
+`configuration.json` (gitignored now), and restarts; switching back turns
+exactly those on again. The kept list is `JUST_MANGA_PACKAGES`, held to the
+packager's own copy by `modules-check`. **Not verified by pressing it** here,
+since that switches this PC's install.
+
+**Three confirmations**, asked for: the button only opens a list of what will
+happen, which has to be ticked as read; then the new configuration's name has
+to be typed (EVERYTHING or JUST MANGA); then the browser asks once more. The
+server refuses a request without that name in `confirmed`, so an older screen
+or a stray request switches nothing; `smoke` sends both refusals and never the
+real thing.
 
 **An install updates from its own kind.** `update.ps1` reads
 `configuration.json` and downloads that zip by exact name, so Just Manga never
@@ -4440,9 +5880,21 @@ needs to look present.
 ## Server
 
 Fastify + libsql (SQLite), migrations applied at boot. Built to be moved: it
-already binds `0.0.0.0`, reads everything from env, and ships a Dockerfile.
-Relocating it to a VPS is a `DATABASE_URL` / `HOST` change plus a deploy —
-libsql speaks to a local file and a remote server through the same client.
+reads everything from env and ships a Dockerfile. Relocating it to a VPS is a
+`DATABASE_URL` / `HOST` change plus a deploy — libsql speaks to a local file
+and a remote server through the same client.
+
+**It listens on this PC only** (`HOST` defaults to `127.0.0.1`, 2026-11-11). It
+listened on every interface, on the reasoning that the phone reaches it over
+the network; but the phone, friends' copies and desktop clients all come in
+through `tailscale serve`, which proxies to `127.0.0.1`, and `serve status`
+says so. Every interface added only the home network, where any device on the
+Wi-Fi reached the server directly, with no Tailscale, which is the road the
+`/%61pi` sign-in bypass was open on. A second layer, not the fix: that was
+`routePath`. The Dockerfile sets `0.0.0.0`, since a container is reached from
+outside it, and Settings → Add a device offers home-network and plain tailnet
+addresses only when the server listens somewhere other than loopback, or it
+would be offering links that never load.
 
 **The agent is an HTTP client like any other.** It never imports the database or
 shares a process with the server. If that boundary is ever crossed, the server
@@ -4505,6 +5957,14 @@ Two things here are load-bearing and easy to get wrong:
   when it actually changed something. It fires every few seconds; broadcasting
   it would make every client reload on a timer, which is the polling this
   avoids.
+- **So is every route an agent calls on a timer.** The blueprints agent's long
+  poll (`/api/blueprints/agent`) ends every twenty seconds and was missed: each
+  ending announced `all`, so every open screen refetched everything on that
+  timer, the reader's hidden chapter list included (about 4s a time, against
+  Suwayomi). Found in the log while looking at something else on 2026-11-11.
+  It, `/hotkey` (a request per click on a watched mouse button) and `/answer`
+  now pass `config: { announce: false }` and announce under their own scope when
+  something changed. A new agent route needs the same.
 
 The browser reads the stream with `fetch`, not `EventSource`, because
 `EventSource` can't send an Authorization header and the alternative is putting
@@ -4607,10 +6067,47 @@ whatever earned the right to interrupt. Clients stay dumb; all judgement is
 server-side so the phone and the PC can never disagree about what a good moment
 is.
 
-### Two holes found by auditing, and what they teach
+### Holes found by auditing, and what they teach
 
-Both were in code this project wrote by hand, and both were confirmed by
-actually firing them at the running server rather than by reading.
+Every one was in code this project wrote by hand, and every one was confirmed
+by actually firing it at the running server rather than by reading.
+
+**The whole API, with no token, by spelling `/api` differently** (2026-11-11,
+the worst found so far). `authenticate` decided whether a request was an API
+request with `request.url.startsWith('/api/')`. The router decodes a path before
+matching it, so `GET /%61pi/tasks` *is* `/api/tasks` to the router and was not
+an API request to the check: it answered with every task, to a request carrying
+no token from a non-local Host. Writes too. The vault's extension-only hook and
+the Code screen's owner-only hook made the same check on the same string, so an
+unlocked vault was readable the same way. Reachable from the tailnet through
+`tailscale serve`, and from the home network directly, since the server listens
+on every interface and the firewall rule Windows made for the app's Node allows
+Private networks, which this PC's Ethernet is. The last run's logs showed no
+such request but the probe's; older logs were gone.
+
+`routePath(request)` in `auth.ts` is the fix and the rule: **a decision about
+which routes something covers is made on the route the router matched**
+(`request.routeOptions.url`, a pattern that cannot be spelled two ways), or for
+no route on the path decoded as the router decodes it, never on `request.url`.
+`authenticate`, a copy's key prefix, the change announcer, the not-found
+handler, the vault and the Code screen all use it, and `module-api` exports it
+for any package with a hook of its own. `instance-check` sends four spellings
+with no token and one with a copy's key; a 401 there also proves the route
+matched, since the old code answered them with data.
+
+**A blueprint's website could run commands on this PC** (2026-11-11). *Open a
+website* went through `cmd /c start "" <address>`, after a check that it was
+http or https. cmd reads `&`, `|`, `<`, `>` and `^` as its own outside quotes,
+and Node quotes an argument only when it has a space in it, which an address
+never does: `https://example.com/?a=1&<command>` passed the check and ran the
+command. Shown harmlessly with `type nul` in place of `start`. A blueprint can be
+somebody else's picture, whose import card calls this "opens websites", and a
+voice phrase can run one. The agent now opens addresses and starts games with
+`ShellExecuteW` (what `start` calls underneath, no command line to parse); the
+server's game launcher, local-only, quotes its target verbatim through
+`startQuoted` and refuses one with a `"` or `%` in it.
+
+The next two were found in the first audit.
 
 **Reflected XSS on the OAuth callback.** `/oauth/callback/:provider` builds HTML
 by hand — it has to, being a real navigation rather than a fetch — and dropped
@@ -5838,8 +7335,9 @@ asked for it.
 compatible because switching voice off does not *unload* the module — it disposes
 the models and closes the microphone, while the agent half keeps polling, which
 is how it learns to turn back on. Deleting the package takes the hotkeys with it,
-which is right. It also keeps the virtual-key table in one place: `actions.ts`
-already owns one for sending keystrokes.
+which is right. The registering itself, and the virtual-key table, moved to core
+(`agent/src/hotkeys.ts`, `agent/src/keys.ts`) when blueprints wanted hotkeys too;
+the two keys and what they do stayed here.
 
 **`RegisterHotKey` is given a window, not null.** With a window, `WM_HOTKEY` is
 posted to it and `DispatchMessageW` routes it to a window procedure like any
@@ -6264,6 +7762,37 @@ quiet follows the wake word, and not at all if you carried straight on — the
 run-together case gets the result tone alone, as it always did. The popup still
 goes up the instant the wake word is heard. `voice-listen` asserts both.
 
+#### A quiet voice, and why boosting it would not help (2026-11-04)
+
+Reported as "mute" in "mute my mic" being misheard, and quiet speech not
+being picked up, with the question whether boosting the microphone would fix
+it or cost accuracy. Measured with Windows' two voices over a room's noise, at
+several volumes:
+
+- **Gain changes nothing.** Every transcript was word for word the same with
+  the audio normalised to an ordinary level as without. What goes wrong is how
+  close the voice is to the room's noise, and gain raises both. At a sixth of
+  normal volume "mute my mic" came back "use my mind" either way. So there is no
+  gain stage, and the answer to a quiet voice is a closer microphone or less
+  aggressive noise suppression in the headset's own software.
+- **The gate was cutting off the wake word.** It opened on the first block over
+  0.006, by which point a soft "hey" was half said, and the spotter heard half a
+  wake word: at a peak of 0.012 it woke once in six, and fed everything, six.
+  `gate.ts` now keeps the last half-second and hands it over when it opens, and
+  sets the line at 2.5 times the room's noise (tracked as the quietest the room
+  has been lately: down at once, up about twice a minute), between 0.002 and the
+  old 0.006, so no room is stricter than before. In a room at 0.0015, wakes at a
+  peak of 0.008 went from 0 of 6 to 6 of 6; at 0.0008 (a headset with noise
+  suppression, as on this PC) 0.005 went from 0 to 6. A silent minute opens it
+  0 times in all three rooms tried, `wake-falsing` still reads 0 / 20, and
+  `speech-test.ts` uses the same class, so the harness measures the real rule.
+- **"mike" is "mic"** (`SAME_WORD` in `shared/voice.ts`). The recogniser wrote
+  "mic back on" as "mike back on" every time, so that phrase could never match.
+- **Hotwords were tried and do not work with this model.** sherpa-onnx can bias
+  the recogniser toward given phrases, but it needs the model's sentencepiece
+  file to spell them, and the kroko release has only `tokens.txt`; spelled by
+  hand, every line was refused. Beam search alone made no difference.
+
 #### What carried over, and what did not
 
 - **Leading attention words are still optional.** `wakeWordRequired` gives
@@ -6277,6 +7806,30 @@ goes up the instant the wake word is heard. `voice-listen` asserts both.
   the listener ignores. With no closed grammar they are needed far less, and the
   setting stays for the case `wake-falsing` cannot make — a slurred name across
   a room.
+- **And the other way round: ways you say it** (`wakeAlikes`, 2026-10-29).
+  Reported as it "thinking I said jervice and not jarvis", and the test's own
+  readout showed what was going on: the *command recogniser*, which runs beside
+  the spotter during a test, wrote "hey jervice", and the spotter, which is what
+  wakes it, never fired. The spotter listens for the wake word's tokens as the
+  model expects them said (`▁JA R VI S`), and a vowel off (`▁JE R VI S`) is not
+  that. Measured on synthesised speech: "hey jervis", "hey jervice" and "hey
+  jurvis" woke nothing listened for as "hey jarvis", and every one of them once
+  "jervis" and "jervice" were listened for too, while "the service was slow",
+  "I get nervous", "you deserve this" and "Jerry is coming" still woke nothing,
+  in `wake-falsing`'s twenty lines of conversation (0 / 20 both ways). So a
+  sound-alike is a keyword beside the wake word that **counts as it**, the
+  opposite of a decoy, and one listed as both is a sound-alike.
+
+  **Learned from you, not guessed.** The idea asked for was making
+  phonetically similar words count for each other, and that is the matching
+  `soundKey` does (`jarvis`, `jervis`, `jervice` and `jurvis` are all `jrfs`;
+  `service` is `srfs`). But a key that coarse is far too generous to decide
+  what wakes a microphone, so it only *offers*: during a test, speech that
+  sounds like the wake word and did not wake it comes back with `soundsLike`,
+  and the readout has **Count "jervice" as the wake word**. What wakes it is the
+  spotter, told only the spellings you accepted. They can be typed too, on the
+  card beside the decoys. Each is given to the spotter alone and after the wake
+  word's leading words, as the wake word is.
 - **The dictionary warnings mostly went away.** "Can this word be heard" was
   Vosk's lexicon: "unmute" was missing and a phrase using it never fired. An
   open vocabulary has no such list. What is left is spelling — a number written
@@ -6318,6 +7871,12 @@ reports every second while it does, rather than parking in the long poll.
 page of instructions — three zips, which folder each unpacks into, "keep the
 folder name" — which was the open-a-terminal friction the double-clickable files
 exist to remove.
+
+**Each download's SHA-256 is pinned** in `voice-paths.ts` beside its size
+(2026-11-11), and one that does not match is deleted and refused. The release
+assets carry no checksum of their own, so the hashes were taken from a fresh
+download whose unpacked models were byte for byte the ones this PC had run
+since the spike.
 
 Each archive is unpacked into a scratch folder and only the named files are
 moved into place, so a half-finished download leaves nothing that looks
@@ -6381,7 +7940,93 @@ accepts a recording. Nothing is written to disk and nothing is logged but text.
 **Voice cannot touch the vault.** Habits, tasks and notes only — a spoken
 password manager is not a feature.
 
+### What a phrase does is a blueprint (2026-10-29)
+
+Asked for as "rework voice so it uses blueprints for its custom triggers and
+all its outputs get put into blueprints". So a voice command is a blueprint: a
+**When I say** box holds the phrases, and the Do boxes after it do the work,
+which means a phrase can now do anything a blueprint can (check whether you are
+in a game first, do three things, wait and nudge). The four choices asked
+about, all taken as recommended: each old command became a blueprint of its
+own; the Commands tab lists them with an **Open** button and **New voice
+command**; *stop listening* and *never mind* stay voice's own; and a habit's
+phrases are blueprints too.
+
+**Voice keeps the hearing, blueprints the doing.** Matching a sentence, "this
+and that" in one breath, asking when two tie and the follow-up window all stay
+in voice, because they are about what was said. The two packages may not
+import each other, so they meet in core's **spoken port**
+(`server/src/spoken-port.ts`), the shape `push-port.ts` has: blueprints
+provides the commands as it loads (`list`, `run`, `create`), voice asks, and
+with Blueprints off there are none. One command per *When I say* box, its id
+`<blueprint>:<box>`; `takesRest` is set when its Do boxes use `{said}`, so voice
+never splits a dictated note as half of a chain; *Afterwards: stop listening*
+is the old "no continuations".
+
+**What the sentence knows goes in as words**: `{said}` is what came after the
+phrase (a new note from "note buy milk"), and `{amount}` how many ("two
+waters" is 2, "to max" is max), which *Tick a habit* reads when set to **As
+many as I said**. A run answers voice within four seconds with what its Do
+boxes said, in one line; one still going (a Wait, a Repeat) is "started, and
+still going". Voice's outcome is `ran` or `failed` now in place of the eight
+kinds it had, and "Try a phrase" asks the blueprint itself what it would do,
+with nothing done and nothing written in its run log.
+
+**Voice presses nothing any more.** Opening a site, media keys and starting a
+game moved from `voice/agent/actions.ts`, which is deleted, to the blueprints
+agent half (`agent/machine.ts`), with their guards: http and https only, a game
+started from what the games list resolved (a path that exists, or
+`steam://rungameid/<digits>`), and no media key while nothing is playing. The
+server queues them as tasks on the long poll the agent half already makes for
+key presses, and the step waits for the agent to say it did them, so a refusal
+("Nothing is playing") is the answer voice speaks. New Do boxes: **Open a
+website**, **Media control**, **Start a game** (a picker of the games list),
+**Play music** (the Music tab's shuffle, asked over loopback as voice did) and
+**Make a new note**.
+
+**The conversion ran once, on the first start** (`blueprints/server/
+convert-voice.ts`, the mapping in `rules.ts` so `blueprints-check` can test it).
+Each `voice_commands` row of a converted kind became a blueprint, switched on if
+it was, named by its label or by what it does ("Open youtube.com", "Start
+Warframe"). The ids converted are in `data/blueprints-voice.json`, so a
+converted blueprint you delete does not come back; the rows stay where they
+were as the record, and voice reads only its own two kinds. Here it made seven.
+
+**The habit editor's phrase box had done nothing for a while.** It wrote
+`habits.voice_phrases`, which voice stopped reading when commands got their own
+table (migration 0010), so a phrase typed there since was never heard. Those
+were converted too, less any a command for that habit already had ("drink
+water" was both, so it was made once). The editor now lists the voice
+blueprints that tick the habit, each with **Open**, and makes a new one with the
+tick already wired (`POST /api/habits/:id/spoken`, through the port, so core
+names no package). The habit list's `voicePhrases` comes from the port too.
+
+**The suites that boot the whole app have a data folder of their own now**
+(`DATA_DIR`, set by `smoke`, `features-check`, `vault-api` and
+`instance-check`). They had their own database and shared the real `data/`
+with every package, so blueprints under `smoke` would have loaded your real
+blueprints, written its test runs into your run log, and created its test
+commands beside yours. Found before it happened, by asking where smoke's
+blueprints would go. It also turned up that uploading a habit's picture did not
+create the folder, which a fresh friend's copy would have hit too.
+
+Verified on the running app: every converted phrase through Try a phrase,
+landing on the right blueprint with the right action, two in one breath
+included; a throwaway "When I say" blueprint run through voice for real, its
+key press reported done by the agent ("Pressed ctrl+alt+shift+f11", a
+combination another throwaway blueprint held, so nothing reached the window in
+front); the Commands tab listing all seven with Open going to each; and the
+habit editor's list. `smoke` drives the rest with the agent played by hand: a
+gauge filled by "sipped two waters" and "to max", a game started by its path
+and then by its Steam address, the agent's refusal coming back as the answer,
+a path refused as a game, and a game not on the list or never run. **Not
+verified**: saying any of it into the microphone, since voice is off here.
+
 ### A phrase can do five things, not one
+
+*What follows describes the kinds before they became blueprints, kept for why
+each rule exists; each kind is now the Do box named above, with the same
+rules.*
 
 `voice_commands` replaced `habits.voice_phrases`, which could only ever tick off
 a habit. Migration `0010` copies the old phrases across and the column is then

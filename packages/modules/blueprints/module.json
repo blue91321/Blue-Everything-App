@@ -1,0 +1,9 @@
+{
+  "id": "blueprints",
+  "label": "Blueprints",
+  "blurb": "Boxes and wires that make the app do things: when a match ends and water is due, remind me.",
+  "version": "0.6.1",
+  "author": "blue91321",
+  "server": "server/index.ts",
+  "notes": "A blueprint can add tasks, tick habits, write notes, raise nudges and press keys, the same as you can. Nudges still wait for a good moment. Hotkeys and key presses need the agent on the PC."
+}

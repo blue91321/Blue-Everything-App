@@ -372,6 +372,27 @@
       "when": 1786064309000,
       "tag": "0052_dashboard_blocks",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1786064310000,
+      "tag": "0053_wake_alikes",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1786064311000,
+      "tag": "0054_nudge_accent",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "6",
+      "when": 1786150711000,
+      "tag": "0055_sound_volume",
+      "breakpoints": true
     }
   ]
 }

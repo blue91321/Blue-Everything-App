@@ -2098,3 +2098,178 @@ html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
   width: 100%;
   margin-bottom: 12px;
 }
+
+/* A source that is failing, on a series' page: what is wrong, what will happen, and the button that fixes it. */
+.manga-trouble {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+.manga-trouble.warn {
+  border-color: var(--danger);
+}
+.manga-trouble-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* More → New chapters: which series notify. Indented under the switch it narrows. */
+.manga-notify-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 8px 24px;
+}
+.manga-notify-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 24px;
+}
+
+/*
+ * Pages mode (the gear): a sheet is the screen's height, holding one page or
+ * two side by side, and the screen snaps to each. The window still does the
+ * scrolling, so the snapping is on the document while the reader shows it.
+ */
+html.manga-snap {
+  scroll-snap-type: y mandatory;
+}
+
+/*
+ * A sheet is as tall as its pages, which are as tall as the screen less a
+ * strip above and below (times the page size in the gear), and the screen
+ * snaps to the middle of each: the end of the page before shows at the top and
+ * the start of the page after at the bottom, so there is no dead space and you
+ * can see the next one is there. A page is never cut: one too wide for its
+ * half of the screen is made smaller instead.
+ */
+.manga-strip.paged {
+  --peek: 26px;
+  --fit: calc((100vh - 2 * var(--peek)) * var(--pages-zoom, 1));
+  gap: 4px;
+  /* So the first page can sit in the middle too, rather than against the top. */
+  padding-top: var(--peek);
+}
+
+@supports (height: 100dvh) {
+  .manga-strip.paged {
+    --fit: calc((100dvh - 2 * var(--peek)) * var(--pages-zoom, 1));
+  }
+}
+
+.manga-sheet {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+}
+
+/* Right to left, the first page of a pair is the right-hand one. */
+.manga-sheet.rtl {
+  flex-direction: row-reverse;
+}
+
+/* The whole page on screen, whatever its shape: the strip's full-width rule is for a strip. */
+.manga-strip .manga-sheet img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: var(--fit);
+  min-width: 0;
+}
+
+.manga-sheet.two img {
+  max-width: 50%;
+}
+
+/* A page still coming keeps a page's shape, so the sheets do not jump as they arrive. */
+.manga-sheet .manga-page-waiting {
+  flex: none;
+  width: auto;
+  height: var(--fit);
+  aspect-ratio: 0.7;
+  max-width: 100%;
+  min-height: 0;
+}
+
+.manga-sheet.two .manga-page-waiting {
+  max-width: 50%;
+}
+
+/* The end of the chapter is a place to stop too. */
+html.manga-snap .manga-reader-end {
+  scroll-snap-align: end;
+}
+
+/* Carrying on: where one chapter ends and the next begins. */
+.manga-chapter-break {
+  align-self: stretch;
+  margin: 0;
+  padding: 18px var(--gap);
+  text-align: center;
+}
+
+/* The "asking the source" line, inside a chapter that opened below another. */
+.manga-strip > .banner,
+.manga-strip > .empty {
+  align-self: stretch;
+  margin: 24px var(--gap);
+}
+
+/*
+ * The gear's choices as tiles: a picture and a word or two, the full sentence
+ * in the tooltip. Chosen ones are filled in the accent, like the hide choices.
+ */
+.manga-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.manga-tile {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 64px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.74rem;
+  line-height: 1.15;
+  text-align: center;
+  cursor: pointer;
+}
+
+.manga-tile[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+@media (hover: hover) {
+  .manga-tile:not([aria-pressed='true']):hover {
+    background: var(--surface);
+  }
+}
+
+.manga-reader-hide-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 2px;
+  color: var(--muted);
+}

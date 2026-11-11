@@ -320,6 +320,8 @@ function VoiceSettings({
           )}
         </div>
 
+        <AlikesCard current={current} saving={saving} update={update} />
+
         {/*
           Directly after the wake word, because it is only ever about the wake
           word — not about commands, which have their own tab and their own
@@ -867,6 +869,19 @@ function LiveStatus({
  */
 function TestReadout({ status }: { status: VoiceStatusType }) {
   const events = status.heard;
+  const [added, setAdded] = useState<string[]>([]);
+
+  /*
+   * What the test heard that sounded like the wake word and did not wake it,
+   * offered as a sound-alike. Added straight to the list, which is what the
+   * button says it does, and the spotter is rebuilt with it on the next poll.
+   */
+  async function countAsWakeWord(words: string) {
+    const settings = await api.settings.get();
+    const now = (settings.wakeAlikes ?? '').split(',').map((w) => w.trim()).filter(Boolean);
+    if (!now.includes(words)) await api.settings.update({ wakeAlikes: [...now, words].join(', ') });
+    setAdded((list) => [...list, words]);
+  }
 
   return (
     <div className="diagnostics" style={{ marginTop: 10 }}>
@@ -897,6 +912,18 @@ function TestReadout({ status }: { status: VoiceStatusType }) {
               event.matchedWake ? (
                 <>
                   heard "{event.text}" <span className="ok-text">— wake word in there</span>
+                </>
+              ) : event.soundsLike ? (
+                // The spotter missing how you say it: offer what was written.
+                <>
+                  heard "{event.text}" — sounds like the wake word, but it did not wake.{' '}
+                  {added.includes(event.soundsLike) ? (
+                    <span className="ok-text">"{event.soundsLike}" counts now. Try it again.</span>
+                  ) : (
+                    <button className="btn subtle" onClick={() => void countAsWakeWord(event.soundsLike!)}>
+                      Count "{event.soundsLike}" as the wake word
+                    </button>
+                  )}
                 </>
               ) : (
                 <>heard "{event.text}" — no wake word yet</>
@@ -977,16 +1004,18 @@ function PhraseTester() {
                 {result.chain.map((step, index) => (
                   <li key={`${step.phrase}-${index}`}>
                     <strong>{step.habitName}</strong>
-                    {step.count > 1 ? ` ${step.count} times` : ''} — matched "{step.phrase}"
+                    {step.would ? `: ${step.would}` : ''} — matched "{step.phrase}"
                   </li>
                 ))}
               </ol>
             </>
           ) : result.match ? (
             <>
+              {/* Asked of the blueprint itself with nothing done, so it says what
+                  that blueprint would do, in its words, rather than guessing. */}
               <span className="ok-text">
-                Would tick off <strong>{result.match.habitName}</strong>
-                {result.count > 1 ? ` ${result.count} times` : ''}
+                <strong>{result.match.habitName}</strong>
+                {result.match.would ? `: ${result.match.would}` : ''}
               </span>{' '}
               — matched "{result.match.phrase}".
             </>
@@ -1328,6 +1357,60 @@ function comboFromEvent(event: KeyboardEvent): string | null {
  * boxes are the same setting, and a half-typed value showing up somewhere you
  * did not type it would be worse than starting again.
  */
+/**
+ * Other ways the wake word comes out when you say it, which count as it.
+ *
+ * The opposite of the decoys below, and next to them for that reason. The
+ * spotter listens for the wake word as the model expects it said, so "jarvis"
+ * said as "jervis" did not wake it at all; listened for as well, it does. The
+ * easiest way in is the test, which offers what it heard, but they can be
+ * typed too.
+ */
+function AlikesCard({
+  current,
+  saving,
+  update,
+}: {
+  current: VoiceSettings;
+  saving: boolean;
+  update: (patch: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const alikes = draft ?? current.wakeAlikes ?? '';
+  const name = current.wakeWord.split(/\s+/).filter(Boolean).pop() ?? 'the wake word';
+  return (
+    <div className="card">
+      <div className="title">Other ways you say it</div>
+      <div className="meta" style={{ marginTop: 4 }}>
+        If it misses when you say "{name}" your way, list how it comes out ("jervis" for "jarvis") and those
+        wake it too. The test above offers what it heard when it sounded like the wake word and did not
+        wake, which is the easiest way to find them.
+      </div>
+      <div className="row" style={{ marginTop: 8, gap: '.4rem' }}>
+        <div className="grow">
+          <input
+            value={alikes}
+            aria-label="Other ways you say the wake word"
+            placeholder="jervis, jervice"
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        </div>
+        <button
+          className="btn"
+          disabled={saving || alikes.trim() === (current.wakeAlikes ?? '').trim()}
+          onClick={() => update({ wakeAlikes: alikes.trim().toLowerCase() }).then(() => setDraft(null))}
+        >
+          Save
+        </button>
+      </div>
+      <div className="meta" style={{ marginTop: 6 }}>
+        Each one is another sound that wakes it, so keep to how you actually say it. A real word you use in
+        conversation would wake it in conversation. Separate them with commas.
+      </div>
+    </div>
+  );
+}
+
 function WakeWordCard({
   current,
   saving,

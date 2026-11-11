@@ -24,6 +24,7 @@
  * Cache Storage exists only on a secure page (https, or localhost), which the
  * phone is, over `tailscale serve`. Anywhere else it says so rather than failing.
  */
+import { beginTransfer, qualityPrefs, withQuality } from './quality';
 import { useEffect, useState } from 'react';
 import { getToken } from '@app/api';
 import { blobIsWholeImage, isWholeImage } from './image-bytes';
@@ -436,9 +437,18 @@ export function fetchPage(url: string): Promise<Blob> {
   const known = fetching.get(url);
   if (known) return known;
   const loading = (async () => {
-    const response = await fetch(url, { headers: { authorization: `Bearer ${getToken()}` } });
-    if (!response.ok) throw new Error(`page failed (${response.status})`);
-    return response.blob();
+    // Every page that crosses the connection is how Automatic learns its speed.
+    const finish = beginTransfer();
+    try {
+      const response = await fetch(url, { headers: { authorization: `Bearer ${getToken()}` } });
+      if (!response.ok) throw new Error(`page failed (${response.status})`);
+      const blob = await response.blob();
+      finish(blob.size, Number(response.headers.get('x-made-in')) || 0);
+      return blob;
+    } catch (error) {
+      finish(0, 0);
+      throw error;
+    }
   })();
   fetching.set(url, loading);
   const forget = () => fetching.delete(url);
@@ -522,8 +532,12 @@ async function saveOne(cache: Cache, item: Queued, job: Job): Promise<void> {
           if (haveBlob && (await blobIsWholeImage(haveBlob))) {
             job.bytes += haveBlob.size;
           } else {
-            // Shared with the reader, if it is asking for this page too.
-            const blob = await fetchPage(url);
+            /*
+             * Shared with the reader, if it is asking for this page too, and
+             * as big as this device keeps them (`quality.ts`). Kept under its
+             * own address whatever size it came at, so the reader finds it.
+             */
+            const blob = await fetchPage(withQuality(url, qualityPrefs().downloads));
             const body = await blob.arrayBuffer();
             /*
              * Checked before it is kept. A page that arrived cut off, or as

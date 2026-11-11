@@ -104,4 +104,6 @@ export interface DeliverableNudge {
   minQuality: NudgeQuality;
   /** True when this fired because its deadline passed, not because the moment was good. */
   escalated: boolean;
+  /** A colour of its own for the popup's title, `#rrggbb`; absent or null is the app's accent. */
+  accent?: string | null;
 }

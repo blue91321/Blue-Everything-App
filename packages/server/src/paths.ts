@@ -63,7 +63,11 @@ export const configuration: 'everything' | 'just-manga' = (() => {
 export { instanceRoot };
 
 /** Beside the database, holding pictures and the like. */
-export const dataDir = instanceRoot ? resolve(instanceRoot, 'data') : resolve(serverSrc, '../data');
+export const dataDir = config.DATA_DIR
+  ? resolve(serverSrc, '..', config.DATA_DIR)
+  : instanceRoot
+    ? resolve(instanceRoot, 'data')
+    : resolve(serverSrc, '../data');
 
 /** Where `start.ps1` writes this copy's logs, and where the app reads them back. */
 export const logsDir = instanceRoot ? resolve(instanceRoot, 'logs') : resolve(repoRoot, 'logs');

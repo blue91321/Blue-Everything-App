@@ -100,8 +100,17 @@ export function shouldDeliver(
   // It still won't fire at an empty desk, because nobody would see it.
   const pastDeadline = nudge.deadlineAt !== null && nudge.deadlineAt <= ctx.now;
   if (pastDeadline) {
-    return ctx.state === 'away'
-      ? { deliver: false, escalated: false, reason: 'past deadline but nobody is at the desk' }
+    if (ctx.state === 'away') return { deliver: false, escalated: false, reason: 'past deadline but nobody is at the desk' };
+    /*
+     * A deadline at the very instant the nudge starts is "say it now", which is
+     * how a blueprint's "Right now, even mid-game" asks to break through. It
+     * breaks through the same way, but nothing was waited out, so it is not
+     * escalated: the popup said "(deadline passed)" in red over a welcome.
+     * Equal, not "no later": a task swept after it was already due has its
+     * deadline before its start, and that one really is late.
+     */
+    return nudge.deadlineAt === nudge.earliestAt
+      ? { deliver: true, escalated: false, reason: 'asked to interrupt' }
       : { deliver: true, escalated: true, reason: 'deadline passed' };
   }
 
@@ -377,6 +386,7 @@ export async function collectDeliverable(
         habitId: nudge.habitId,
         minQuality: nudge.minQuality as NudgeQuality,
         escalated: decision.escalated,
+        accent: nudge.accent,
       },
     });
   }

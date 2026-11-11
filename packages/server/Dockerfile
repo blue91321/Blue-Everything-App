@@ -15,6 +15,7 @@ COPY packages/server ./packages/server
 # The database lives on a volume, not in the image.
 VOLUME /data
 ENV DATABASE_URL=file:/data/everything.db
+# Every interface: a container is reached from outside it, never on loopback.
 ENV HOST=0.0.0.0
 ENV PORT=8787
 EXPOSE 8787

@@ -121,6 +121,82 @@ export function parseWakeDecoys(stored: string, wakeWord = ''): string[] {
 }
 
 /**
+ * Other ways the wake word comes out when you say it, which count as it: the
+ * opposite of a decoy. "jervis" for "jarvis" is the reason. The spotter
+ * listens for the wake word as the model expects it said, and a pronunciation a
+ * vowel off did not wake it at all; listened for as well, it does.
+ *
+ * Stored and cleaned exactly as the decoys are. One that is also a decoy is
+ * dropped from the decoys, not from here, since saying it counts is the newer
+ * and more specific claim.
+ */
+export const wakeAlikesSchema = wakeDecoysSchema;
+
+export function parseWakeAlikes(stored: string, wakeWord = ''): string[] {
+  return parseWakeDecoys(stored, wakeWord);
+}
+
+/**
+ * A word as it sounds, roughly: consonants by how they are said, vowels
+ * dropped except a leading one. "jarvis", "jervis", "jervice" and "jurvis" are
+ * all `jrfs`; "service" is `srfs` and "nervous" `nrfs`, so the first sound,
+ * which carries most of a name, still tells them apart.
+ *
+ * For *offering* a sound-alike from what a test heard, and for reading a test's
+ * transcript, never for deciding what wakes the PC: a key this coarse would be
+ * far too generous as a rule. What wakes it is the spotter, told only the
+ * spellings you accepted.
+ */
+export function soundKey(word: string): string {
+  let w = word.toLowerCase().replace(/[^a-z]/g, '');
+  if (!w) return '';
+  w = w
+    .replace(/^kn|^gn|^wr|^ps/, (m) => m[1]!)
+    .replace(/ph/g, 'f')
+    .replace(/ck|q/g, 'k')
+    .replace(/c(?=[eiy])/g, 's')
+    .replace(/c/g, 'k')
+    .replace(/x/g, 'ks')
+    .replace(/dg(?=[eiy])/g, 'j')
+    .replace(/g(?=[eiy])/g, 'j')
+    .replace(/[zv]/g, (m) => (m === 'z' ? 's' : 'f'))
+    .replace(/(?<=.)[wh]/g, '');
+  const first = w[0]!;
+  const rest = w.slice(1).replace(/[aeiouy]/g, '');
+  return (first + rest).replace(/(.)\1+/g, '$1');
+}
+
+/**
+ * Whether what was heard sounds like the wake word, and if so the words that
+ * were written for its name: "a jervice" heard for "hey jarvis" gives
+ * `"jervice"`. Null when it does not sound like it, or when it is the wake word
+ * spelled right, which needs no alike.
+ */
+export function soundsLikeWakeWord(heard: string, wakeWord: string): string | null {
+  const required = wakeWordRequired(wakeWord);
+  if (required.length === 0) return null;
+  const words = heard.toLowerCase().replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(Boolean);
+  const keys = required.map(soundKey);
+  // A short name's key ("jo" is `j`) matches far too much to offer anything.
+  if (keys.some((k) => k.length < 3)) return null;
+  for (let i = 0; i + required.length <= words.length; i++) {
+    const run = words.slice(i, i + required.length);
+    if (run.every((w, n) => soundKey(w) === keys[n])) {
+      const said = run.join(' ');
+      return said === required.join(' ') ? null : said;
+    }
+  }
+  // Said as one word: "jervisdrink" is not a thing, but "jar vis" for "jarvis" is.
+  if (required.length === 1) {
+    for (let i = 0; i + 1 < words.length; i++) {
+      const joined = words[i]! + words[i + 1]!;
+      if (soundKey(joined) === keys[0] && joined !== required[0]) return `${words[i]} ${words[i + 1]}`;
+    }
+  }
+  return null;
+}
+
+/**
  * Words a speech recogniser drops constantly and that carry no identity.
  *
  * "hey" is short, unstressed and usually run into the next word, so a recogniser
@@ -486,6 +562,17 @@ const IRREGULAR: Record<string, string> = {
 };
 
 /**
+ * One word, spelled two ways. The recogniser writes "mic" as "mike" whenever
+ * it is not sure it heard a word about microphones (measured: "mic back on"
+ * came back "mike back on" from both of Windows' voices at every volume), so a
+ * phrase typed with "mic" could never match it. Kept to spellings that mean
+ * nothing else in a command.
+ */
+const SAME_WORD: Record<string, string> = {
+  mike: 'mic', mikes: 'mic', microphone: 'mic', microphones: 'mic',
+};
+
+/**
  * Words that carry no meaning in a command and vary wildly between the way a
  * phrase was typed and the way it gets said. Dropping them is what lets one
  * stored phrase cover "drink water", "I drank the water" and "just had some water".
@@ -691,6 +778,7 @@ export function voiceTokens(text: string): string[] {
       .replace(/[^a-z0-9\s]/g, ' ')
       .split(/\s+/)
       .filter(Boolean)
+      .map((word) => SAME_WORD[word] ?? word)
       /*
        * Filler goes *before* stemming as well as after, and the first pass is
        * the one that matters.

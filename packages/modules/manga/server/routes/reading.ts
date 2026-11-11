@@ -10,6 +10,7 @@ import { chapterValue } from '../identity.js';
 import { applyReadMark, placeIsAtEnd } from '../read-marks.js';
 import { isWholeImage } from '../../web/image-bytes.js';
 import { PageFetchError, sharedPage } from '../page-fetch.js';
+import { compressCached, qualityFrom } from '../compress.js';
 import { read, write, readPositions, writePosition, type ReadingPosition, type Store } from '../library.js';
 import { SourceError, effectiveUrl } from '../sources.js';
 import { DEFAULT_BASE_URL } from '../suwayomi.js';
@@ -91,7 +92,13 @@ export function readingRoutes(app: FastifyInstance): void {
        */
       const followed = 'muId' in ctx.series ? ctx.series : undefined;
 
-      if (followed && followed.error !== null) {
+      /*
+       * Only an answer from the site clears it. Without `refresh` the list is
+       * Suwayomi's saved copy, which answers whether or not the site would:
+       * opening a MangaHub series while MangaHub shut apps out cleared its
+       * failure, and with it the warning and the two-day count on its page.
+       */
+      if (followed && followed.error !== null && refresh === '1') {
         const store = read();
         const row = store.series.find((s) => s.id === id);
         if (row && row.error !== null) {
@@ -246,6 +253,13 @@ export function readingRoutes(app: FastifyInstance): void {
     const { id, chapterId } = request.params as { id: string; chapterId: string };
     const asUrls = (pages: string[]) => ({
       pages: pages.map((path) => `/api/manga/${id}/page?p=${encodeURIComponent(path)}`),
+      /*
+       * How many chapters to fetch ahead (`Store.readAheadChapters`), so the
+       * reader follows the same setting on the device: at more than 0 it also
+       * fetches the next chapter onto the device while this one is read — see
+       * `holdNext` in `manga-api.ts`.
+       */
+      readAhead: read().readAheadChapters,
     });
 
     /*
@@ -312,7 +326,7 @@ export function readingRoutes(app: FastifyInstance): void {
    */
   app.get('/api/manga/:id/page', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { p, fresh } = request.query as { p?: string; fresh?: string };
+    const { p, fresh, q } = request.query as { p?: string; fresh?: string; q?: string };
     if (!p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
       return reply.code(400).send({ error: 'not a page' });
     }
@@ -322,6 +336,25 @@ export function readingRoutes(app: FastifyInstance): void {
      * replaces the cached copy, through `keepPage`, if it is a whole picture.
      */
     const skipKept = fresh === '1';
+    /*
+     * `q=smaller` or `q=smallest`: a smaller copy for a weak connection or a
+     * device that keeps less (`compress.ts`). Made from whichever copy is found
+     * below, never kept in place of it: the cache and the archive hold what
+     * they hold, and this is only what is sent.
+     */
+    const level = qualityFrom(q);
+    const send = async (body: Buffer, type: string) => {
+      const out = await compressCached(p!, { body, type }, level);
+      return (
+        reply
+          .header('content-type', out.type)
+          .header('cache-control', 'private, max-age=604800')
+          // How long this took before a byte was sent, so the reader can tell
+          // a slow connection from a slow site — see `quality.ts`.
+          .header('x-made-in', String(Math.round(reply.elapsedTime)))
+          .send(out.body)
+      );
+    };
 
     // Kept for good, and preferred over everything: see the chapter route above.
     // Either kept copy is used only while it is still a whole picture — one
@@ -335,14 +368,10 @@ export function readingRoutes(app: FastifyInstance): void {
         saved = { body: Buffer.from(await response.arrayBuffer()), type: response.headers.get('content-type') ?? 'image/jpeg' };
       }
     }
-    if (saved && whole(saved.body)) {
-      return reply.header('content-type', saved.type).header('cache-control', 'private, max-age=604800').send(saved.body);
-    }
+    if (saved && whole(saved.body)) return send(saved.body, saved.type);
 
     const kept = skipKept ? undefined : cachedPage(id, p);
-    if (kept && whole(kept.body)) {
-      return reply.header('content-type', kept.type).header('cache-control', 'private, max-age=604800').send(kept.body);
-    }
+    if (kept && whole(kept.body)) return send(kept.body, kept.type);
 
     const ctx = await reader(id);
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
@@ -353,12 +382,9 @@ export function readingRoutes(app: FastifyInstance): void {
       const { body, type } = await sharedPage(`${ctx.url}${p}`, { share: !skipKept });
       // Kept if its chapter is one of the last ten; ignored otherwise.
       keepPage(id, p, body, type);
-      return reply
-        .header('content-type', type)
-        // A page never changes once it exists, and a reader fetches it again on
-        // every revisit — so this is the one image here worth caching hard.
-        .header('cache-control', 'private, max-age=604800')
-        .send(body);
+      // A page never changes once it exists, and a reader fetches it again on
+      // every revisit — so this is the one image here worth caching hard.
+      return send(body, type);
     } catch (error) {
       // 504 when it timed out twice, so the reader knows waiting again will not help.
       const code = error instanceof PageFetchError && error.status === 504 ? 504 : 502;

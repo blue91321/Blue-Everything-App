@@ -24,6 +24,19 @@ import { db } from '../db/client.js';
 import { games } from '../db/schema.js';
 import { changes } from '../events.js';
 
+/**
+ * `start "" "<target>"`, quoted for cmd and passed verbatim. Unquoted, cmd
+ * reads `&`, `|`, `<`, `>` and `^` in a target as its own, and Node quotes an
+ * argument only when it has a space in it, so a folder called `A&B` would have
+ * been two commands. Inside quotes those are only characters; what quotes do
+ * not stop is a `"` ending them and `%NAME%` being expanded, so a target with
+ * either is refused rather than escaped.
+ */
+export function startQuoted(target: string): string {
+  if (/["%\r\n]/.test(target)) throw new Error(`refusing to start "${target}": it has a character cmd would act on`);
+  return `start "" "${target}"`;
+}
+
 /** Where a row came from. Kept so the screen can say why something is listed. */
 export type GameSource = 'builtin' | 'seen' | 'fullscreen' | 'manual';
 
@@ -355,7 +368,9 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
       if (!isLaunchUrl(row.launchUrl)) {
         return reply.code(409).send({ error: `${row.launchUrl} is not a game address` });
       }
-      const viaUrl = spawn('cmd.exe', ['/c', 'start', '', row.launchUrl], {
+      // Quoted and verbatim, so cmd reads nothing in it as its own (see `startQuoted`).
+    const viaUrl = spawn('cmd.exe', ['/c', startQuoted(row.launchUrl)], {
+      windowsVerbatimArguments: true,
         detached: true,
         stdio: 'ignore',
       });
@@ -383,7 +398,14 @@ export async function gameRoutes(app: FastifyInstance): Promise<void> {
      * plenty of games look for files beside themselves and simply fail if
      * started from somewhere else.
      */
-    const child = spawn('cmd.exe', ['/c', 'start', '', row.launchPath], {
+    let command: string;
+    try {
+      command = startQuoted(row.launchPath);
+    } catch (error) {
+      return reply.code(409).send({ error: error instanceof Error ? error.message : 'cannot start that path' });
+    }
+    const child = spawn('cmd.exe', ['/c', command], {
+      windowsVerbatimArguments: true,
       cwd: dirname(row.launchPath),
       detached: true,
       stdio: 'ignore',

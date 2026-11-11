@@ -27,7 +27,9 @@ import { onDataChange } from './live';
 import { onNavigate, onSectionShown } from './nav';
 import { onPopView, pushView, startHistory, viewFromUrl } from './view-history';
 import { homeTiles, inMenu, publishEntries, useMenuEntries, type MenuEntry } from './menu-prefs';
-import { groupMenu, readOpen, saveOpen } from './menu-groups';
+import { groupMenu, readOpen, saveOpen, type MenuRow } from './menu-groups';
+import { folderFor, foldersFrom, makeFolder, putInFolder, removeFolder, useFolderPrefs } from './menu-folders';
+import { Glyph } from './Glyph';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
@@ -196,6 +198,14 @@ export function App() {
   useMenuEntries();
   // Edit mode: outlined text renames, ⠿ moves. See edit-mode.ts.
   const editing = useEditMode();
+  /*
+   * The menu's folders, as the packages declare them and as you rearranged
+   * them (`menu-folders.ts`), and a screen being dragged into one in edit
+   * mode: which screen, and which folder it is over ('' for the top).
+   */
+  const folderPrefs = useFolderPrefs();
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropOn, setDropOn] = useState<string | null>(null);
   /** Text for the destination's search box — see `NavRequest.search`. */
   const [search, setSearch] = useState<string | null>(null);
   /**
@@ -657,6 +667,21 @@ export function App() {
    * on the edge are the same control in two places rather than two controls
    * with two behaviours to keep in step.
    */
+  /*
+   * Which folder a screen is in: where you put it, else where its package
+   * says (`menu-folders.ts`). And what a dragged screen is over: a folder (its
+   * heading or anything in it), the top of the menu (anywhere else in it), or
+   * nowhere (outside the menu).
+   */
+  const folders = foldersFrom(webFeatures.map((w) => w.group), folderPrefs);
+  const groupOf = (id: string) => folderFor(id, webFeatures.find((w) => w.id === id)?.group, folders, folderPrefs);
+  const folderAt = (x: number, y: number): string | null => {
+    const el = document.elementFromPoint(x, y) as HTMLElement | null;
+    const folder = el?.closest<HTMLElement>('[data-folder]');
+    if (folder) return folder.dataset.folder ?? '';
+    return el?.closest('.drawer nav') ? '' : null;
+  };
+
   const setMenuShown = (next: boolean) => {
     if (wide) setCollapsed(!next);
     else drawer.setOpen(next);
@@ -676,40 +701,66 @@ export function App() {
             {wordmark}
           </span>
         </div>
-        <nav>
-          {groupMenu(entries.filter(inMenu), (id) => webFeatures.find((w) => w.id === id)?.group).map((row) => {
+        <nav className={dragging !== null && dropOn === '' ? 'drop-target' : undefined}>
+          {(() => {
+            const rows = groupMenu(entries.filter(inMenu), groupOf);
+            const pinnedRow = (r: MenuRow) => r.kind === 'entry' && !!nav.find((n) => n.id === r.entry.id)?.pinned;
+            // In edit mode a folder with nothing in it is still drawn, so there is somewhere to drop a screen.
+            const drawn = new Set(rows.flatMap((r) => (r.kind === 'group' ? [r.group.id] : [])));
+            const empty: MenuRow[] = editing
+              ? folders.filter((f) => !drawn.has(f.id)).map((group) => ({ kind: 'group', group, members: [] }))
+              : [];
+            const draw = (row: MenuRow) => {
               if (row.kind === 'group') {
                 const open = openGroups.has(row.group.id);
                 return (
-                  <button
+                  <div
                     key={`group:${row.group.id}`}
-                    className="group-head"
-                    aria-expanded={open}
-                    onClick={() => {
-                      const next = new Set(openGroups);
-                      if (open) next.delete(row.group.id);
-                      else next.add(row.group.id);
-                      setOpenGroups(next);
-                      saveOpen(next);
-                    }}
+                    className={`group-row${dragging !== null && dropOn === row.group.id ? ' drop-target' : ''}`}
+                    data-folder={row.group.id}
                   >
-                    <span className="glyph" aria-hidden="true">
-                      {row.group.glyph}
-                    </span>
-                    <Editable id={`group:${row.group.id}`} fallback={row.group.label} inButton />
-                    <span className="group-twist" aria-hidden="true">
-                      {open ? '▾' : '▸'}
-                    </span>
-                  </button>
+                    <button
+                      className="group-head"
+                      aria-expanded={open}
+                      onClick={() => {
+                        const next = new Set(openGroups);
+                        if (open) next.delete(row.group.id);
+                        else next.add(row.group.id);
+                        setOpenGroups(next);
+                        saveOpen(next);
+                      }}
+                    >
+                      <span className="glyph" aria-hidden="true">
+                        <Glyph glyph={row.group.glyph} />
+                      </span>
+                      <Editable id={`group:${row.group.id}`} fallback={row.group.label} inButton />
+                      {row.members.length === 0 && <span className="group-empty">empty</span>}
+                      <span className="group-twist" aria-hidden="true">
+                        {open ? '▾' : '▸'}
+                      </span>
+                    </button>
+                    {editing && (
+                      <button
+                        className="group-remove"
+                        data-ui-fixed
+                        title="Remove this folder. What is in it moves to the top of the menu."
+                        aria-label="Remove this folder"
+                        onClick={() => removeFolder(row.group.id)}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 );
               }
               const e = row.entry;
+              const screen = e.parent ?? e.id;
+              const folder = row.inGroup ? groupOf(screen)?.id : undefined;
               /*
                * A folded group still shows the screen you are on, so the mark
                * saying where you are is never folded away.
                */
-              const groupId = webFeatures.find((w) => w.id === (e.parent ?? e.id))?.group?.id;
-              if (row.inGroup && groupId && !openGroups.has(groupId) && current.id !== (e.parent ?? e.id)) return null;
+              if (folder && !openGroups.has(folder) && current.id !== screen) return null;
               const pinned = nav.find((n) => n.id === e.id)?.pinned;
               const here = e.parent
                 ? current.id === e.parent && section === e.id.split('#')[1]
@@ -717,18 +768,88 @@ export function App() {
               return (
                 <button
                   key={e.id}
-                  className={[pinned ? 'pinned' : '', e.parent ? 'sub' : '', row.inGroup ? 'in-group' : ''].filter(Boolean).join(' ') || undefined}
+                  className={[pinned ? 'pinned' : '', e.parent ? 'sub' : '', row.inGroup ? 'in-group' : '', dragging === e.id ? 'dragging' : '']
+                    .filter(Boolean)
+                    .join(' ') || undefined}
+                  data-folder={folder}
                   aria-current={here}
                   onClick={() => go(e.id)}
                 >
                   <span className="glyph" aria-hidden="true">
-                    {e.glyph}
+                    <Glyph glyph={e.glyph} />
                   </span>
                   <Editable id={`screen:${e.id}`} fallback={e.label} inButton />
                   {sectionsLive[e.id] && <span className="live-dot" title="On now" aria-label="on now" />}
+                  {/* A screen's grip, to drag it into a folder or out to the top. A section goes with its screen. */}
+                  {editing && !e.parent && !pinned && (
+                    <span
+                      className="menu-grip"
+                      data-ui-fixed
+                      aria-hidden="true"
+                      title="Drag into a folder, or out to the top of the menu"
+                      onPointerDown={(ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        ev.currentTarget.setPointerCapture(ev.pointerId);
+                        setDragging(e.id);
+                        setDropOn(null);
+                      }}
+                      onPointerMove={(ev) => {
+                        if (dragging === e.id) setDropOn(folderAt(ev.clientX, ev.clientY));
+                      }}
+                      onPointerUp={(ev) => {
+                        if (dragging === e.id) {
+                          const to = folderAt(ev.clientX, ev.clientY);
+                          if (to !== null && to !== (groupOf(e.id)?.id ?? '')) {
+                            putInFolder(e.id, to);
+                            if (to && !openGroups.has(to)) {
+                              const next = new Set(openGroups).add(to);
+                              setOpenGroups(next);
+                              saveOpen(next);
+                            }
+                          }
+                        }
+                        setDragging(null);
+                        setDropOn(null);
+                      }}
+                      onPointerCancel={() => {
+                        setDragging(null);
+                        setDropOn(null);
+                      }}
+                      // Letting go is not also a press of the screen it is on.
+                      onClick={(ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                      }}
+                    >
+                      ⠿
+                    </span>
+                  )}
                 </button>
               );
-            })}
+            };
+            return (
+              <>
+                {rows.filter((r) => !pinnedRow(r)).map(draw)}
+                {empty.map(draw)}
+                {editing && (
+                  <button
+                    className="menu-new-folder"
+                    data-ui-fixed
+                    onClick={() => {
+                      const id = makeFolder('New folder');
+                      const next = new Set(openGroups).add(id);
+                      setOpenGroups(next);
+                      saveOpen(next);
+                    }}
+                  >
+                    ＋ New folder
+                  </button>
+                )}
+                {rows.filter(pinnedRow).map(draw)}
+              </>
+            );
+          })()}
         </nav>
         {/*
           Edit mode's way in, here because the menu is on every screen and on the

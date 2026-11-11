@@ -71,6 +71,12 @@ export interface ModuleManifest {
    */
   startsOff?: boolean;
   /**
+   * Loaded on the host's copy only, never on a friend's. A copy runs this
+   * checkout's code, so a package about the code itself (Code) would let a
+   * friend change the host's app.
+   */
+  hostOnly?: boolean;
+  /**
    * Entry point for its server-side half, relative to the module folder.
    *
    * Optional because a module may be nothing but data. When present it is
@@ -192,6 +198,7 @@ export function validateModuleManifest(raw: unknown): { manifest: ModuleManifest
   const notes = text('notes', false, 1000);
   const server = text('server', false, 200);
   const startsOff = value.startsOff === true;
+  const hostOnly = value.hostOnly === true;
 
   /*
    * The entry path is a path, so it gets the path rule rather than the string
@@ -236,6 +243,7 @@ export function validateModuleManifest(raw: unknown): { manifest: ModuleManifest
       version: version!,
       ...(author === undefined ? {} : { author }),
       ...(startsOff ? { startsOff: true } : {}),
+      ...(hostOnly ? { hostOnly: true } : {}),
       ...(server === undefined ? {} : { server }),
       ...(web === undefined ? {} : { web }),
       ...(tab === undefined ? {} : { tab }),

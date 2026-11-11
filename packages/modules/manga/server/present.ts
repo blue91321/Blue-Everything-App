@@ -32,6 +32,12 @@ export type SeriesSummary = {
   chapterTitle: string;
   checkedAt: number | null;
   error: string | null;
+  /** Since when its checks have failed, if they are failing. */
+  failingSince: number | null;
+  /** When an automatic switch last found no other source. */
+  switchTriedAt: number | null;
+  /** The source it was last switched away from. */
+  switchedFrom: { sourceName: string; at: number; why: string; automatic: boolean } | null;
   addedAt: number;
   /** Starred — see `Series.favourite`. Always a boolean here, unlike on disk. */
   favourite: boolean;
@@ -203,6 +209,9 @@ export function seriesSummary(series: Series): SeriesSummary {
     ...chapterLine(series),
     checkedAt: series.checkedAt,
     error: series.error,
+    failingSince: series.failingSince ?? null,
+    switchTriedAt: series.switchTriedAt ?? null,
+    switchedFrom: series.switchedFrom ?? null,
     addedAt: series.addedAt,
     favourite: series.favourite === true,
     rating: series.rating ?? null,

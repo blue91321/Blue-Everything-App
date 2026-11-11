@@ -526,6 +526,8 @@ export function sourceRoutes(app: FastifyInstance): void {
     series.sourceChapter = null;
     series.sourceCheckedAt = null;
     series.checkedAt = null;
+    // The old source's failure is not the new one's: it said "not answering" on a series just linked to a working source.
+    series.error = null;
     // Found under another name: go by it, when it is one worth having.
     retitleFromSource(series);
 
@@ -564,6 +566,7 @@ export function sourceRoutes(app: FastifyInstance): void {
       row.sourceChapter = null;
       row.sourceCheckedAt = null;
       row.checkedAt = null;
+      row.error = null;
       row.totalChapters = total;
       write(fresh);
       return seriesSummary(row);

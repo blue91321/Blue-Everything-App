@@ -92,16 +92,36 @@ export function toCatchUp(s: ShelfRow): number {
  * through every layer to say what the message already says, and a message that
  * changes shows up as a row in the wrong filter rather than as a crash.
  */
-export const sourceHasNothing = (s: ShelfRow) =>
-  s.source !== null && s.error !== null && /no chapters/i.test(s.error);
+export const sourceHasNothing = (s: ShelfRow) => s.source !== null && goneFromSource(s.error);
+
+/**
+ * Whether a check's error means the series is gone from that source, rather
+ * than the source failing to answer: "No chapters found", or the site's 404 for
+ * the series' page. A 404 was filed under "not answering" until 2026-11-07,
+ * which read as "try again later" for 21 series MangaFox and Mangahere had
+ * taken down, and spent two retry slots of every sweep on them. Both mean the
+ * same thing and want the same fix, another source, so both are this. The
+ * sweep asks it too (`dueForCheck`), so it gives them no retry slots.
+ */
+/** How long a series' source may fail before it is switched to another: two days, so a site down for an evening is waited out. */
+export const SWITCH_AFTER_MS = 2 * 24 * 60 * 60_000;
+
+/** When it will be switched, if it is failing and switching is on; past times mean "at the next check that can". */
+export function switchDueAt(s: { source: unknown; error: string | null; failingSince?: number | null; switchTriedAt?: number | null }, on: boolean): number | null {
+  if (!on || s.source === null || !s.error || typeof s.failingSince !== 'number') return null;
+  const due = s.failingSince + SWITCH_AFTER_MS;
+  // Tried and found nothing: tried again a day after that.
+  return typeof s.switchTriedAt === 'number' && s.switchTriedAt >= due ? s.switchTriedAt + 24 * 60 * 60_000 : due;
+}
+
+export const goneFromSource = (error: string | null | undefined): boolean => !!error && /no chapters|\b404\b/i.test(error);
 
 /**
  * Its source failed when last asked — by the sweep, or by opening its chapters.
  *
  * "Had nothing for it" is excluded: that is an *answer*, and a useful one.
  */
-export const notAnswering = (s: ShelfRow) =>
-  s.source !== null && s.error !== null && !/no chapters/i.test(s.error);
+export const notAnswering = (s: ShelfRow) => s.source !== null && s.error !== null && !goneFromSource(s.error);
 
 /** "Asura Scans (EN)" → "Asura Scans": the language is the same on every tile. */
 export function sourceLabel(name: string): string {

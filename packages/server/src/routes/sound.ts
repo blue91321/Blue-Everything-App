@@ -24,11 +24,18 @@
  * here is byte-for-byte what will actually interrupt you.
  */
 import type { FastifyInstance } from 'fastify';
-import { TONES, isToneName, wav } from '@everything/shared/sound';
+import { TONES, isToneName, wav, type Blip } from '@everything/shared/sound';
 
 export async function soundRoutes(app: FastifyInstance): Promise<void> {
   app.get('/sounds/:file', async (request, reply) => {
     const { file } = request.params as { file: string };
+    /*
+     * `?v=` turns it down, 0 to 100, in the bytes rather than with the audio
+     * element's volume: an iPhone ignores that property entirely, so a tone
+     * previewed there played at full whatever the slider said.
+     */
+    const asked = Number((request.query as { v?: string }).v);
+    const volume = Number.isFinite(asked) ? Math.max(0, Math.min(100, Math.round(asked))) : 100;
     const tone = file.replace(/\.wav$/i, '');
 
     if (!isToneName(tone)) return reply.code(404).send({ error: 'no such tone' });
@@ -50,6 +57,6 @@ export async function soundRoutes(app: FastifyInstance): Promise<void> {
        * that nobody is left auditioning a tone that no longer exists.
        */
       .header('cache-control', 'public, max-age=3600')
-      .send(Buffer.from(wav(TONES[tone])));
+      .send(Buffer.from(wav((TONES[tone] as readonly Blip[]).map((b) => ({ ...b, gain: ((b.gain ?? 0.7) * volume) / 100 })))));
   });
 }

@@ -28,11 +28,17 @@ function anchorDatabaseUrl(url: string): string {
 
 const envSchema = z.object({
   /**
-   * `0.0.0.0` on purpose: the Windows agent and the phone both reach the server
-   * over the network, even when it happens to be running on the same PC. Binding
-   * to localhost would work today and break the moment it moves.
+   * This PC only, by default (2026-11-11). Everything that reaches a native
+   * install arrives through loopback: the agent and the app window are on this
+   * PC, and the phone, friends' copies and desktop clients come in through
+   * `tailscale serve`, which proxies to `127.0.0.1`. Listening on every
+   * interface only added the home network, where anything on the Wi-Fi could
+   * reach the server directly with no Tailscale in between, which is how the
+   * `/%61pi` sign-in bypass was reachable from it. The Dockerfile sets
+   * `0.0.0.0`, since a container is only reachable that way, and so can a
+   * server moved to a VPS.
    */
-  HOST: z.string().default('0.0.0.0'),
+  HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().int().positive().default(8787),
 
   /**
@@ -191,6 +197,15 @@ const envSchema = z.object({
     .refine((v) => v === '' || /^[a-z0-9][a-z0-9-]{0,31}$/.test(v), {
       message: 'a lowercase name: letters, digits and hyphens, up to 32',
     }),
+
+  /**
+   * A data folder other than the usual one, for the suites that boot the whole
+   * app (`smoke`, `features-check`). They had their own database and shared the
+   * real `data/` folder with every package, so a package that keeps its state
+   * in a file there (blueprints, weather, trips) read and wrote the real one
+   * while being tested. Empty for the real app.
+   */
+  DATA_DIR: z.string().default(''),
 
   /**
    * Where a guest copy finds the host, for the one thing they share: the

@@ -31,7 +31,7 @@ The nudge engine is the app. Everything else is optional:
 | **deleted** | remove the folder; the app boots and reports it as not installed |
 
 **Settings → Packages** lists them — the password vault, voice, app
-integrations, phone push, weather, trips and manga, each in `packages/modules/<name>/`
+integrations, phone push, weather, trips, manga, the code screen and blueprints, each in `packages/modules/<name>/`
 — with a switch, its size and a Remove button. A change takes a restart, and
 the screen has the button for it. Habits, notes and time tracking can be
 switched off but not deleted: the Dashboard uses them.

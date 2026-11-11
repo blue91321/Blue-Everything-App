@@ -11,7 +11,20 @@ import {
   setHomeList,
   setShown,
   useMenuEntries,
+  type MenuEntry,
 } from '../../menu-prefs';
+import {
+  folderFor,
+  foldersChanged,
+  foldersFrom,
+  makeFolder,
+  putInFolder,
+  removeFolder,
+  resetFolders,
+  useFolderPrefs,
+} from '../../menu-folders';
+import { webFeatures } from '../../features';
+import { Glyph } from '../../Glyph';
 import { api } from '../../api';
 import { useAsync } from '../../useAsync';
 import { OrderedPicker } from './OrderedPicker';
@@ -165,6 +178,8 @@ export function MenuAndHome() {
         </div>
       </div>
 
+      <MenuFolders screens={all.filter((e) => !e.parent && e.id !== 'settings')} />
+
       {sections.length > 0 && (
         <div className="card">
           <div className="title">Sections in the menu</div>
@@ -190,6 +205,89 @@ export function MenuAndHome() {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Folders in the menu (`menu-folders.ts`): which screen is in which, and
+ * making and removing them. The menu itself does the same by dragging in
+ * edit mode; this is the way for a keyboard, or for anybody who would rather
+ * pick from a list. A folder is renamed in edit mode, by its heading.
+ */
+function MenuFolders({ screens }: { screens: MenuEntry[] }) {
+  const t = useUiText();
+  const prefs = useFolderPrefs();
+  const [name, setName] = useState('');
+  const declaredOf = (id: string) => webFeatures.find((w) => w.id === id)?.group;
+  const folders = foldersFrom(webFeatures.map((w) => w.group), prefs);
+  return (
+    <div className="card">
+      <div className="title">Folders in the menu</div>
+      <div className="meta" style={{ marginTop: 2 }}>
+        Screens gathered under one heading that folds, like World. Removing a folder moves what is in it to the top of the
+        menu. Rename one in ✎ Edit screens, by clicking its name, where you can also drag screens in and out. On this device
+        only.
+      </div>
+      <div className="menu-prefs">
+        {folders.map((f) => (
+          <div key={f.id} className="menu-prefs-row">
+            <span className="menu-prefs-name">
+              <span aria-hidden="true">
+                <Glyph glyph={f.glyph} />
+              </span>{' '}
+              {t(`group:${f.id}`, f.label)}
+              <span className="meta"> · {screens.filter((s) => folderFor(s.id, declaredOf(s.id), folders, prefs)?.id === f.id).length} in it</span>
+            </span>
+            <button className="btn subtle" onClick={() => removeFolder(f.id)}>
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+      <form
+        className="row"
+        style={{ marginTop: '.75rem', gap: '.4rem' }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          makeFolder(name);
+          setName('');
+        }}
+      >
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="New folder's name" aria-label="New folder's name" />
+        <button className="btn" type="submit">
+          ＋ New folder
+        </button>
+      </form>
+      <div className="menu-prefs" style={{ marginTop: '.75rem' }}>
+        {screens.map((s) => (
+          <label key={s.id} className="menu-prefs-row">
+            <span className="menu-prefs-name">
+              <span aria-hidden="true">
+                <Glyph glyph={s.glyph} />
+              </span>{' '}
+              {s.label}
+            </span>
+            <select
+              value={folderFor(s.id, declaredOf(s.id), folders, prefs)?.id ?? ''}
+              onChange={(e) => putInFolder(s.id, e.target.value)}
+              aria-label={`Folder for ${s.label}`}
+            >
+              <option value="">Not in a folder</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {t(`group:${f.id}`, f.label)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+      </div>
+      {foldersChanged() && (
+        <button className="btn subtle" style={{ marginTop: '.75rem' }} onClick={resetFolders}>
+          Back to the defaults
+        </button>
+      )}
+    </div>
   );
 }
 

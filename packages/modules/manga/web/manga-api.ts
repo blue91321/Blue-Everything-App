@@ -10,6 +10,7 @@
 import { apiRequest, getToken } from '@app/api';
 import { cachedResponse, fetchPage, replaceSavedPage, savedPages } from './offline-store';
 import { blobIsWholeImage } from './image-bytes';
+import { beginTransfer, readingLevel, withQuality } from './quality';
 import { keptBlob } from '@app/offline-sync';
 
 export type SeriesStatus = 'ongoing' | 'completed' | 'hiatus' | 'cancelled' | 'unknown';
@@ -26,6 +27,12 @@ export interface SeriesSummary {
   chapterTitle: string;
   checkedAt: number | null;
   error: string | null;
+  /** Since when its checks have failed. Optional: an older server does not send it. */
+  failingSince?: number | null;
+  /** When an automatic switch last found no other source. */
+  switchTriedAt?: number | null;
+  /** The source it was last switched away from, when and why. */
+  switchedFrom?: { sourceName: string; at: number; why: string; automatic: boolean } | null;
   addedAt: number;
   /** Starred. Optional: an older server does not send it. */
   favourite?: boolean;
@@ -80,6 +87,8 @@ export interface OldHistorySearch {
 /** Finding a source for every series without one — see `find-sources.ts` on the server. */
 export interface FindSourcesState {
   running: boolean;
+  /** Absent from a server older than switching. */
+  mode?: 'unlinked' | 'gone';
   total: number;
   done: number;
   linked: number;
@@ -89,6 +98,20 @@ export interface FindSourcesState {
   finishedAt: number | null;
   problem: string | null;
   unlinked: number;
+  /** Series whose source has lost them. Absent from a server older than switching. */
+  gone?: number;
+}
+
+/** FlareSolverr on this PC: installed or not, running or not, and how a download is going. */
+export interface FlareState {
+  installed: boolean;
+  version: string | null;
+  bytes: number | null;
+  running: boolean;
+  lastUsedAt: number | null;
+  installing: { step: string; received: number; total: number | null } | null;
+  problem: string | null;
+  unavailable: string | null;
 }
 
 /** A source left out of searching and browsing. */
@@ -445,6 +468,10 @@ export interface Library {
   releaseTasks?: boolean;
   /** Whether a new chapter raises a notification at all. Optional for the same reason. */
   releaseNudges?: boolean;
+  /** Which series notify: null for every one. Absent from an older server. */
+  releaseNudgesFor?: { favourites: boolean; shelves: string[] } | null;
+  /** Whether a source failing for two days is switched to another. Absent from an older server. */
+  autoSwitchSources?: boolean;
   /** Chapters fetched ahead while reading. Optional: an older server sends neither. */
   readAheadChapters?: number;
   maxReadAhead?: number;
@@ -514,6 +541,10 @@ export interface CollectionRules {
   autoKeepFavourites: boolean;
   autoKeepMinRating: number | null;
   shareRatingsWithCopies: boolean;
+  /** How the collection keeps pictures; absent on a friend's copy, where the host decides. */
+  archiveQuality?: 'original' | 'smaller' | 'smallest';
+  /** Whether the PC can make pictures smaller at all (`server/compress.ts`). */
+  compressionAvailable?: boolean;
 }
 
 export const manga = {
@@ -528,6 +559,22 @@ export const manga = {
   checkNow: () => call<SweepResult>('/api/manga/check', { method: 'POST' }),
   setReleaseNudges: (on: boolean) =>
     call<{ releaseNudges: boolean }>('/api/manga/release-nudges', { method: 'PUT', body: JSON.stringify({ on }) }),
+  setReleaseScope: (scope: { favourites: boolean; shelves: string[] } | null) =>
+    call<{ releaseNudgesFor: { favourites: boolean; shelves: string[] } | null }>('/api/manga/release-nudges/scope', {
+      method: 'PUT',
+      body: JSON.stringify({ scope }),
+    }),
+  setAutoSwitch: (on: boolean) => call<{ autoSwitchSources: boolean }>('/api/manga/auto-switch', { method: 'PUT', body: JSON.stringify({ on }) }),
+  /** A new source for one series, now. About fifteen seconds. */
+  switchSource: (id: string) =>
+    call<{
+      outcome: { kind: 'switched'; from: string; to: string; chapters: number } | { kind: 'notFound'; from: string } | { kind: 'failed'; problem: string } | { kind: 'skipped' };
+      series: SeriesSummary | null;
+    }>(`/api/manga/${encodeURIComponent(id)}/switch-source`, {
+      method: 'POST',
+      // Searches every source and asks the best few for their chapters: often past the 15s a change normally gets.
+      signal: AbortSignal.timeout(120_000),
+    }),
   /**
    * Start (or find) the record for something being read but not followed.
    *
@@ -576,7 +623,7 @@ export const manga = {
     }),
   findSources: {
     get: () => call<FindSourcesState>('/api/manga/find-sources'),
-    start: () => call<FindSourcesState>('/api/manga/find-sources', { method: 'POST' }),
+    start: (mode: 'unlinked' | 'gone' = 'unlinked') => call<FindSourcesState>('/api/manga/find-sources', { method: 'POST', body: JSON.stringify({ mode }) }),
   },
   setReleaseTasks: (on: boolean) =>
     call<{ releaseTasks: boolean }>('/api/manga/release-tasks', { method: 'PUT', body: JSON.stringify({ on }) }),
@@ -614,6 +661,13 @@ export const manga = {
         method: 'PUT',
         body: JSON.stringify({ id, name, ignored }),
       }),
+  },
+
+  /** The Cloudflare helper — see `flaresolverr.ts` on the server. Installing and removing it are for the PC. */
+  flaresolverr: {
+    get: () => call<FlareState>('/api/manga/flaresolverr'),
+    install: () => call<FlareState>('/api/manga/flaresolverr/install', { method: 'POST' }),
+    remove: () => call<FlareState>('/api/manga/flaresolverr', { method: 'DELETE' }),
   },
 
   source: {
@@ -759,10 +813,17 @@ export const manga = {
      * A saved chapter's pages come from this device — no request, no Suwayomi,
      * no PC needed. Otherwise the server is asked.
      */
-    pages: async (id: string, chapterId: string) => {
+    pages: async (id: string, chapterId: string): Promise<{ pages: string[]; readAhead?: number; saved?: true }> => {
       const saved = await savedPages(id, chapterId);
-      if (saved) return { pages: saved };
-      return call<{ pages: string[] }>(`/api/manga/${id}/chapters/${chapterId}/pages`);
+      if (saved) return { pages: saved, saved: true };
+      // Fetched while the chapter before it was read: see `holdNext`.
+      if (held?.key === heldKey(id, chapterId)) {
+        // Opened: the reader fetches the rest itself from here, three at a time.
+        held.opened = true;
+        const list = await held.list.catch(() => null);
+        if (list) return list;
+      }
+      return call<{ pages: string[]; readAhead?: number }>(`/api/manga/${id}/chapters/${chapterId}/pages`);
     },
     /** Forget the saved place — the other half of removing a History row. */
     clearPosition: (id: string) => call<{ ok: true }>(`/api/manga/${id}/position`, { method: 'DELETE' }),
@@ -796,6 +857,13 @@ export const manga = {
        * fail the same way forever.
        */
       if (!options.fresh) {
+        // Fetched ahead onto this device: handed over once, and then it is the caller's.
+        const ahead = held?.blobs.get(path);
+        if (ahead) {
+          held?.blobs.delete(path);
+          const blob = await ahead;
+          if (blob) return URL.createObjectURL(blob);
+        }
         const saved = await cachedResponse(path);
         if (saved) {
           const blob = await saved.blob();
@@ -804,13 +872,23 @@ export const manga = {
       }
       // `fresh` reaches the server too: its own page cache could hold the bad copy.
       let blob: Blob;
+      // As big as reading asks for now: smaller over a slow connection, if chosen (`quality.ts`).
+      const asked = withQuality(path, readingLevel());
       if (options.fresh) {
-        const response = await fetch(`${path}&fresh=1`, { headers: { authorization: `Bearer ${getToken()}` } });
-        if (!response.ok) throw new Error(`page failed (${response.status})`);
+        const finish = beginTransfer();
+        const response = await fetch(`${asked}&fresh=1`, { headers: { authorization: `Bearer ${getToken()}` } }).catch((e: unknown) => {
+          finish(0, 0);
+          throw e;
+        });
+        if (!response.ok) {
+          finish(0, 0);
+          throw new Error(`page failed (${response.status})`);
+        }
         blob = await response.blob();
+        finish(blob.size, Number(response.headers.get('x-made-in')) || 0);
       } else {
         // The same request as the download's, when this chapter is saving as you read it.
-        blob = await fetchPage(path);
+        blob = await fetchPage(asked);
       }
       if (!(await blobIsWholeImage(blob))) throw new Error('the page arrived damaged');
       // Mend a saved chapter with the good copy, if this page was one.
@@ -819,6 +897,79 @@ export const manga = {
     },
   },
 };
+
+/**
+ * The next chapter, fetched onto this device while you read the one before it.
+ *
+ * The server's read-ahead (`readAhead` in `routes/reading.ts`) puts the next
+ * chapters on the PC's disk, which is the slow half when the source is a site.
+ * The other half is the PC to this device, and it was paid only at the moment
+ * the next chapter opened: a page is often 3 to 5MB, so over Tailscale to a
+ * phone the next chapter's first pages took seconds, in carrying on as well as
+ * with Next. Found in the server's log on *As Written In the Lewd Notebook*:
+ * chapter 10's page list answered in 29ms and each page in 14ms from disk, and
+ * still the page asked for first arrived seconds after the open.
+ *
+ * So once the chapter being read has every page, the reader asks for the next
+ * one here (`holdNext`): its page list, then its pages one at a time, in order,
+ * so it never competes with anything you are looking at. Opening that chapter
+ * takes them (`manga.reader.pages` and `.page`), each handed over once.
+ *
+ * - **One chapter, and only up to `HOLD_BYTES` of it.** These are held in
+ *   memory, beside the chapter on screen and any carried above it, and a phone
+ *   is where that matters. The pages past the cap load the ordinary way, three
+ *   at a time from the moment the chapter opens, which keeps ahead of reading.
+ * - **The same setting as the server's.** "Fetch ahead while reading" at 0 is
+ *   off here too: the page list says what it is (`readAhead`).
+ * - **Not for a chapter saved on this device**, which opens from here anyway.
+ * - **Silent when it fails**, like the server's: that page loads as before.
+ */
+const HOLD_BYTES = 32 * 1024 * 1024;
+
+let held: {
+  key: string;
+  list: Promise<{ pages: string[]; readAhead?: number }>;
+  blobs: Map<string, Promise<Blob | null>>;
+  opened: boolean;
+} | null = null;
+const heldKey = (seriesId: string, chapterId: string) => `${seriesId}/${chapterId}`;
+
+export async function holdNext(seriesId: string, chapterId: string): Promise<void> {
+  const key = heldKey(seriesId, chapterId);
+  if (held?.key === key) return;
+  dropHeld();
+  if (await savedPages(seriesId, chapterId)) return;
+  const me = {
+    key,
+    list: call<{ pages: string[]; readAhead?: number }>(`/api/manga/${seriesId}/chapters/${chapterId}/pages`),
+    blobs: new Map<string, Promise<Blob | null>>(),
+    opened: false,
+  };
+  held = me;
+  let pages: string[];
+  try {
+    pages = (await me.list).pages;
+  } catch {
+    if (held === me) held = null;
+    return;
+  }
+  let bytes = 0;
+  for (const path of pages) {
+    if (held !== me || me.opened || bytes >= HOLD_BYTES) return;
+    const got = fetchPage(withQuality(path, readingLevel())).then(
+      async (blob) => ((await blobIsWholeImage(blob)) ? blob : null),
+      () => null
+    );
+    me.blobs.set(path, got);
+    const blob = await got;
+    if (blob) bytes += blob.size;
+  }
+}
+
+/** Let go of the chapter held ahead, unless it is the one named. */
+export function dropHeld(seriesId?: string, chapterId?: string): void {
+  if (held && (seriesId === undefined || chapterId === undefined || held.key !== heldKey(seriesId, chapterId))) held = null;
+}
 
 /**
  * A cover, fetched with the token and handed back as an object URL.

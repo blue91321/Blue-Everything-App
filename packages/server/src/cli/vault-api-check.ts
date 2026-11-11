@@ -17,6 +17,8 @@ process.env.LOG_LEVEL = 'error';
  * PC where it had never been switched on.
  */
 process.env.MODULES_STATE = './data/vault-smoke-modules.json';
+// Its own data folder, for the reason smoke has one.
+process.env.DATA_DIR = './data/vault-smoke-data';
 
 import { rmSync, writeFileSync } from 'node:fs';
 

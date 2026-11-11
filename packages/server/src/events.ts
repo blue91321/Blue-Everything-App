@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { FastifyInstance } from 'fastify';
+import { routePath } from './auth.js';
 
 /**
  * Live updates, so the phone and the desktop don't drift apart.
@@ -91,27 +92,28 @@ function scopeForPath(path: string): ChangeScope | 'all' {
  */
 export function registerChangeAnnouncer(app: FastifyInstance): void {
   app.addHook('onResponse', async (request, reply) => {
-    if (request.method === 'GET' || !request.url.startsWith('/api/')) return;
+    const path = routePath(request);
+    if (request.method === 'GET' || !path.startsWith('/api/')) return;
     if (reply.statusCode >= 400) return;
 
     // The agent posts attention every few seconds and it is not, in itself, a
     // data change. Broadcasting it would turn this into polling with extra
     // steps. That route announces its own changes when it actually makes any.
-    if (request.url.startsWith('/api/attention')) return;
+    if (path.startsWith('/api/attention')) return;
 
     // Same reasoning for voice: with an always-on microphone `/api/voice/command`
     // fires on ambient speech, and most of those end in "not for me" — a wrong
     // speaker, or nothing that matched. Announcing all of them would reload
     // every open client whenever the room was noisy. These routes announce
     // themselves, with the right scope, only when they actually wrote something.
-    if (request.url.startsWith('/api/voice/')) return;
+    if (path.startsWith('/api/voice/')) return;
 
     // And again for the agent's local-presence report, which arrives on a timer
     // whether or not anybody's status changed. Announcing it would reload every
     // open client every few seconds — polling with extra steps, which is the one
     // thing this stream exists to avoid. `recordLocalPresence` announces itself
     // when the snapshot it was handed is actually different.
-    if (request.url.startsWith('/api/integrations/presence')) return;
+    if (path.startsWith('/api/integrations/presence')) return;
 
     /*
      * Any route can say the same about itself, with `config: { announce: false }`
@@ -123,7 +125,7 @@ export function registerChangeAnnouncer(app: FastifyInstance): void {
      */
     if ((request.routeOptions.config as { announce?: boolean } | undefined)?.announce === false) return;
 
-    changes.emitChange(scopeForPath(request.url));
+    changes.emitChange(scopeForPath(path));
   });
 }
 

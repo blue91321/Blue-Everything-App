@@ -1,56 +1,26 @@
 import { useState } from 'react';
-import { api, type Game, type Habit } from '@app/api';
-import { voiceApi, type VoiceCommand, type VoiceCommandKind } from './voice-api';
+import { goTo } from '@app/nav';
+import { voiceApi, type SpokenCommand, type VoiceCommand, type VoiceCommandKind } from './voice-api';
 import { useAsync } from '@app/useAsync';
 import { Toggle } from '@app/controls';
+import type { ChangeScope } from '@app/live';
 
-const KIND_LABEL: Record<VoiceCommandKind, string> = {
-  habit: 'Tick off a habit',
-  note: 'Write a note',
-  url: 'Open a website',
-  hotkey: 'Press keys',
-  media: 'Control media',
-  launch: 'Start a game or app',
-  pause: 'Stop listening',
-  // Not offered on its own — see SELECTABLE_KINDS. `cancel` is presented as one
-  // of the ways to stop listening, because that is what it is from where you
-  // is sitting; only the *duration* differs.
-  cancel: 'Stop listening',
-  music: 'Play music',
-};
-
-/**
- * What the "what it does" dropdown offers.
+/*
+ * What you can say, and where each is changed.
  *
- * `cancel` is deliberately absent. It is a scope of "Stop listening" rather
- * than a sixth thing to choose between — offering both side by side made two
- * near-identical entries and left you guessing which one meant "never mind".
- */
-const SELECTABLE_KINDS: VoiceCommandKind[] = ['habit', 'note', 'url', 'hotkey', 'media', 'music', 'launch', 'pause'];
-
-/** What a music command does — Connections → Music's Shuffle card. Display copy only. */
-const MUSIC_LABEL: Record<string, string> = {
-  shuffle: 'Play shuffled',
-  random: 'Play random',
-  stop: 'Stop adding songs',
-};
-
-/**
- * The media controls, duplicated from `MEDIA_LABEL` in @everything/shared.
+ * **A command is a blueprint now** (2026-10-29): a "When I say" box holds the
+ * phrases and the Do boxes after it do the work, so a spoken command can do
+ * anything a blueprint can. This tab lists those, each with a button that opens
+ * it on the Blueprints screen, and **New voice command** makes one.
  *
- * Same reason as everything else here: importing that package pulls zod into a
- * bundle that is otherwise almost entirely framework. Display copy only — the
- * server validates which of these is a real action.
+ * **Two stay here**: stop listening, and never mind. They act on the
+ * microphone itself, and work with Blueprints switched off, so voice can always
+ * be silenced by voice. They keep the editor they had.
  */
-const MEDIA_LABEL: Record<string, string> = {
-  playpause: 'Play / pause',
-  next: 'Skip forward',
-  previous: 'Skip back',
-  stop: 'Stop',
-  volumeup: 'Volume up',
-  volumedown: 'Volume down',
-  mute: 'Mute / unmute',
-};
+
+// Blueprints announce their changes under a scope core does not name, and the
+// list changes whenever one is saved.
+const WATCH = ['settings', 'blueprints'] as unknown as ChangeScope[];
 
 /** How long a "Stop listening" lasts. The only thing separating pause from cancel. */
 type StopScope = 'sentence' | 'minutes' | 'manual';
@@ -68,197 +38,105 @@ const SCOPE_HELP: Record<StopScope, string> = {
   manual: 'Closes the microphone until you turn it back on from this screen.',
 };
 
-/** Words of a command the recogniser will never write — a number written as digits. */
-function brokenWords(command: VoiceCommand, unknown: Set<string>): string[] {
+/** Words of a phrase the recogniser will never write — a number written as digits. */
+function brokenWords(phrases: string[], unknown: Set<string>): string[] {
   if (unknown.size === 0) return [];
-  const words = command.phrases.flatMap((phrase) => phrase.toLowerCase().split(/\s+/));
+  const words = phrases.flatMap((phrase) => phrase.toLowerCase().split(/\s+/));
   return [...new Set(words)].filter((word) => unknown.has(word));
 }
 
-/** What to call a saved command in the list — scope included, for the stop kinds. */
-function describeKind(command: VoiceCommand): string {
-  if (command.kind === 'media') {
-    return `Control media · ${MEDIA_LABEL[command.target ?? ''] ?? 'unknown control'}`;
-  }
-  if (command.kind === 'launch') return `Start a game or app · ${command.target ?? 'nothing chosen'}`;
-  // `queue` was a choice once and now plays shuffled; a command saved with it still says what it does.
-  if (command.kind === 'music') {
-    const label = MUSIC_LABEL[command.target === 'queue' ? 'shuffle' : (command.target ?? '')];
-    return `Play music · ${label ?? 'nothing chosen'}`;
-  }
+/** What a stop command does, in the list. */
+function describeStop(command: VoiceCommand): string {
   if (command.kind === 'cancel') return 'Stop listening · just this sentence';
-  if (command.kind === 'pause') {
-    return command.pauseMinutes
-      ? `Stop listening · for ${command.pauseMinutes} minutes`
-      : 'Stop listening · until switched back on';
-  }
-  return KIND_LABEL[command.kind];
+  return command.pauseMinutes ? `Stop listening · for ${command.pauseMinutes} minutes` : 'Stop listening · until switched back on';
 }
 
-const KIND_HELP: Record<VoiceCommandKind, string> = {
-  habit: 'Records one against the habit. Saying "two" or "three" counts that many.',
-  note: 'Whatever you say after the phrase becomes the note.',
-  url: 'Opens in your default browser. Only http and https addresses.',
-  hotkey: 'Sends the keys to whichever window is focused. Needs a modifier — ctrl, alt, shift or win.',
-  media:
-    'Uses the system media keys, so it reaches whatever is playing without that window being focused. Ignored entirely when nothing is playing, so a mis-heard word cannot skip a track in a silent room.',
-  launch:
-    'Only things on the Games list, which fills itself in as you use this PC. What it starts is whatever that row says, so a mis-heard phrase can only ever open something you have already run yourself.',
-  pause: 'Closes the microphone — for a moment, for a few minutes, or until you turn it back on.',
-  cancel: 'Drops what you were part-way through saying. The microphone stays on.',
-  music:
-    "Starts Spotify the way Connections → Music does, where music is already playing, or else on this PC's Spotify, with the lists, gap, boosts and queue size chosen on that tab. Shuffle or Random is the one you pick here.",
-};
-
-/**
- * Everything a phrase can do, and how to change it.
- *
- * This was a read-only list of habit phrases. It is the whole command surface
- * now, because "what can I say" is a question about voice rather than about any
- * one habit — and because habits were never the only useful answer to it.
- */
-/**
- * The groups the list is broken into.
- *
- * `pause` and `cancel` share one, because the screen already presents them as
- * one choice with a scope — splitting them here would undo that.
- */
-const GROUPS: { id: string; label: string; kinds: VoiceCommandKind[] }[] = [
-  { id: 'habit', label: 'Habits', kinds: ['habit'] },
-  { id: 'note', label: 'Notes', kinds: ['note'] },
-  { id: 'url', label: 'Websites', kinds: ['url'] },
-  { id: 'hotkey', label: 'Hotkeys', kinds: ['hotkey'] },
-  { id: 'media', label: 'Media', kinds: ['media'] },
-  { id: 'music', label: 'Music', kinds: ['music'] },
-  { id: 'launch', label: 'Games and apps', kinds: ['launch'] },
-  { id: 'stop', label: 'Stop listening', kinds: ['pause', 'cancel'] },
-];
-
-const COLLAPSED_KEY = 'everything.voiceGroupsCollapsed';
-
-/** Which sections are shut. Remembered, because reopening them every visit is a chore. */
-function readCollapsed(): Set<string> {
-  try {
-    const stored = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]');
-    return new Set(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : []);
-  } catch {
-    return new Set();
-  }
-}
-
-/**
- * Everything a phrase can do, and how to change it.
- *
- * Grouped by what the command *does*, because the flat list stopped being
- * scannable at about six entries and this is a list that only grows. Sections
- * are `<details>` rather than hand-rolled state: the browser gives keyboard
- * support and the open/closed semantics for free.
- */
 export function VoicePhrases() {
-  const commands = useAsync(() => voiceApi.commands(), [], ['settings', 'habits']);
-  // Only the agent can answer "does the model know this word", because only it
-  // has the model loaded.
+  const commands = useAsync(() => voiceApi.commands(), [], WATCH);
+  // Only the agent can answer "is this word ever written", because only it has
+  // the model loaded.
   const status = useAsync(() => voiceApi.status(), [], ['settings']);
-  const habits = useAsync(() => api.habits.list(), [], ['habits']);
-  const games = useAsync(() => api.games.list(), [], ['games']);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
+  const [problem, setProblem] = useState('');
 
   if (commands.loading) return <div className="empty">loading…</div>;
-  const all = commands.data ?? [];
-
-  /*
-   * Words the recogniser will never write.
-   *
-   * Under Vosk this was the model's dictionary, and "unmute" was missing from
-   * it. The recogniser now writes any word, so what is left is spelling: it
-   * writes numbers out as words, so "drink 2 water" reads perfectly and can
-   * never match — the exact failure this screen exists to prevent.
-   */
+  const own = commands.data?.own ?? [];
+  const spoken = commands.data?.spoken ?? [];
   const unknown = new Set(status.data?.unknownWords ?? []);
-  const broken = unknown.size === 0
-    ? []
-    : all
-        .map((command) => ({
-          command,
-          words: [...new Set(command.phrases.flatMap((p) => p.toLowerCase().split(/\s+/)))].filter((w) =>
-            unknown.has(w)
-          ),
-        }))
-        .filter((entry) => entry.words.length > 0);
 
-  const reload = () => {
-    commands.reload();
-    habits.reload();
-  };
-
-  function setOpen(id: string, open: boolean) {
-    setCollapsed((previous) => {
-      const next = new Set(previous);
-      if (open) next.delete(id);
-      else next.add(id);
-      try {
-        localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...next]));
-      } catch {
-        // Private browsing, or a full quota. Losing the preference is not worth
-        // failing the render over.
-      }
-      return next;
-    });
+  async function newCommand() {
+    setProblem('');
+    try {
+      const { edit } = await voiceApi.newBlueprint();
+      goTo(edit.screen, { focus: edit.focus });
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
   }
 
-  function row(command: VoiceCommand) {
-    if (editing === command.id) {
-      return (
-        <CommandEditor
-          key={command.id}
-          command={command}
-          habits={habits.data ?? []}
-          games={games.data ?? []}
-          unknownWords={unknown}
-          onDone={() => {
-            setEditing(null);
-            reload();
-          }}
-        />
-      );
-    }
-
-    // Flagged on the command itself, not only in the summary above: this is the
-    // row you are looking at when you wonder why the phrase never fires.
-    const bad = brokenWords(command, unknown);
-
+  function spokenRow(command: SpokenCommand) {
+    const bad = brokenWords(command.phrases, unknown);
     return (
       <div className="card" key={command.id}>
         <div className="row between">
           <div className="grow">
             <div className="title">
-              {command.label ?? KIND_LABEL[command.kind]}
+              {command.label}
               {bad.length > 0 && <span className="urgent" title="contains a word that is never heard as written"> ⚠</span>}
             </div>
             <div className="meta">
-              {describeKind(command)}
-              {command.phrases.length > 0 && ` · ${command.phrases.map((p) => `"${p}"`).join(', ')}`}
-              {!command.allowFollowUp && ' · no continuations'}
+              {command.phrases.length > 0 ? command.phrases.map((p) => `"${p}"`).join(', ') : 'no phrases yet'}
+              {!command.allowFollowUp && ' · stops listening after'}
               {!command.enabled && ' · off'}
             </div>
             {bad.length > 0 && (
               <div className="meta urgent" style={{ marginTop: 4 }}>
-                {bad.map((w) => `"${w}"`).join(', ')} is never heard that way, so this never fires
-                <div style={{ marginTop: 2 }}>
-                  Numbers are heard as words — write "two", not "2".
-                </div>
+                {bad.map((w) => `"${w}"`).join(', ')} is never heard that way, so this never fires. Numbers are heard as words:
+                write "two", not "2".
               </div>
             )}
+          </div>
+          <button className="btn subtle" onClick={() => goTo(command.edit.screen, { focus: command.edit.focus })}>
+            Open
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function ownRow(command: VoiceCommand) {
+    if (editing === command.id) {
+      return (
+        <StopEditor
+          key={command.id}
+          command={command}
+          unknownWords={unknown}
+          onDone={() => {
+            setEditing(null);
+            commands.reload();
+          }}
+        />
+      );
+    }
+    return (
+      <div className="card" key={command.id}>
+        <div className="row between">
+          <div className="grow">
+            <div className="title">{command.label ?? 'Stop listening'}</div>
+            <div className="meta">
+              {describeStop(command)}
+              {command.phrases.length > 0 && ` · ${command.phrases.map((p) => `"${p}"`).join(', ')}`}
+              {!command.enabled && ' · off'}
+            </div>
           </div>
           <button className="btn subtle" onClick={() => setEditing(command.id)}>
             edit
           </button>
           <button
             className="btn subtle danger"
-            aria-label={`Remove ${command.label ?? command.kind}`}
-            onClick={() => voiceApi.removeCommand(command.id).then(reload)}
+            aria-label={`Remove ${command.label ?? 'this'}`}
+            onClick={() => voiceApi.removeCommand(command.id).then(commands.reload)}
           >
             remove
           </button>
@@ -270,121 +148,68 @@ export function VoicePhrases() {
   return (
     <>
       <div className="meta" style={{ marginBottom: 8 }}>
-        Tense and filler words don't matter — "drink water" already catches "I just drank some water". Add a
-        second phrase only for a genuinely different wording.
+        Each command is a blueprint: a <strong>When I say</strong> box with its phrases, joined to whatever it should
+        do. Tense and filler words don't matter, so "drink water" already catches "I just drank some water".
       </div>
 
-      {broken.length > 0 && (
-        <div className="card">
-          <div className="title urgent">Some words are never heard as written</div>
-          <div className="meta" style={{ marginTop: 4 }}>
-            Speech is written down as words, so a number in digits never matches. Write it out — "two", not
-            "2".
-          </div>
-          {broken.map(({ command, words }) => (
-            <div className="meta" key={command.id} style={{ marginTop: 6 }}>
-              <strong>{command.label ?? KIND_LABEL[command.kind]}</strong> — {words.map((w) => `"${w}"`).join(', ')}
-            </div>
-          ))}
-        </div>
+      <h3 className="voice-commands-head">From blueprints</h3>
+      {!commands.data?.blueprints ? (
+        <div className="empty">Blueprints is switched off, so voice has only its own commands below. Switch it on under Settings → Packages.</div>
+      ) : spoken.length === 0 ? (
+        <div className="empty">Nothing to say yet. Make one with New voice command.</div>
+      ) : (
+        spoken.map(spokenRow)
       )}
+      {commands.data?.blueprints && (
+        <button className="btn primary" style={{ marginTop: 4 }} onClick={() => void newCommand()}>
+          New voice command
+        </button>
+      )}
+      {problem && <div className="banner">{problem}</div>}
 
-      {all.length === 0 && <div className="empty">Nothing is wired up yet, so voice has nothing to match.</div>}
-
-      {GROUPS.map((group) => {
-        const mine = all.filter((command) => group.kinds.includes(command.kind));
-        // An empty group is noise — the "Add" button below is how a new kind
-        // gets its first entry, and the section appears once it has one.
-        if (mine.length === 0) return null;
-
-        return (
-          <details
-            className="group"
-            key={group.id}
-            open={!collapsed.has(group.id)}
-            onToggle={(e) => setOpen(group.id, (e.currentTarget as HTMLDetailsElement).open)}
-          >
-            <summary>
-              {group.label}
-              <span className="meta"> {mine.length}</span>
-              {/* Collapsing a section should not hide a problem inside it. */}
-              {mine.some((command) => brokenWords(command, unknown).length > 0) && (
-                <span className="urgent" title="a command in here cannot be recognised"> ⚠</span>
-              )}
-            </summary>
-            {mine.map(row)}
-          </details>
-        );
-      })}
-
+      <h3 className="voice-commands-head">Voice's own</h3>
+      <div className="meta" style={{ marginBottom: 6 }}>
+        These act on the microphone, so they stay here and work with Blueprints switched off.
+      </div>
+      {own.map(ownRow)}
       {adding ? (
-        <CommandEditor
-          habits={habits.data ?? []}
-          games={games.data ?? []}
+        <StopEditor
           unknownWords={unknown}
-          onDone={(savedKind) => {
+          onDone={() => {
             setAdding(false);
-            // Open whichever section it landed in, or it looks like nothing
-            // happened when that section happens to be shut.
-            if (savedKind) {
-              const group = GROUPS.find((g) => g.kinds.includes(savedKind));
-              if (group) setOpen(group.id, true);
-            }
-            reload();
+            commands.reload();
           }}
         />
       ) : (
-        <button className="btn primary" style={{ marginTop: 4 }} onClick={() => setAdding(true)}>
-          Add something to say
+        <button className="btn" style={{ marginTop: 4 }} onClick={() => setAdding(true)}>
+          Add a way to stop listening
         </button>
       )}
     </>
   );
 }
 
-/**
- * One command, being written.
- *
- * The target field changes shape with the kind, because a habit id, a URL and a
- * key combination have nothing in common but the column they share. Validation
- * errors come back from the server rather than being duplicated here — it is
- * the side that refuses a bare letter as a hotkey, and it should stay the only
- * side that decides that.
- */
-function CommandEditor({
+/** A "stop listening" command, being written: the phrases and how long it lasts. */
+function StopEditor({
   command,
-  habits,
-  games,
   unknownWords,
   onDone,
 }: {
   command?: VoiceCommand;
-  habits: Habit[];
-  /** What this PC has actually run — the only things a `launch` may point at. */
-  games: Game[];
   /** Words the recogniser never writes, so a phrase using one never matches. */
   unknownWords: Set<string>;
-  onDone: (savedKind?: VoiceCommandKind) => void;
+  onDone: () => void;
 }) {
-  // `cancel` is edited as "Stop listening" with a scope, so the dropdown never
-  // shows it: the two are one choice as far as this screen is concerned.
-  const [kind, setKind] = useState<VoiceCommandKind>(
-    command?.kind === 'cancel' ? 'pause' : (command?.kind ?? 'habit')
-  );
   const [scope, setScope] = useState<StopScope>(
-    command?.kind === 'cancel' ? 'sentence' : command?.pauseMinutes ? 'minutes' : 'manual'
+    command?.kind === 'cancel' ? 'sentence' : command?.pauseMinutes ? 'minutes' : command ? 'manual' : 'sentence'
   );
   const [phrases, setPhrases] = useState<string[]>(command?.phrases ?? []);
   const [draft, setDraft] = useState('');
-  const [target, setTarget] = useState(command?.target ?? '');
   const [pauseMinutes, setPauseMinutes] = useState(command?.pauseMinutes ?? 0);
   const [label, setLabel] = useState(command?.label ?? '');
   const [enabled, setEnabled] = useState(command?.enabled ?? true);
-  const [allowFollowUp, setAllowFollowUp] = useState(command?.allowFollowUp ?? true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-
-  const active = habits.filter((habit) => habit.active);
 
   function addPhrase() {
     const phrase = draft.trim().toLowerCase();
@@ -394,39 +219,32 @@ function CommandEditor({
   }
 
   async function save() {
-    // Taking a phrase that was typed but never added: doing that is what
-    // everyone does, and silently discarding it reads as "Save didn't work".
+    // A phrase typed but never added is taken: silently discarding it reads as
+    // "Save didn't work".
     const pending = draft.trim().toLowerCase();
     const finalPhrases = pending && !phrases.includes(pending) ? [...phrases, pending] : phrases;
-
     if (finalPhrases.length === 0) {
       setError('give it at least one phrase to listen for');
       return;
     }
-
     setBusy(true);
     setError('');
-
-    // The scope is what decides which kind this really is. They do genuinely
-    // different things underneath — one abandons a sentence, the other closes
-    // the microphone — so the distinction stays in the data even though the
-    // screen presents them as one choice.
-    const realKind: VoiceCommandKind = kind === 'pause' && scope === 'sentence' ? 'cancel' : kind;
-
+    // The scope decides which kind this really is: one abandons a sentence, the
+    // other closes the microphone, so the distinction stays in the data.
+    const kind: VoiceCommandKind = scope === 'sentence' ? 'cancel' : 'pause';
     const payload = {
-      kind: realKind,
+      kind,
       phrases: finalPhrases,
-      target: realKind === 'note' || realKind === 'pause' || realKind === 'cancel' ? null : target.trim(),
-      pauseMinutes: realKind === 'pause' && scope === 'minutes' && pauseMinutes > 0 ? pauseMinutes : null,
+      target: null,
+      pauseMinutes: kind === 'pause' && scope === 'minutes' && pauseMinutes > 0 ? pauseMinutes : null,
       label: label.trim() || null,
-      allowFollowUp,
+      allowFollowUp: false,
       enabled,
     };
-
     try {
       if (command) await voiceApi.updateCommand(command.id, payload);
       else await voiceApi.createCommand(payload);
-      onDone(realKind);
+      onDone();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'could not save');
     } finally {
@@ -436,155 +254,29 @@ function CommandEditor({
 
   return (
     <div className="card">
-      <select value={kind} onChange={(e) => setKind(e.target.value as VoiceCommandKind)} aria-label="What it does">
-        {SELECTABLE_KINDS.map((option) => (
+      <select value={scope} aria-label="How long to stop listening" onChange={(e) => setScope(e.target.value as StopScope)}>
+        {(Object.keys(SCOPE_LABEL) as StopScope[]).map((option) => (
           <option key={option} value={option}>
-            {KIND_LABEL[option]}
+            {SCOPE_LABEL[option]}
           </option>
         ))}
       </select>
       <div className="meta" style={{ marginTop: 6 }}>
-        {KIND_HELP[kind]}
+        {SCOPE_HELP[scope]}
       </div>
 
-      {kind === 'habit' && (
-        <select
-          style={{ marginTop: 10 }}
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          aria-label="Which habit"
-        >
-          <option value="">choose a habit…</option>
-          {active.map((habit) => (
-            <option key={habit.id} value={habit.id}>
-              {habit.name}
-            </option>
-          ))}
-        </select>
-      )}
-
-      {kind === 'url' && (
-        <input
-          style={{ marginTop: 10 }}
-          value={target}
-          placeholder="https://mail.google.com"
-          aria-label="Address to open"
-          onChange={(e) => setTarget(e.target.value)}
-        />
-      )}
-
-      {kind === 'media' && (
-        <select
-          style={{ marginTop: 10 }}
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          aria-label="Which media control"
-        >
-          <option value="">choose a control…</option>
-          {Object.entries(MEDIA_LABEL).map(([value, text]) => (
-            <option key={value} value={value}>
-              {text}
-            </option>
-          ))}
-        </select>
-      )}
-
-      {kind === 'music' && (
-        <select
-          style={{ marginTop: 10 }}
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          aria-label="What it does with the music"
-        >
-          <option value="">choose what it does…</option>
-          {Object.entries(MUSIC_LABEL).map(([value, text]) => (
-            <option key={value} value={value}>
-              {text}
-            </option>
-          ))}
-        </select>
-      )}
-
-      {kind === 'launch' &&
-        (games.length === 0 ? (
-          /*
-            No list means nothing to point at, and an empty dropdown says
-            nothing about why. The list fills itself in from use, so the fix is
-            to go and run the thing once rather than to type its name here.
-          */
-          <div className="meta" style={{ marginTop: 10 }}>
-            Nothing on the Games list yet. Start a game and it appears there within a few seconds —
-            Settings → Games.
-          </div>
-        ) : (
-          <>
-            <select
-              style={{ marginTop: 10 }}
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              aria-label="Which game or app"
-            >
-              <option value="">choose one…</option>
-              {games.map((game) => (
-                <option key={game.exe} value={game.exe}>
-                  {game.label}
-                  {game.launchPath ? '' : ' — location not known yet'}
-                </option>
-              ))}
-            </select>
-            {/* Said here rather than only on failure: a row with no path saves
-                perfectly and then answers "I do not know where that is", which
-                reads as the command being broken. */}
-            {target !== '' && !games.find((game) => game.exe === target)?.launchPath && (
-              <div className="meta" style={{ marginTop: 6 }}>
-                Where that lives is filled in the next time it runs, and this cannot start it until then.
-              </div>
-            )}
-          </>
-        ))}
-
-      {kind === 'hotkey' && (
-        <input
-          style={{ marginTop: 10 }}
-          value={target}
-          placeholder="ctrl+shift+m"
-          aria-label="Keys to press"
-          onChange={(e) => setTarget(e.target.value)}
-        />
-      )}
-
-      {kind === 'pause' && (
-        <>
-          <select
-            style={{ marginTop: 10 }}
-            value={scope}
-            aria-label="How long to stop listening"
-            onChange={(e) => setScope(e.target.value as StopScope)}
-          >
-            {(Object.keys(SCOPE_LABEL) as StopScope[]).map((option) => (
-              <option key={option} value={option}>
-                {SCOPE_LABEL[option]}
-              </option>
-            ))}
-          </select>
-          <div className="meta" style={{ marginTop: 6 }}>
-            {SCOPE_HELP[scope]}
-          </div>
-
-          {scope === 'minutes' && (
-            <div className="row" style={{ marginTop: 10 }}>
-              <input
-                type="number"
-                min={1}
-                max={1440}
-                value={pauseMinutes || 5}
-                aria-label="Minutes to stop listening for"
-                onChange={(e) => setPauseMinutes(Number(e.target.value))}
-              />
-              <span className="meta">minutes</span>
-            </div>
-          )}
-        </>
+      {scope === 'minutes' && (
+        <div className="row" style={{ marginTop: 10 }}>
+          <input
+            type="number"
+            min={1}
+            max={1440}
+            value={pauseMinutes || 5}
+            aria-label="Minutes to stop listening for"
+            onChange={(e) => setPauseMinutes(Number(e.target.value))}
+          />
+          <span className="meta">minutes</span>
+        </div>
       )}
 
       {phrases.length > 0 && (
@@ -637,18 +329,6 @@ function CommandEditor({
         aria-label="Name"
         onChange={(e) => setLabel(e.target.value)}
       />
-
-      <div className="row between" style={{ marginTop: 12 }}>
-        <div className="grow">
-          <div className="title">Open to continuations</div>
-          <div className="meta">
-            {allowFollowUp
-              ? 'After this runs, you can say another thing without the wake word.'
-              : 'The microphone closes as soon as this runs — good for anything that sends you elsewhere.'}
-          </div>
-        </div>
-        <Toggle on={allowFollowUp} label="Open to continuations" onChange={setAllowFollowUp} />
-      </div>
 
       {error && <div className="banner">{error}</div>}
 

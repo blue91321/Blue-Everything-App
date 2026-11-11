@@ -47,6 +47,9 @@ agent.config.json
 # The feature switches are a local deployment choice, not a project fact.
 # features.json is per-install; features.example.json is the checked-in one.
 features.json
+# Everything or Just Manga. A release zip carries its own; on a clone it is
+# written by Settings → Packages when you switch, which is a local choice too.
+/configuration.json
 
 # Installed packages, and which of them are switched on. Third-party code that
 # arrived from outside this repo — emphatically not ours to commit.

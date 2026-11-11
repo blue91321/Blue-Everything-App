@@ -53,6 +53,7 @@ const NEVER_KEPT = [
   /^\/api\/events\b/,
   /^\/api\/integrations\b/, // who is online, stale, is a lie with a coloured dot
   /^\/api\/voice\b/,
+  /^\/api\/code\b/, // the files change under it, and one is half a megabyte
   /^\/api\/manga\/(browse|search|thumb|extensions|source|ui-session)\b/,
   /^\/api\/manga\/[^/]+\/chapters\/[^/]+\/pages\b/, // a chapter is "saved" by the manga package, or not at all
   /^\/api\/manga\/[^/]+\/source\b/,

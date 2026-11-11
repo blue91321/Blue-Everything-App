@@ -15,7 +15,10 @@
  *
  * **Notifications are last on purpose**, as asked: by then the app is
  * installed, which on an iPhone is the only place push works, and the person
- * has said what they use it for, so the question means something.
+ * has said what they use it for, so the question means something. It starts
+ * with whether they want any (2026-11-09): "No" switches reminders off, the
+ * master switch every nudge obeys, manga's included, so a friend here for the
+ * reader is never asked to allow something only to ignore it.
  */
 import { useEffect, useState } from 'react';
 import { api, setToken, type AppSettings } from './api';
@@ -313,7 +316,10 @@ function Notify({ onFinish }: { onFinish: () => void }) {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [on, setOn] = useState(false);
+  /** Whether they want notifications at all: asked first, and nothing below shows until they say. */
+  const [want, setWant] = useState<boolean | null>(null);
   const support = checkPushSupport();
+  const manga = featureEnabled('manga');
   const pushHere = featureEnabled('push');
 
   useEffect(() => {
@@ -346,53 +352,91 @@ function Notify({ onFinish }: { onFinish: () => void }) {
     }
   };
 
+  /** "No" is reminders off, which holds every notification; "Yes" puts them back if "No" was pressed first. */
+  const choose = (yes: boolean) => {
+    setWant(yes);
+    if (!settings) return;
+    if (!yes) void update({ remindersEnabled: false }, { remindersEnabled: 0 });
+    else if (!settings.remindersEnabled) void update({ remindersEnabled: true }, { remindersEnabled: 1 });
+  };
+
   return (
     <>
       <h1>Notifications</h1>
-      <p>New chapters, and anything you ask to be reminded of, sent to this device.</p>
-      {!pushHere ? (
-        <p className="meta">Notifications are switched off on this copy.</p>
-      ) : !support.supported ? (
-        <p className="meta">{support.reason}</p>
-      ) : (
-        <button className="btn primary" disabled={busy || on || !settings} onClick={() => void allow()}>
-          {on ? 'Notifications on' : busy ? 'Asking…' : 'Allow notifications'}
+      <p>
+        {manga ? 'New chapters' : 'Reminders'}, and anything you ask to be reminded of. Do you want them?
+      </p>
+      <div className="onboarding-choices">
+        <button className={`onboarding-choice${want === true ? ' on' : ''}`} disabled={!settings} onClick={() => choose(true)}>
+          <strong>Yes, notify me</strong>
+          <span className="meta">On this device, and on the PC's screen when you're at it.</span>
         </button>
-      )}
-      {message && <p className="meta">{message}</p>}
+        <button className={`onboarding-choice${want === false ? ' on' : ''}`} disabled={!settings} onClick={() => choose(false)}>
+          <strong>No notifications</strong>
+          <span className="meta">Nothing pops up or buzzes. You can turn them on later.</span>
+        </button>
+      </div>
 
-      {settings && (
+      {want === false && (
+        <p className="meta">
+          Nothing will notify you.{' '}
+          {manga ? 'New chapters still show in your library, with the NEW badge. ' : ''}
+          Turn them back on in Settings → Notifications → Reminders.
+        </p>
+      )}
+
+      {want === true && (
         <>
-          <h3>Quiet hours</h3>
-          <label className="row" style={{ gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={Boolean(settings.quietHoursEnabled)}
-              onChange={(e) => void update({ quietHoursEnabled: e.target.checked }, { quietHoursEnabled: e.target.checked ? 1 : 0 })}
-            />
-            <span>Nothing between</span>
-          </label>
-          <div className="row" style={{ gap: 8, opacity: settings.quietHoursEnabled ? 1 : 0.5 }}>
-            <input
-              type="time"
-              value={toTime(settings.quietStartMinute)}
-              disabled={!settings.quietHoursEnabled}
-              onChange={(e) => void update({ quietStartMinute: fromTime(e.target.value) }, { quietStartMinute: fromTime(e.target.value) })}
-              aria-label="Quiet from"
-            />
-            <span>and</span>
-            <input
-              type="time"
-              value={toTime(settings.quietEndMinute)}
-              disabled={!settings.quietHoursEnabled}
-              onChange={(e) => void update({ quietEndMinute: fromTime(e.target.value) }, { quietEndMinute: fromTime(e.target.value) })}
-              aria-label="Quiet until"
-            />
-          </div>
+          {!pushHere ? (
+            <p className="meta">Notifications are switched off on this copy.</p>
+          ) : !support.supported ? (
+            <p className="meta">{support.reason}</p>
+          ) : (
+            <button className="btn primary" disabled={busy || on || !settings} onClick={() => void allow()}>
+              {on ? 'Notifications on' : busy ? 'Asking…' : 'Allow notifications'}
+            </button>
+          )}
+          {message && <p className="meta">{message}</p>}
+          {manga && (
+            <p className="meta">
+              To be told only about some series, such as your favourites or one shelf, see Manga → More → New chapters.
+            </p>
+          )}
+
+          {settings && (
+            <>
+              <h3>Quiet hours</h3>
+              <label className="row" style={{ gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.quietHoursEnabled)}
+                  onChange={(e) => void update({ quietHoursEnabled: e.target.checked }, { quietHoursEnabled: e.target.checked ? 1 : 0 })}
+                />
+                <span>Nothing between</span>
+              </label>
+              <div className="row" style={{ gap: 8, opacity: settings.quietHoursEnabled ? 1 : 0.5 }}>
+                <input
+                  type="time"
+                  value={toTime(settings.quietStartMinute)}
+                  disabled={!settings.quietHoursEnabled}
+                  onChange={(e) => void update({ quietStartMinute: fromTime(e.target.value) }, { quietStartMinute: fromTime(e.target.value) })}
+                  aria-label="Quiet from"
+                />
+                <span>and</span>
+                <input
+                  type="time"
+                  value={toTime(settings.quietEndMinute)}
+                  disabled={!settings.quietHoursEnabled}
+                  onChange={(e) => void update({ quietEndMinute: fromTime(e.target.value) }, { quietEndMinute: fromTime(e.target.value) })}
+                  aria-label="Quiet until"
+                />
+              </div>
+            </>
+          )}
         </>
       )}
 
-      <button className="btn primary" onClick={onFinish} style={{ marginTop: 16 }}>
+      <button className="btn primary" disabled={want === null} onClick={onFinish} style={{ marginTop: 16 }}>
         Done
       </button>
     </>

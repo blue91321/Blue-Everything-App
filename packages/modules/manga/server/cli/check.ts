@@ -29,7 +29,7 @@ import {
   seriesStatus,
   worthPolling,
 } from '../identity.js';
-import { alreadyRaised, clampReadAhead, isPutAway, MAX_READ_AHEAD, type ReadingPosition, type Store } from '../library.js';
+import { alreadyRaised, clampReadAhead, cleanReleaseScope, inReleaseScope, isPutAway, MAX_READ_AHEAD, type ReadingPosition, type Store } from '../library.js';
 import { KEEP_CHAPTERS, readAheadAt } from '../page-cache.js';
 import { beside, reachedTheEnd, skippedBetween, skipTarget } from '../../web/chapter-nav.js';
 import { fromLine, toLine } from '../../web/log-csv.js';
@@ -53,9 +53,12 @@ import { BATCH, checkEvery, dueForCheck, pollable, RECENT_SLOTS, RETRY_SLOTS, se
 import { fromSuwayomiFilter, groupKey, groupMatches, isIndexSource, toSuwayomiChanges } from '../browse.js';
 import { thumbPath } from '../present.js';
 import { betterTitle, retitleFromSource, titleKey } from '../titles.js';
-import { sorted } from '../../web/shelf.js';
+import { goneFromSource, notAnswering, sorted, sourceHasNothing, SWITCH_AFTER_MS, switchDueAt } from '../../web/shelf.js';
+import { dueForSwitch, pickReplacement } from '../find-sources.js';
+import { isPrivateAddress, refusal, secretMatches } from '../flaresolverr.js';
 import { fetchPage, pagesInFlight, PageFetchError, sharedPage, SLOW_FAILURE_MS } from '../page-fetch.js';
 import { glideDistance, glideStep, MAX_SPEED, releaseVelocity, STOP_SPEED } from '../../web/glide.js';
+import { chooseFirstAlone, contentKind, cutsCarryOn, EDGE, fitsTwo, formatFromTags, pairPages, seamJoined, type PageInfo } from '../../web/page-layout.js';
 import { normaliseTags } from '../tags.js';
 import { DEFAULT_HIDDEN_TAGS, hasTag, hiddenBy, tagsForLevel } from '../mature.js';
 import { extensionUsage } from '../extension-usage.js';
@@ -64,6 +67,8 @@ import { chapterFolder, mendManifest, nextInQueue, pickEdition, type ArchiveMani
 import { mkdirSync as mkdirTmp, mkdtempSync, readdirSync as listTmp, rmSync as rmTmp, writeFileSync as writeTmp } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join as joinTmp } from 'node:path';
+import { compress } from '../compress.js';
+import { levelForSpeed, sampleSpeed, withQuality } from '../../web/quality.js';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -742,10 +747,13 @@ const store: Store = {
   shelfNewFirst: true,
   shelfFavFirst: false,
   releaseNudges: true,
+  releaseNudgesFor: null,
   autoUpdateExtensions: true,
+  autoSwitchSources: true,
   autoKeepFavourites: false,
   autoKeepMinRating: null,
   shareRatingsWithCopies: false,
+  archiveQuality: 'original',
   browseSource: null,
   libraries: [],
   glimpses: [],
@@ -804,6 +812,18 @@ check('nor the same chapter of another series', !alreadyRaised(store, 'stale', '
   check('hidden wins over a visible shelf it is also on', isPutAway(shelves, { libraries: ['b', 'a'] }));
   check('a series only on visible shelves is not', !isPutAway(shelves, { libraries: ['b'] }));
   check('nor one on no shelf at all', !isPutAway(shelves, {}));
+
+  // Which series a new chapter notifies about (More → New chapters).
+  check('no scope notifies for every series', inReleaseScope(null, {}));
+  check('favourites: a starred series notifies', inReleaseScope({ favourites: true, shelves: [] }, { favourite: true }));
+  check('favourites: an unstarred one does not', !inReleaseScope({ favourites: true, shelves: [] }, {}));
+  check('a chosen shelf notifies', inReleaseScope({ favourites: false, shelves: ['b'] }, { libraries: ['a', 'b'] }));
+  check('either is enough', inReleaseScope({ favourites: true, shelves: ['b'] }, { libraries: ['b'] }));
+  check('a series on no chosen shelf does not', !inReleaseScope({ favourites: false, shelves: ['b'] }, { libraries: ['a'] }));
+  const libs = [{ id: 'a' }, { id: 'b' }];
+  check('a scope with nothing chosen reads as every series', cleanReleaseScope({ favourites: false, shelves: [] }, libs) === null);
+  check('a removed shelf is dropped from the scope', JSON.stringify(cleanReleaseScope({ favourites: true, shelves: ['b', 'gone', 'b'] }, libs)) === '{"favourites":true,"shelves":["b"]}');
+  check('nonsense reads as every series', cleanReleaseScope('all', libs) === null && cleanReleaseScope(null, libs) === null);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1109,6 +1129,56 @@ console.log('\na check that failed is asked again sooner\n');
   );
   check('and it is near the front, not the back', picked.findIndex((p) => p.error !== null) < RETRY_SLOTS);
 
+  /*
+   * Gone from its source (a 404, or "no chapters") is not a failure to retry:
+   * MangaFox's 404s for series it had taken down sat in the retry slots of every
+   * sweep. Asked once a day in the ordinary queue instead.
+   */
+  check('a 404 is gone from the source, as "no chapters" is; a timeout is not', goneFromSource('HTTP error 404') && goneFromSource('No chapters found') && !goneFromSource('Suwayomi did not answer in time') && !goneFromSource(null));
+  const goneRow = old(901, 'HTTP error 404');
+  const withGone = dueForCheck({ ...store, series: [...Array.from({ length: 40 }, (_, i) => old(i, null)), goneRow] }, now, {});
+  check('  ...and a gone row gets no retry slot', withGone.findIndex((p) => p.id === goneRow.id) === -1 || withGone.findIndex((p) => p.id === goneRow.id) >= RETRY_SLOTS);
+  check('  ...and is not asked again within a day', !dueForCheck({ ...store, series: [{ ...goneRow, checkedAt: now - 3_600_000 }] }, now, {}).some((p) => p.id === goneRow.id));
+  const shelfRow = (error: string) => ({ source: { sourceName: 'MangaFox (EN)' }, error }) as unknown as Parameters<typeof notAnswering>[0];
+  check('  ...and the Library files it under "source has nothing for it", not "not answering"', sourceHasNothing(shelfRow('HTTP error 404')) && !notAnswering(shelfRow('HTTP error 404')) && notAnswering(shelfRow('timeout')));
+  const m = (id: string, sourceName: string) => ({ id, title: 'T', sourceName, lang: 'en', url: null, thumbnailUrl: null });
+  check(
+    'a switch takes a source that reaches as far as you have read, over one used more that does not',
+    pickReplacement([{ match: m('a', 'Big'), latest: 40, chapters: 40 }, { match: m('b', 'Small'), latest: 120, chapters: 118 }], 100)?.id === 'b'
+  );
+  check('  ...failing that, the one that reaches furthest', pickReplacement([{ match: m('a', 'A'), latest: 40, chapters: 40 }, { match: m('b', 'B'), latest: 60, chapters: 58 }], 100)?.id === 'b');
+  check('  ...and none that has no chapters', pickReplacement([{ match: m('a', 'A'), latest: null, chapters: 0 }], 0) === null);
+
+  // Two days of failing, then a switch; a switch that found nothing is tried again daily, and none when switching is off.
+  {
+    const H = 3_600_000;
+    const failing = (since: number, tried?: number) =>
+      ({ ...old(950, 'Cloudflare bypass currently disabled'), failingSince: now - since * H, ...(tried === undefined ? {} : { switchTriedAt: now - tried * H }) });
+    check('a source failing for two days is due for a switch, one failing for a day is not', dueForSwitch(failing(49), now) && !dueForSwitch(failing(24), now));
+    check('  ...nor one tried an hour ago that found nothing, until a day has passed', !dueForSwitch(failing(72, 1), now) && dueForSwitch(failing(72, 25), now));
+    check('  ...nor one that is answering', !dueForSwitch({ ...failing(72), error: null }, now));
+    check('  ...and the page says when: two days after it started failing', switchDueAt(failing(10), true) === now - 10 * H + SWITCH_AFTER_MS);
+    check('  ...and nothing when switching is off', switchDueAt(failing(10), false) === null);
+    check('  ...and a day after a try that found nothing', switchDueAt(failing(72, 2), true) === now - 2 * H + 24 * H);
+  }
+
+  // FlareSolverr's door: only what Suwayomi asks for, and only for public sites.
+  {
+    const dns = (map: Record<string, string[]>) => async (host: string) => map[host] ?? [];
+    const asked = (body: unknown, map: Record<string, string[]> = { 'mangahub.io': ['104.21.1.1'] }) => refusal(body, dns(map));
+    check('FlareSolverr: a page on a public site is passed on', (await asked({ cmd: 'request.get', url: 'https://mangahub.io/manga/x' })) === null);
+    check('  ...and a session Suwayomi keeps', (await asked({ cmd: 'sessions.create', session: 'suwayomi' })) === null);
+    check('  ...but not a command Suwayomi never sends', (await asked({ cmd: 'request.raw', url: 'https://mangahub.io' })) !== null && (await asked({ cmd: 1 })) !== null);
+    check(
+      '  ...nor anything on this PC, the home network or the tailnet, by address',
+      (await Promise.all(['http://127.0.0.1:8787/api', 'http://192.168.1.5/', 'http://10.0.0.1', 'http://100.101.1.2/', 'http://[::1]:4567/', 'http://169.254.169.254/'].map((url) => asked({ cmd: 'request.get', url })))).every((r) => r !== null)
+    );
+    check('  ...or by a name that points there', (await asked({ cmd: 'request.get', url: 'https://sneaky.example/' }, { 'sneaky.example': ['127.0.0.1'] })) !== null && (await asked({ cmd: 'request.get', url: 'http://localhost:4567/' })) !== null && (await asked({ cmd: 'request.get', url: 'https://pc.tail1234.ts.net/' })) !== null);
+    check('  ...nor a file, nor a password in the address', (await asked({ cmd: 'request.get', url: 'file:///C:/Windows/win.ini' })) !== null && (await asked({ cmd: 'request.get', url: 'https://a:b@mangahub.io/' })) !== null);
+    check('  ...and private addresses are known as such', isPrivateAddress('172.20.3.4') && isPrivateAddress('fd00::1') && isPrivateAddress('::ffff:127.0.0.1') && !isPrivateAddress('104.21.1.1') && !isPrivateAddress('2606:4700::1'));
+    check('  ...and a wrong secret does not open the door', !secretMatches('') && !secretMatches('0'.repeat(64)));
+  }
+
   // Bounded: a library where everything is broken must not spend the whole
   // sweep on it, or nothing you are reading is ever asked about again.
   const allBroken = {
@@ -1386,6 +1456,67 @@ console.log('\na mouse drag slides on after letting go');
   check('  ...and far short where the browser truncates', truncated.shown < truncatedKept.shown * 0.8, `${truncated.shown}px against ${truncatedKept.shown}px`);
 }
 
+console.log('\npages mode: which pages sit side by side, and what a chapter is');
+{
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  const six = [0.7, 0.7, 0.7, 0.7, 0.7, 0.7];
+  check('a cover alone, then pairs, when asked', same(pairPages(six, true, true), [[0], [1, 2], [3, 4], [5]]));
+  check('or pairs from the first page', same(pairPages(six, false, true), [[0, 1], [2, 3], [4, 5]]));
+  check('one page to a sheet when two do not fit', same(pairPages(six, true, false), [[0], [1], [2], [3], [4], [5]]));
+  const wide = [0.7, 0.7, 1.4, 0.7, 0.7];
+  check('a wide page is alone, and the next starts a pair', same(pairPages(wide, false, true), [[0, 1], [2], [3, 4]]));
+  check('  ...and the page before it is alone when it has no partner', same(pairPages(wide, true, true), [[0], [1], [2], [3, 4]]));
+  check('pages not read yet pair as pages', same(pairPages([null, null, null], false, true), [[0, 1], [2]]));
+
+  check('two fit on a desktop window', fitsTwo(1920, 1080, 0.7));
+  check('  ...and on a phone held sideways', fitsTwo(844, 390, 0.7));
+  check('  ...not on a phone held upright', !fitsTwo(390, 844, 0.7));
+  check('  ...nor a tablet held upright', !fitsTwo(768, 1024, 0.7));
+  check('  ...but on half of a wide monitor', fitsTwo(1720, 1390, 0.703));
+
+  // Edges: a plain margin, a picture, and a different picture.
+  const plain = Array.from({ length: EDGE }, () => 250);
+  const art = Array.from({ length: EDGE }, (_, i) => 128 + 100 * Math.sin(i / 3));
+  const other = Array.from({ length: EDGE }, (_, i) => 128 + 100 * Math.cos(i / 2));
+  check('a plain margin says nothing about a seam', seamJoined(plain, art) === null);
+  check('a picture carried across the gutter is joined', seamJoined(art, art.map((x) => x + 5)) === true);
+  check('two different pictures are not', seamJoined(art, other) === false);
+
+  const page = (left: number[], right: number[]): PageInfo => ({ aspect: 0.7, colour: 0.02, left, right, top: plain, bottom: plain });
+  // Right to left: page 2's left edge carries into page 3's right edge, a spread across them.
+  const book = [page(plain, plain), page(art, plain), page(plain, art), page(plain, plain), page(plain, plain), page(plain, plain)];
+  check('a spread across pages 2 and 3 puts the cover alone', chooseFirstAlone(book, true) === true);
+  const fromFirst = [page(art, plain), page(plain, art), page(plain, plain), page(plain, plain)];
+  check('a spread across pages 1 and 2 pairs from the first', chooseFirstAlone(fromFirst, true) === false);
+  check('  ...read left to right, the other edges are the seam', chooseFirstAlone(fromFirst, false) === null);
+  check('nothing drawn across any gutter decides nothing', chooseFirstAlone([page(plain, plain), page(plain, plain), page(plain, plain)], true) === null);
+
+  const info = (aspect: number, colour: number, top = plain, bottom = plain): PageInfo => ({ aspect, colour, left: plain, right: plain, top, bottom });
+  check('tall slices are a strip', contentKind([info(0.1, 0.4), info(0.1, 0.4), info(0.12, 0.3), info(0.7, 0.3)]) === 'scroll');
+  check('black-and-white pages are a book', contentKind([info(0.7, 0.3), info(0.68, 0.02), info(0.7, 0.01), info(0.71, 0.03)]) === 'pages');
+  check('coloured pages say nothing', contentKind([info(0.7, 0.3), info(0.7, 0.4), info(0.7, 0.35)]) === null);
+  check('page-sized slices that carry on into each other are a strip', contentKind([info(0.66, 0.02, plain, art), info(0.66, 0.02, art, art), info(0.66, 0.02, art, plain)]) === 'scroll');
+  check('two pages are not enough to tell', contentKind([info(0.7, 0.01), info(0.7, 0.01)]) === null);
+
+  // Cuts the picture carries on across, plain or drawn, but not white paper on white paper.
+  const grey = Array.from({ length: EDGE }, () => 120);
+  const greyish = grey.map((x) => x + 6);
+  check('a plain grey background carried across every cut is a strip', cutsCarryOn([info(0.66, 0.2, plain, grey), info(0.66, 0.2, greyish, grey), info(0.66, 0.2, greyish, grey), info(0.66, 0.2, greyish, plain)]));
+  check('  ...and makes page-shaped black-and-white slices a strip', contentKind([info(0.66, 0.02, plain, grey), info(0.66, 0.02, greyish, grey), info(0.66, 0.02, greyish, grey), info(0.66, 0.02, greyish, plain)]) === 'scroll');
+  check('white margins meeting white margins say nothing', !cutsCarryOn([info(0.7, 0.02), info(0.7, 0.02), info(0.7, 0.02), info(0.7, 0.02)]));
+  check('pages whose art bleeds to the edge are different drawings', !cutsCarryOn([info(0.7, 0.02, plain, art), info(0.7, 0.02, other, art), info(0.7, 0.02, other, plain)]));
+  check('  ...and stay a book', contentKind([info(0.7, 0.02, plain, art), info(0.7, 0.02, other, art), info(0.7, 0.02, other, plain)]) === 'pages');
+  check('most of the time, not every time', cutsCarryOn([info(0.66, 0.2, plain, grey), info(0.66, 0.2, greyish, grey), info(0.66, 0.2, greyish, art), info(0.66, 0.2, other, grey), info(0.66, 0.2, greyish, plain)]));
+
+  // Tags first.
+  check('Long Strip is a strip', formatFromTags(['Adaptation', 'Full Color', 'Long Strip', 'Web Comic']) === 'scroll');
+  check('Manga is a book', formatFromTags(['Manga', 'Action', 'Isekai']) === 'pages');
+  check('Manhwa and Manhua are strips', formatFromTags(['Manhwa', 'Fantasy']) === 'scroll' && formatFromTags(['Manhua']) === 'scroll');
+  check('a Japanese series published as a webtoon is still a strip', formatFromTags(['Manga', 'Long Strip']) === 'scroll');
+  check('spelling and case do not matter', formatFromTags(['long-strip']) === 'scroll' && formatFromTags(['4-Koma']) === 'pages');
+  check('Full Color alone says nothing', formatFromTags(['Full Color', 'Action']) === null && formatFromTags(undefined) === null);
+}
+
 console.log('\na page that times out is given up on sooner');
 {
   // A fake clock and a fake fetch: each attempt "takes" the time given, and fails.
@@ -1489,6 +1620,41 @@ console.log('\nkeeping a series keeps one edition of each chapter');
   const queue = [item('old', '1'), item('old', '2'), item('new', '9')];
   check('a series never served goes first', nextInQueue(queue, new Map([['old', 5]]))?.chapterId === '9');
   check('then the one served longest ago', nextInQueue(queue, new Map([['old', 5], ['new', 9]]))?.chapterId === '1');
+}
+
+console.log('\nsmaller pictures');
+{
+  // How fast a page crossed the connection, with the server's own time taken off.
+  check('a 600KB page in 400ms, 100ms of it the server, is 2KB a millisecond', Math.round(sampleSpeed(600_000, 400, 100, 1)!) === 2000);
+  check('three going together share the connection', Math.round(sampleSpeed(600_000, 1200, 0, 3)!) === 1500);
+  check('a small page says nothing about speed', sampleSpeed(20_000, 300, 0, 1) === null);
+  check('fast is full size, slow smaller, very slow smallest', levelForSpeed(3000) === 'original' && levelForSpeed(800) === 'smaller' && levelForSpeed(100) === 'smallest');
+  check('the level rides on the address', withQuality('/api/manga/s/page?p=x', 'smaller') === '/api/manga/s/page?p=x&q=smaller' && withQuality('/x?p=1', 'original') === '/x?p=1');
+
+  const sharp = (await import('sharp')).default;
+  // A noisy picture, as a scanned page is: a PNG of it is big, and a WebP far smaller.
+  const { randomBytes } = await import('node:crypto');
+  const png = await sharp(randomBytes(800 * 2400 * 3), { raw: { width: 800, height: 2400, channels: 3 } }).png().toBuffer();
+  // And one a PNG already holds in very little: a pattern repeating, which WebP does not beat.
+  const pattern = Buffer.alloc(800 * 2400 * 3);
+  for (let i = 0; i < pattern.length; i++) pattern[i] = (i * 2654435761) >>> 24;
+  const tight = await sharp(pattern, { raw: { width: 800, height: 2400, channels: 3 } }).png().toBuffer();
+  const small = await compress({ body: png, type: 'image/png' }, 'smaller');
+  check('a big page is made smaller, as WebP', small.type === 'image/webp' && small.body.length < png.length, `${png.length} → ${small.body.length}`);
+  const meta = await sharp(small.body).metadata();
+  check('  ...at its own width when under the cap', meta.width === 800 && meta.height === 2400, `${meta.width}x${meta.height}`);
+  const smallest = await compress({ body: png, type: 'image/png' }, 'smallest');
+  check('smallest is smaller again', smallest.body.length < small.body.length, `${small.body.length} → ${smallest.body.length}`);
+  const wide = await sharp({ create: { width: 1800, height: 1200, channels: 3, background: '#808080' } }).png().toBuffer();
+  const wideOut = await sharp((await compress({ body: wide, type: 'image/png' }, 'smallest')).body).metadata();
+  check('a page wider than the cap is brought down to it', wideOut.width === 900 && wideOut.height === 600, `${wideOut.width}x${wideOut.height}`);
+  const tall = await sharp({ create: { width: 800, height: 20000, channels: 3, background: '#808080' } }).png().toBuffer();
+  const tallOut = await compress({ body: tall, type: 'image/png' }, 'smaller');
+  check('a strip taller than WebP allows comes back as JPEG', tallOut.type === 'image/jpeg', tallOut.type);
+  check('a copy that is not smaller is not sent', (await compress({ body: tight, type: 'image/png' }, 'smaller')).body === tight);
+  check('a GIF is left alone', (await compress({ body: png, type: 'image/gif' }, 'smallest')).body === png);
+  check('full size is the picture itself', (await compress({ body: png, type: 'image/png' }, 'original')).body === png);
+  check('something that is not a picture comes back as it was', (await compress({ body: Buffer.from('nope'), type: 'image/jpeg' }, 'smaller')).body.toString() === 'nope');
 }
 
 process.exit(failures === 0 ? 0 : 1);

@@ -112,8 +112,13 @@ export interface Habit {
   reminderStartMinute: number | null;
   /** 1 yes, 0 no, null follows the default in Settings. */
   pushToPhone: number | null;
-  /** Things you can say to tick this off. Empty means voice can't reach it. */
+  /** Things you can say to tick this off, from the voice blueprints that do. */
   voicePhrases: string[];
+  /**
+   * The voice commands (blueprints) that tick it, and where each is edited.
+   * Optional: a server older than this sends none.
+   */
+  spoken?: { label: string; phrases: string[]; enabled: boolean; edit: { screen: string; focus: string } }[];
   periodKey: string;
   doneThisPeriod: number;
   /** The last tick ever, not just this period. Null if never done. */
@@ -141,6 +146,8 @@ export interface AppSettings {
   remindersEnabled: number;
   /** A short tone with each popup. Absent on a server older than the column. */
   soundEnabled?: number;
+  /** How loud the app's tones are, 0 to 100. Absent on a server older than the column. */
+  soundVolume?: number;
   /**
    * Which tone each moment gets, by name from the agent's palette.
    *
@@ -188,6 +195,8 @@ export interface AppSettings {
   wakeWord?: string;
   /** Comma-separated words that keep being heard as the wake word. */
   wakeDecoys?: string;
+  /** Other ways the wake word comes out when you say it, which count as it. */
+  wakeAlikes?: string;
   requireKnownSpeaker?: number;
   /** 0-1. Stored as whole percent; converted on the way out of the server. */
   speakerThreshold?: number;

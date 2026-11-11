@@ -2,68 +2,52 @@
  * Turning a transcript into something that happens.
  *
  * Split out of the route because this is the part with consequences and the
- * part worth testing on its own: a phrase can now tick off a habit, open a
- * site, press keys in whatever window is focused, or silence the microphone.
- * `npm run voice-check -w @everything/server` covers it.
+ * part worth testing on its own. `npm run voice-check -w @everything/server`
+ * covers it.
  *
- * The division of labour is deliberate. Anything that touches *data* happens
- * here, on the server, because the server owns the database. Anything that
- * touches *this machine* — a browser, a keystroke — is returned as an
- * instruction for the agent to carry out, because the server is meant to be
- * movable and has no business assuming it runs on your desk.
+ * **What a command does is a blueprint now** (2026-10-29). A *When I say* box
+ * holds the phrases and the Do boxes after it do the work, so a spoken command
+ * can do anything a blueprint can, and ticking a habit, opening a site,
+ * pressing keys, media keys, starting a game, music and notes all moved there.
+ * Voice keeps what is about *hearing*: which command a sentence was, "this and
+ * that" in one breath, asking when two tie, and the microphone staying open
+ * for another. The two packages may not import each other, so the commands
+ * come through core's spoken port (`spokenCommands()`), and with Blueprints
+ * switched off there are none.
+ *
+ * **Two commands are still voice's own**: "stop listening" (`pause`) and
+ * "never mind" (`cancel`). They act on the microphone itself, mid-sentence,
+ * and must work with Blueprints off, so the microphone can always be silenced
+ * by voice. Those stay in `voice_commands`; the other kinds left there are the
+ * record of what was converted, and are not read.
  */
-import { and, asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray } from 'drizzle-orm';
 import {
   ALWAYS_IN_VOCABULARY,
-  MEDIA_LABEL,
   matchVoiceCommand,
   matchVoiceCommandLoosely,
   spokenVariants,
-  parseHotkey,
   remainderAfterPhrase,
   segmentUtterance,
   spokenAmount,
-  isLaunchTarget,
-  type MediaAction,
   type VoiceCandidate,
-  type VoiceCommandKind,
 } from '@everything/shared';
-import { isLaunchUrl } from '@everything/shared/games';
-import { config, db } from '@everything/server/module-api';
-import { games, habits, notes, settings, voiceCommands } from '@everything/server/module-api';
-import { saveNote } from '@everything/server/module-api';
-import { recordHabitDone } from '@everything/server/module-api';
+import { db, settings, spokenCommands, voiceCommands } from '@everything/server/module-api';
 
-/** Something for the agent to do on the machine you are sitting at. */
+/** Something for the agent to do to the microphone. Everything else is a blueprint's. */
 export type VoiceAction =
-  | { do: 'open-url'; url: string }
-  | { do: 'press-keys'; keys: string }
-  /** A system media key. The agent refuses it when nothing is playing. */
-  | { do: 'media'; action: string }
-  /**
-   * Start a program. Resolved here from the games list, never carried in the
-   * command — see `isLaunchTarget`.
-   *
-   * Either a path or a `steam://` address: for a Steam game the executable is
-   * frequently the wrong thing to run, and the URL is what the desktop shortcut
-   * holds. Exactly one is set.
-   */
-  | { do: 'launch'; path?: string; url?: string; name: string }
   | { do: 'pause'; untilMs: number | null }
   /** Drop the sentence in progress. The microphone stays on. */
   | { do: 'cancel' };
 
 export interface VoiceOutcome {
   outcome:
-    | 'habit-checked'
-    | 'note-added'
-    | 'opened'
-    | 'keys-sent'
-    | 'media-sent'
-    | 'launched'
+    /** A blueprint ran, and `say` is what it did. */
+    | 'ran'
+    /** A blueprint was matched and could not do it; `say` says why. */
+    | 'failed'
     | 'paused'
     | 'cancelled'
-    | 'captured-as-note'
     | 'ambiguous'
     /** Several commands in one sentence, joined by "and". See `steps`. */
     | 'chained'
@@ -76,20 +60,13 @@ export interface VoiceOutcome {
    * The parts of a `chained` outcome, in the order they were said and run.
    *
    * A list rather than a flattened set of fields because each part is a whole
-   * outcome — its own `say`, its own action, its own habit tally — and the
-   * overlay wants to show what each one did. Absent on every other outcome.
+   * outcome with its own `say`, and the overlay shows what each one did.
    */
   steps?: VoiceOutcome[];
   /** When more than one command matched equally well, so the agent can ask. */
   choices?: { id: string; label: string }[];
   /** Whether this command lets the microphone stay open afterwards. */
   allowFollowUp?: boolean;
-  habitId?: string;
-  habitName?: string;
-  doneThisPeriod?: number;
-  target?: number;
-  met?: boolean;
-  noteId?: string;
 }
 
 export function parsePhrases(raw: string): string[] {
@@ -102,33 +79,61 @@ export function parsePhrases(raw: string): string[] {
   }
 }
 
+/** Voice's own two, which act on the microphone and stay with it. */
+export const OWN_KINDS = ['pause', 'cancel'] as const;
+
 export interface LoadedCommand {
   id: string;
-  kind: VoiceCommandKind;
+  /** `blueprint` is a "When I say" box; the other two are voice's own. */
+  kind: 'pause' | 'cancel' | 'blueprint';
   phrases: string[];
+  /** For a blueprint, its spoken id in the port. */
   target: string | null;
   pauseMinutes: number | null;
   label: string | null;
   /** Whether the microphone stays open after this fires. */
   allowFollowUp: boolean;
+  /** It uses the words said after its phrase, so it is never one half of a chain. */
+  takesRest?: boolean;
 }
+
+/** A spoken command's id in this list: kept apart from voice's own ids by its prefix. */
+const BLUEPRINT = 'bp:';
 
 export async function loadCommands(): Promise<LoadedCommand[]> {
   const rows = await db
     .select()
     .from(voiceCommands)
-    .where(eq(voiceCommands.enabled, 1))
+    .where(inArray(voiceCommands.kind, [...OWN_KINDS]))
     .orderBy(asc(voiceCommands.sortOrder));
 
-  return rows.map((row) => ({
-    id: row.id,
-    kind: row.kind as VoiceCommandKind,
-    phrases: parsePhrases(row.phrases),
-    target: row.target,
-    pauseMinutes: row.pauseMinutes,
-    label: row.label,
-    allowFollowUp: Boolean(row.allowFollowUp),
-  }));
+  const own: LoadedCommand[] = rows
+    .filter((row) => row.enabled)
+    .map((row) => ({
+      id: row.id,
+      kind: row.kind as 'pause' | 'cancel',
+      phrases: parsePhrases(row.phrases),
+      target: row.target,
+      pauseMinutes: row.pauseMinutes,
+      label: row.label,
+      allowFollowUp: Boolean(row.allowFollowUp),
+    }));
+
+  const spoken: LoadedCommand[] = spokenCommands()
+    .list()
+    .filter((command) => command.enabled && command.phrases.length > 0)
+    .map((command) => ({
+      id: `${BLUEPRINT}${command.id}`,
+      kind: 'blueprint',
+      phrases: command.phrases,
+      target: command.id,
+      pauseMinutes: null,
+      label: command.label,
+      allowFollowUp: command.allowFollowUp,
+      takesRest: command.takesRest,
+    }));
+
+  return [...own, ...spoken];
 }
 
 /** The literal words of every phrase, plus the wake word. What to check exists. */
@@ -195,17 +200,6 @@ export function vocabularyFor(commands: LoadedCommand[], wakeWord: string): stri
   }
 
   return [...words].sort();
-}
-
-/** The games list's own name for an executable, for the Voice screen. */
-async function describeGame(exe: string): Promise<string> {
-  const [row] = await db.select().from(games).where(eq(games.exe, exe.trim().toLowerCase()));
-  return row?.label ?? exe;
-}
-
-async function describeHabit(habitId: string): Promise<string> {
-  const [habit] = await db.select().from(habits).where(eq(habits.id, habitId));
-  return habit?.name ?? 'a habit that no longer exists';
 }
 
 /**
@@ -329,10 +323,10 @@ export async function resolveVoiceCommand(
  *  - **No segment may be ambiguous.** Asking about one part of a chain would
  *    mean holding the rest of the sentence somewhere while the popup waits,
  *    which is a lot of machinery for a rare case. Falling back is honest.
- *  - **No `note`.** Its content is whatever was said after the trigger, so
- *    "note buy milk and eggs" would file "buy milk" and try to run "eggs" as a
- *    command. A note is allowed to contain the word "and"; that is the point of
- *    dictating one.
+ *  - **Nothing that uses the words after its phrase.** A new note's content is
+ *    whatever was said after the trigger, so "note buy milk and eggs" would
+ *    file "buy milk" and try to run "eggs" as a command. A note is allowed to
+ *    contain the word "and"; that is the point of dictating one.
  */
 export interface ChainStep {
   command: LoadedCommand;
@@ -377,10 +371,10 @@ export function planChain(
     if (tied) return null;
 
     const command = commands.find((c) => c.id === match.id)!;
-    // A note's content is whatever was said after its trigger, so segmenting it
-    // would file half a sentence and try to run the rest. Dictating a note that
-    // contains "and" is rather the point of dictating one.
-    if (command.kind === 'note') return null;
+    // A command that uses what was said after its phrase (a new note) needs
+    // all of it, so segmenting it would file half a sentence and try to run the
+    // rest. Dictating a note that contains "and" is rather the point.
+    if (command.takesRest) return null;
 
     resolved.push({ command, phrase: match.phrase, segment });
   }
@@ -420,214 +414,37 @@ async function resolveChain(
 
 export async function labelFor(command: LoadedCommand): Promise<string> {
   if (command.label) return command.label;
-  switch (command.kind) {
-    case 'habit':
-      return await describeHabit(command.target ?? '');
-    case 'url':
-      return `open ${command.target}`;
-    case 'hotkey':
-      return `press ${command.target}`;
-    case 'media':
-      return MEDIA_LABEL[(command.target ?? '') as MediaAction] ?? 'media control';
-    case 'launch':
-      // The games list already holds a name a person chose, so use it rather
-      // than showing `fortniteclient-win64-shipping.exe` on the Voice screen.
-      return `start ${await describeGame(command.target ?? '')}`;
-    case 'note':
-      return 'make a note';
-    case 'pause':
-      return command.pauseMinutes ? `stop listening for ${command.pauseMinutes}m` : 'stop listening';
-    case 'cancel':
-      return 'never mind';
-    case 'music':
-      return MUSIC_LABEL[command.target ?? ''] ?? 'music';
-  }
+  if (command.kind === 'pause') return command.pauseMinutes ? `stop listening for ${command.pauseMinutes}m` : 'stop listening';
+  if (command.kind === 'cancel') return 'never mind';
+  return `"${command.phrases[0] ?? ''}"`;
 }
-
-const MUSIC_LABEL: Record<string, string> = {
-  shuffle: 'play shuffled music',
-  random: 'play random music',
-  queue: 'play shuffled music',
-  stop: 'stop adding songs to the music queue',
-};
 
 /**
- * Ask the Music feature to do it, over HTTP to this same server.
- *
- * Voice and integrations are separate packages, either of which can be
- * deleted, so voice may not import the shuffle. A request to its own route is
- * the boundary both already respect: with integrations gone it answers 404,
- * which becomes "Music isn't installed". It goes to loopback by IP with no
- * forwarding headers, which is what local trust asks for, so no token is
- * needed. The lists, gap, recency, boosts and queue size are the Music tab's
- * own, kept on the server, so voice plays exactly what the tab would; only
- * Shuffle or Random comes from the command.
+ * Run one resolved command, or with `dry`, only say what it would do. Exported
+ * so the overlay can act on a disambiguation and "Try a phrase" can ask.
  */
-async function musicRequest(path: string, body: unknown): Promise<{ ok: true } | { ok: false; why: string }> {
-  try {
-    const response = await fetch(`http://127.0.0.1:${config.PORT}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (response.status === 404) return { ok: false, why: "Music isn't installed" };
-    if (!response.ok) {
-      const data = (await response.json().catch(() => ({}))) as { error?: string };
-      return { ok: false, why: data.error ?? `Music answered ${response.status}` };
-    }
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, why: error instanceof Error ? error.message : 'Music did not answer' };
-  }
-}
-
-/** Run one resolved command. Exported so the overlay can act on a disambiguation. */
 export async function runCommand(
   command: LoadedCommand,
   text: string,
   phrase: string,
-  wakeWord: string
+  wakeWord: string,
+  dry = false
 ): Promise<VoiceOutcome> {
   switch (command.kind) {
-    case 'habit': {
+    case 'blueprint': {
       /*
-       * **Through `recordHabitDone`, not a second implementation.** This case
-       * used to insert the entry itself and count the period up by hand, which
-       * was identical to the HTTP route right up until gauge mode arrived — the
-       * fill was added to the route and saying "I drank water" quietly logged an
-       * entry and left the gauge exactly where it was. Reported as the voice
-       * command not updating it, and that is what a half-done write looks like.
-       *
-       * The spoken line comes back from there too, because "3 of 8" is a
-       * sentence about a target a gauge does not have.
+       * The blueprint gets what only the sentence knows: what was said after
+       * the phrase, for `{said}` ("note buy milk" stores "buy milk"), and how
+       * many, for "Tick a habit" set to as many as I said. `spokenAmount`, not
+       * a count: "to max" is a real thing to say and is not a number you
+       * could know, so the habit resolves it.
        */
-      /*
-       * `spokenAmount`, not `spokenCount`: "to max" is a real thing to say and
-       * is not a number you could know. For a gauge, how many top-ups reach full
-       * depends on where it is now, which is why the habit resolves it rather
-       * than this.
-       */
-      const progress = await recordHabitDone(command.target ?? '', spokenAmount(text));
-      if (!progress) return { outcome: 'no-match', text, say: 'That habit has been deleted' };
-
-      return {
-        outcome: 'habit-checked',
-        text,
-        habitId: progress.habit.id,
-        habitName: progress.habit.name,
-        doneThisPeriod: progress.doneThisPeriod,
-        target: progress.habit.targetPerPeriod,
-        met: progress.met,
-        say: progress.say,
-      };
-    }
-
-    case 'note': {
-      // The note is whatever was said *besides* the trigger, so "make a note
-      // buy milk" stores "buy milk" rather than the whole sentence.
-      const body = remainderAfterPhrase(text, phrase, wakeWord);
-      if (!body) return { outcome: 'no-match', text, say: 'I heard the trigger but nothing to write down' };
-
-      /*
-        * Through `saveNote` rather than an insert of its own, so a dictated note
-        * is indexed like any other: it gets a title from its first line, its
-        * tags are found, and a `[[…]]` said aloud reaches the note it names.
-        * Inserting here directly was writing a row nothing could link to.
-        */
-      const note = await saveNote({ body });
-      return { outcome: 'note-added', text, noteId: note.id, say: `Noted: ${body}` };
-    }
-
-    case 'url':
-      return {
-        outcome: 'opened',
-        text,
-        action: { do: 'open-url', url: command.target ?? '' },
-        say: `Opening ${command.target}`,
-      };
-
-    case 'hotkey':
-      return {
-        outcome: 'keys-sent',
-        text,
-        action: { do: 'press-keys', keys: command.target ?? '' },
-        say: `Pressed ${command.target}`,
-      };
-
-    case 'media':
-      // Whether it actually fires is the agent's call: only it can see the
-      // output meter, and "is anything playing" is the guard on this kind.
-      return {
-        outcome: 'media-sent',
-        text,
-        action: { do: 'media', action: command.target ?? '' },
-        say: MEDIA_LABEL[(command.target ?? '') as MediaAction] ?? 'Media',
-      };
-
-    case 'launch': {
-      /*
-       * The path comes off the row, never off the command — the same rule the
-       * Run button follows. A stored target is a name like `cs2.exe`, and what
-       * it can point at is bounded by what this machine has already run by
-       * itself.
-       */
-      const exe = (command.target ?? '').trim().toLowerCase();
-      const [row] = await db.select().from(games).where(eq(games.exe, exe));
-
-      // Three failures worth telling apart, because they have three different
-      // fixes and "it didn't work" has none.
-      if (!row) return { outcome: 'no-match', text, say: `${exe} is not on the games list` };
-
-      /*
-       * The URL wins over the path, because for a Steam game the executable is
-       * usually the wrong thing to run: `Warframe.x64.exe` answers "start
-       * warframe from launcher" and quits. Reported from real use, by exactly
-       * that command.
-       */
-      if (row.launchUrl && isLaunchUrl(row.launchUrl)) {
-        return {
-          outcome: 'launched',
-          text,
-          action: { do: 'launch', url: row.launchUrl, name: row.label },
-          say: `Starting ${row.label}`,
-        };
-      }
-
-      if (!row.launchPath) {
-        return { outcome: 'no-match', text, say: `I do not know how to start ${row.label} — run it once and I will` };
-      }
-
-      return {
-        outcome: 'launched',
-        text,
-        action: { do: 'launch', path: row.launchPath, name: row.label },
-        say: `Starting ${row.label}`,
-      };
-    }
-
-    case 'music': {
-      const what = command.target ?? '';
-      const done =
-        what === 'stop'
-          ? await musicRequest('/api/integrations/spotify/shuffle/stop', {})
-          : await musicRequest('/api/integrations/spotify/shuffle', {
-              // "queue" was its own choice once; it now plays, as the card's one
-              // button does, so commands saved with it still work.
-              mode: 'play',
-              order: what === 'random' ? 'random' : 'shuffle',
-            });
-      if (!done.ok) return { outcome: 'no-match', text, say: done.why };
-      return {
-        outcome: 'media-sent',
-        text,
-        say:
-          what === 'stop'
-            ? 'Stopped adding songs'
-            : what === 'random'
-                ? 'Playing random music'
-                : 'Playing shuffled music',
-      };
+      const result = await spokenCommands().run(
+        command.target ?? '',
+        { text, phrase, rest: remainderAfterPhrase(text, phrase, wakeWord), amount: spokenAmount(text) },
+        dry
+      );
+      return { outcome: result.ok ? 'ran' : 'failed', text, say: result.say };
     }
 
     case 'cancel':
@@ -636,6 +453,13 @@ export async function runCommand(
       return { outcome: 'cancelled', text, action: { do: 'cancel' }, say: 'Never mind' };
 
     case 'pause': {
+      if (dry) {
+        return {
+          outcome: 'paused',
+          text,
+          say: command.pauseMinutes ? `Would stop listening for ${command.pauseMinutes} minutes` : 'Would stop listening until you switch it back on',
+        };
+      }
       // -1 is "until switched back on by hand", which has to survive a restart
       // and so cannot just be a very large timestamp.
       const untilMs = command.pauseMinutes ? Date.now() + command.pauseMinutes * 60_000 : -1;

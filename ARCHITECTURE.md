@@ -34,7 +34,7 @@ move into Docker one day while the agent stays native.
 | `packages/agent` | The Windows agent: attention sensor, tray icon, popup, sounds. [README](packages/agent/README.md) |
 | `packages/web` | The app itself, a React PWA with no router. [README](packages/web/README.md) |
 | `packages/shared` | Types, schemas and rules all three agree on. [README](packages/shared/README.md) |
-| `packages/modules/<id>` | **Packages** that ship with the app: manga, voice, vault, integrations, weather, trips, push. Each can be switched off or deleted. |
+| `packages/modules/<id>` | **Packages** that ship with the app: manga, voice, vault, integrations, weather, trips, push, code, blueprints. Each can be switched off or deleted. |
 | `modules/` | Packages *installed* from a zip (Settings → Packages). Gitignored. |
 | `scripts/` | Start, stop, update, package a release, and the checks. |
 | `instances/` | Friends' copies of the server (Settings → People). Gitignored. |
@@ -106,8 +106,12 @@ phone appears on the PC with no polling.
 | Navigation and the menu | `packages/web/src/App.tsx`, `nav.ts`, `menu-prefs.ts`, `menu-groups.ts` |
 | Core styles | `packages/web/src/styles/`, in the order `styles.css` imports them |
 | Edit mode (renaming and hiding text, moving sections) | `packages/web/src/edit-mode.ts`, `ui-text.tsx`, `reorder.ts`; `packages/web/ui-text-plugin.mjs` makes the source's wording editable at build time; text is stored by `packages/server/src/ui-text.ts` |
+| The Code screen (reading and editing the app's own files) | `packages/modules/code/`: `server/files.ts` decides what is offered and how a save is written |
+| Blueprints (boxes and wires that make the app do things) | `packages/modules/blueprints/`: `web/catalogue.ts` is every box, `web/engine.ts` the walk, `agent/` hears hotkeys and presses keys; core says what happened through `packages/server/src/happenings.ts` |
 | A package | its folder under `packages/modules/`; start at its README |
 | The tray, popup or sounds | `packages/agent/src/tray.ts`, `popup.ts`, `overlay.ts`, `sound.ts` |
+| Voice commands (a phrase that does something) | a blueprint with a *When I say* box; voice matches through core's `packages/server/src/spoken-port.ts` |
+| System-wide hotkeys (registering, for voice and blueprints) | `packages/agent/src/hotkeys.ts`, with the key table in `keys.ts` |
 | Starting, stopping, updating | `scripts/start.ps1`, `stop.ps1`, `update.ps1` |
 
 ## Rules worth knowing before you start
@@ -125,8 +129,10 @@ phone appears on the PC with no polling.
 - **Paths are resolved from the source file's own location** (`paths.ts`), never
   from the working directory, because Task Scheduler starts the app in
   `C:\Windows\System32`.
-- **The agent only observes**, except `packages/modules/voice/agent/actions.ts`,
-  which presses keys and opens sites for voice commands. Keep its guards.
+- **The agent only observes**, except the blueprints package's agent half
+  (`agent/keys.ts`, `agent/machine.ts`), which presses keys, opens sites, sends
+  media keys and starts games for blueprints, and so for voice commands. Keep
+  its guards.
 - **Nothing personal is committed.** Run `npm run publish-check` before any push.
 
 ## Checking your work

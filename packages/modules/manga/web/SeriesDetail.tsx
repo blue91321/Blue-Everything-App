@@ -171,6 +171,7 @@ export function SeriesDetail({
     return (
       <Reader
         {...(recordId ? { seriesId: recordId } : { preview: result.id })}
+        tags={page.genres}
         chapter={open}
         backLabel="Details"
         resume={resume}
@@ -207,6 +208,7 @@ export function SeriesDetail({
         hasPrevious={beside(page.chapters, open.number, -1) !== undefined}
         hasNext={beside(page.chapters, open.number, 1) !== undefined}
         nextNumber={beside(page.chapters, open.number, 1)?.number ?? null}
+        nextId={recordId ? (beside(page.chapters, open.number, 1)?.id ?? null) : null}
         {...(() => {
           const target = skipTarget(page.chapters, open.number);
           return {

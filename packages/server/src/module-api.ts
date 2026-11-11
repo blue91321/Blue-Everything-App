@@ -64,6 +64,12 @@ export * as schema from './db/schema.js';
 export { dataDir } from './paths.js';
 
 /**
+ * The checkout itself, for the one package whose subject is the app's own
+ * source (Code). Anything else wanting a path should want `dataDir`.
+ */
+export { repoRoot } from './paths.js';
+
+/**
  * Reading a zip somebody hands a package — an export from another app.
  *
  * The reader the package installer uses, with its guards: zip slip, sizes
@@ -81,6 +87,9 @@ export { readZip, ZipError, type ZipEntry, type ZipLimits } from './zip.js';
  */
 export { config, isGuest, instanceRoot } from './config.js';
 
+/** Whether a request is from this PC and not a proxy or a web page: the test every local-only route uses. For a package's route outside `/api/`, where no token is asked for. */
+export { isTrustedLocal, routePath } from './auth.js';
+
 /** A guest copy's key to the host, for what copies share. See `instances.ts`. */
 export { copyOfDevice, readHostKey } from './instances.js';
 export { nameFor, ownName } from './names.js';
@@ -93,6 +102,13 @@ export { nameFor, ownName } from './names.js';
  * failure the live stream exists to prevent.
  */
 export { changes, type ChangeScope } from './events.js';
+
+/**
+ * What happened, with what it was about: a match ended, a habit was ticked, a
+ * task was finished. `changes` above says only which part moved; blueprints
+ * need to know what.
+ */
+export { happenings, type Happenings } from './happenings.js';
 
 /** Settings as the nudge engine reads them, resolved and typed. */
 export { getSettings } from './nudge-engine.js';
@@ -108,6 +124,28 @@ export { getSettings } from './nudge-engine.js';
 export { providePush } from './push-port.js';
 
 /**
+ * Whether another package is loaded this boot, by id. For saying what a
+ * package's own feature depends on ("voice is off"), never for importing it.
+ */
+export { moduleIsRunning } from './modules.js';
+
+/**
+ * Spoken commands: blueprints provide them, voice matches against them. Two
+ * packages that may not import each other meet here.
+ */
+export {
+  onSpokenChange,
+  provideSpokenCommands,
+  spokenChanged,
+  spokenCommands,
+  spokenProvided,
+  type SpokenCommand,
+  type SpokenCommands,
+  type SpokenHeard,
+  type SpokenResult,
+} from './spoken-port.js';
+
+/**
  * The only two functions that write a habit entry.
  *
  * Exported because the voice package needs them and there must not be a second
@@ -115,7 +153,7 @@ export { providePush } from './push-port.js';
  * gauge mode arrived, and then saying "I drank water" logged an entry and left
  * the gauge exactly where it was.
  */
-export { recordHabitDone, undoHabitDone } from './routes/habits.js';
+export { habitProgress, recordHabitDone, undoHabitDone } from './routes/habits.js';
 /**
  * The one write that creates a note.
  *
@@ -137,3 +175,10 @@ export { saveNote } from './routes/notes.js';
  * so the parser has to be reachable from both.
  */
 export { parseHiddenProviders, parsePanelList } from './routes/settings.js';
+
+/**
+ * Why nudges are held right now (reminders off, paused, quiet hours, Windows
+ * Do Not Disturb), or null. A package that writes a nudge asks it so it can
+ * say the nudge will not show, rather than claiming it was sent.
+ */
+export { currentQuietReason } from './routes/settings.js';

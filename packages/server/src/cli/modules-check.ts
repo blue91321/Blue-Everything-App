@@ -281,6 +281,16 @@ for (const [what, glyph] of [
 const longGlyph = validateModuleManifest({ ...base, web: 'ui.js', tab: { label: 'T', glyph: 'abc' } });
 check('a multi-character glyph is cut to one', longGlyph.manifest?.tab?.glyph === 'a');
 
+// Switching to Just Manga on a clone keeps what the Just Manga download keeps.
+// The packager runs under plain node and has its own copy of the list.
+{
+  const { JUST_MANGA_PACKAGES } = await import('../routes/configuration.js');
+  const packager = readFileSync(join(import.meta.dirname, '../../../../scripts/package-release.mjs'), 'utf8');
+  const listed = /JUST_MANGA_KEEPS = new Set\(\[([^\]]*)\]\)/.exec(packager)?.[1] ?? '';
+  const kept = [...listed.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+  check(`Just Manga keeps the same packages, switched or downloaded (${kept.join(', ')})`, kept.join() === [...JUST_MANGA_PACKAGES].sort().join());
+}
+
 console.log('');
 console.log('Installing and removing, for real');
 console.log('');

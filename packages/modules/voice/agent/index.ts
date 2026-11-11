@@ -25,8 +25,6 @@ import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { ServerUnreachable, type ServerClient, type VoiceConfig, type VoiceOutcome } from '../../../agent/src/client.js';
-import { mediaIsPlaying } from '../../../agent/src/audio.js';
-import { launchProgram, openUrl, pressKeys, pressMediaKey } from './actions.js';
 import { listScreens, forgetAvatar, type Avatar, type Placement } from '../../../agent/src/overlay.js';
 // The popup is core now, and voice is one of its callers rather than its owner.
 // Nudges use the same window, which is the point: it is the only surface here
@@ -41,10 +39,8 @@ const OVERLAY_RESULT_MS = popup.POPUP_RESULT_MS;
 const OVERLAY_ASK_MS = popup.POPUP_ASK_MS;
 
 const TONE_FOR: Record<string, 'good' | 'bad' | 'muted'> = {
-  'habit-checked': 'good',
-  'note-added': 'good',
-  opened: 'good',
-  'keys-sent': 'good',
+  ran: 'good',
+  failed: 'bad',
   paused: 'muted',
   cancelled: 'muted',
   'captured-as-note': 'muted',
@@ -123,28 +119,6 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
   // the click handler, since it is the only thing that ever offers a choice.
   popup.onChoiceMade((id) => void chooseCommand(id));
 
-  /**
-   * Whether a media command is allowed to fire right now.
-   *
-   * The whole point of the guard: with an always-on microphone, a mis-heard word
-   * skipping a track in a silent room is worse than most misfires because there
-   * is nothing to notice. If the output meter says nothing has played, the
-   * command does not go out.
-   *
-   * Checked here rather than on the server because only this process can see the
-   * meter — and it is the same reading `attention.ts` already takes, so it costs
-   * nothing extra.
-   */
-  function mediaAllowed(): boolean {
-    try {
-      return mediaIsPlaying();
-    } catch {
-      // No sound card, or COM refused. An unknown answer is not a yes for
-      // something that presses keys.
-      return false;
-    }
-  }
-
   function performAction(result: VoiceOutcome): void {
     // A chained outcome's instructions live on its parts, in the order they were
     // said. Run them in that order: "pause the music and open my notes" should
@@ -154,37 +128,15 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
       return;
     }
 
-    // Anything that touches *this machine* comes back as an instruction; the
-    // server does the database half itself. It has no business assuming it runs
-    // on your desk, and one day it won't.
+    // What a command does on the PC (keys, a site, a media key, a game) is a
+    // blueprint's now, done by the blueprints half of the agent before the
+    // answer comes back. What is left here is voice's own: the microphone.
     if (!result.action) return;
-    try {
-      if (result.action.do === 'open-url') openUrl(result.action.url);
-      if (result.action.do === 'press-keys') pressKeys(result.action.keys);
-      if (result.action.do === 'launch') launchProgram(result.action, result.action.name);
-
-      if (result.action.do === 'media') {
-        if (!mediaAllowed()) {
-          console.log(`[${clock()}] media ignored — nothing is playing`);
-          popup.show({
-            title: 'Nothing is playing',
-            lines: [{ text: `so "${result.text}" was ignored`, tone: 'muted' }],
-          });
-          popup.hide(OVERLAY_RESULT_MS);
-          return;
-        }
-        pressMediaKey(result.action.action);
-      }
-      // Drop whatever was in progress, but leave the microphone open — the wake
-      // word works again straight away, which is the whole difference from pause.
-      if (result.action.do === 'cancel') voice.cancelExchange();
-      // A pause needs nothing here: the server has recorded it, and the next
-      // long-poll answer reports voice as disabled, which closes the microphone.
-    } catch (error) {
-      console.error(`[${clock()}] voice action refused: ${(error as Error).message}`);
-      popup.show({ title: 'Refused', lines: [{ text: (error as Error).message, tone: 'bad' }] });
-      popup.hide(OVERLAY_RESULT_MS);
-    }
+    // Drop whatever was in progress, but leave the microphone open — the wake
+    // word works again straight away, which is the whole difference from pause.
+    if (result.action.do === 'cancel') voice.cancelExchange();
+    // A pause needs nothing here: the server has recorded it, and the next
+    // long-poll answer reports voice as disabled, which closes the microphone.
   }
 
   function showResult(result: VoiceOutcome): void {
@@ -215,7 +167,7 @@ export function startVoice(client: ServerClient, clock: () => string): VoiceFeat
      * own falling tone rather than silence, because "it did nothing" and "it
      * never heard you" are the two outcomes worth telling apart without looking.
      */
-    const sound = result.outcome === 'no-match' ? 'miss' : 'ok';
+    const sound = result.outcome === 'no-match' || result.outcome === 'failed' ? 'miss' : 'ok';
 
     /*
      * The exchange reads as a conversation: what you said on the right, what it

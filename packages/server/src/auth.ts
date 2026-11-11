@@ -103,6 +103,30 @@ export function isTrustedLocal(request: FastifyRequest): boolean {
   }
 }
 
+/**
+ * The path a request is *for*: the pattern of the route the router matched
+ * (`/api/tasks/:id`), or for no route the path decoded as the router decodes it.
+ * **Every decision about which routes a rule covers is made on this, never on
+ * `request.url`.**
+ *
+ * `request.url` is the path as sent, and the router decodes it before matching:
+ * `/%61pi/tasks` is routed to `/api/tasks`, while `'/%61pi/tasks'.startsWith('/api/')`
+ * is false. Deciding on the raw URL let any caller on the tailnet read and write
+ * the whole API with no token at all, the vault's extension-only rule with it.
+ * Found on 2026-11-11 by sending the spellings a router might normalise
+ * (`smoke` sends them still). The matched pattern cannot be spelled two ways.
+ */
+export function routePath(request: FastifyRequest): string {
+  const matched = request.routeOptions?.url;
+  if (matched) return matched;
+  const raw = request.url.split(/[?#]/)[0] ?? '';
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   request.deviceId = null;
   request.deviceKind = null;
@@ -111,11 +135,12 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   // Only the API is protected. The PWA's shell — HTML, JS, icons — has to load
   // before there's anywhere to type a token, and it carries no data of its own;
   // everything it displays comes from an authenticated /api call.
-  if (!request.url.startsWith('/api/')) return;
+  const path = routePath(request);
+  if (!path.startsWith('/api/')) return;
   // A sign-in link's code, or a hand-off code typed into a new device: the code
   // is the credential, swapped for a token once (`instances.ts`). The only
   // route that answers without a token, on every copy.
-  if (request.method === 'POST' && request.url.split('?')[0] === '/api/invite/redeem') return;
+  if (request.method === 'POST' && path === '/api/invite/redeem') return;
   if (!config.AUTH_REQUIRED) {
     request.isLocal = true;
     return;
@@ -149,7 +174,7 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
    * it would be a full device token for your copy held in a folder another
    * copy can read.
    */
-  if (device.kind === 'instance' && !INSTANCE_PREFIXES.some((p) => request.url.startsWith(p))) {
+  if (device.kind === 'instance' && !INSTANCE_PREFIXES.some((p) => path.startsWith(p))) {
     return reply.code(403).send({ error: "a copy's key reaches only what copies share" });
   }
 

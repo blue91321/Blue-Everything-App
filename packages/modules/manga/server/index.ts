@@ -38,7 +38,7 @@ import { read, write } from './library.js';
 import { sweepReleases, SWEEP_EVERY_MS } from './releases.js';
 import { effectiveUrl } from './sources.js';
 import { DEFAULT_BASE_URL } from './suwayomi.js';
-import { suwayomiProcess, portOf } from './process.js';
+import { suwayomiProcess, portOf, whenSuwayomiUp } from './process.js';
 import { fillTags } from './tags.js';
 import { updateExtensionsIfDue } from './setup.js';
 import { mendEditions, sweepArchive } from './archive.js';
@@ -51,6 +51,9 @@ import { browseRoutes } from './routes/browse.js';
 import { readingRoutes } from './routes/reading.js';
 import { archiveRoutes } from './routes/archive.js';
 import { hostRoutes } from './routes/host.js';
+import { flaresolverrRoutes } from './routes/flaresolverr.js';
+import { configureSuwayomiFlare, stopFlare, stopLeftover } from './flaresolverr.js';
+import { autoSwitch } from './find-sources.js';
 
 export async function routes(app: FastifyInstance): Promise<void> {
   /*
@@ -110,6 +113,10 @@ export async function routes(app: FastifyInstance): Promise<void> {
   readingRoutes(app);
   archiveRoutes(app);
   hostRoutes(app);
+  flaresolverrRoutes(app);
+  // One a killed server left running is stopped now; Suwayomi learns this run's door each time it comes up.
+  stopLeftover();
+  whenSuwayomiUp(configureSuwayomiFlare);
 
   /* ---- the timer ---- */
 
@@ -119,6 +126,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
   const sweep = async () => {
     try {
       await sweepReleases();
+      // A few series whose sources have failed for two days, switched to another that has them — see `autoSwitch`.
+      await autoSwitch().catch(() => 0);
       // A few series' genres each sweep, only while Suwayomi is up — see `tags.ts`.
       await fillTags(TAGS_PER_SWEEP);
       // Extensions, once a day, only while Suwayomi is up — see `updateExtensionsIfDue`.
@@ -199,5 +208,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const store = read();
     const url = store.manageSuwayomi ? effectiveUrl(store, DEFAULT_BASE_URL) : null;
     suwayomiProcess.stop(url ? portOf(url) : undefined);
+    // FlareSolverr too, always: it is ours alone, and nothing else would stop it.
+    stopFlare();
   });
 }

@@ -183,6 +183,18 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
     this.timer = undefined;
   }
 
+  /**
+   * Look now rather than at the next tick, which can be 15s away at the desk.
+   * Asked when the server has just queued something to say (a blueprint's
+   * nudge), so it lands at once instead of on the next heartbeat. Costs one
+   * tick, and the rhythm carries on from here.
+   */
+  checkNow(): void {
+    if (!this.timer) return;
+    clearTimeout(this.timer);
+    this.tick();
+  }
+
   private tick(): void {
     const snapshot = this.sample();
     const previous = this.last;
@@ -351,7 +363,9 @@ export class AttentionMonitor extends EventEmitter<AttentionMonitorEvents> {
       return { ...base, state: 'focused', reason: `Windows reports ${notificationStateName(notificationState)}` };
     }
 
-    if (foreground?.isFullScreen && !isLauncher(foreground.exe)) {
+    // Not the desktop: it covers its monitor too, so with nothing open you read
+    // as busy, "Am I free" said no, and a nudge waiting for a break waited on.
+    if (foreground?.isFullScreen && !isLauncher(foreground.exe) && !looksLikeSystemApp(foreground.exePath)) {
       return { ...base, state: 'focused', reason: `${foreground.exe} is fullscreen` };
     }
 

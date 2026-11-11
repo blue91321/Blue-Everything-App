@@ -1,0 +1,10 @@
+{
+  "id": "code",
+  "label": "Code",
+  "blurb": "The app's own source: a map of its parts, every file, and an editor.",
+  "version": "0.6.1",
+  "author": "blue91321",
+  "server": "server/index.ts",
+  "hostOnly": true,
+  "notes": "Any of your devices can read the code. Saving is only from the PC running the app, since a saved file is code this PC runs when the app next starts."
+}

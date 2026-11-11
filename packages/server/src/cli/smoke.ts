@@ -13,12 +13,16 @@ process.env.LOG_LEVEL = 'error';
 // Package switches of its own, so it runs the shipped defaults whatever this
 // install has switched on or off, and never writes this install's file.
 process.env.MODULES_STATE = './data/smoke-modules.json';
+// A data folder of its own, or every package that keeps a file in `data/`
+// (blueprints, weather, trips) reads and writes the real one while tested.
+process.env.DATA_DIR = './data/smoke-data';
 
 import { rmSync } from 'node:fs';
 import type { AttentionReport } from '@everything/shared';
 
 rmSync('./data/smoke.db', { force: true });
 rmSync('./data/smoke-modules.json', { force: true });
+rmSync('./data/smoke-data', { recursive: true, force: true });
 
 // Imported after the env is set, so config picks up the throwaway database.
 const { runMigrations } = await import('../db/migrate.js');
@@ -122,6 +126,15 @@ const escalated = await post(
 const escalatedBody = escalated.json();
 check('a passed deadline breaks through mid-game', titles(escalated).includes('This one is late'));
 check('and is marked as an escalation', escalatedBody.deliver[0]?.escalated === true);
+
+// "Say it now" (a blueprint's "Right now, even mid-game") breaks through too,
+// but was never late, so the popup must not call it a passed deadline.
+const sayNowAt = Date.now() - 500;
+await post('/api/nudges', { title: 'Say it now', minQuality: 'any', earliestAt: sayNowAt, deadlineAt: sayNowAt });
+const sayNow = await post('/api/attention', report({ state: 'in-game', reason: 'still playing', liveGames: ['cs2.exe'] }));
+const sayNowNudge = (sayNow.json().deliver as Array<{ title: string; escalated: boolean }>).find((n) => n.title === 'Say it now');
+check('a deadline at its own start breaks through mid-game', Boolean(sayNowNudge), titles(sayNow).join(', '));
+check('  ...without being called a passed deadline', sayNowNudge?.escalated === false);
 
 console.log('\nnobody at the desk');
 await post('/api/nudges', { title: 'Nobody is here', minQuality: 'any', deadlineAt: Date.now() - 1000 });
@@ -904,11 +917,37 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
    * what is being tested here.
    */
   await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceEnabled: true } });
-  await post('/api/voice/commands', { kind: 'habit', target: voiceGaugeId, phrases: ['sip water'] });
 
-  const spoken = await post('/api/voice/command', { text: 'hey everything i sipped water', speakerScore: null });
-  const outcome = spoken.json();
-  check('a spoken phrase reaches the habit', outcome.outcome === 'habit-checked', JSON.stringify(outcome));
+  /*
+   * A voice command is a blueprint now: a "When I say" box joined to a Do box.
+   * Made over HTTP, as everything here is, since `smoke` is core and must not
+   * reach into a package's folder.
+   */
+  const voiceBlueprints: string[] = [];
+  const sayThen = async (phrases: string[], action: { type: string; fields: Record<string, unknown> }) => {
+    const made = (await post('/api/blueprints', { template: 'empty', name: `smoke: ${phrases[0]}` })).json();
+    voiceBlueprints.push(made.id);
+    await app.inject({
+      method: 'PUT',
+      url: `/api/blueprints/${made.id}`,
+      payload: {
+        enabled: true,
+        graph: {
+          nodes: [
+            { id: 'say', type: 'on-voice', x: 0, y: 0, fields: { phrases: phrases.join('\n'), keep: 'yes' } },
+            { id: 'do', type: action.type, x: 300, y: 0, fields: action.fields },
+          ],
+          wires: [{ id: 'w', from: 'say', pin: 'then', to: 'do' }],
+        },
+      },
+    });
+    return made.id as string;
+  };
+  const say = async (text: string) => (await post('/api/voice/command', { text, speakerScore: null })).json();
+
+  await sayThen(['sip water'], { type: 'tick-habit', fields: { habit: voiceGaugeId, howMany: 'said' } });
+  const outcome = await say('hey everything i sipped water');
+  check('a spoken phrase reaches the habit, through its blueprint', outcome.outcome === 'ran', JSON.stringify(outcome));
   check(
     'and it actually moves the gauge',
     (await listOf(voiceGaugeId)).gaugeNow === 20,
@@ -918,87 +957,424 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
    * And says something true about it. The reply was hard-coded to "N of
    * target", which for a gauge is a sentence about a target it does not have.
    */
-  check('and says the level rather than a target', outcome.say === 'Sip water — 20% full', outcome.say);
+  check('and says the level rather than a target', /Sip water — 20% full/.test(outcome.say ?? ''), outcome.say);
 
-  // "two waters" is two fills, not one — the count has to survive the trip.
-  const twoSips = await post('/api/voice/command', { text: 'hey everything i sipped two waters', speakerScore: null });
+  // "two waters" is two fills, not one: the count has to survive the trip.
+  const twoSips = await say('hey everything i sipped two waters');
   check(
     'a spoken count fills that many times',
     (await listOf(voiceGaugeId)).gaugeNow === 60,
-    `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}% after "${twoSips.json().text}"`
+    `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}% after "${twoSips.text}"`
   );
 
   /*
-   * And "to max" fills it the rest of the way, whatever that is — the whole
-   * point being that at 60% with a 20% fill you would otherwise have to notice
-   * it needed exactly two more.
+   * And "to max" fills it the rest of the way, whatever that is: at 60% with a
+   * 20% fill you would otherwise have to notice it needed exactly two more.
    */
-  const maxed = await post('/api/voice/command', { text: 'hey everything i sipped water to max', speakerScore: null });
+  const maxed = await say('hey everything i sipped water to max');
   check('"to max" fills it the rest of the way', (await listOf(voiceGaugeId)).gaugeNow === 100, `gauge is ${(await listOf(voiceGaugeId)).gaugeNow}%`);
-  check('and says so', maxed.json().say === 'Sip water — 100% full', maxed.json().say);
+  check('and says so', /100% full/.test(maxed.say ?? ''), maxed.say);
   // Saying it must always record something, or a full gauge answers "done"
   // having done nothing at all.
-  const again = await post('/api/voice/command', { text: 'hey everything i sipped water to max', speakerScore: null });
-  check('saying it again on a full gauge is still an answer', again.json().outcome === 'habit-checked');
+  const again = await say('hey everything i sipped water to max');
+  check('saying it again on a full gauge is still an answer', again.outcome === 'ran');
   check('and leaves it full rather than overflowing', (await listOf(voiceGaugeId)).gaugeNow === 100);
 
+  // The old kinds are blueprints now; only voice's own two are made here.
+  const oldKind = await post('/api/voice/commands', { kind: 'habit', target: voiceGaugeId, phrases: ['old way'] });
+  check('a habit command is no longer made on the Voice screen', oldKind.statusCode === 400, `HTTP ${oldKind.statusCode}`);
+  const listed = (await app.inject({ method: 'GET', url: '/api/voice/commands' })).json();
+  check(
+    'the Commands tab lists the blueprint, with where to edit it',
+    listed.spoken.some((c: { phrases: string[]; edit: { screen: string } }) => c.phrases.includes('sip water') && c.edit.screen === 'blueprints'),
+    JSON.stringify(listed.spoken)
+  );
+  const habitRow = await listOf(voiceGaugeId);
+  check('the habit says which phrases tick it', habitRow.voicePhrases.includes('sip water'), JSON.stringify(habitRow.voicePhrases));
+
   /*
-   * Starting a game by voice. The whole safety property of this kind is that a
-   * stored target names a *row on the games list* and the path is read from
-   * that row — so what a mis-heard phrase can start is bounded by what this
-   * machine has already run on its own.
+   * Starting a game by voice. The safety property is the one the old `launch`
+   * kind had: the box names a *row on the games list*, and what the agent is
+   * sent is read from that row, so what a mis-heard phrase can start is bounded
+   * by what this machine has already run on its own.
+   *
+   * The agent is played here by hand: one ask to say it is there, then a long
+   * poll that the queued task wakes, then the report that it was done.
    */
   const sep = String.fromCharCode(92);
   const gamePath = `D:${sep}SteamLibrary${sep}steamapps${sep}common${sep}Deep Rock Galactic${sep}FSD.exe`;
   await post('/api/games', { exe: 'fsd.exe', label: 'Deep Rock Galactic', launchPath: gamePath });
-  await post('/api/voice/commands', { kind: 'launch', target: 'fsd.exe', phrases: ['rock and stone'] });
+  await sayThen(['rock and stone'], { type: 'launch-game', fields: { game: 'fsd.exe' } });
 
-  const started = (await post('/api/voice/command', { text: 'hey everything rock and stone', speakerScore: null })).json();
-  check('a spoken phrase can start a game', started.outcome === 'launched', JSON.stringify(started));
-  check('  ...and the path comes off the row, not the command', started.action?.path === gamePath, started.action?.path);
-  check('  ...and it says which one', started.say === 'Starting Deep Rock Galactic', started.say);
+  const asAgent = async (text: string, answer: (task: Record<string, unknown>) => string | undefined) => {
+    const hello = (await post('/api/blueprints/agent', {})).json();
+    const spokenReply = say(text);
+    const poll = (await post('/api/blueprints/agent', { version: hello.version, waitMs: 3000 })).json();
+    const task = poll.tasks?.[0] as Record<string, unknown> | undefined;
+    if (task) {
+      const error = answer(task);
+      await post('/api/blueprints/agent', { version: hello.version, done: [{ id: task.id, ...(error ? { error } : {}) }] });
+    }
+    return { task, reply: await spokenReply };
+  };
+
+  const started = await asAgent('hey everything rock and stone', () => undefined);
+  check('a spoken phrase can start a game', started.reply.outcome === 'ran', JSON.stringify(started.reply));
+  check('  ...and the path comes off the row, not the box', started.task?.do === 'launch' && started.task?.path === gamePath, JSON.stringify(started.task));
+  check('  ...and it says which one', started.reply.say === 'Started Deep Rock Galactic', started.reply.say);
 
   /*
-   * And when the row knows a `steam://` address, that wins over the path.
-   *
-   * This is the whole point of the address existing: running a Steam game's own
-   * executable frequently answers "start <game> from launcher" and quits, which
-   * is what was reported. The action the agent receives has to carry the URL and
-   * not the path, or the fix reaches the database and stops there.
+   * And when the row knows a `steam://` address, that wins over the path:
+   * running a Steam game's own executable often answers "start it from the
+   * launcher" and quits, which is what was reported.
    */
+  await app.inject({ method: 'PATCH', url: '/api/games/fsd.exe', payload: { launchUrl: 'steam://rungameid/548430' } });
+  const viaSteam = await asAgent('hey everything rock and stone', () => undefined);
+  check('a Steam game starts through Steam, not through its exe', viaSteam.task?.url === 'steam://rungameid/548430', JSON.stringify(viaSteam.task));
+  check('  ...and the path is not sent instead', viaSteam.task?.path === undefined);
+
+  // What the agent refuses is the answer, in its words.
+  const agentRefused = await asAgent('hey everything rock and stone', () => 'Deep Rock Galactic is not where it used to be');
+  check('a refusal on the PC comes back as the answer', agentRefused.reply.outcome === 'failed' && /not where it used to be/.test(agentRefused.reply.say), JSON.stringify(agentRefused.reply));
+
+  // A path as the game is refused when the box is saved, not merely not found.
+  const pathAsGame = await sayThen(['open a shell'], { type: 'launch-game', fields: { game: `C:${sep}Windows${sep}System32${sep}cmd.exe` } });
+  const stored = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json().blueprints.find((b: { id: string }) => b.id === pathAsGame);
+  check('a path is refused as a game, not stored', stored.graph.nodes.find((n: { id: string }) => n.id === 'do').fields.game === '');
+
+  await sayThen(['start the shell'], { type: 'launch-game', fields: { game: 'cmd.exe' } });
+  const missing = await say('hey everything start the shell');
+  check('  ...and a name with no row starts nothing, saying so', missing.outcome === 'failed' && /not on the games list/.test(missing.say), JSON.stringify(missing));
+
+
+  /*
+   * "Am I in a game" can name one, and "I start playing" can wait for one. The
+   * game is the one the heartbeat says is in front.
+   */
+  const inGame = (await post('/api/blueprints', { template: 'empty', name: 'smoke: in a game' })).json();
+  voiceBlueprints.push(inGame.id);
   await app.inject({
-    method: 'PATCH',
-    url: '/api/games/fsd.exe',
-    payload: { launchUrl: 'steam://rungameid/548430' },
+    method: 'PUT',
+    url: `/api/blueprints/${inGame.id}`,
+    payload: {
+      graph: {
+        nodes: [
+          { id: 'go', type: 'on-button', x: 0, y: 0, fields: {} },
+          { id: 'any', type: 'if-doing', x: 300, y: 0, fields: { state: 'in-game', game: '' } },
+          { id: 'wf', type: 'if-doing', x: 600, y: 0, fields: { state: 'in-game', game: 'warframe.x64.exe' } },
+        ],
+        wires: [
+          { id: 'a', from: 'go', pin: 'then', to: 'any' },
+          { id: 'b', from: 'any', pin: 'yes', to: 'wf' },
+        ],
+      },
+    },
   });
-  const viaSteam = (await post('/api/voice/command', { text: 'hey everything rock and stone', speakerScore: null })).json();
-  check('a Steam game starts through Steam, not through its exe', viaSteam.action?.url === 'steam://rungameid/548430', JSON.stringify(viaSteam.action));
-  check('  ...and the path is not sent instead', viaSteam.action?.path === undefined);
+  const ask = async () =>
+    ((await post(`/api/blueprints/${inGame.id}/run`, { dry: true })).json().steps as Array<{ node: string; said: string }>);
+  await post('/api/attention', report({ state: 'in-game', reason: 'League running', liveGames: ['league of legends.exe'] }));
+  const inLeague = await ask();
+  check('"Am I in a game" says yes to any game', /^Yes/.test(inLeague.find((s) => s.node === 'any')?.said ?? ''), JSON.stringify(inLeague));
+  check('  ...and naming Warframe says no in another', inLeague.find((s) => s.node === 'wf')?.said === 'No, in League of Legends, not Warframe', JSON.stringify(inLeague));
+  await post('/api/attention', report({ state: 'in-game', reason: 'Warframe running', liveGames: ['warframe.x64.exe'] }));
+  const inWarframe = await ask();
+  check('  ...and yes once Warframe is in front, with no stop between', inWarframe.find((s) => s.node === 'wf')?.said === 'Yes, in Warframe', JSON.stringify(inWarframe));
+  await post('/api/attention', report({ reason: 'back at the desktop' }));
+
+  // Dragging a box is not changing what a blueprint does, so a run waiting in
+  // it carries on; changing a box's setting still stops it.
+  const waiting = (await post('/api/blueprints', { template: 'empty', name: 'smoke: waiting' })).json();
+  voiceBlueprints.push(waiting.id);
+  const waitGraph = (x: number, minutes: number) => ({
+    nodes: [
+      { id: 'go', type: 'on-button', x: 0, y: 0, fields: {} },
+      { id: 'w', type: 'wait', x, y: 0, fields: { minutes } },
+    ],
+    wires: [{ id: 'a', from: 'go', pin: 'then', to: 'w' }],
+  });
+  const putWaiting = (graph: unknown, enabled?: boolean) =>
+    app.inject({ method: 'PUT', url: `/api/blueprints/${waiting.id}`, payload: { graph, ...(enabled === undefined ? {} : { enabled }) } });
+  const stillGoing = async () => ((await app.inject({ method: 'GET', url: '/api/blueprints' })).json().waiting as string[]).length > 0;
+  const stillGoingFor = async (id: string) => {
+    const state = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json() as { waiting: string[]; runs: Array<{ id: string; blueprint: string }> };
+    return state.runs.some((r) => r.blueprint === id && state.waiting.includes(r.id));
+  };
+  await putWaiting(waitGraph(300, 30), true);
+  await post(`/api/blueprints/${waiting.id}/run`, { dry: false });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  check('a run waits in its Wait box', await stillGoing());
+  await putWaiting(waitGraph(420, 30));
+  check('  ...and dragging the box leaves it going', await stillGoing());
+  await putWaiting(waitGraph(420, 45));
+  check('  ...but changing the wait stops it', !(await stillGoing()));
 
   /*
-   * A path as the target is refused by the schema rather than merely failing to
-   * find a row. Working by accident is not the same as working by rule, and the
-   * rule is what has to hold when somebody edits this next.
+   * A watched hotkey, the Warframe script's way: a mouse button, let through,
+   * listened for only while that game is played. The agent is played by hand.
    */
-  const asPath = await post('/api/voice/commands', {
-    kind: 'launch',
-    target: `C:${sep}Windows${sep}System32${sep}cmd.exe`,
-    phrases: ['open a shell'],
+  const macro = (await post('/api/blueprints', { template: 'empty', name: 'smoke: melee slide' })).json();
+  voiceBlueprints.push(macro.id);
+  await app.inject({
+    method: 'PUT',
+    url: `/api/blueprints/${macro.id}`,
+    payload: {
+      enabled: true,
+      graph: {
+        nodes: [
+          { id: 'hk', type: 'on-hotkey', x: 0, y: 0, fields: { listen: 'watch', watch: 'XButton1', game: 'warframe.x64.exe', again: 'ignore' } },
+          { id: 'seq', type: 'press-keys', x: 300, y: 0, fields: { mode: 'timeline', timeline: JSON.stringify([
+            { keys: 'w', at: 0, until: 85, ifUp: true },
+            { keys: 'ctrl', at: 20, until: 80 },
+            { keys: 'e', at: 40, until: 50 },
+          ]) } },
+          { id: 'fire', type: 'on-hotkey', x: 0, y: 200, fields: { listen: 'watch', watch: 'lbutton', game: 'warframe.x64.exe', again: 'ignore', release: 'stop' } },
+          { id: 'rep', type: 'repeat', x: 300, y: 200, fields: { every: 0.4, unit: 'seconds', until: 'stopped', first: 'now' } },
+          { id: 'cnt', type: 'counter', x: 600, y: 200, fields: { times: 9 } },
+          { id: 'rnd', type: 'random-number', x: 320, y: 360, fields: { min: 2, max: 2 } },
+          { id: 'two', type: 'press-keys', x: 900, y: 200, fields: { mode: 'one', keys: '2', hold: 30 } },
+        ],
+        wires: [
+          { id: 'a', from: 'hk', pin: 'then', to: 'seq' },
+          { id: 'b', from: 'fire', pin: 'then', to: 'rep' },
+          { id: 'c', from: 'rep', pin: 'each', to: 'cnt' },
+          { id: 'd', from: 'cnt', pin: 'yes', to: 'two' },
+          { id: 'e', from: 'rnd', pin: 'value', to: 'cnt', port: 'x' },
+        ],
+      },
+    },
   });
-  check('a path is refused as a launch target', asPath.statusCode === 400, `HTTP ${asPath.statusCode}`);
+  const agentHello = async () => (await post('/api/blueprints/agent', {})).json() as { version: string; watch: Array<{ keys: string; game: string }>; tasks: Array<Record<string, unknown>> };
+  await post('/api/attention', report({ reason: 'at the desktop' }));
+  check('a watched key is not watched while its game is not played', (await agentHello()).watch.length === 0);
+  const statusOf = async (id: string) =>
+    ((await app.inject({ method: 'GET', url: '/api/blueprints' })).json().statuses?.[id] as { state: string; why: string } | undefined);
+  check('a blueprint waiting for its game is idle, not on', (await statusOf(macro.id))?.state === 'idle', JSON.stringify(await statusOf(macro.id)));
+  await post('/api/attention', report({ state: 'in-game', reason: 'Warframe running', liveGames: ['warframe.x64.exe'] }));
+  const watching = await agentHello();
+  check(
+    '  ...and is, with its game, once it is',
+    JSON.stringify(watching.watch) === JSON.stringify([{ keys: 'mouse1', game: 'warframe.x64.exe' }, { keys: 'mouse4', game: 'warframe.x64.exe' }]),
+    JSON.stringify(watching.watch)
+  );
+  check('  ...and on once the game is open', (await statusOf(macro.id))?.state === 'on', JSON.stringify(await statusOf(macro.id)));
+  // Pressed: the timeline goes to the agent whole, to play with its own timing.
+  await post('/api/blueprints/hotkey', { keys: 'xbutton1', watched: true });
+  const slidePoll = (await post('/api/blueprints/agent', { version: watching.version, waitMs: 3000 })).json() as { tasks: Array<Record<string, unknown>> };
+  const slideTask = slidePoll.tasks[0];
+  check('a watched press plays the timeline on the PC', slideTask?.do === 'timeline' && (slideTask.bars as unknown[]).length === 3 && slideTask.totalMs === 85, JSON.stringify(slideTask));
+  if (slideTask) await post('/api/blueprints/agent', { version: watching.version, done: [{ id: slideTask.id }] });
+  check('  ...and a registered hotkey of the same name does not count', (await post('/api/blueprints/hotkey', { keys: 'xbutton1' })).statusCode === 400);
+  // Held: every second go presses 2, until let go.
+  await post('/api/blueprints/hotkey', { keys: 'lbutton', watched: true });
+  const pressed: string[] = [];
+  const until = Date.now() + 1500;
+  while (Date.now() < until) {
+    // Not held open: the server's wait is unref'd, and with no socket here
+    // nothing else would keep this process alive through it.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const poll = (await post('/api/blueprints/agent', { version: watching.version })).json() as { tasks: Array<Record<string, unknown>> };
+    for (const task of poll.tasks) {
+      pressed.push(String(task.keys));
+      await post('/api/blueprints/agent', { version: watching.version, done: [{ id: task.id }] });
+    }
+  }
+  check('holding repeats and presses 2 every so many goes', pressed.length >= 1 && pressed.every((k) => k === '2'), JSON.stringify(pressed));
+  check('  ...and is still going while held', (await stillGoingFor(macro.id)));
+  await post('/api/blueprints/hotkey', { keys: 'lbutton', watched: true, up: true });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  check('  ...and letting go stops it', !(await stillGoingFor(macro.id)));
+  await post('/api/attention', report({ reason: 'back at the desktop' }));
+  check('leaving the game stops watching', (await agentHello()).watch.length === 0);
 
-  const bareName = await post('/api/voice/commands', { kind: 'launch', target: 'cmd.exe', phrases: ['open a shell'] });
-  check('  ...and a name with no row is stored but starts nothing', bareName.statusCode === 201, `HTTP ${bareName.statusCode}`);
-  const missing = (await post('/api/voice/command', { text: 'hey everything open a shell', speakerScore: null })).json();
-  check('  ...saying so rather than pretending', missing.outcome === 'no-match' && missing.action === undefined, JSON.stringify(missing));
+  // A blueprint whose only trigger is a phrase can't start while voice is off.
+  const spoken = (await post('/api/blueprints', { template: 'empty', name: 'smoke: voice only' })).json();
+  voiceBlueprints.push(spoken.id);
+  await app.inject({
+    method: 'PUT',
+    url: `/api/blueprints/${spoken.id}`,
+    payload: {
+      enabled: true,
+      graph: { nodes: [{ id: 'say', type: 'on-voice', x: 0, y: 0, fields: { phrases: 'smoke phrase', keep: 'yes' } }], wires: [] },
+    },
+  });
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceEnabled: false, voiceListenHotkeyWhileOff: false } });
+  check('with voice off, a voice-only blueprint is disabled', (await statusOf(spoken.id))?.state === 'disabled', JSON.stringify(await statusOf(spoken.id)));
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { voiceEnabled: true } });
+  check('  ...and on again once voice is', (await statusOf(spoken.id))?.state === 'on', JSON.stringify(await statusOf(spoken.id)));
+
+  // Folders arrange the list, and nothing else.
+  const folder = (await post('/api/blueprints/folders', { name: '  Warframe   macros ' })).json() as { id: string; name: string };
+  check('a folder is made, its name tidied', folder.name === 'Warframe macros', JSON.stringify(folder));
+  const runsBefore = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json().statuses?.[spoken.id]?.state;
+  const into = await app.inject({ method: 'PUT', url: `/api/blueprints/${spoken.id}`, payload: { folder: folder.id } });
+  check('a blueprint goes into it', into.json().folder === folder.id, into.body);
+  check('  ...without being switched or changed', into.json().enabled === true && (await statusOf(spoken.id))?.state === runsBefore);
+  const nowhere = await app.inject({ method: 'PUT', url: `/api/blueprints/${spoken.id}`, payload: { folder: 'not-a-folder' } });
+  check('a folder that is not there is refused', nowhere.statusCode === 400);
+  await app.inject({ method: 'PUT', url: `/api/blueprints/folders/${folder.id}`, payload: { name: 'Game macros' } });
+  const folderList = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json() as { folders: Array<{ id: string; name: string }>; blueprints: Array<{ id: string; folder?: string | null }> };
+  check('  ...renamed, it keeps what is in it', folderList.folders.some((f) => f.id === folder.id && f.name === 'Game macros') && folderList.blueprints.find((x) => x.id === spoken.id)?.folder === folder.id);
+  await app.inject({ method: 'DELETE', url: `/api/blueprints/folders/${folder.id}` });
+  const after = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json() as typeof folderList;
+  check('removing a folder keeps the blueprint, moved to the top', !after.folders.some((f) => f.id === folder.id) && after.blueprints.find((x) => x.id === spoken.id)?.folder === null);
+
+  /*
+   * Variables, a sum, a popup and a question (2026-11-04), with the agent
+   * played by hand: the popup is shown and said done, and the question is
+   * answered on its own route, as the agent's popup does when Enter is pressed.
+   */
+  const quiz = (await post('/api/blueprints', { name: 'Smoke quiz' })).json() as { id: string };
+  const quizGraph = {
+    nodes: [
+      { id: 'go', type: 'on-button', x: 0, y: 0, fields: {} },
+      { id: 's1', type: 'set-variable', x: 300, y: 0, fields: { name: 'Smoke Score', how: 'set', value: '20' } },
+      { id: 'm', type: 'math', x: 300, y: 300, fields: { expr: '2 + 3' } },
+      { id: 's2', type: 'set-variable', x: 600, y: 0, fields: { name: 'smoke_score', how: 'add', value: 'a' } },
+      { id: 'p', type: 'show-popup', x: 900, y: 0, fields: { title: 'Score {smoke_score}', color: '#FF6B6B', seconds: 5 } },
+      { id: 'q', type: 'ask', x: 1200, y: 0, fields: { title: 'Name?', seconds: 30, saveAs: 'smoke_name' } },
+      { id: 's3', type: 'set-variable', x: 1500, y: 0, fields: { name: 'smoke_score', how: 'pctup', percent: '20' } },
+      { id: 't', type: 'if-true', x: 1800, y: 0, fields: { expr: '{smoke_score} = 30' } },
+    ],
+    wires: [
+      { id: 'q1', from: 'go', pin: 'then', to: 's1' },
+      { id: 'q2', from: 's1', pin: 'then', to: 's2' },
+      { id: 'q3', from: 'm', pin: 'value', to: 's2', port: 'l-a' },
+      { id: 'q4', from: 's2', pin: 'then', to: 'p' },
+      { id: 'q5', from: 'p', pin: 'then', to: 'q' },
+      { id: 'q6', from: 'q', pin: 'answered', to: 's3' },
+      { id: 'q7', from: 's3', pin: 'then', to: 't' },
+    ],
+  };
+  await app.inject({ method: 'PUT', url: `/api/blueprints/${quiz.id}`, payload: { enabled: true, graph: quizGraph } });
+  const quizHello = (await post('/api/blueprints/agent', {})).json() as { version: string };
+  const quizRun = (await post(`/api/blueprints/${quiz.id}/run`, { from: 'go', dry: false })).json();
+  check('a run with a question in it is started, not waited on', quizRun.started === true, JSON.stringify(quizRun));
+  const popupPoll = (await post('/api/blueprints/agent', { version: quizHello.version, waitMs: 3000 })).json() as { tasks: Array<Record<string, unknown>> };
+  const popupTask = popupPoll.tasks.find((t) => t.do === 'popup');
+  check('"Show a popup" goes to the PC with its words filled in', popupTask?.title === 'Score 25', JSON.stringify(popupPoll.tasks));
+  check('  ...in its own colour', popupTask?.color === '#ff6b6b');
+  const askPoll = (await post('/api/blueprints/agent', { version: quizHello.version, waitMs: 3000, done: popupTask ? [{ id: popupTask.id }] : [] })).json() as {
+    tasks: Array<Record<string, unknown>>;
+  };
+  const askTask = askPoll.tasks.find((t) => t.do === 'ask');
+  check('"Ask me" goes to the PC as a question', askTask?.title === 'Name?' && typeof askTask?.ask === 'string', JSON.stringify(askPoll.tasks));
+  const answered = await post('/api/blueprints/answer', { ask: askTask?.ask, answer: '  Blake ' });
+  check('  ...and its answer is taken', answered.json().ok === true, answered.body);
+  let quizSteps: Array<{ node: string; said: string; result: string }> = [];
+  for (let i = 0; i < 30 && !quizSteps.some((st) => st.node === 't'); i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    const state = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json() as { runs: Array<{ blueprint: string; steps: typeof quizSteps }> };
+    quizSteps = state.runs.filter((r) => r.blueprint === quiz.id).at(-1)?.steps ?? [];
+  }
+  check('a variable is set, then added to by a wired sum', quizSteps.some((st) => st.node === 's2' && st.said === 'Set {smoke_score} to 25'), JSON.stringify(quizSteps));
+  check('  ...the answer kept as a variable of its own', quizSteps.some((st) => st.node === 'q' && st.said === 'Answered "Blake", kept as {smoke_name}'));
+  check('  ...increased by a percentage', quizSteps.some((st) => st.node === 's3' && st.said === 'Set {smoke_score} to 30'), JSON.stringify(quizSteps));
+  check('  ...and a comparison reads them', quizSteps.some((st) => st.node === 't' && st.result === 'yes'));
+  const quizState = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json() as { variables: Record<string, unknown> };
+  check('the variables are listed for the screen', quizState.variables.smoke_score === 30 && quizState.variables.smoke_name === 'Blake', JSON.stringify(quizState.variables));
+  const forgot = await app.inject({ method: 'DELETE', url: '/api/blueprints/variables/smoke_score' });
+  await app.inject({ method: 'DELETE', url: '/api/blueprints/variables/smoke_name' });
+  check('  ...and can be forgotten', forgot.statusCode === 204);
+  const strayAnswer = await post('/api/blueprints/answer', { ask: 'nothing-asked-this', answer: 'x' });
+  check('an answer to nothing is ignored', strayAnswer.json().ok === false);
+  await app.inject({ method: 'DELETE', url: `/api/blueprints/${quiz.id}` });
+
+  /*
+   * "Am I holding a key?" is asked of the agent, played here by hand: held
+   * once, so the wire back goes round after the wait, then let go.
+   */
+  const holdBp = (await post('/api/blueprints', { name: 'Smoke hold' })).json() as { id: string };
+  await app.inject({
+    method: 'PUT',
+    url: `/api/blueprints/${holdBp.id}`,
+    payload: {
+      enabled: true,
+      graph: {
+        nodes: [
+          { id: 'go', type: 'on-button', x: 0, y: 0, fields: {} },
+          { id: 'h', type: 'if-held', x: 300, y: 0, fields: { keys: 'XButton1' } },
+          { id: 'w', type: 'wait', x: 600, y: 0, fields: { minutes: 0.1, unit: 'seconds' } },
+          { id: 'done', type: 'set-variable', x: 600, y: 300, fields: { name: 'smoke_hold', how: 'set', value: '1' } },
+        ],
+        wires: [
+          { id: 'h1', from: 'go', pin: 'then', to: 'h' },
+          { id: 'h2', from: 'h', pin: 'yes', to: 'w' },
+          { id: 'h3', from: 'w', pin: 'then', to: 'h' },
+          { id: 'h4', from: 'h', pin: 'no', to: 'done' },
+        ],
+      },
+    },
+  });
+  const holdHello = (await post('/api/blueprints/agent', {})).json() as { version: string };
+  // The parked poll and the run's wait are both unref'd, as they should be in
+  // the app: here nothing else would keep the process up while they wait.
+  const keepAlive = setInterval(() => undefined, 50);
+  const holdRun = post(`/api/blueprints/${holdBp.id}/run`, { from: 'go', dry: false });
+  const heldAsks: Array<Record<string, unknown>> = [];
+  let holdDone: Array<{ id: unknown; value: boolean }> = [];
+  for (let i = 0; i < 3 && heldAsks.length < 2; i += 1) {
+    const poll = (await post('/api/blueprints/agent', { version: holdHello.version, waitMs: 2000, done: holdDone })).json() as { tasks: Array<Record<string, unknown>> };
+    holdDone = [];
+    for (const task of poll.tasks.filter((t) => t.do === 'held')) {
+      heldAsks.push(task);
+      holdDone.push({ id: task.id, value: heldAsks.length === 1 });
+    }
+  }
+  await post('/api/blueprints/agent', { version: holdHello.version, waitMs: 0, done: holdDone });
+  await holdRun;
+  clearInterval(keepAlive);
+  check('"Am I holding a key?" asks the PC, by the key\'s one spelling', heldAsks[0]?.keys === 'mouse4', JSON.stringify(heldAsks));
+  let holdSteps: Array<{ node: string; said: string; result: string }> = [];
+  for (let i = 0; i < 20 && !holdSteps.some((st) => st.node === 'done'); i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    const state = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json() as { runs: Array<{ blueprint: string; steps: typeof holdSteps }> };
+    holdSteps = state.runs.filter((r) => r.blueprint === holdBp.id).at(-1)?.steps ?? [];
+  }
+  check('  ...held, it waits and asks again; let go, it goes the other way', heldAsks.length === 2 && holdSteps.filter((st) => st.node === 'h').map((st) => st.result).join() === 'yes,no' && holdSteps.some((st) => st.node === 'done'), JSON.stringify(holdSteps));
+  await app.inject({ method: 'DELETE', url: '/api/blueprints/variables/smoke_hold' });
+
+  /*
+   * A Variable box says where its variable starts, so "Add" to one nobody has
+   * set adds to that, not to 0, and "Put it back to its start" goes back there.
+   */
+  const startBp = (await post('/api/blueprints', { name: 'Smoke start' })).json() as { id: string };
+  await app.inject({
+    method: 'PUT',
+    url: `/api/blueprints/${startBp.id}`,
+    payload: {
+      graph: {
+        nodes: [
+          { id: 'go', type: 'on-button', x: 0, y: 0, fields: {} },
+          { id: 'v', type: 'variable', x: 0, y: 300, fields: { name: 'Smoke Start', about: 'a test', start: 10 } },
+          { id: 'add', type: 'set-variable', x: 300, y: 0, fields: { name: 'smoke_start', how: 'add', value: '5' } },
+        ],
+        wires: [{ id: 'a', from: 'go', pin: 'then', to: 'add' }],
+      },
+    },
+  });
+  await post(`/api/blueprints/${startBp.id}/run`, { from: 'go', dry: false });
+  const afterStart = (await app.inject({ method: 'GET', url: '/api/blueprints' })).json() as { variables: Record<string, unknown> };
+  check('adding to a variable nobody set adds to where its Variable box starts it', afterStart.variables.smoke_start === 15, JSON.stringify(afterStart.variables));
+  await app.inject({ method: 'DELETE', url: '/api/blueprints/variables/smoke_start' });
+  const tested = (await post(`/api/blueprints/${startBp.id}/run`, { from: 'go', dry: true })).json() as { steps: Array<{ node: string; said: string }> };
+  check('  ...and once put back, it starts there again', tested.steps.some((s) => s.node === 'add' && s.said === 'Would set {smoke_start} to 15'), JSON.stringify(tested.steps));
+  await app.inject({ method: 'DELETE', url: `/api/blueprints/${startBp.id}` });
+  await app.inject({ method: 'DELETE', url: `/api/blueprints/${holdBp.id}` });
+
+  // Switching Everything and Just Manga needs the name typed on the screen.
+  // Only the refusals are tried here: a real switch would restart this PC's app.
+  const noName = await post('/api/configuration', { to: 'just-manga' });
+  check('switching without the typed name is refused', noName.statusCode === 400 && /type JUST MANGA/.test(noName.json().error), noName.body);
+  const wrongName = await post('/api/configuration', { to: 'just-manga', confirmed: 'EVERYTHING' });
+  check('  ...and with the wrong one', wrongName.statusCode === 400);
 
   /*
    * A row whose path is not known yet: it saves, and says what to do about it.
    * "It did not work" is not a fix; "run it once" is.
    */
   await post('/api/games', { exe: 'nopath.exe', label: 'Not Run Yet' });
-  await post('/api/voice/commands', { kind: 'launch', target: 'nopath.exe', phrases: ['start the other one'] });
-  const noPath = (await post('/api/voice/command', { text: 'hey everything start the other one', speakerScore: null })).json();
+  await sayThen(['start the other one'], { type: 'launch-game', fields: { game: 'nopath.exe' } });
+  const noPath = await say('hey everything start the other one');
   check('a game never run here says where the gap is', /run it once/.test(noPath.say ?? ''), noPath.say);
 
   await app.inject({ method: 'DELETE', url: '/api/games/fsd.exe' });
@@ -1972,6 +2348,29 @@ console.log('words that are not the wake word');
   await app.inject({ method: 'PATCH', url: '/api/settings', payload: { wakeDecoys: '' } });
   const cleared = (await app.inject({ method: 'GET', url: '/api/voice/config' })).json();
   check('clearing them empties the list', (cleared.wakeDecoys as string[]).length === 0);
+
+  /*
+   * Sound-alikes: how the wake word comes out when you say it, which count as
+   * it. The opposite of a decoy, so one listed as both is a sound-alike.
+   */
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { wakeWord: 'hey jarvis', wakeAlikes: 'Jervis, jervice', wakeDecoys: 'harley, jervis' } });
+  const alikeConfig = (await app.inject({ method: 'GET', url: '/api/voice/config' })).json();
+  check('the sound-alikes reach /api/voice/config', (alikeConfig.wakeAlikes as string[]).join('|') === 'jervis|jervice', JSON.stringify(alikeConfig.wakeAlikes));
+  check('  ...and one that is also a decoy is not a decoy', (alikeConfig.wakeDecoys as string[]).join('|') === 'harley', JSON.stringify(alikeConfig.wakeDecoys));
+  check('  ...and the version moves, so the spotter is rebuilt', alikeConfig.version !== cleared.version);
+
+  // The test offers what it heard when that sounded like the wake word and did not wake it.
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { wakeAlikes: '' } });
+  await post('/api/voice/test-listen');
+  const heardOne = (text: string) =>
+    post('/api/voice/heard', { kind: 'speech', text, speakerScore: null, peak: 0.01, matchedWake: false });
+  await heardOne('a jurvis');
+  await heardOne('the service was slow');
+  const offered = (await app.inject({ method: 'GET', url: '/api/voice/status' })).json().heard as Array<{ text: string; soundsLike: string | null }>;
+  check('a test offers what it heard as a sound-alike', offered.find((h) => h.text === 'a jurvis')?.soundsLike === 'jurvis', JSON.stringify(offered.slice(-2)));
+  check('  ...and nothing for speech that only shares a few sounds', offered.find((h) => h.text === 'the service was slow')?.soundsLike === null);
+  await post('/api/voice/test-listen/stop');
+  await app.inject({ method: 'PATCH', url: '/api/settings', payload: { wakeDecoys: '', wakeWord: before.wakeWord } });
 }
 
 console.log('');

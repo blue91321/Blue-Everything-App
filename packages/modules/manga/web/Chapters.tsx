@@ -32,6 +32,7 @@ import { Icon } from './Icons';
 import { chapterText } from './judge';
 import { sourceLabel } from './Library';
 import { ageOf, manga, type SeriesSummary, type SourceChapter } from './manga-api';
+import { SourceTrouble } from './SourceTrouble';
 import { Reader } from './Reader';
 import { usePositionSaver } from './usePositionSaver';
 import {
@@ -134,7 +135,10 @@ export function Chapters({
   continueOnOpen = false,
   reopenChapterId,
   coverPath = null,
+  autoSwitch,
 }: {
+  /** Whether a source failing for two days is switched (More), for the warning to say what will happen. */
+  autoSwitch?: boolean;
   seriesId: string;
   /** The library's summary of it: status, when it was checked, and whether that failed. */
   series?: SeriesSummary;
@@ -395,6 +399,9 @@ export function Chapters({
     }
     setWaiting(null);
     setResume(at);
+    // Now, not in the effect below: a page killed for memory as the next
+    // chapter opens (which is when it is likeliest) came back to the one before.
+    rememberOpen({ seriesId, chapterId: chapter.id });
     setOpen(chapter);
   }
 
@@ -759,6 +766,7 @@ export function Chapters({
     return (
       <Reader
         seriesId={seriesId}
+        tags={series?.tags}
         chapter={open}
         resume={resume}
         ahead={ahead ? readyText(open) : null}
@@ -783,6 +791,11 @@ export function Chapters({
         hasPrevious={beside(list.data?.chapters ?? [], open.number, -1) !== undefined}
         hasNext={beside(list.data?.chapters ?? [], open.number, 1) !== undefined}
         nextNumber={beside(list.data?.chapters ?? [], open.number, 1)?.number ?? null}
+        nextId={(() => {
+          // The copy Next and finishing open — see `go` and `finished`.
+          const target = beside(list.data?.chapters ?? [], open.number, 1);
+          return target ? shownCopy(target).id : null;
+        })()}
         onElsewhere={(copy) => {
           /*
            * The same number from another source, read under this series: the
@@ -832,7 +845,17 @@ export function Chapters({
             * Beside the numbers it could not refresh, never instead of them —
             * the grid's ! points here.
             */}
-          {series?.error && <span className="meta urgent">Last check failed: {series.error}</span>}
+          {series && (
+            <SourceTrouble
+              series={series}
+              autoSwitch={autoSwitch}
+              onCompare={onCompare}
+              onSwitched={() => {
+                list.reload();
+                onChanged?.();
+              }}
+            />
+          )}
           {series?.notWatchingBecause && <span className="meta">Not watched — {series.notWatchingBecause}</span>}
 
           {/*

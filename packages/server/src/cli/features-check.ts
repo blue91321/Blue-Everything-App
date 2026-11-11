@@ -44,6 +44,8 @@ const RESULT_PREFIX = '##features##';
 
 if (process.argv[2] === 'probe') {
   process.env.DATABASE_URL = 'file:./data/features-smoke.db';
+  // Its own data folder, for the reason smoke has one.
+  process.env.DATA_DIR = './data/features-smoke-data';
   process.env.AUTH_REQUIRED = 'false';
   // 'fatal', not 'silent' — config.ts validates this against a fixed list and
   // exits on anything else, which would look exactly like a boot failure.

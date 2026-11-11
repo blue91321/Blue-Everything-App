@@ -51,6 +51,7 @@
  * is visibly an answer rather than a button that seemed to do nothing.
  */
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { copyFileSync, createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -61,7 +62,8 @@ import { dataDir } from '@everything/server/module-api';
 import { RUNTIME_DIR, bundledJava, suwayomiProcess } from './process.js';
 import { DEFAULT_BASE_URL, KEIYOUSHI_REPO, SuwayomiAdapter } from './suwayomi.js';
 
-const JAVA_URL = 'https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse';
+/** Adoptium's asset list rather than its download redirect, because it carries each build's SHA-256. */
+const JAVA_ASSETS = 'https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=x64&image_type=jre&os=windows&vendor=eclipse';
 const SUWAYOMI_RELEASE = 'https://api.github.com/repos/Suwayomi/Suwayomi-Server/releases/latest';
 
 export type SetupState = {
@@ -82,7 +84,12 @@ export function setupState(): SetupState {
   return state;
 }
 
-async function download(url: string, to: string, step: string): Promise<void> {
+/**
+ * Downloads to `to`, checked against the SHA-256 its publisher gives. Both are
+ * code this PC then runs (a Java and a jar), so a download cut short or altered
+ * on the way is refused and deleted, never unpacked or started.
+ */
+async function download(url: string, to: string, step: string, sha256: string): Promise<void> {
   state = { ...state, step, received: 0, total: null };
   const response = await fetch(url, {
     headers: { 'user-agent': 'blue-everything' },
@@ -96,9 +103,21 @@ async function download(url: string, to: string, step: string): Promise<void> {
   counted.on('data', (chunk: Buffer) => {
     state.received += chunk.length;
   });
+  const hash = createHash('sha256');
+  counted.on('data', (chunk: Buffer) => hash.update(chunk));
   const part = `${to}.part`;
   await pipeline(counted, createWriteStream(part));
+  if (hash.digest('hex') !== sha256.toLowerCase()) {
+    rmSync(part, { force: true });
+    throw new Error(`${step}: the file did not match the checksum its publisher gives, so it was not used`);
+  }
   renameSync(part, to);
+}
+
+/** The SHA-256 GitHub records for a release asset (`sha256:<hex>`), or null. */
+export function githubDigest(asset: { digest?: string | null }): string | null {
+  const m = /^sha256:([0-9a-f]{64})$/i.exec(asset.digest ?? '');
+  return m ? m[1]!.toLowerCase() : null;
 }
 
 /** Windows' own bsdtar reads zips; Git's GNU tar, first on PATH with Git Bash, does not. */
@@ -127,7 +146,15 @@ async function run(): Promise<void> {
   // ---- Java 21 ----
   if (!bundledJava()) {
     const zip = join(RUNTIME_DIR, 'jre.zip');
-    await download(JAVA_URL, zip, 'Downloading Java 21');
+    state = { ...state, step: 'Finding Java 21', received: 0, total: null };
+    const listed = await fetch(JAVA_ASSETS, { headers: { 'user-agent': 'blue-everything' }, signal: AbortSignal.timeout(30_000) });
+    if (!listed.ok) throw new Error(`could not ask Adoptium for Java 21 (${listed.status})`);
+    const builds = (await listed.json()) as Array<{ binary?: { package?: { link?: string; checksum?: string; name?: string } } }>;
+    const pkg = builds
+      .map((b) => b.binary?.package)
+      .find((p) => !!p?.link?.startsWith('https://') && /^[0-9a-f]{64}$/i.test(p.checksum ?? '') && !!p.name?.endsWith('.zip'));
+    if (!pkg) throw new Error('Adoptium listed no Java 21 zip with a checksum');
+    await download(pkg.link!, zip, 'Downloading Java 21', pkg.checksum!);
     state = { ...state, step: 'Unpacking Java' };
     const tmp = join(RUNTIME_DIR, 'java-unpack');
     rmSync(tmp, { recursive: true, force: true });
@@ -151,13 +178,17 @@ async function run(): Promise<void> {
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`could not ask GitHub for Suwayomi's latest release (${response.status})`);
-  const release = (await response.json()) as { assets?: Array<{ name: string; browser_download_url: string }> };
+  const release = (await response.json()) as { assets?: Array<{ name: string; browser_download_url: string; digest?: string | null }> };
   // The plain jar, not the .msi, .zip or AppImage beside it — the jar is the one
   // this launcher runs, on every platform.
   const asset = release.assets?.find((a) => /^Suwayomi-Server-v[\d.]+\.jar$/.test(a.name));
   if (!asset) throw new Error('Suwayomi\'s latest release has no .jar to download');
   const jar = join(RUNTIME_DIR, asset.name);
-  if (!existsSync(jar)) await download(asset.browser_download_url, jar, `Downloading ${asset.name}`);
+  if (!existsSync(jar)) {
+    const sha256 = githubDigest(asset);
+    if (!sha256) throw new Error(`GitHub gave no checksum for ${asset.name}, so it was not downloaded`);
+    await download(asset.browser_download_url, jar, `Downloading ${asset.name}`, sha256);
+  }
 
   // ---- a different version from the one in use: stop it and keep its database ----
   const before = read();

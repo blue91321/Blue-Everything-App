@@ -19,6 +19,14 @@
  * A session with no desktop has no window station to create a window on, and
  * that is not a reason to stop delivering nudges or listening for commands.
  * Every entry point here degrades to "no popup" and says so once.
+ *
+ * ### A question waits its turn and keeps its place (2026-11-04)
+ *
+ * `ask` puts up a popup with a box to type in, for a blueprint's "Ask me". It
+ * is still the one popup, so the two cannot fight: something else shown while
+ * a question is up covers it, and the question comes back when that goes, with
+ * whatever had been typed; something shown while you are typing waits until
+ * you have sent it. Questions asked together are asked one after another.
  */
 import {
   createOverlay,
@@ -80,7 +88,10 @@ function ui(): Overlay | null {
   try {
     overlay = createOverlay({
       onChoice: (id) => onChoice(id),
-      onDismiss: () => hide(0),
+      // The ✕ on a question on screen is not answering it.
+      onDismiss: () => (asking && !asking.covered ? finishAsk(null) : hide(0)),
+      onSubmit: (text) => finishAsk(text),
+      onCancel: () => finishAsk(null),
     });
   } catch (error) {
     failed = true;
@@ -90,6 +101,21 @@ function ui(): Overlay | null {
 }
 
 export function show(options: PopupOptions): void {
+  if (asking) {
+    // Typing an answer: this waits until it is sent, rather than snatching the box away.
+    if (overlay?.typing) {
+      waiting.push(options);
+      if (waiting.length > 5) waiting.shift();
+      return;
+    }
+    // Otherwise it goes over the question, which comes back when it hides.
+    if (!asking.covered) asking.text = overlay?.inputText() ?? asking.text;
+    asking.covered = true;
+  }
+  showNow(options);
+}
+
+function showNow(options: PopupOptions): void {
   showing = options;
   const { forMs = POPUP_RESULT_MS, sound, ...content } = options;
 
@@ -125,11 +151,121 @@ export function hide(afterMs: number): void {
   clearHideTimer();
 
   if (afterMs <= 0) {
-    overlay?.hide();
+    hidden();
     return;
   }
-  hideTimer = setTimeout(() => overlay?.hide(), afterMs);
+  hideTimer = setTimeout(hidden, afterMs);
   hideTimer.unref();
+}
+
+/** It goes: and then what waited for it, or the question it covered, comes back. */
+function hidden(): void {
+  overlay?.hide();
+  showing = null;
+  const next = waiting.shift();
+  if (next) {
+    show(next);
+    return;
+  }
+  if (asking?.covered) showAsk(asking);
+}
+
+/* --- Questions ---------------------------------------------------- */
+
+export interface AskOptions {
+  /** Says which question an answer or a cancel is about. */
+  id: string;
+  title: string;
+  lines?: OverlayLine[];
+  placeholder?: string;
+  accent?: string;
+  /** How long it waits for an answer before giving up. */
+  forMs: number;
+  sound?: SoundName;
+}
+
+interface Asking extends AskOptions {
+  resolve: (answer: string | null) => void;
+  text: string;
+  /** Something else is on screen over it. */
+  covered: boolean;
+  timer: NodeJS.Timeout | null;
+}
+
+let asking: Asking | null = null;
+const asks: Asking[] = [];
+/** Popups that came while an answer was being typed, shown once it is sent. */
+const waiting: PopupOptions[] = [];
+
+/**
+ * Ask something with a box to type in. Resolves with what was typed, or null
+ * when it was given up on (Escape, the ✕, the time running out, `cancelAsk`).
+ * The box does not take the keyboard until it is clicked.
+ */
+export function ask(options: AskOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    const entry: Asking = { ...options, resolve, text: '', covered: false, timer: null };
+    entry.timer = setTimeout(() => finishAsk(null, entry), Math.max(1000, options.forMs));
+    entry.timer.unref();
+    if (asking) {
+      asks.push(entry);
+      return;
+    }
+    asking = entry;
+    if (visible() && showing) {
+      // Something is on screen already: the question waits under it, and comes up when it goes.
+      entry.covered = true;
+      return;
+    }
+    if (entry.sound) playSound(entry.sound);
+    showAsk(entry);
+  });
+}
+
+function showAsk(entry: Asking): void {
+  entry.covered = false;
+  clearHideTimer();
+  showing = null;
+  ui()?.show({
+    title: entry.title,
+    lines: entry.lines,
+    accent: entry.accent,
+    input: { placeholder: entry.placeholder, text: entry.text },
+  });
+}
+
+/** Take a question away unanswered: the blueprint that asked it was stopped. */
+export function cancelAsk(id: string): void {
+  const entry = asking?.id === id ? asking : asks.find((a) => a.id === id);
+  if (entry) finishAsk(null, entry);
+}
+
+function finishAsk(answer: string | null, entry: Asking | null = asking): void {
+  if (!entry) return;
+  if (entry.timer) clearTimeout(entry.timer);
+  entry.timer = null;
+  const queued = asks.indexOf(entry);
+  if (queued !== -1) {
+    asks.splice(queued, 1);
+    entry.resolve(answer);
+    return;
+  }
+  if (entry !== asking) return;
+  asking = null;
+  const wasShowing = !entry.covered;
+  entry.resolve(answer);
+  const next = asks.shift();
+  if (next) {
+    asking = next;
+    // Straight on to the next question, or under whatever covered this one.
+    if (wasShowing) {
+      if (next.sound) playSound(next.sound);
+      showAsk(next);
+    } else next.covered = true;
+    return;
+  }
+  // The question was what was on screen: it goes, and anything that waited for it comes.
+  if (wasShowing) hidden();
 }
 
 function clearHideTimer(): void {
@@ -190,6 +326,12 @@ export function onChoiceMade(handler: (id: string) => void): void {
 export function stopPopups(): void {
   if (hideTimer) clearTimeout(hideTimer);
   hideTimer = null;
+  for (const entry of [...asks, ...(asking ? [asking] : [])]) {
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.resolve(null);
+  }
+  asks.length = 0;
+  asking = null;
   overlay?.destroy();
   overlay = null;
 }

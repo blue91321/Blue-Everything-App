@@ -256,6 +256,7 @@ export default function MangaView({ search, focus, onFocused, local }: FeatureVi
         series={current}
         coverPath={current?.coverPath ?? null}
         libraries={data?.libraries ?? []}
+        autoSwitch={data?.autoSwitchSources}
         continueOnOpen={continuing}
         reopenChapterId={reopen?.seriesId === reading ? reopen.chapterId : undefined}
         onClose={() => {

@@ -22,7 +22,7 @@ import { Cover } from './Cover';
 import { isIncognito, setIncognito } from './incognito';
 import { logCsv, logSize, syncLog, unsentCount } from './reading-log';
 import { SourceCard } from './SourceCard';
-import { manga, type Candidate, type Library, type SeriesSummary } from './manga-api';
+import { manga, type Candidate, type FlareState, type Library, type SeriesSummary } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
   ongoing: 'ongoing',
@@ -44,6 +44,75 @@ const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
  * a device setting that only this control changes, and `localStorage` on a
  * render path is a synchronous read nobody needs.
  */
+/**
+ * The Cloudflare helper, FlareSolverr: for a source that answers with an "are
+ * you human" check, which Suwayomi cannot pass alone ("Cloudflare bypass
+ * currently disabled"). Installed once, from the PC; it only runs while a site
+ * is asking for a check to be solved, and stops ten minutes after.
+ */
+function FlareCard({ local }: { local: boolean }) {
+  const [state, setState] = useState<FlareState | null>(null);
+  const [problem, setProblem] = useState('');
+  useEffect(() => {
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = () =>
+      manga.flaresolverr.get().then(
+        (s) => {
+          if (stop) return;
+          setState(s);
+          if (s.installing) timer = setTimeout(ask, 1500);
+        },
+        () => {}
+      );
+    void ask();
+    return () => {
+      stop = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [state?.installing !== null]);
+  if (!state) return null;
+  const mb = (n: number) => `${Math.round(n / 1_000_000)} MB`;
+  const act = async (fn: () => Promise<FlareState>) => {
+    setProblem('');
+    try {
+      setState(await fn());
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
+  };
+  return (
+    <div className="card">
+      <div className="row between" style={{ alignItems: 'center', gap: 8 }}>
+        <div className="grow">
+          <div className="title">Cloudflare helper (FlareSolverr)</div>
+          <div className="meta">
+            {state.unavailable
+              ? state.unavailable
+              : state.installing
+                ? `${state.installing.step}${state.installing.total ? `: ${mb(state.installing.received)} of ${mb(state.installing.total)}` : ''}`
+                : state.installed
+                  ? `Installed${state.version ? `, ${state.version}` : ''}${state.bytes ? `, ${mb(state.bytes)}` : ''}. ${state.running ? 'Running now, solving a check for a source; it stops ten minutes after the last one.' : 'Not running: it starts only when a source asks for a check to be solved, and stops ten minutes after.'}${state.lastUsedAt ? ` Last used ${new Date(state.lastUsedAt).toLocaleString()}.` : ''}`
+                  : 'For sources behind a Cloudflare "are you human" check, which Suwayomi cannot pass by itself (they read "Cloudflare bypass currently disabled"). It solves the check in a hidden browser. About a 380 MB download; it runs only while a check is being solved, on this PC only.'}
+          </div>
+        </div>
+        {!state.unavailable && !state.installing && (
+          <button
+            className={`btn${state.installed ? '' : ' primary'}`}
+            disabled={!local}
+            title={local ? undefined : 'Installing or removing a program is done from the PC'}
+            onClick={() => void act(state.installed ? manga.flaresolverr.remove : manga.flaresolverr.install)}
+          >
+            {state.installed ? 'Remove' : 'Install'}
+          </button>
+        )}
+      </div>
+      {state.installing?.total ? <progress max={state.installing.total} value={state.installing.received} style={{ width: '100%', marginTop: 8 }} /> : null}
+      {(problem || state.problem) && <p className="banner">{problem || state.problem}</p>}
+    </div>
+  );
+}
+
 function Incognito() {
   const [on, setOn] = useState(isIncognito);
 
@@ -250,6 +319,110 @@ function Shelves({
       </form>
 
       {problem && <div className="meta warn" style={{ marginTop: 8 }}>{problem}</div>}
+    </div>
+  );
+}
+
+type ReleaseScope = { favourites: boolean; shelves: string[] };
+
+/**
+ * Which series a new chapter notifies about (`Store.releaseNudgesFor`): every
+ * one, or only your favourites and the shelves you pick, either being enough.
+ * Asked for on 2026-11-09. "Only some" with nothing ticked is not saved, since
+ * saving it would mean every series again; the line under it says so.
+ */
+function NotifyScope({
+  scope,
+  libraries,
+  series,
+  onChanged,
+}: {
+  scope: ReleaseScope | null;
+  libraries: Array<{ id: string; name: string; count: number; hidden?: boolean }>;
+  series: SeriesSummary[];
+  onChanged: () => void;
+}) {
+  const key = JSON.stringify(scope);
+  const [some, setSome] = useState(scope !== null);
+  const [draft, setDraft] = useState<ReleaseScope>(scope ?? { favourites: false, shelves: [] });
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  // The server's copy wins once it comes back, or after another device changed it.
+  useEffect(() => {
+    setSome(scope !== null);
+    setDraft(scope ?? { favourites: false, shelves: [] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  const save = async (next: ReleaseScope | null) => {
+    setBusy(true);
+    setProblem('');
+    try {
+      await manga.setReleaseScope(next);
+      onChanged();
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : 'that did not save');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const change = (next: ReleaseScope) => {
+    setDraft(next);
+    if (next.favourites || next.shelves.length) void save(next);
+  };
+
+  const hidden = new Set(libraries.filter((l) => l.hidden).map((l) => l.id));
+  const putAway = (s: SeriesSummary) => s.libraries?.some((id) => hidden.has(id)) === true;
+  const inScope = (s: SeriesSummary) =>
+    !some || (draft.favourites && s.favourite === true) || draft.shelves.some((id) => s.libraries?.includes(id) === true);
+  const notifying = series.filter((s) => inScope(s) && !putAway(s)).length;
+  const favourites = series.filter((s) => s.favourite === true).length;
+  const nothing = some && !draft.favourites && draft.shelves.length === 0;
+
+  return (
+    <div className="manga-notify-scope">
+      <label className="meta">
+        <input type="radio" name="manga-notify-scope" checked={!some} disabled={busy} onChange={() => { setSome(false); void save(null); }} /> For every series
+        I follow
+      </label>
+      <label className="meta">
+        <input type="radio" name="manga-notify-scope" checked={some} disabled={busy} onChange={() => setSome(true)} /> Only for some of them
+      </label>
+      {some && (
+        <div className="manga-notify-picks">
+          <label className="meta">
+            <input
+              type="checkbox"
+              checked={draft.favourites}
+              disabled={busy}
+              onChange={(e) => change({ ...draft, favourites: e.target.checked })}
+            />{' '}
+            ★ Favourites ({favourites})
+          </label>
+          {libraries.map((l) => (
+            <label key={l.id} className="meta">
+              <input
+                type="checkbox"
+                checked={draft.shelves.includes(l.id)}
+                disabled={busy || l.hidden === true}
+                onChange={(e) =>
+                  change({ ...draft, shelves: e.target.checked ? [...draft.shelves, l.id] : draft.shelves.filter((id) => id !== l.id) })
+                }
+              />{' '}
+              {l.name} ({l.count}){l.hidden ? ' · hidden, so it never notifies' : ''}
+            </label>
+          ))}
+          {libraries.length === 0 && <span className="meta">Shelves you make below can be picked here too.</span>}
+        </div>
+      )}
+      <span className={`meta${nothing ? ' urgent' : ''}`}>
+        {nothing
+          ? 'Tick at least one. Until you do, every series still notifies; to have none, untick the box above.'
+          : `${notifying} of ${series.length} series will notify. The rest still get the NEW badge and the count${
+              some ? '; a series on a hidden shelf never notifies.' : '.'
+            }`}
+      </span>
+      {problem && <span className="meta urgent">{problem}</span>}
     </div>
   );
 }
@@ -465,6 +638,24 @@ export function More({
             />{' '}
             Notify me when a new chapter is out. Off, new chapters still show on the library — the NEW badge and the
             count — and nothing waits on the Dashboard; switching it off clears the ones waiting now.
+          </label>
+        )}
+        {data?.releaseNudges && data.releaseNudgesFor !== undefined && (
+          <NotifyScope scope={data.releaseNudgesFor} libraries={data.libraries ?? []} series={data.series} onChanged={onChanged} />
+        )}
+        {data?.autoSwitchSources !== undefined && (
+          <label className="meta">
+            <input
+              type="checkbox"
+              checked={data.autoSwitchSources}
+              onChange={async (e) => {
+                await manga.setAutoSwitch(e.target.checked);
+                onChanged();
+              }}
+            />{' '}
+            Switch a series to another source when its source has failed for two days. It is switched only to a source
+            with exactly the same title that really has chapters, preferring one that reaches as far as you have read;
+            what you have read carries over, and its page says where it came from. Off, it stays until you change it.
           </label>
         )}
         {/*
@@ -686,6 +877,7 @@ export function More({
 
 
       {!setupFirst && sourceCard}
+      <FlareCard local={local} />
     </div>
   );
 }

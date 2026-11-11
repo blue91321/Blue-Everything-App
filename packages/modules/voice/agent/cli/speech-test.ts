@@ -10,12 +10,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { SpeechGate } from '../gate.js';
 import { rms, SAMPLE_RATE } from '../mic.js';
 import { createCommandRecogniser, createWakeSpotter, toFloat, type WakeHit } from '../engine.js';
 
 export const BLOCK = SAMPLE_RATE / 10;
-const SPEECH_FLOOR = 0.006;
-const HANGOVER_MS = 700;
 
 const workDir = mkdtempSync(join(tmpdir(), 'everything-voice-'));
 let counter = 0;
@@ -52,19 +51,18 @@ export function say(text: string, rate = 1): Int16Array {
  */
 export function spot(audio: Int16Array, phrases: string[]): Array<WakeHit & { atMs: number }> {
   const spotter = createWakeSpotter(phrases);
+  const gate = new SpeechGate();
   const hits: Array<WakeHit & { atMs: number }> = [];
   let at = 0;
-  let lastLoudAt = -Infinity;
 
   const feed = (block: Int16Array): void => {
     at += 100;
-    if (rms(block) >= SPEECH_FLOOR) lastLoudAt = at;
-    if (at - lastLoudAt > HANGOVER_MS) {
-      spotter.restart();
-      return;
+    const step = gate.step(block, rms(block), at);
+    if (step.closed) spotter.restart();
+    for (const part of step.feed) {
+      const hit = spotter.accept(toFloat(part));
+      if (hit) hits.push({ ...hit, atMs: at });
     }
-    const hit = spotter.accept(toFloat(block));
-    if (hit) hits.push({ ...hit, atMs: at });
   };
 
   for (let i = 0; i < audio.length; i += BLOCK) feed(audio.subarray(i, Math.min(i + BLOCK, audio.length)));

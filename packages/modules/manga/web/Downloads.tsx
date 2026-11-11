@@ -25,6 +25,8 @@ import { thePc } from '@app/device';
 import { useEffect, useState } from 'react';
 import { useConnectivity } from '@app/offline-sync';
 import { Archive, CollectionRulesCard } from './Archive';
+import { QualityChoice } from './QualityChoice';
+import { qualityPrefs, setQualityPrefs, type Quality } from './quality';
 import { Cover } from './Cover';
 import {
   cancelDownload,
@@ -216,6 +218,7 @@ export function Downloads({ onRead, onBrowseKept }: { onRead: (seriesId: string)
         {/* And where they are, which is the question that gets asked first. */}
         <p className="meta">{whereKeptNote(kept)}</p>
         <DownloadFolder />
+        <SaveSize />
         {waiting > 0 && (
           <p className="meta">
             {waiting} change{waiting === 1 ? '' : 's'} to your reading made offline, {NOT_YET_SENT}.{' '}
@@ -534,5 +537,26 @@ function SavingCard({
         </details>
       )}
     </div>
+  );
+}
+
+/**
+ * How big saved chapters are on this device: made smaller on the PC before they
+ * come, so it saves the device's space and the time to fetch them
+ * (`quality.ts`, `server/compress.ts`). Chapters saved already stay as they are.
+ */
+function SaveSize() {
+  const [value, setValue] = useState<Quality>(() => qualityPrefs().downloads);
+  return (
+    <>
+      <div className="meta" style={{ marginTop: 10 }}>
+        Picture size for chapters saved from now on
+      </div>
+      <QualityChoice
+        label="How big the pictures in saved chapters are"
+        value={value}
+        onPick={(q) => setValue(setQualityPrefs({ downloads: q === 'auto' ? 'original' : q }).downloads)}
+      />
+    </>
   );
 }

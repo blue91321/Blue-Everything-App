@@ -89,6 +89,9 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 # run, already inside a release zip. Nothing on the PC needs installing.
 try {
   . (Join-Path $PSScriptRoot 'node-runtime.ps1')
+  # Never inherited: the server and agent are given the labeled loader, which only
+  # tsx's esbuild accepts, and Vite's build below would refuse it (node-runtime.ps1).
+  Remove-Item Env:ESBUILD_BINARY_PATH -ErrorAction SilentlyContinue
 }
 catch {
   Write-Host "Could not get Node.js: $($_.Exception.Message)" -ForegroundColor Red
@@ -247,6 +250,14 @@ if ($needsBuild) {
   Push-Location $root
   try {
     Invoke-Npm run build -w @everything/web
+    # Vite empties dist\ first, and a file there held for a moment (OneDrive
+    # syncing it, a scan) refuses with EPERM: the build stops before it starts
+    # and the app with it. Held files let go in seconds, so it is tried once more.
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host 'Building failed; trying once more in 5 seconds...' -ForegroundColor Yellow
+      Start-Sleep -Seconds 5
+      Invoke-Npm run build -w @everything/web
+    }
     if ($LASTEXITCODE -ne 0) { throw 'building the web app failed' }
   } finally { Pop-Location }
   # Written after the build, not before: a failed build must not record a state
@@ -300,6 +311,7 @@ if ($Instance) {
   Save-PreviousLog 'server'
   Save-PreviousLog 'server.err'
   Write-Host "Starting the copy ""$Instance""..." -NoNewline
+  if ($script:LoaderExe) { $env:ESBUILD_BINARY_PATH = $script:LoaderExe }
   $copy = Start-Process $script:ServerExe `
     -ArgumentList '--import', 'tsx', "`"$serverEntry`"", "--instance=$Instance" `
     -WorkingDirectory $serverDir `
@@ -307,6 +319,7 @@ if ($Instance) {
     -RedirectStandardOutput (Join-Path $logDir 'server.log') `
     -RedirectStandardError (Join-Path $logDir 'server.err.log') `
     -PassThru
+  Remove-Item Env:ESBUILD_BINARY_PATH -ErrorAction SilentlyContinue
   $ready = $false
   foreach ($i in 1..60) {
     if ($copy.HasExited) { break }
@@ -359,6 +372,7 @@ if ($AgentOnly) {
   Save-PreviousLog 'agent'
   Save-PreviousLog 'agent.err'
   Write-Host 'Starting agent... ' -NoNewline
+  if ($script:LoaderExe) { $env:ESBUILD_BINARY_PATH = $script:LoaderExe }
   $only = Start-Process $script:AgentExe `
     -ArgumentList '--expose-gc', '--import', 'tsx', "`"$agentEntry`"" `
     -WorkingDirectory $agentDir `
@@ -366,6 +380,7 @@ if ($AgentOnly) {
     -RedirectStandardOutput (Join-Path $logDir 'agent.log') `
     -RedirectStandardError (Join-Path $logDir 'agent.err.log') `
     -PassThru
+  Remove-Item Env:ESBUILD_BINARY_PATH -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 800
   if ($only.HasExited) {
     Write-Host 'failed' -ForegroundColor Red
@@ -384,6 +399,7 @@ $env:EXIT_WITHOUT_AGENT = 'true'
 Save-PreviousLog 'server'
 Save-PreviousLog 'server.err'
 Write-Host 'Starting server...' -NoNewline
+if ($script:LoaderExe) { $env:ESBUILD_BINARY_PATH = $script:LoaderExe }
 $server = Start-Process $script:ServerExe `
   -ArgumentList '--import', 'tsx', "`"$serverEntry`"" `
   -WorkingDirectory $serverDir `
@@ -391,6 +407,7 @@ $server = Start-Process $script:ServerExe `
   -RedirectStandardOutput (Join-Path $logDir 'server.log') `
   -RedirectStandardError (Join-Path $logDir 'server.err.log') `
   -PassThru
+Remove-Item Env:ESBUILD_BINARY_PATH -ErrorAction SilentlyContinue
 
 # Wait for the port rather than sleeping a fixed amount: migrations run at boot
 # and take an unpredictable moment on first launch.
@@ -414,7 +431,8 @@ if ($Foreground) {
   Write-Host "App:  $url" -ForegroundColor Cyan
   Write-Host 'Running the agent here. Ctrl+C stops the agent, and the server follows within 90s.' -ForegroundColor Cyan
   Push-Location $agentDir
-  try { & $script:AgentExe --expose-gc --import tsx $agentEntry } finally { Pop-Location }
+  if ($script:LoaderExe) { $env:ESBUILD_BINARY_PATH = $script:LoaderExe }
+  try { & $script:AgentExe --expose-gc --import tsx $agentEntry } finally { Pop-Location; Remove-Item Env:ESBUILD_BINARY_PATH -ErrorAction SilentlyContinue }
   exit 0
 }
 
@@ -434,6 +452,8 @@ if (Test-AgentRunning) {
 Save-PreviousLog 'agent'
 Save-PreviousLog 'agent.err'
 Write-Host 'Starting agent... ' -NoNewline
+# Through the labeled loader, like the server: see node-runtime.ps1.
+if ($script:LoaderExe) { $env:ESBUILD_BINARY_PATH = $script:LoaderExe }
 $agent = Start-Process $script:AgentExe `
   -ArgumentList '--expose-gc', '--import', 'tsx', "`"$agentEntry`"" `
   -WorkingDirectory $agentDir `
@@ -441,6 +461,7 @@ $agent = Start-Process $script:AgentExe `
   -RedirectStandardOutput (Join-Path $logDir 'agent.log') `
   -RedirectStandardError (Join-Path $logDir 'agent.err.log') `
   -PassThru
+Remove-Item Env:ESBUILD_BINARY_PATH -ErrorAction SilentlyContinue
 
 Start-Sleep -Milliseconds 800
 if ($agent.HasExited) {

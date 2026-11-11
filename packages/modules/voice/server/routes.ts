@@ -1,5 +1,6 @@
 /**
- * Voice commands: "I drank water" ticks off the drink-water habit.
+ * Voice commands: "I drank water" ticks off the drink-water habit, through a
+ * blueprint whose "When I say" box holds the phrase.
  *
  * The split that matters is that the agent hears and the server decides. The
  * agent turns sound into a string and posts it; every judgement about what that
@@ -19,7 +20,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import {
   VOICE_ENROL_MS,
@@ -35,16 +36,19 @@ import {
   type VoiceAgentReport,
   type VoiceCandidate,
   type VoiceHeard,
+  parseWakeAlikes,
+  soundsLikeWakeWord,
   parseWakeDecoys,
   voiceprintIsCurrent,
 } from '@everything/shared';
 import { db, dataDir, isGuest } from '@everything/server/module-api';
 import { notes, settings, voiceCommands } from '@everything/server/module-api';
 import { getSettings } from '@everything/server/module-api';
-import { changes } from '@everything/server/module-api';
+import { changes, onSpokenChange, spokenCommands, spokenProvided } from '@everything/server/module-api';
 import {
   labelFor,
   loadCommands,
+  OWN_KINDS,
   parsePhrases,
   planChain,
   resolveVoiceCommand,
@@ -152,6 +156,8 @@ function bumpVoice(): void {
 changes.on('change', (event: { scope: string }) => {
   if (event.scope === 'settings' || event.scope === 'habits' || event.scope === 'all') bumpVoice();
 });
+// The phrases themselves are blueprints' now, and those say when they change.
+onSpokenChange(bumpVoice);
 
 /** Wait for something to change, or give up so status stays reasonably fresh. */
 function waitForVoiceChange(ms: number): Promise<void> {
@@ -171,6 +177,12 @@ interface HeardEvent extends VoiceHeard {
   at: number;
   /** What it would have ticked off, had this not been a test. */
   wouldMatch: { habitName: string | null; phrase: string } | null;
+  /**
+   * Speech that sounds like the wake word and did not wake it: the words the
+   * recogniser wrote for its name ("jervice"), for the screen to offer as a
+   * sound-alike. Null when it did not sound like it, or already is one.
+   */
+  soundsLike: string | null;
 }
 const heard: HeardEvent[] = [];
 const HEARD_LIMIT = 40;
@@ -198,8 +210,7 @@ const AGENT_STALE_MS = 45_000;
 function announce(result: VoiceOutcome): void {
   for (const step of result.steps ?? []) announce(step);
 
-  if (result.outcome === 'habit-checked') changes.emitChange('habits');
-  if (result.outcome === 'note-added' || result.outcome === 'captured-as-note') changes.emitChange('notes');
+  // A blueprint announces what it wrote itself; only voice's own pause is left.
   if (result.outcome === 'paused') {
     changes.emitChange('settings');
     bumpVoice();
@@ -241,7 +252,14 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
      * and are never matched against — they are keywords the spotter listens
      * for beside the wake word, so a sound close to both goes to them instead.
      */
-    const decoys = parseWakeDecoys(row.wakeDecoys ?? '', row.wakeWord);
+    /*
+     * And the other way round: ways *you* say the wake word that the spotter
+     * would not hear as it ("jervis"), listened for beside it and counting as
+     * it. One that is also a decoy goes from the decoys: the two claims say
+     * opposite things about the same sound, and this one is the newer.
+     */
+    const alikes = parseWakeAlikes(row.wakeAlikes ?? '', row.wakeWord);
+    const decoys = parseWakeDecoys(row.wakeDecoys ?? '', row.wakeWord).filter((d) => !alikes.includes(d));
     // The words you typed, for the can-this-be-heard check: a digit or a
     // symbol in a phrase is something the recogniser will never write.
     const literal = phraseWordsFor(commands, row.wakeWord);
@@ -254,6 +272,7 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
       voiceprint: row.voiceprint ? (JSON.parse(row.voiceprint) as number[]) : null,
       vocabulary: words,
       wakeDecoys: decoys,
+      wakeAlikes: alikes,
       /* The decoys ride along here too, checked the same way. */
       checkWords: [...literal, ...decoys.flatMap((d) => d.split(' '))],
       /**
@@ -274,7 +293,8 @@ export async function voiceRoutes(app: FastifyInstance): Promise<void> {
          */
         .update(`${row.wakeWord}
 ${words.join(' ')}
-${decoys.join(' ')}`)
+${decoys.join(' ')}
+${alikes.join(' ')}`)
         .digest('hex')
         .slice(0, 16),
     };
@@ -494,7 +514,18 @@ ${decoys.join(' ')}`)
       ? { habitName: await labelFor(matched), phrase: match.phrase }
       : null;
 
-    heard.push({ ...body, at: Date.now(), wouldMatch });
+    /*
+     * The one moment the PC hears you say the wake word *and* has the words for
+     * it: while waiting, during a test, the command recogniser runs beside the
+     * spotter. Speech that sounds like the wake word and did not wake it is the
+     * spotter missing how you say it, so the screen offers what was written.
+     */
+    const settingsRow = await getSettings();
+    const alikesNow = parseWakeAlikes(settingsRow.wakeAlikes ?? '', settingsRow.wakeWord);
+    const soundsLike =
+      body.kind === 'speech' && !body.matchedWake && body.text ? soundsLikeWakeWord(body.text, settingsRow.wakeWord) : null;
+
+    heard.push({ ...body, at: Date.now(), wouldMatch, soundsLike: soundsLike && !alikesNow.includes(soundsLike) ? soundsLike : null });
     if (heard.length > HEARD_LIMIT) heard.splice(0, heard.length - HEARD_LIMIT);
 
     /*
@@ -571,9 +602,21 @@ ${decoys.join(' ')}`)
 
   /* ---------------- what can I say ---------------- */
 
+  /*
+   * Voice's own two commands, and the blueprints that answer the rest.
+   *
+   * Only "stop listening" and "never mind" are rows here now: they act on the
+   * microphone and must work with Blueprints off. Everything else is a "When I
+   * say" box, listed beside them with where to edit it, so the Commands tab can
+   * still answer "what can I say".
+   */
   app.get('/api/voice/commands', async () => {
-    const rows = await db.select().from(voiceCommands).orderBy(asc(voiceCommands.sortOrder));
-    return Promise.all(
+    const rows = await db
+      .select()
+      .from(voiceCommands)
+      .where(inArray(voiceCommands.kind, [...OWN_KINDS]))
+      .orderBy(asc(voiceCommands.sortOrder));
+    const own = await Promise.all(
       rows.map(async (row) => ({
         ...row,
         phrases: parsePhrases(row.phrases),
@@ -581,7 +624,7 @@ ${decoys.join(' ')}`)
         allowFollowUp: Boolean(row.allowFollowUp),
         label: await labelFor({
           id: row.id,
-          kind: row.kind as never,
+          kind: row.kind as 'pause' | 'cancel',
           phrases: parsePhrases(row.phrases),
           target: row.target,
           pauseMinutes: row.pauseMinutes,
@@ -590,10 +633,28 @@ ${decoys.join(' ')}`)
         }),
       }))
     );
+    const spoken = spokenCommands()
+      .list()
+      .map(({ id, phrases, label, enabled, allowFollowUp, edit }) => ({ id, phrases, label, enabled, allowFollowUp, edit }));
+    return { own, spoken, blueprints: spokenProvided() };
   });
+
+  /** A new "When I say" blueprint, for New voice command. Answers where to edit it. */
+  app.post('/api/voice/commands/blueprint', async (_request, reply) => {
+    try {
+      return await spokenCommands().create();
+    } catch (error) {
+      return reply.code(409).send({ error: (error as Error).message });
+    }
+  });
+
+  /** Only voice's own kinds are made here; the rest are blueprints. */
+  const ownKind = (kind: string) => (OWN_KINDS as readonly string[]).includes(kind);
+  const MAKE_IT_A_BLUEPRINT = 'That is a blueprint now: press New voice command, which opens one with a "When I say" box.';
 
   app.post('/api/voice/commands', async (request, reply) => {
     const body = createVoiceCommandSchema.parse(request.body);
+    if (!ownKind(body.kind)) return reply.code(400).send({ error: MAKE_IT_A_BLUEPRINT });
     const existing = await db.select({ sortOrder: voiceCommands.sortOrder }).from(voiceCommands);
     const nextOrder = existing.reduce((max, c) => Math.max(max, c.sortOrder), 0) + 1;
 
@@ -602,7 +663,7 @@ ${decoys.join(' ')}`)
       .values({
         kind: body.kind,
         phrases: JSON.stringify(body.phrases.map((p) => p.trim().toLowerCase())),
-        target: body.target ?? null,
+        target: null,
         pauseMinutes: body.pauseMinutes ?? null,
         label: body.label ?? null,
         allowFollowUp: body.allowFollowUp ? 1 : 0,
@@ -618,19 +679,20 @@ ${decoys.join(' ')}`)
   app.patch('/api/voice/commands/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = createVoiceCommandSchema.parse(request.body);
+    if (!ownKind(body.kind)) return reply.code(400).send({ error: MAKE_IT_A_BLUEPRINT });
 
     const [updated] = await db
       .update(voiceCommands)
       .set({
         kind: body.kind,
         phrases: JSON.stringify(body.phrases.map((p) => p.trim().toLowerCase())),
-        target: body.target ?? null,
+        target: null,
         pauseMinutes: body.pauseMinutes ?? null,
         label: body.label ?? null,
         allowFollowUp: body.allowFollowUp ? 1 : 0,
         enabled: body.enabled ? 1 : 0,
       })
-      .where(eq(voiceCommands.id, id))
+      .where(and(eq(voiceCommands.id, id), inArray(voiceCommands.kind, [...OWN_KINDS])))
       .returning();
 
     if (!updated) return reply.code(404).send({ error: 'no such command' });
@@ -638,9 +700,10 @@ ${decoys.join(' ')}`)
     return { ...updated, phrases: parsePhrases(updated.phrases) };
   });
 
+  // Only voice's own: a converted row is the record of what became a blueprint.
   app.delete('/api/voice/commands/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
-    await db.delete(voiceCommands).where(eq(voiceCommands.id, id));
+    await db.delete(voiceCommands).where(and(eq(voiceCommands.id, id), inArray(voiceCommands.kind, [...OWN_KINDS])));
     bumpVoice();
     return reply.code(204).send();
   });
@@ -802,7 +865,8 @@ ${decoys.join(' ')}`)
     // Asked first, exactly as the real path does — "drink water and skip this
     // track" matches "drink water" as a whole sentence, so reporting the single
     // match would describe half of what would actually happen.
-    const chain = planChain(body.text, commands, candidates, (await getSettings()).wakeWord);
+    const wakeWord = (await getSettings()).wakeWord;
+    const chain = planChain(body.text, commands, candidates, wakeWord);
     if (chain) {
       return {
         heard: body.text,
@@ -816,6 +880,8 @@ ${decoys.join(' ')}`)
             habitName: await labelFor(step.command),
             // Per segment, because that is how the real path counts them.
             count: spokenCount(step.segment),
+            // What its blueprint would do, asked of it with nothing done.
+            would: (await runCommand(step.command, step.segment, step.phrase, wakeWord, true)).say ?? '',
           }))
         ),
       };
@@ -827,7 +893,15 @@ ${decoys.join(' ')}`)
       heard: body.text,
       tokens: voiceTokens(body.text),
       count: spokenCount(body.text),
-      match: match && matched ? { ...match, habitName: await labelFor(matched), kind: matched.kind } : null,
+      match:
+        match && matched
+          ? {
+              ...match,
+              habitName: await labelFor(matched),
+              kind: matched.kind,
+              would: (await runCommand(matched, body.text, match.phrase, wakeWord, true)).say ?? '',
+            }
+          : null,
       chain: null,
     };
   });

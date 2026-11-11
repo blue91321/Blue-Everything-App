@@ -39,11 +39,12 @@
 import { db, tasks, nudges, changes, getSettings } from '@everything/server/module-api';
 import { resolvePush } from '@everything/shared';
 import { isNewerChapter, worthPolling } from './identity.js';
-import { read, readPositions, write, alreadyRaised, isPutAway, type ReadingPosition, type Series, type Store } from './library.js';
+import { read, readPositions, write, alreadyRaised, inReleaseScope, isPutAway, type ReadingPosition, type Series, type Store } from './library.js';
 import { readSeries, MangaUpdatesError, SPACING_MS } from './mangaupdates.js';
 import { SourceError, effectiveUrl } from './sources.js';
 import { SuwayomiAdapter, DEFAULT_BASE_URL } from './suwayomi.js';
 import { suwayomiProcess } from './process.js';
+import { goneFromSource } from '../web/shelf.js';
 
 /**
  * How many series one sweep asks about.
@@ -165,6 +166,16 @@ export function dueForCheck(
   const rest: Series[] = [];
   for (const s of pollable(store)) {
     if (!askable(s)) continue;
+    /*
+     * Gone from its source (a 404, or "no chapters"): asked about once a day, in
+     * the ordinary queue, in case the site puts it back. Not a retry slot, and
+     * not every sweep even while you are reading it: asking again cannot help,
+     * and finding another source can.
+     */
+    if (goneFromSource(s.error)) {
+      if (s.checkedAt === null || now - s.checkedAt >= DAY) rest.push(s);
+      continue;
+    }
     const active = lastActive(s, positions);
     if (now - active <= RECENT_MS) {
       // Already asked about every sweep; a retry slot would buy it nothing.
@@ -383,7 +394,8 @@ export async function sweepReleases(now = Date.now()): Promise<SweepResult> {
         : null;
 
       // Switched off, the chapter is still recorded below — only the nudge is skipped.
-      const nudge = store.releaseNudges && !away
+      // Narrowed to favourites or chosen shelves, if asked (More → New chapters): the chapter is still recorded.
+      const nudge = store.releaseNudges && !away && inReleaseScope(store.releaseNudgesFor, row)
         ? (
             await db
               .insert(nudges)

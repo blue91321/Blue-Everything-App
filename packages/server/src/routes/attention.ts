@@ -3,10 +3,12 @@ import type { FastifyInstance } from 'fastify';
 import { attentionReportSchema, isAwayFromPc,
   ACCENT_HEX,
   type AccentColor,
+  type AttentionReport,
 } from '@everything/shared';
 import { db } from '../db/client.js';
 import { attentionSamples } from '../db/schema.js';
 import { changes } from '../events.js';
+import { happenings } from '../happenings.js';
 import { agentCheckedIn } from '../agent-watch.js';
 import { gamesVersion, recordSeen } from './games.js';
 import { looksLikeGameInstall, looksLikeSystemApp } from '@everything/shared/games';
@@ -38,6 +40,8 @@ export const SAMPLE_RETENTION_MS = 90 * 24 * 60 * 60_000;
  * and one extra sweep, which is the right trade for keeping it off disk.
  */
 let lastPersisted: { state: string; at: number; away: boolean } | null = null;
+/** What was last said to `happenings`, kept apart from what was last written. */
+let lastSaid: { state: AttentionReport['state']; away: boolean; game: string | null; games: string } | null = null;
 let lastSweepAt = 0;
 /** When an agent last reported, for `phoneOnlyDelivery` to stand aside. */
 let lastReportAt = 0;
@@ -149,6 +153,35 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
       lastPersisted = { state: report.state, at, away };
     }
 
+    /*
+     * Said only when something moved: a different state, coming or going, or a
+     * stopping point. The game is the one in front, or on the stopping point
+     * that ends a match, the one that was — "after Warframe" is the useful half.
+     */
+    const game = report.liveGames[0] ?? (report.state === 'in-game' ? (report.exe ?? null) : null);
+    // A different game in front counts too, or one game straight after another is unheard.
+    const otherGame = report.state === 'in-game' && lastSaid?.state === 'in-game' && game !== null && game !== lastSaid.game;
+    // And a game opening or closing behind the one in front, for whatever waits on a particular game.
+    const games = [...new Set(report.liveGames.map((g) => g.toLowerCase()))].sort();
+    const otherGames = lastSaid !== null && lastSaid.games !== games.join('|');
+    if (!lastSaid || lastSaid.state !== report.state || lastSaid.away !== away || report.stoppingPoint || otherGame || otherGames) {
+      happenings.say('attention', {
+        state: report.state,
+        previous: lastSaid?.state ?? null,
+        away,
+        previousAway: lastSaid?.away ?? null,
+        stoppingPoint: report.stoppingPoint ?? null,
+        game: game ?? lastSaid?.game ?? null,
+        games,
+      });
+    }
+    lastSaid = {
+      state: report.state,
+      away,
+      game: game ?? (report.state === 'in-game' ? lastSaid?.game ?? null : null),
+      games: games.join('|'),
+    };
+
     let queueChanged = false;
     if (at - lastSweepAt >= SWEEP_INTERVAL_MS) {
       // Expire first, so a stale reminder can't be delivered and doesn't block
@@ -237,6 +270,8 @@ export async function attentionRoutes(app: FastifyInstance): Promise<void> {
        * only request the agent always makes.
        */
       soundEnabled: Boolean(prefs.soundEnabled),
+      /** How loud the app's tones are, 0 to 100, for the same reason. */
+      soundVolume: prefs.soundVolume ?? 50,
       /*
        * So the popup drawn over a fullscreen game is the colour the rest of the
        * app is. The dark value, always: the overlay has one background and it is

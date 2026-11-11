@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, nudges, config, devices, isGuest, nameFor } from '@everything/server/module-api';
+import { available as compressionAvailable, isQuality } from '../compress.js';
 import { chapterValue } from '../identity.js';
 import { search, fetchCover, MangaDexError } from '../mangadex.js';
 import { CREDIT } from '../mangaupdates.js';
@@ -19,13 +20,15 @@ import {
   findExisting,
   readPositions,
   writePosition,
+  cleanReleaseScope,
+  inReleaseScope,
   type Series,
   isRating,
 } from '../library.js';
 import { seriesSummary, recentReleases, thumbPath } from '../present.js';
 import { sweepReleases, pollable } from '../releases.js';
 import { readableChapter } from '../sources.js';
-import { findSourcesState, startFindingSources, unlinkedCount } from '../find-sources.js';
+import { findSourcesState, goneCount, startFindingSources, switchNow, unlinkedCount } from '../find-sources.js';
 import { searchOldHistory } from '../old-history.js';
 import { othersRatings, setShared } from '../shared-ratings.js';
 import { keptMangaIds } from '../archive.js';
@@ -47,11 +50,38 @@ export function libraryRoutes(app: FastifyInstance): void {
    * Finding a source for every series without one — see `find-sources.ts`.
    * Not local-only: it is about your library, like linking one by hand.
    */
-  app.get('/api/manga/find-sources', async () => ({ ...findSourcesState(), unlinked: unlinkedCount() }));
-  app.post('/api/manga/find-sources', { config: { announce: false } }, async () => ({
-    ...startFindingSources(),
-    unlinked: unlinkedCount(),
-  }));
+  /**
+   * A new source for one series, now: the button on its page. Not local-only,
+   * like linking one by hand. Takes as long as the searches do (about fifteen
+   * seconds), and answers with what happened and the series as it now is.
+   */
+  app.post('/api/manga/:id/switch-source', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const outcome = await switchNow(id);
+      const row = read().series.find((s) => s.id === id);
+      return { outcome, series: row ? seriesSummary(row) : null };
+    } catch (error) {
+      return reply.code(502).send({ error: error instanceof Error ? error.message : 'the sources could not be asked' });
+    }
+  });
+
+  /** Switching sources after two days of failing, on or off. Not local-only: it is about your library. */
+  app.put('/api/manga/auto-switch', async (request, reply) => {
+    const body = request.body as { on?: unknown } | null;
+    if (typeof body?.on !== 'boolean') return reply.code(400).send({ error: 'send on: true or false' });
+    const store = read();
+    store.autoSwitchSources = body.on;
+    write(store);
+    return { autoSwitchSources: store.autoSwitchSources };
+  });
+
+  app.get('/api/manga/find-sources', async () => ({ ...findSourcesState(), unlinked: unlinkedCount(), gone: goneCount() }));
+  // `mode: 'gone'` switches every series its source has lost to another source that has it.
+  app.post('/api/manga/find-sources', { config: { announce: false } }, async (request) => {
+    const mode = (request.body as { mode?: unknown } | null)?.mode === 'gone' ? 'gone' : 'unlinked';
+    return { ...startFindingSources(mode), unlinked: unlinkedCount(), gone: goneCount() };
+  });
 
   /**
    * Sources left out of searching and browsing. Not local-only: it is
@@ -115,6 +145,10 @@ export function libraryRoutes(app: FastifyInstance): void {
       releaseTasks: store.releaseTasks,
       /** Whether a new chapter raises a nudge — see `Store.releaseNudges`. */
       releaseNudges: store.releaseNudges,
+      /** Which series notify — see `Store.releaseNudgesFor`. */
+      releaseNudgesFor: store.releaseNudgesFor,
+      /** Whether a source failing for two days is switched — see `Store.autoSwitchSources`. */
+      autoSwitchSources: store.autoSwitchSources,
       /** How many chapters are fetched ahead — see `Store.readAheadChapters`. */
       readAheadChapters: store.readAheadChapters,
       /** The cap, sent rather than written into the screen twice. */
@@ -305,6 +339,25 @@ export function libraryRoutes(app: FastifyInstance): void {
       }
     }
     return { releaseNudges: store.releaseNudges };
+  });
+
+  /**
+   * Which series a new chapter notifies about: `{ favourites, shelves }`, or
+   * null for every series. Like switching off, narrowing clears the waiting
+   * ones it now leaves out, since those are the ones just said to be unwanted.
+   */
+  app.put('/api/manga/release-nudges/scope', async (request, reply) => {
+    const body = request.body as { scope?: unknown } | null;
+    if (!body || !('scope' in body)) return reply.code(400).send({ error: 'send scope: { favourites, shelves } or null' });
+    const store = read();
+    store.releaseNudgesFor = cleanReleaseScope(body.scope, store.libraries);
+    write(store);
+    const outside = new Set(store.series.filter((s) => !inReleaseScope(store.releaseNudgesFor, s)).map((s) => s.id));
+    const waiting = store.links.filter((l) => outside.has(l.seriesId)).map((l) => l.nudgeId).filter((id): id is string => typeof id === 'string');
+    if (waiting.length > 0) {
+      await db.update(nudges).set({ state: 'expired' }).where(and(inArray(nudges.id, waiting), eq(nudges.state, 'pending')));
+    }
+    return { releaseNudgesFor: store.releaseNudgesFor };
   });
 
   /**
@@ -604,6 +657,8 @@ export function libraryRoutes(app: FastifyInstance): void {
       autoKeepFavourites: store.autoKeepFavourites,
       autoKeepMinRating: store.autoKeepMinRating,
       shareRatingsWithCopies: store.shareRatingsWithCopies,
+      // The host's to set: a friend's copy keeps nothing of its own.
+      ...(isGuest ? {} : { archiveQuality: store.archiveQuality, compressionAvailable: await compressionAvailable() }),
     };
   });
 
@@ -612,8 +667,14 @@ export function libraryRoutes(app: FastifyInstance): void {
       autoKeepFavourites?: unknown;
       autoKeepMinRating?: unknown;
       shareRatingsWithCopies?: unknown;
+      archiveQuality?: unknown;
     };
     const store = read();
+    if (body.archiveQuality !== undefined) {
+      if (isGuest) return reply.code(403).send({ error: 'The host decides how the Local collection keeps pictures.' });
+      if (!isQuality(body.archiveQuality)) return reply.code(400).send({ error: 'archiveQuality is original, smaller or smallest' });
+      store.archiveQuality = body.archiveQuality;
+    }
     if (body.autoKeepFavourites !== undefined) {
       if (typeof body.autoKeepFavourites !== 'boolean') return reply.code(400).send({ error: 'autoKeepFavourites is true or false' });
       store.autoKeepFavourites = body.autoKeepFavourites;
@@ -637,6 +698,7 @@ export function libraryRoutes(app: FastifyInstance): void {
       autoKeepFavourites: store.autoKeepFavourites,
       autoKeepMinRating: store.autoKeepMinRating,
       shareRatingsWithCopies: store.shareRatingsWithCopies,
+      ...(isGuest ? {} : { archiveQuality: store.archiveQuality, compressionAvailable: await compressionAvailable() }),
     };
   });
 
