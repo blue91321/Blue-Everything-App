@@ -208,6 +208,12 @@
   height: auto;
 }
 
+/* A page of a chapter far above, its picture let go: a blank of exactly its size (`rest` in Reader.tsx). */
+.manga-page-rest {
+  display: block;
+  width: var(--page-width, 100%);
+}
+
 /*
  * A gap that says what it is, and offers to fix itself.
  *
@@ -2135,12 +2141,10 @@ html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
 
 /*
  * Pages mode (the gear): a sheet is the screen's height, holding one page or
- * two side by side, and the screen snaps to each. The window still does the
- * scrolling, so the snapping is on the document while the reader shows it.
+ * two side by side. The window does the scrolling, freely; once it stops, a
+ * sheet near the middle is pulled the rest of the way (`magnet.ts`). There is
+ * no CSS scroll snapping: see that file for why.
  */
-html.manga-snap {
-  scroll-snap-type: y mandatory;
-}
 
 /*
  * A sheet is as tall as its pages, which are as tall as the screen less a
@@ -2169,8 +2173,6 @@ html.manga-snap {
   align-items: center;
   justify-content: center;
   width: 100%;
-  scroll-snap-align: center;
-  scroll-snap-stop: always;
 }
 
 /* Right to left, the first page of a pair is the right-hand one. */
@@ -2191,6 +2193,33 @@ html.manga-snap {
   max-width: 50%;
 }
 
+/*
+ * Part of a taller picture (a page with the group's credits stacked onto it):
+ * a box of the part's shape hiding the rest, the picture inside at full width
+ * and pinned to the top or the bottom by the reader. The sheet's own sizing
+ * rules for a page are undone for the picture inside, or it would be squeezed
+ * to the box's height instead of cut by it.
+ */
+.manga-page-crop {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.manga-sheet.two .manga-page-crop {
+  max-width: 50%;
+}
+
+.manga-strip .manga-sheet .manga-page-crop img {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: auto;
+  max-width: none;
+  max-height: none;
+}
+
 /* A page still coming keeps a page's shape, so the sheets do not jump as they arrive. */
 .manga-sheet .manga-page-waiting {
   flex: none;
@@ -2203,11 +2232,6 @@ html.manga-snap {
 
 .manga-sheet.two .manga-page-waiting {
   max-width: 50%;
-}
-
-/* The end of the chapter is a place to stop too. */
-html.manga-snap .manga-reader-end {
-  scroll-snap-align: end;
 }
 
 /* Carrying on: where one chapter ends and the next begins. */

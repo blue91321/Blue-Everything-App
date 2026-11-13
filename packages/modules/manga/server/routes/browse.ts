@@ -6,7 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import { changes } from '@everything/server/module-api';
 import { PageFetchError, sharedPage } from '../page-fetch.js';
-import { compressCached, qualityFrom } from '../compress.js';
+import { compressCached, originalSizeHeader, qualityFrom } from '../compress.js';
 import { search, type Candidate } from '../mangadex.js';
 import { readSeries } from '../mangaupdates.js';
 import {
@@ -611,12 +611,13 @@ export function browseRoutes(app: FastifyInstance): void {
     try {
       // Asked again on a refusal before giving up, and shared — see `page-fetch.ts`.
       // Made smaller when asked, as the followed reader's are (`compress.ts`).
-      const { body, type } = await compressCached(p, await sharedPage(`${ctx.url}${p}`), qualityFrom(q));
+      const out = await compressCached(p, await sharedPage(`${ctx.url}${p}`), qualityFrom(q));
       return reply
-        .header('content-type', type)
+        .header('content-type', out.type)
         .header('cache-control', 'private, max-age=604800')
         .header('x-made-in', String(Math.round(reply.elapsedTime)))
-        .send(body);
+        .headers(originalSizeHeader(out))
+        .send(out.body);
     } catch (error) {
       // 504 when it timed out twice, so the reader knows waiting again will not help.
       const code = error instanceof PageFetchError && error.status === 504 ? 504 : 502;

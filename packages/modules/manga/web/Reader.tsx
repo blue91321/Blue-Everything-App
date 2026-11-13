@@ -121,7 +121,7 @@
  * and CSS transitions on this project's list of things that measure nothing in a
  * pane nobody is looking at.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ServerUnreachable } from '@app/api';
 import { useNow } from '@app/clock';
@@ -131,11 +131,13 @@ import { NEEDS } from './device-text';
 import { Icon } from './Icons';
 import { chapterText } from './judge';
 import { ReaderSettings } from './ReaderSettings';
-import { rememberedFormat, rememberFormat, useReaderPrefs, type ReaderMode } from './reader-prefs';
-import { chooseFirstAlone, contentKind, fitsTwo, formatFromTags, pairPages, typicalAspect, type PageInfo } from './page-layout';
+import { rememberedFormat, rememberedMargins, rememberedPairing, rememberFormat, rememberMargins, rememberPairing, useReaderPrefs, type ChapterPairing, type ReaderMode } from './reader-prefs';
+import { apartPages, asBookPages, chooseFirstAlone, contentKind, learnMargins, seamsDecide, stackedPages, type MarginSide, fitsTwo, formatFromTags, leanFromTags, pairPages, typicalAspect, type PageInfo } from './page-layout';
 import { usePageInfo } from './page-analysis';
 import { reachedTheEnd } from './chapter-nav';
-import { glideDistance, glideStep, releaseVelocity, STOP_SPEED, type DragSample } from './glide';
+import { glideStep, releaseVelocity, STOP_SPEED, type DragSample } from './glide';
+import { magnetTarget, reachFor, SETTLED_PX, type MagnetSpot } from './magnet';
+import { settlePlan, settleTarget } from './settle';
 import { useTakeScreen } from './take-screen';
 import { useFarPages } from './far-pages';
 
@@ -146,13 +148,39 @@ const IN_FLIGHT = 3;
  * a phone holding three chapters of tall strips is a phone killing the page
  * (see `far-pages.ts`, which is the other half of keeping that from happening).
  */
-const KEEP_BEHIND = 1;
+/** A chapter carried above this far from the screen lets go of its pictures and keeps their space. */
+const REST_SCREENS = 4;
+/** And takes them back this near. */
+const WAKE_SCREENS = 2;
+/** Under this many screens tall, a chapter is short enough to fetch the next one ahead from its start. */
+const SHORT_SCREENS = 4;
+/** No pages, the same array every render. */
+const NO_URLS: (string | null)[] = [];
 
 /** A finished chapter left on screen above the next, when carrying on — see "Carrying on". */
-type Carried = { id: string; number: number; urls: (string | null)[] };
+/**
+ * A chapter carried on from, above the one being read. Kept for the whole
+ * session, its space and all (2026-11-12): taking chapters off the top moved
+ * what you were reading, and Safari has nothing that puts it back. One far from
+ * the screen is `resting`: its pictures and their bytes let go, each page a
+ * blank of the size it was (`shapes`, width over height), until you scroll back
+ * near it and its pages (`paths`) are asked for again.
+ */
+type Carried = {
+  id: string;
+  number: number;
+  urls: (string | null)[];
+  paths: string[];
+  shapes: (number | null)[];
+  resting?: boolean;
+};
 
 /** A page that has arrived and been drawn. */
-const loaded = (k: Element) => k instanceof HTMLImageElement && k.complete && k.naturalHeight > 0;
+const loaded = (k: Element) => {
+  // A page cut out of a taller image is a box with the picture inside it (`cropped`).
+  const img = k instanceof HTMLImageElement ? k : k.querySelector('img');
+  return !!img && img.complete && img.naturalHeight > 0;
+};
 /** How long the reader waits before giving the pages that failed a second go. */
 const SECOND_GO_MS = 3_000;
 
@@ -180,6 +208,8 @@ const READ_LINE = 8;
 
 /** How often scrolling is turned into a place, at most. */
 const MEASURE_MS = 300;
+/** How long the screen has to be still before pages mode's pull (`magnet.ts`) acts: past a wheel's notches and a flick's last frames. */
+const MAGNET_WAIT_MS = 160;
 
 /** A thumbnail's box, drawn at twice this for a sharp screen. */
 const THUMB_W = 30;
@@ -276,7 +306,8 @@ export function Reader({
   ahead?: string | null;
   /**
    * The series' tags, where the screen opening the reader knows them: what
-   * switching by itself asks first (`formatFromTags`), before the pictures.
+   * switching by itself asks first (`formatFromTags`, and `leanFromTags`
+   * where they only lean), before the pictures.
    */
   tags?: string[];
 }) {
@@ -337,7 +368,7 @@ export function Reader({
         `(Cancel, then ⋯ → Other sources on the chapter list, to find one that has them.)`
     );
   };
-  const [urls, setUrls] = useState<(string | null)[]>([]);
+  const [rawUrls, setUrls] = useState<(string | null)[]>([]);
   /**
    * The source's own page paths, kept so one page can be asked for again.
    *
@@ -391,7 +422,23 @@ export function Reader({
       setElsewhere({ state: 'failed', message: error instanceof Error ? error.message : 'could not look' });
     }
   };
-  const [total, setTotal] = useState<number | null>(null);
+  const [rawTotal, setTotal] = useState<number | null>(null);
+  /**
+   * Which chapter `rawUrls` and `rawTotal` are about (2026-11-11).
+   *
+   * They are cleared by the loader's effect, which runs after the render in
+   * which the chapter changed, so for that one render they still held the
+   * last chapter's pages and the new chapter's strip drew them: in *Endless*,
+   * every page of the chapter just finished put on screen a second time, as
+   * new pictures, below the first copy and at the moment the next chapter
+   * starts. Reported as the start of chapter 82 looking squished, on the
+   * series whose pages had twice killed the page on an iPhone at exactly this
+   * moment. Read through `urls` and `total`, which are empty until the loader
+   * has started on this chapter.
+   */
+  const [owner, setOwner] = useState(chapter.id);
+  const urls = owner === chapter.id ? rawUrls : NO_URLS;
+  const total = owner === chapter.id ? rawTotal : null;
   const [problem, setProblem] = useState<string | null>(null);
   /*
    * Where the screen underneath was scrolled to, taken during the first render
@@ -440,6 +487,9 @@ export function Reader({
     if (els.length === 0) return null;
     const el = els[Math.max(0, Math.min(index, els.length - 1))];
     const sheet = pagesRef.current ? (el.closest('.manga-sheet') as HTMLElement | null) : null;
+    // The start of a chapter is its first sheet, the group's notice where there is one above the first page.
+    const opening = index === 0 && offset === 0 ? strip.current?.querySelector<HTMLElement>(':scope > .manga-sheet-credits') : null;
+    if (opening && sheet && opening.compareDocumentPosition(sheet) & Node.DOCUMENT_POSITION_FOLLOWING) return Math.max(0, centred(opening));
     if (sheet) return centred(sheet);
     return window.scrollY + el.getBoundingClientRect().top + offset * el.offsetHeight - READ_LINE;
   };
@@ -449,7 +499,12 @@ export function Reader({
     return pagesRef.current && sheets !== null && sheets.length > 0 && sheets[sheets.length - 1].includes(index);
   };
   /** The last place measured, put back when the layout changes under it (sheets re-paired, the mode switched). */
-  const lastPlace = useRef<{ page: number; offset: number } | null>(null);
+  const lastPlace = useRef<{ page: number; offset: number; chapter?: string } | null>(null);
+  /** For callbacks made on an earlier render: the chapter being read now. */
+  const chapterIdRef = useRef(chapter.id);
+  chapterIdRef.current = chapter.id;
+  /** A page turn's landing, still to come; a chapter change cancels it. */
+  const landing = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /*
    * Carrying on: in scroll mode, with it switched on, the next chapter opens
@@ -463,7 +518,9 @@ export function Reader({
   const nextIdRef = useRef(nextId);
   nextIdRef.current = nextId;
   /** Set just before moving on by carrying on, so the chapter change keeps the scroll where it is. */
-  const seamless = useRef(false);
+  const seamless = useRef<number | null>(null);
+  /** Carrying on now: marked within the last few seconds, so a mark nothing came of cannot hold things up. */
+  const carrying = () => seamless.current !== null && Date.now() - seamless.current < 10_000;
   /**
    * The chapter just finished, and where it sat on screen, so that taking older
    * ones off the top leaves it exactly there. Measured rather than worked out
@@ -471,7 +528,6 @@ export function Reader({
    * when something above it goes (scroll anchoring), and Safari does not, so
    * scrolling back by the height moved Chrome a whole chapter up.
    */
-  const keepInPlace = useRef<{ el: Element; top: number } | null>(null);
   /** Pictures of chapters taken off the top, let go once they are off the screen. */
   const dropped = useRef<string[]>([]);
   /**
@@ -570,17 +626,23 @@ export function Reader({
     (async () => {
       setUrls([]);
       setTotal(null);
+      setOwner(chapter.id);
       setProblem(null);
       setSlow(new Set());
       setElsewhere(null);
       // A chapter held ahead that this is not was a guess that missed.
       if (seriesId) dropHeld(seriesId, chapter.id);
       try {
-        const list: { pages: string[]; readAhead?: number; saved?: true } = preview
+        const list: { pages: string[]; readAhead?: number; pageMargins?: MarginSide | null; saved?: true } = preview
           ? await manga.browse.pages(preview, chapter.id)
           : await manga.reader.pages(seriesId!, chapter.id);
         const { pages } = list;
         if (!alive) return;
+        // The PC's word on the series' margins, kept on this device for chapters read away from it.
+        if (seriesId && list.pageMargins !== undefined) {
+          rememberMargins(seriesId, list.pageMargins);
+          setMargins(list.pageMargins);
+        }
         setTotal(pages.length);
         setUrls(new Array(pages.length).fill(null));
         paths.current = pages;
@@ -632,7 +694,9 @@ export function Reader({
          * read away from the PC as often as not.
          */
         const nextUp = nextIdRef.current;
-        if (alive && seriesId && nextUp && !list.saved && (list.readAhead ?? 1) > 0) void holdNext(seriesId, nextUp);
+        holdAllowed.current = Boolean(seriesId && !list.saved && (list.readAhead ?? 1) > 0);
+        // In Endless, from halfway through instead (`holdFromHalfway`): the next chapter is not loaded before then.
+        if (alive && seriesId && nextUp && holdAllowed.current && !endlessRef.current) void holdNext(seriesId, nextUp);
 
         /*
          * The second go, once the rest of the chapter is in. Most pages that
@@ -689,13 +753,31 @@ export function Reader({
   // at the bottom of it — unless this chapter is being continued.
   useEffect(() => {
     // Carried on into: the reader stays where it is, below the chapter just finished.
-    const carry = seamless.current;
-    seamless.current = false;
+    /*
+     * Opened by Next in pages mode, a chapter could start nearly at its end
+     * (2026-11-12, reported twice as page 19 of 24). Three ways the last
+     * chapter's place could reach this one are closed here: a page turn's
+     * landing still to come (cancelled, and any smooth scroll stopped where it
+     * is), the layout's put-back using the place measured in the chapter before
+     * (`lastPlace` now says which chapter it was in), and a carry-on mark left
+     * over (`seamless` is a time, good for a few seconds). And in pages mode a
+     * chapter not being returned to is headed for its first sheet, as a jump
+     * is, so whatever the snapping does while its pages arrive, that is where
+     * it lands.
+     */
+    const carry = carrying();
+    seamless.current = null;
     lastPlace.current = null;
-    setShifted(false);
+    if (landing.current) {
+      clearTimeout(landing.current);
+      landing.current = null;
+    }
+    if (!carry) window.scrollTo({ top: window.scrollY, behavior: 'auto' });
     if (!carry && carried.length > 0) {
       // Any other way to a chapter starts afresh, without the ones above.
       for (const c of carried) for (const u of c.urls) if (u) dropped.current.push(u);
+      for (const job of waking.current.values()) job.alive = false;
+      waking.current.clear();
       setCarried([]);
     }
     const from = carry ? null : resume;
@@ -705,7 +787,24 @@ export function Reader({
     setPage(from?.page ?? 0);
     setAtEnd(false);
     atEndRef.current = false;
+    setViewing(null);
+    heldFor.current = null;
     if (!carry && !resume) top.current?.scrollIntoView({ block: 'start' });
+    if (!carry && !resume && pagesRef.current) returning.current = { page: 0, offset: 0 };
+    /*
+     * Carried on into by Next: go down to where it starts, as a jump to its
+     * first page, which waits for the page to be there. Scrolling at once went
+     * nowhere: the chapter had no pages yet and so no height, the scroll stopped
+     * at the bottom of the one before, and that is where you were left while
+     * this one filled in below (2026-11-12, reported as Next booting you back).
+     * A touch on the screen meanwhile ends it, as any jump does.
+     */
+    if (carry && jumpOnCarry.current) {
+      returning.current = { page: 0, offset: 0 };
+      setHeading({ page: 0, why: 'jump' });
+      setEagerTo(0);
+    }
+    jumpOnCarry.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter.id]);
 
@@ -729,9 +828,12 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urls, total, eagerTo]);
 
+  /** When the screen was last touched, scrolled or typed at: a jump's second look stands down after one. */
+  const lastTouch = useRef(0);
   // Touching the screen ends the return: you have taken over.
   useEffect(() => {
     const stop = () => {
+      lastTouch.current = performance.now();
       if (returning.current) arrived();
     };
     const events = ['wheel', 'touchstart', 'keydown', 'mousedown'] as const;
@@ -749,6 +851,35 @@ export function Reader({
     setHeading({ page: to, why: 'jump' });
     setEagerTo((e) => Math.max(e, to + 1));
     setPage(to);
+    /*
+     * In pages mode the sheet is brought to the middle (`scrollIntoView`).
+     * The place is the target at once, so nothing redrawing meanwhile puts the
+     * old one back; and it is looked at again twice, going there once more if
+     * something moved it (a wide page arriving above), unless you have touched
+     * the screen since. Hops used to come undone on an iPhone because Safari's
+     * scroll snapping put you back on the sheet it remembered; there is no
+     * snapping now (`magnet.ts`).
+     */
+    if (pagesRef.current) {
+      const sheetOf = () => pageEls()[to]?.closest('.manga-sheet') as HTMLElement | null;
+      const sheet = sheetOf();
+      if (sheet) {
+        lastPlace.current = { page: to, offset: 0, chapter: chapter.id };
+        sheet.scrollIntoView({ block: 'center' });
+        arrived();
+        const touchedAt = lastTouch.current;
+        const look = () => {
+          if (lastTouch.current !== touchedAt || !pagesRef.current) return;
+          const here = sheetOf();
+          const all = sheetEls();
+          if (here && all[sheetAt()] !== here) here.scrollIntoView({ block: 'center' });
+        };
+        setTimeout(look, 500);
+        setTimeout(look, 1100);
+        wake();
+        return;
+      }
+    }
     if (returnTo()) arrived();
     // However it was pressed — a tap, a key, VoiceOver — you are using them.
     wake();
@@ -801,6 +932,21 @@ export function Reader({
       return { page: kids.length - 1, offset: 1, pages: kids.length };
     }
 
+    /*
+     * In pages mode, the page is the one on the sheet in the middle of the
+     * screen (2026-11-12). The line near the top is a strip's question: a sheet
+     * is centred with the foot of the one before showing above it, so the line
+     * fell on that one, and the counter and the place kept were a page behind
+     * (and a re-layout put you back on it). Reported as the bar not hopping.
+     */
+    if (pagesRef.current) {
+      // At the top it is the first page, as at the foot it is the last: a short first sheet cannot be centred.
+      if (window.scrollY <= 1) return { page: 0, offset: 0, pages: kids.length };
+      const sheets = sheetEls();
+      const first = sheets[sheetAt()]?.querySelector<HTMLElement>('[data-page]');
+      if (first) return { page: Number(first.dataset.page), offset: 0, pages: kids.length };
+    }
+
     for (let i = 0; i < kids.length; i++) {
       const box = kids[i].getBoundingClientRect();
       if (box.bottom > READ_LINE + 1) {
@@ -830,14 +976,24 @@ export function Reader({
     const kids = pageEls();
     if (!box || kids.length === 0) return false;
     const lastEl = kids[kids.length - 1];
-    // In pages mode the end is the last sheet being the one on screen.
+    const whole = box.getBoundingClientRect();
+    /*
+     * In pages mode the end is the last sheet being the one on screen, or the
+     * strip's own rule below (2026-11-12, asked for as that rule applying here
+     * too): under a tenth of the chapter left and under two and a half screens,
+     * which with a sheet to a screen is the last two or so. Pages mode had only
+     * the first, so a chapter left from its second-to-last page, or anywhere
+     * the counter misjudged, was never marked read: 58 and 61 of one series
+     * went that way. Every page has its size before it loads in pages mode
+     * (`pageShape`), so nothing waits for them to load.
+     */
     const sheet = pagesRef.current ? lastEl.closest('.manga-sheet') : null;
     if (sheet) {
-      const box = sheet.getBoundingClientRect();
-      return box.top + box.height / 2 < window.innerHeight * 0.75;
+      const last = sheet.getBoundingClientRect();
+      if (last.top + last.height / 2 < window.innerHeight * 0.75) return true;
+      return reachedTheEnd({ viewportHeight: window.innerHeight, stripTop: whole.top, stripHeight: whole.height, lastPageTop: last.top, allLoaded: true });
     }
     const last = lastEl.getBoundingClientRect();
-    const whole = box.getBoundingClientRect();
     return reachedTheEnd({
       viewportHeight: window.innerHeight,
       stripTop: whole.top,
@@ -854,14 +1010,19 @@ export function Reader({
       if (returning.current) return;
       const place = where();
       if (!place) return;
+      const above = behindInView();
+      setViewing((had) => (had?.id === above?.id && had?.page === above?.page ? had : above));
+      // Scrolled back up into the chapter carried above: that is where you are, not here.
+      if (above) return;
       setPage(place.page);
-      lastPlace.current = place;
+      lastPlace.current = { ...place, chapter: chapterIdRef.current };
       if (place.page === place.pages - 1 || onLastSheet(place.page) || endInSight()) {
         atEndRef.current = true;
         setAtEnd(true);
       }
       report.current?.(place);
       continueRef.current();
+      tendRef.current();
     };
     const onScroll = () => {
       if (!waiting) waiting = setTimeout(measure, MEASURE_MS);
@@ -902,10 +1063,90 @@ export function Reader({
   const seriesKey = seriesId ?? preview;
   // Remembered, else the tags, else (below) the pictures.
   const [detected, setDetected] = useState(() => rememberedFormat(seriesKey) ?? (prefs.autoMode ? formatFromTags(tags) : null));
-  const viewMode: ReaderMode = prefs.autoMode && detected ? detected : prefs.mode;
+  // Tags that only lean (Manga) open it that way while the pictures are asked.
+  const leaning = prefs.autoMode && detected === null ? leanFromTags(tags) : null;
+  const viewMode: ReaderMode = prefs.autoMode && detected ? detected : (leaning ?? prefs.mode);
   const pagesMode = viewMode === 'pages';
   // Pages far from the screen let go of their pixels — see `far-pages.ts`.
   useFarPages(!pagesMode);
+
+  /*
+   * ### Nothing above you moves you (2026-11-11)
+   *
+   * Reported from an iPhone as "when something loaded, it shot me forwards".
+   * Safari has no scroll anchoring: when anything above the screen changes
+   * height, everything under it moves and the page being read slides away.
+   * Plenty above does change in Endless: a chapter taken off the top, a
+   * placeholder giving way to a picture that has no size yet, a picture
+   * arriving, a notice going.
+   *
+   * So the reader does it by hand, the same in every browser
+   * (`overflow-anchor: none` while it is open, so Chrome does not do it a
+   * second time). What is under the read line is remembered by where it sits
+   * in the *document* (its top plus the scroll), which scrolling does not
+   * change and a change above it does. On every render, and as each picture
+   * finishes loading, if it has moved in the document the window moves by as
+   * much. A change below, or to the page being read, leaves it where it is.
+   * Not while returning to a saved place, which does its own scrolling, nor in
+   * pages mode, which snaps. It replaces a measure that covered only a chapter
+   * being taken off the top.
+   */
+  const still = useRef<{ el: Element; at: number } | null>(null);
+  const holdingStill = !pagesMode;
+  const takeAnchor = () => {
+    still.current = null;
+    // Pages are stacked, so their bottoms only grow: the first below the line is found by halving, not by walking a session's thousands.
+    const pages = document.querySelectorAll('.manga-reader .manga-strip > img, .manga-reader .manga-strip > .manga-page-waiting, .manga-reader .manga-strip > .manga-page-rest');
+    let lo = 0;
+    let hi = pages.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (pages[mid]!.getBoundingClientRect().bottom > READ_LINE + 1) hi = mid;
+      else lo = mid + 1;
+    }
+    const el = pages[lo];
+    if (el) still.current = { el, at: el.getBoundingClientRect().top + window.scrollY };
+  };
+  const holdStill = () => {
+    if (!holdingStill || returning.current) {
+      still.current = null;
+      return;
+    }
+    const had = still.current;
+    if (had?.el.isConnected) {
+      const moved = had.el.getBoundingClientRect().top + window.scrollY - had.at;
+      if (Math.abs(moved) > 1) window.scrollBy(0, moved);
+    }
+    takeAnchor();
+  };
+  const holdStillRef = useRef(holdStill);
+  holdStillRef.current = holdStill;
+  useLayoutEffect(() => holdStillRef.current());
+  useEffect(() => {
+    if (!holdingStill) return;
+    const root = document.documentElement;
+    root.style.overflowAnchor = 'none';
+    let last = 0;
+    const onScroll = () => {
+      // Often enough to be the page you are on, without measuring every event.
+      const now = performance.now();
+      if (now - last < 50) return;
+      last = now;
+      if (!returning.current) takeAnchor();
+    };
+    const onLoad = (event: Event) => {
+      if (event.target instanceof HTMLImageElement && event.target.closest('.manga-reader')) holdStillRef.current();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    // `load` does not bubble, so it is heard on the way down.
+    document.addEventListener('load', onLoad, true);
+    return () => {
+      root.style.overflowAnchor = '';
+      window.removeEventListener('scroll', onScroll);
+      document.removeEventListener('load', onLoad, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdingStill]);
   pagesRef.current = pagesMode;
   // Pages mode reads every page, for the pairs; telling what a series is takes the first six.
   const infos = usePageInfo(urls, pagesMode ? urls.length : prefs.autoMode && detected === null && !formatFromTags(tags) ? 6 : 0);
@@ -922,7 +1163,8 @@ export function Reader({
     const ready = infos.slice(0, 6).filter((p): p is PageInfo => p !== null);
     // The first six, or the whole chapter when it is shorter.
     if (ready.length < 3 || ready.length < Math.min(6, urls.length)) return;
-    const kind = contentKind(ready);
+    // The pictures win; where they say nothing, the tags' lean.
+    const kind = contentKind(ready) ?? leanFromTags(tags);
     if (kind) {
       anchor.current = where();
       setDetected(kind);
@@ -936,28 +1178,137 @@ export function Reader({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-  const aspects = infos.map((p) => p?.aspect ?? null);
+  /*
+   * What the pages say about pairing, worked out once per page read rather
+   * than at every redraw (the reader redraws as you scroll): each of these
+   * walks every page's edges and rows. A first or last image with a page
+   * stacked in it counts as that page (`stackedPages`); the group's own pages
+   * are apart (`apartPages`).
+   */
+  const { stacked, aspects, apart } = useMemo(
+    () => ({ stacked: stackedPages(infos), aspects: asBookPages(infos).map((p) => p?.aspect ?? null), apart: apartPages(infos) }),
+    [infos]
+  );
   const twoUp =
     pagesMode &&
     (prefs.spread === 'two' ||
       // The window decides, not the page size: making pages smaller must not turn two into one.
       (prefs.spread === 'auto' && fitsTwo(viewport.w, viewport.h, typicalAspect(aspects))));
-  /** Pairs moved along by one page, by hand, for when the reader got them wrong. Per chapter. */
-  const [shifted, setShifted] = useState(false);
-  // Paired from the first page unless the pictures carried across the gutter say otherwise.
-  const firstAlone = ((twoUp ? chooseFirstAlone(infos, prefs.rightToLeft) : null) ?? false) !== shifted;
-  const sheets = pagesMode ? pairPages(aspects, firstAlone, twoUp) : null;
+  /**
+   * The pairing set by hand for this chapter (`ChapterPairing`), kept on the
+   * device. Held with the chapter it is for, and read afresh in the render a
+   * chapter changes, so one chapter's fix is never laid over the next.
+   */
+  const [pairingHeld, setPairingHeld] = useState<{ chapter: string } & ChapterPairing>(() => ({ chapter: chapter.id, ...rememberedPairing(chapter.id) }));
+  const pairing: ChapterPairing = pairingHeld.chapter === chapter.id ? pairingHeld : rememberedPairing(chapter.id);
+  const setPairing = ({ first, alone }: ChapterPairing) => {
+    const next: ChapterPairing = { first, alone: alone && alone.length > 0 ? alone : undefined };
+    setPairingHeld({ chapter: chapter.id, ...next });
+    rememberPairing(chapter.id, next);
+  };
+  const alone = pairing.alone ?? [];
+  /** Which edge this series keeps plain paper on, where known — see `MarginSide`. */
+  const [margins, setMargins] = useState<MarginSide | null>(() => rememberedMargins(seriesKey));
+  /** Whether a finger, a mouse drag or the slide after one is moving the page: see where the sheets are laid out. */
+  const moving = useRef(false);
+  const deferredLayout = useRef(false);
+  const shownSheets = useRef<{ chapter: string; count: number; sheets: number[][] } | null>(null);
+  const [, setRelayout] = useState(0);
+  /*
+   * A series learns its side from its first picture drawn across the fold
+   * (2026-11-12): that picture says which pages face each other, and the
+   * margins of the rest of the chapter then say which edge this series keeps
+   * plain, as **Move along one** teaches it. Once every page is read, and only
+   * while the series has no side.
+   */
+  const allRead = pagesMode && infos.length > 0 && infos.every((p) => p !== null);
+  useEffect(() => {
+    if (!allRead || margins !== null || !seriesId) return;
+    const bySeams = seamsDecide(infos, prefs.rightToLeft);
+    if (bySeams === null) return;
+    const learned = learnMargins(infos, prefs.rightToLeft, bySeams);
+    if (!learned) return;
+    setMargins(learned);
+    rememberMargins(seriesId, learned);
+    void manga.reader.setPageMargins(seriesId, learned).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRead, margins, seriesId, chapter.id, prefs.rightToLeft]);
+  /*
+   * Paired from the first page unless the pictures carried across the gutter
+   * say otherwise, or the series' margins do.
+   */
+  const decided = useMemo(() => (twoUp ? chooseFirstAlone(infos, prefs.rightToLeft, margins) : null), [twoUp, infos, prefs.rightToLeft, margins]);
+  const firstAlone = pairing.first ?? decided ?? false;
+  const shifted = firstAlone !== (decided ?? false);
+  /**
+   * **Move along one**, and what it teaches: where this chapter's margins say
+   * clearly which pairing is which, the side that makes them agree with the
+   * pairing just asked for is kept for the series (on the PC, and here), so
+   * its other chapters pair that way without being asked.
+   */
+  const shiftPairs = () => {
+    const wanted = !firstAlone;
+    const learned = learnMargins(infos, prefs.rightToLeft, wanted);
+    if (learned && learned !== margins && seriesId) {
+      setMargins(learned);
+      rememberMargins(seriesId, learned);
+      void manga.reader.setPageMargins(seriesId, learned).catch(() => {});
+      // Asked again with what was learned: kept by hand only if that still does not give the pairing asked for.
+      const now = chooseFirstAlone(infos, prefs.rightToLeft, learned) ?? false;
+      setPairing({ first: now === wanted ? undefined : wanted });
+      return;
+    }
+    // A whole-chapter move starts the pairing afresh, so pages put on their own by hand go with it.
+    setPairing({ first: wanted === (decided ?? false) ? undefined : wanted });
+  };
+  // A scanlation group's own pages (a notice, credits) are alone, so the book's pages pair as printed; so is a page put on its own by **From here**.
+  const paired = pagesMode ? pairPages(aspects, firstAlone, twoUp, apart.map((a, i) => a || alone.includes(i))) : null;
+  /*
+   * Not under a finger (2026-11-12). The pairing can change as the pages are
+   * read one by one in the background (a page set apart, the margins tipping
+   * the choice), and a change puts you back on your page: mid-drag that was
+   * the page moving by itself under the finger, reported as the pull going on
+   * while dragging. So while a finger, a mouse drag or the slide after one is
+   * moving the page (`moving`), the pairing on screen is kept, and the new one
+   * is laid out once the page has come to rest (`stillAgain`).
+   */
+  const shownSheet = shownSheets.current;
+  const frozen =
+    moving.current &&
+    !!paired &&
+    !!shownSheet &&
+    shownSheet.chapter === chapter.id &&
+    shownSheet.count === urls.length &&
+    shownSheet.sheets.map((s) => s.join('+')).join(',') !== paired.map((s) => s.join('+')).join(',');
+  if (frozen) deferredLayout.current = true;
+  const sheets = frozen ? shownSheet!.sheets : paired;
+  shownSheets.current = sheets ? { chapter: chapter.id, count: urls.length, sheets } : null;
   sheetsRef.current = sheets;
   const layoutSig = sheets ? sheets.map((sheet) => sheet.join('+')).join(',') : 'scroll';
   const sheetNow = sheets?.find((sheet) => sheet.includes(page)) ?? null;
+  /*
+   * **From here**: a page missing from the scan puts every pair after it one
+   * page out (2026-11-12: Reset's chapters 7.2 and 8.1 of *MMO!* each lack a
+   * page Thunder's have), and moving the whole chapter along fixes the pairs
+   * after it by breaking the ones before. So the page showing is put on its
+   * own and the pairing after it moves along by one; pressed on a page put on
+   * its own that way, it goes back. Nothing finds the gap by itself: the
+   * margins say which side of the book a page was on for two or three pages a
+   * chapter, too few to tell where between them a page went missing.
+   */
+  const sheetIndex = sheets && sheetNow ? sheets.indexOf(sheetNow) : -1;
+  const firstBookSheet = sheets ? sheets.findIndex((sheet) => !apart[sheet[0]]) : -1;
+  const shiftedHere = !!sheetNow && sheetNow.length === 1 && alone.includes(sheetNow[0]);
+  const shiftHere = () => {
+    if (!sheetNow) return;
+    const at = sheetNow[0];
+    if (shiftedHere) setPairing({ ...pairing, alone: alone.filter((n) => n !== at) });
+    else if (sheetNow.length === 2) setPairing({ ...pairing, alone: [...alone, at].sort((a, b) => a - b) });
+    // A page already alone (the last, a spread): the pairing moves along from the page after it.
+    else if (at + 1 < urls.length && !apart[at + 1]) setPairing({ ...pairing, alone: [...alone, at + 1].sort((a, b) => a - b) });
+  };
 
-  // The screen snaps to each sheet, in pages mode.
-  useEffect(() => {
-    document.documentElement.classList.toggle('manga-snap', pagesMode);
-    return () => document.documentElement.classList.remove('manga-snap');
-  }, [pagesMode]);
-
-  /** The next sheet or the one before: the wheel and a swipe do this by snapping, the keys by this. */
+  /** The sheets, in order. */
   const sheetEls = () => (strip.current ? [...strip.current.querySelectorAll<HTMLElement>('.manga-sheet')] : []);
   /** The sheet nearest the middle of the screen. */
   const sheetAt = (): number => {
@@ -1026,9 +1377,9 @@ export function Reader({
    * (the same `reachedTheEnd` that makes Next finish it), it is finished as
    * Next would finish it and the next chapter opens **below** it rather than
    * in its place, so the strip simply goes on. The chapter just read stays on
-   * screen above, its pictures handed over rather than fetched again, and the
-   * one before that at most: older ones are taken off the top, and the chapter
-   * on screen is measured before and after so nothing you are looking at moves.
+   * screen above, its pictures handed over rather than fetched again, and so
+   * does every one before it, keeping its space (see "The chapters above keep
+   * their space").
    *
    * It stops, and leaves the ordinary buttons, where Next would ask first: a
    * hole of a whole chapter or more in this source's numbers. And it waits for
@@ -1037,27 +1388,194 @@ export function Reader({
    */
   const behind = carried.filter((c) => c.id !== chapter.id);
   const continueOn = () => {
-    if (!prefs.infinite || pagesMode || seamless.current || !hasNext || !total || problem) return;
+    if (!prefs.infinite || pagesMode || carrying() || !hasNext || !total || problem) return;
     if (nextNumber !== null && Math.floor(nextNumber) > Math.floor(chapter.number) + 1) return;
     if (urls.some((u) => !u) || !endInSight()) return;
-    seamless.current = true;
-    for (const u of urls) if (u) handedOff.current.add(u);
-    const next = [...behind, { id: chapter.id, number: chapter.number, urls: [...urls] }];
-    for (const old of next.slice(0, Math.max(0, next.length - KEEP_BEHIND))) for (const u of old.urls) if (u) dropped.current.push(u);
-    if (strip.current) keepInPlace.current = { el: strip.current, top: strip.current.getBoundingClientRect().top };
-    setCarried(next.slice(-KEEP_BEHIND));
-    onFinished(chapter.number);
+    carryOn(true, false);
   };
+  /**
+   * This chapter goes above and the next one opens below it: by reaching the
+   * end (`continueOn`, which stays where you are) or by Next (`jump`, which
+   * then takes you down to the next one's start). From partway through, Next
+   * only moves, as it always has: `finishing` is false and nothing is marked.
+   */
+  const jumpOnCarry = useRef(false);
+  const carryOn = (finishing: boolean, jump: boolean) => {
+    seamless.current = Date.now();
+    jumpOnCarry.current = jump;
+    for (const u of urls) if (u) handedOff.current.add(u);
+    const kept: Carried = { id: chapter.id, number: chapter.number, urls: [...urls], paths: [...paths.current], shapes: [] };
+    setCarried([...behind, kept]);
+    // Left before every page had come: the rest are fetched into it, so scrolling back finds them.
+    if (kept.urls.some((u) => !u) && kept.paths.length > 0) wakeChapter(kept);
+    if (finishing) onFinished(chapter.number);
+    else onGo!(1);
+  };
+  /**
+   * The arrows in Endless go between the chapters on screen (2026-11-12, asked
+   * for as Next scrolling to the next chapter). From a chapter kept above, to
+   * the start of the one after it, or before it; from the chapter being read,
+   * Next carries on into the next one and goes down to it, and Previous goes up
+   * to the one kept above. Past those, they do what they always did.
+   */
+  const blockInView = () => {
+    const blocks = [...document.querySelectorAll<HTMLElement>('.manga-reader [data-chapter-block]')];
+    const here = viewing?.id ?? chapter.id;
+    return { blocks, at: blocks.findIndex((b) => b.dataset.chapterBlock === here) };
+  };
+  const scrollToBlock = (block: HTMLElement) => window.scrollTo(0, window.scrollY + block.getBoundingClientRect().top);
+  const goNext = (finishing: boolean) => {
+    if (prefs.infinite && !pagesMode && !carrying()) {
+      const { blocks, at } = blockInView();
+      if (at >= 0 && at < blocks.length - 1) return scrollToBlock(blocks[at + 1]!);
+      if (!hasNext || !nextIsOk()) return;
+      return carryOn(finishing, true);
+    }
+    if (!nextIsOk()) return;
+    if (finishing) onFinished(chapter.number);
+    else onGo?.(1);
+  };
+  /**
+   * The gear's Refresh: every chapter kept above goes, and you stay where you
+   * are in this one (`holdStill` puts the page back as the space above goes).
+   * From a chapter kept above, which is going too, to the start of this one.
+   */
+  const clearAbove = () => {
+    const wasAbove = viewing !== null;
+    for (const c of carried) for (const u of c.urls) if (u) dropped.current.push(u);
+    for (const job of waking.current.values()) job.alive = false;
+    waking.current.clear();
+    setCarried([]);
+    setViewing(null);
+    if (wasAbove) {
+      setTimeout(() => {
+        if (strip.current) window.scrollTo(0, window.scrollY + strip.current.getBoundingClientRect().top);
+      }, 0);
+    }
+  };
+  const goPrevious = () => {
+    if (prefs.infinite && !pagesMode && !carrying()) {
+      const { blocks, at } = blockInView();
+      if (at > 0) return scrollToBlock(blocks[at - 1]!);
+    }
+    onGo?.(-1);
+  };
+
+  /*
+   * ### The chapters above keep their space (2026-11-12)
+   *
+   * Every chapter carried on from stays where it is for the whole session. One
+   * more than `REST_SCREENS` screens from the screen rests: each page becomes a
+   * blank of exactly the size it was, measured off the page as drawn, and its
+   * picture and bytes are let go. Within `WAKE_SCREENS` its pages are asked for
+   * again (from this device's saved copy, or the PC's cache) and drawn into the
+   * same space, so scrolling back up through a session works and moves nothing.
+   * Pictures held follow the screen, not how far you have read.
+   *
+   * This is what replaced loading and dropping whole chapters either side, tried
+   * the same day: every chapter added or taken away above you is a scroll put
+   * back by hand, which on an iPhone also stops a flick dead, and it latched onto
+   * the wrong chapter once (Next opened a chapter with nothing in it yet, the one
+   * before was loaded above it, and the reader held on to that instead).
+   */
+  const carriedRef = useRef(carried);
+  carriedRef.current = carried;
+  /** Each waking chapter's fetch, so leaving can stop it. */
+  const waking = useRef(new Map<string, { alive: boolean }>());
+  const blockOf = (id: string) =>
+    [...document.querySelectorAll<HTMLElement>('.manga-reader [data-chapter-block]')].find((el) => el.dataset.chapterBlock === id) ?? null;
+  const rest = (c: Carried, block: HTMLElement) => {
+    const pages = [...block.querySelectorAll<HTMLElement>(':scope > img, :scope > .manga-page-waiting, :scope > .manga-page-rest')];
+    const shapes = pages.map((el) => (el.offsetWidth > 0 && el.offsetHeight > 0 ? el.offsetWidth / el.offsetHeight : null));
+    for (const u of c.urls) if (u) dropped.current.push(u);
+    setCarried((had) => had.map((x) => (x.id === c.id ? { ...x, resting: true, shapes, urls: x.urls.map(() => null) } : x)));
+  };
+  const wakeChapter = (c: Carried) => {
+    const job = { alive: true };
+    waking.current.set(c.id, job);
+    setCarried((had) => had.map((x) => (x.id === c.id ? { ...x, resting: false } : x)));
+    const todo = c.paths.map((_, i) => i).filter((i) => !c.urls[i]);
+    let next = 0;
+    const worker = async () => {
+      while (job.alive) {
+        if (next >= todo.length) return;
+        const index = todo[next++]!;
+        try {
+          const url = await manga.reader.page(c.paths[index]!);
+          if (!job.alive) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          handedOff.current.add(url);
+          setCarried((had) => had.map((x) => (x.id === c.id ? { ...x, urls: x.urls.map((u, i) => (i === index ? url : u)) } : x)));
+        } catch {
+          // Left blank, its space kept: it is asked for again the next time it wakes.
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: Math.min(IN_FLIGHT, todo.length) }, worker)).finally(() => {
+      if (waking.current.get(c.id) === job) waking.current.delete(c.id);
+    });
+  };
+  /** Rest what is far, wake what is near, and fetch the next chapter ahead from halfway. */
+  const tend = () => {
+    const vh = window.innerHeight || 800;
+    for (const c of carriedRef.current) {
+      if (c.id === chapter.id) continue;
+      const block = blockOf(c.id);
+      if (!block) continue;
+      const box = block.getBoundingClientRect();
+      const away = box.bottom < 0 ? -box.bottom / vh : box.top > vh ? (box.top - vh) / vh : 0;
+      if (!c.resting && !waking.current.has(c.id) && away > REST_SCREENS) rest(c, block);
+      else if (c.resting && away <= WAKE_SCREENS) wakeChapter(c);
+    }
+    holdFromHalfway();
+  };
+  /**
+   * The next chapter onto this device (`holdNext`), in Endless from halfway
+   * through this one, or from the start of one only a few screens long: asked
+   * for as the next chapter not loading before then. What the PC fetches and
+   * keeps is unchanged.
+   */
+  const holdAllowed = useRef(false);
+  const heldFor = useRef<string | null>(null);
+  const holdFromHalfway = () => {
+    if (!endlessRef.current || heldFor.current === chapter.id || !holdAllowed.current || !seriesId || !nextIdRef.current) return;
+    const box = strip.current?.getBoundingClientRect();
+    if (!box || box.height <= 0 || urls.some((u) => !u)) return;
+    const vh = window.innerHeight || 800;
+    if ((READ_LINE - box.top) / box.height < 0.5 && box.height >= SHORT_SCREENS * vh) return;
+    heldFor.current = chapter.id;
+    void holdNext(seriesId, nextIdRef.current);
+  };
+  const tendRef = useRef(tend);
+  tendRef.current = tend;
+  const endlessRef = useRef(false);
+  endlessRef.current = prefs.infinite && !pagesMode;
+  /**
+   * The chapter carried above, when that is what is under the read line, and
+   * the page of it there (2026-11-11). The number at the top and the counter
+   * said the new chapter's from the moment it opened below, while you were
+   * still reading the end of the old one, and stayed on it if you scrolled
+   * back up. Asked of the blocks themselves, which carry their number.
+   */
+  const behindInView = (): { id: string; number: number; page: number; pages: number } | null => {
+    for (const block of document.querySelectorAll<HTMLElement>('.manga-reader .manga-strip-before')) {
+      const box = block.getBoundingClientRect();
+      if (box.top > READ_LINE || box.bottom <= READ_LINE + 1) continue;
+      const pages = [...block.querySelectorAll<HTMLElement>(':scope > img, :scope > .manga-page-waiting, :scope > .manga-page-rest')];
+      let page = pages.findIndex((el) => el.getBoundingClientRect().bottom > READ_LINE + 1);
+      if (page < 0) page = pages.length - 1;
+      return { id: block.dataset.chapterBlock ?? '', number: Number(block.dataset.chapterNumber), page, pages: pages.length };
+    }
+    return null;
+  };
+  const [viewing, setViewing] = useState<{ id: string; number: number; page: number; pages: number } | null>(null);
+
   const continueRef = useRef(continueOn);
   continueRef.current = continueOn;
-  // Chapters taken off the top: the one just finished is put back where it was, and their pictures are let go.
+  // Chapters taken off the top let go of their pictures. Nothing moves meanwhile: see `holdStill`.
   useLayoutEffect(() => {
-    const keep = keepInPlace.current;
-    keepInPlace.current = null;
-    if (keep?.el.isConnected) {
-      const moved = keep.el.getBoundingClientRect().top - keep.top;
-      if (Math.abs(moved) > 1) window.scrollBy(0, moved);
-    }
     for (const u of dropped.current) {
       URL.revokeObjectURL(u);
       handedOff.current.delete(u);
@@ -1067,6 +1585,7 @@ export function Reader({
   useEffect(
     () => () => {
       for (const u of handedOff.current) URL.revokeObjectURL(u);
+      for (const job of waking.current.values()) job.alive = false;
       // Closing the reader is not going on to the next chapter.
       dropHeld();
     },
@@ -1079,7 +1598,9 @@ export function Reader({
    * Deliberately `pointerType === 'mouse'` only: a finger already scrolls by
    * dragging, and claiming the same gesture would mean fighting the browser for
    * it and losing momentum, rubber-banding and every other thing touch
-   * scrolling does better than this could.
+   * scrolling does better than this could. Except in pages mode, where the
+   * finger is taken over on purpose (see the touch effect beside `settleFrom`):
+   * the browser's momentum cannot be told to stop on a page.
    *
    * `drag.current` is a ref and not state because none of it is rendered and a
    * `setState` per `pointermove` would re-render the strip sixty times a
@@ -1126,6 +1647,24 @@ export function Reader({
     clearTimeout(g.timer);
     glide.current = null;
     return true;
+  };
+
+  /**
+   * Once nothing is moving the page any more (no finger down, no drag, no
+   * slide, no page turn landing), lay out a pairing that changed meanwhile.
+   * Asked after letting go, and again every 120ms until the page is at rest.
+   */
+  const fingerDown = useRef(false);
+  const stillAgain = () => {
+    if (fingerDown.current || drag.current || glide.current || landing.current) {
+      setTimeout(stillAgain, 120);
+      return;
+    }
+    moving.current = false;
+    if (deferredLayout.current) {
+      deferredLayout.current = false;
+      setRelayout((n) => n + 1);
+    }
   };
 
   const startGlide = (velocity: number) => {
@@ -1177,6 +1716,144 @@ export function Reader({
     };
   };
 
+  /**
+   * Pages mode's slide after letting go (`settle.ts`): from the speed it was
+   * let go at to rest on the middle of a page, the friction made to fit. In
+   * the same `glide` slot as the strip's slide, so everything that stops one
+   * (a press, a wheel, a key) stops this, and the pull leaves it alone.
+   */
+  const settleFrom = (velocity: number) => {
+    stopGlide();
+    const all = sheetEls();
+    if (all.length === 0) return;
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    const stops = all.map(centred);
+    // The end of the chapter, with its Next, is somewhere to stop too.
+    const end = document.querySelector('.manga-reader-end');
+    if (end) stops.push(window.scrollY + end.getBoundingClientRect().bottom - window.innerHeight);
+    const from = window.scrollY;
+    const to = settleTarget(stops, from, velocity, max);
+    if (to === null || Math.abs(to - from) <= SETTLED_PX) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      window.scrollTo(0, to);
+      return;
+    }
+    const plan = settlePlan(from, to, velocity);
+    const started = performance.now();
+    const frame = () => {
+      const g = glide.current;
+      if (!g) return;
+      cancelAnimationFrame(g.raf);
+      clearTimeout(g.timer);
+      const t = performance.now() - started;
+      window.scrollTo(0, plan.at(t));
+      if (t >= plan.duration) {
+        glide.current = null;
+        return;
+      }
+      g.raf = requestAnimationFrame(frame);
+      g.timer = setTimeout(frame, 34);
+    };
+    glide.current = { velocity, at: started, pos: from, raf: requestAnimationFrame(frame), timer: setTimeout(frame, 34) };
+  };
+
+  /** The click a finger's drag may be followed by is not a tap on the page. Cleared after, in case none comes. */
+  const swallowTap = () => {
+    dragged.current = true;
+    setTimeout(() => (dragged.current = false), 500);
+  };
+
+  /** A sideways drag turns a sheet on or back from `from`, as a book's page does. */
+  const turnByDrag = (dx: number, from: number) => {
+    const goal = turnSheet((dx > 0) === settings.current.prefs.rightToLeft ? 1 : -1, from, true);
+    // Landed by hand if the slide has not got there: a smooth scroll is not run at all in a window that is not drawing.
+    if (landing.current) clearTimeout(landing.current);
+    landing.current = setTimeout(() => {
+      landing.current = null;
+      if (goal !== null && Math.abs(window.scrollY - goal) > 2) window.scrollTo(0, goal);
+    }, 450);
+  };
+
+  /*
+   * Pages mode takes the finger's scrolling over, which nothing else here
+   * does: the browser's own momentum cannot be told where to stop, and
+   * stopping on a page is the whole of what was asked. The page follows the
+   * finger, and letting go hands its speed to `settleFrom`. A sideways swipe
+   * turns a page. Two fingers, a page zoomed in, or a touch on the controls
+   * are left to the browser. Every move is cancelled (non-passive), since iOS
+   * scrolls the page natively unless the very first move is.
+   */
+  useEffect(() => {
+    if (!pagesMode) return;
+    let t: { x: number; y: number; last: number; carry: number; axis: 'x' | 'y' | null; sheet: number; samples: DragSample[] } | null = null;
+    const start = (e: TouchEvent) => {
+      t = null;
+      if (e.touches.length !== 1) return;
+      if ((e.target as HTMLElement | null)?.closest?.('.manga-reader-chrome, .manga-reader-settings, button, a, input, select, textarea')) return;
+      if ((window.visualViewport?.scale ?? 1) > 1.01) return;
+      const p = e.touches[0];
+      t = { x: p.clientX, y: p.clientY, last: p.clientY, carry: 0, axis: null, sheet: sheetAt(), samples: [{ t: e.timeStamp, y: p.clientY }] };
+      // Touching stops a slide, as on a phone, and holds the pairing still until the page is at rest again.
+      stopGlide();
+      fingerDown.current = true;
+      moving.current = true;
+    };
+    const move = (e: TouchEvent) => {
+      if (!t) return;
+      if (e.touches.length !== 1) {
+        t = null;
+        return;
+      }
+      e.preventDefault();
+      const p = e.touches[0];
+      if (!t.axis) {
+        const dx = p.clientX - t.x;
+        const dy = p.clientY - t.y;
+        if (Math.hypot(dx, dy) < 6) return;
+        t.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      }
+      if (t.axis === 'y') {
+        // By the distance since the last move, keeping the part of a pixel the browser could not take (as `dragMove`).
+        const want = t.last - p.clientY + t.carry;
+        const before = window.scrollY;
+        window.scrollTo(0, before + want);
+        t.carry = Math.max(-1, Math.min(1, want - (window.scrollY - before)));
+      }
+      t.last = p.clientY;
+      // When the finger was there, not when this ran: a busy frame would otherwise read as a sudden change of speed.
+      const now = e.timeStamp;
+      t.samples.push({ t: now, y: p.clientY });
+      while (t.samples.length > 2 && now - t.samples[0].t > 200) t.samples.shift();
+    };
+    const end = (e: TouchEvent) => {
+      const g = t;
+      if (!g || e.touches.length > 0) return;
+      t = null;
+      fingerDown.current = false;
+      if (!g.axis) {
+        // A tap: the click goes through.
+        stillAgain();
+        return;
+      }
+      swallowTap();
+      const p = e.changedTouches[0];
+      if (g.axis === 'x' && e.type === 'touchend' && p && Math.abs(p.clientX - g.x) > 40) turnByDrag(p.clientX - g.x, g.sheet);
+      else settleFrom(g.axis === 'y' && e.type === 'touchend' ? releaseVelocity(g.samples, e.timeStamp) : 0);
+      stillAgain();
+    };
+    window.addEventListener('touchstart', start, { passive: true });
+    window.addEventListener('touchmove', move, { passive: false });
+    window.addEventListener('touchend', end);
+    window.addEventListener('touchcancel', end);
+    return () => {
+      window.removeEventListener('touchstart', start);
+      window.removeEventListener('touchmove', move);
+      window.removeEventListener('touchend', end);
+      window.removeEventListener('touchcancel', end);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagesMode]);
+
   // A wheel or a key takes over from a slide, as touching the screen does.
   useEffect(() => {
     const stop = () => void stopGlide();
@@ -1189,6 +1866,64 @@ export function Reader({
     };
   }, []);
 
+  /**
+   * Pages mode's pull, for scrolling this reader does not drive itself (a
+   * wheel, the scrollbar): once the screen has stopped (no scroll for
+   * `MAGNET_WAIT_MS`, no finger down, no drag or slide or jump under way), a
+   * sheet whose middle is near the middle of the screen is slid the rest of
+   * the way. See `magnet.ts`. A finger or a mouse drag lands on a page by
+   * itself (`settleFrom`), so this finds nothing to do after one.
+   */
+  useEffect(() => {
+    if (!pagesMode) return;
+    let touches = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastY = window.scrollY;
+    let heading: 1 | -1 | 0 = 0;
+    const settle = () => {
+      timer = null;
+      if (touches > 0 || drag.current || glide.current || returning.current || landing.current) return;
+      const all = sheetEls();
+      if (all.length === 0) return;
+      const screen = window.innerHeight;
+      const spots: MagnetSpot[] = all.map((el) => ({ at: centred(el), reach: reachFor(el.getBoundingClientRect().height, screen) }));
+      const to = magnetTarget(spots, window.scrollY, document.documentElement.scrollHeight - screen, heading);
+      if (to === null) return;
+      const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top: to, behavior: still ? 'auto' : 'smooth' });
+      // Finished by hand if the slide has not got there and nobody has touched the screen since: a smooth scroll sometimes does not run at all in a window that is not drawing.
+      const touchedAt = lastTouch.current;
+      setTimeout(() => {
+        if (lastTouch.current === touchedAt && pagesRef.current && touches === 0 && Math.abs(window.scrollY - to) > SETTLED_PX) window.scrollTo(0, to);
+      }, 700);
+    };
+    const soon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(settle, MAGNET_WAIT_MS);
+    };
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (y !== lastY) heading = y > lastY ? 1 : -1;
+      lastY = y;
+      soon();
+    };
+    const onTouch = (e: TouchEvent) => {
+      touches = e.touches.length;
+      if (touches > 0) {
+        if (timer) clearTimeout(timer);
+        timer = null;
+      } else soon();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    for (const t of ['touchstart', 'touchend', 'touchcancel'] as const) window.addEventListener(t, onTouch, { passive: true });
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('scroll', onScroll);
+      for (const t of ['touchstart', 'touchend', 'touchcancel'] as const) window.removeEventListener(t, onTouch);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagesMode]);
+
   const dragStart = (e: React.PointerEvent) => {
     /*
      * Pressing again stops a slide dead, wherever it is pressed — which is how a
@@ -1197,11 +1932,14 @@ export function Reader({
      * would flash the controls up every time.
      */
     const caught = stopGlide();
+    // A finger catching a slide: its click is not a tap either (touch is handled by the effect above).
+    if (caught && e.pointerType !== 'mouse') swallowTap();
     if (!prefs.dragToScroll || e.pointerType !== 'mouse' || e.button !== 0) return;
     // Not from the controls: a drag that begins on a button is somebody missing
     // the button, and scrolling the page under them is the wrong apology.
     if ((e.target as HTMLElement).closest('.manga-reader-chrome, button, a, input')) return;
     if (caught) dragged.current = true;
+    moving.current = true;
     drag.current = {
       y: e.clientY,
       last: e.clientY,
@@ -1223,8 +1961,6 @@ export function Reader({
       d.moved = true;
       // Only once it is a drag: taken on pointerdown it would eat every click.
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      // The page follows the pointer, so the snapping waits until it is let go (see `dragEnd`).
-      if (pagesRef.current) document.documentElement.classList.remove('manga-snap');
     }
     /*
      * Up drags the page up, which is how every hand tool works — by the distance
@@ -1259,54 +1995,21 @@ export function Reader({
     drag.current = null;
     if (d?.moved && pagesRef.current) {
       /*
-       * Pages mode: letting go turns to the next page or the one before, by
-       * which way it was dragged (up for on, as a scroll; sideways as a book's
-       * page turns, rightwards for on when reading right to left), or puts the
-       * page back for a drag too small to mean either. A quick flick counts
-       * however short.
-       *
-       * A drag that went past the page it began on (pages made small, so
-       * several are on screen) settles on the page nearest the middle of the
-       * screen instead, where a flick would have carried it: the slide a
-       * scroll would make (`glideDistance`), and the page nearest the middle
-       * there.
+       * Pages mode: a sideways drag turns the page, as a book's does
+       * (rightwards for on when reading right to left). An up-and-down one
+       * slides on from the speed it was let go at and comes to rest on the
+       * middle of a page (`settleFrom`), as a finger's does.
        */
       const dx = e.clientX - d.x;
       const dy = e.clientY - d.y;
-      const speed = releaseVelocity(d.samples, performance.now());
-      let direction: 1 | -1 | 0 = 0;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        if (Math.abs(dx) > 40) direction = (dx > 0) === settings.current.prefs.rightToLeft ? 1 : -1;
-      } else if (Math.abs(dy) > 40 || Math.abs(speed) > 0.3) direction = dy < 0 || speed > 0.3 ? 1 : -1;
-      const nowAt = sheetAt();
-      let goal: number | null;
-      if (nowAt !== d.sheet && Math.abs(dy) >= Math.abs(dx)) {
-        const all = sheetEls();
-        const middle = window.scrollY + glideDistance(speed) + window.innerHeight / 2;
-        let best = nowAt;
-        const off = (el: Element) => {
-          const box = el.getBoundingClientRect();
-          return Math.abs(window.scrollY + box.top + box.height / 2 - middle);
-        };
-        all.forEach((el, i) => {
-          if (off(el) < off(all[best])) best = i;
-        });
-        goal = turnSheet(0, best, true);
-      } else goal = turnSheet(direction, d.sheet, true);
-      /*
-       * The snapping back once the turn has landed, so it lands where it was
-       * sent; and landed by hand if the slide has not got there, since a smooth
-       * scroll is not run at all in a window that is not drawing, and a turn
-       * left halfway is worse than one without the slide.
-       */
-      setTimeout(() => {
-        if (goal !== null && Math.abs(window.scrollY - goal) > 2) window.scrollTo(0, goal);
-        if (pagesRef.current) document.documentElement.classList.add('manga-snap');
-      }, 450);
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 40) turnByDrag(dx, d.sheet);
+      else settleFrom(e.type === 'pointerup' ? releaseVelocity(d.samples, performance.now()) : 0);
+      stillAgain();
       return;
     }
     // Let go mid-drag and it carries on; a cancelled pointer just stops.
     if (d?.moved && e.type === 'pointerup') startGlide(releaseVelocity(d.samples, performance.now()));
+    if (d) stillAgain();
   };
   const [shown, setShown] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1390,7 +2093,8 @@ export function Reader({
       if (returnTo()) arrived();
       return;
     }
-    const place = anchor.current ?? lastPlace.current;
+    const measured = lastPlace.current?.chapter === undefined || lastPlace.current.chapter === chapter.id ? lastPlace.current : null;
+    const place = anchor.current ?? measured;
     anchor.current = null;
     if (!place) return;
     const y = placeY(place.page, place.offset);
@@ -1479,13 +2183,88 @@ export function Reader({
   );
 
   /** One page, whatever state it is in. Each carries `data-page`, which is what counts as a page. */
-  const renderPage = (index: number) => {
+  /*
+   * In pages mode a page has its shape before its picture comes (2026-11-12).
+   * An `<img>` not loaded yet has no size, and pages load as you come near
+   * them, so on a phone most of a chapter's sheets were flat: a hop from the
+   * bar worked out where page 15 was over flat pages, everything moved as they
+   * filled, and anything past the last one drawn landed on the same page (the
+   * end of what had loaded). Reported as Next landing on page 26 of 29 and
+   * every hop but page 1 going there too, and reproduced at phone size: sheets
+   * 17 to 31 were 0px tall. So each page is the screen's height, at its own
+   * width once it has been read (`aspects`) and the chapter's typical shape
+   * before, narrowed to fit as a drawn one is: the same box a drawn page has.
+   */
+  const pageShape = (index: number, half: boolean): React.CSSProperties => {
+    const ratio = aspects[index] ?? typicalAspect(aspects);
+    return { aspectRatio: String(ratio), width: `min(${half ? 50 : 100}%, calc(var(--fit) * ${ratio}))`, height: 'auto' };
+  };
+  /*
+   * Part of a taller picture, cut out: a box of the part's shape that hides
+   * the rest, with the whole picture inside it pinned to the top or the
+   * bottom. A box rather than `object-fit` on the `<img>` itself, which was the
+   * first version and, on an iPhone, drew the whole picture at its own shape:
+   * the last page with the credits under it, the page beside it shrunk to
+   * match. A plain box that hides its overflow is drawn the same everywhere.
+   */
+  const cropped = (url: string, keep: 'top' | 'bottom', box: React.CSSProperties, img: React.ImgHTMLAttributes<HTMLImageElement>, attrs: Record<string, unknown> = {}) => (
+    <div {...attrs} className="manga-page-crop" style={box}>
+      <img {...img} src={url} draggable={false} decoding="async" style={keep === 'top' ? { top: 0 } : { bottom: 0 }} />
+    </div>
+  );
+  /*
+   * The rest of an image with a page stacked in it, on a sheet of its own: the
+   * group's notice before the first page, their credits after the last. Kept,
+   * not cut off (asked for, 2026-11-12: people want to know who translated a
+   * chapter). Not a page: no `data-page`, so the counter, the jumps and the
+   * end of the chapter go by the pages as before.
+   */
+  const creditSheet = (index: number) => {
+    const st = stacked[index];
     const url = urls[index];
+    const info = infos[index];
+    if (!st || !url || !info || st.share > 0.9) return null;
+    const ratio = info.aspect / (1 - st.share);
+    return (
+      <div key={`credits-${index}`} className="manga-sheet manga-sheet-credits">
+        {/* The part the page is not: below a page kept at the top, above one kept at the bottom. */}
+        {cropped(
+          url,
+          st.keep === 'top' ? 'bottom' : 'top',
+          { aspectRatio: String(ratio), width: `min(100%, calc(var(--fit) * ${ratio}))` },
+          { alt: "The scanlation group's notice and credits" }
+        )}
+      </div>
+    );
+  };
+  const renderPage = (index: number, _at?: number, sheet?: readonly number[]) => {
+    const url = urls[index];
+    // Pages mode, a page with the group's notice or credits stacked onto it: the page, cut out (`creditSheet` has the rest).
+    const st = pagesMode ? stacked[index] : null;
+    if (url && st)
+      return (
+        <Fragment key={index}>
+          {cropped(
+            url,
+            st.keep,
+            pageShape(index, (sheet?.length ?? 1) === 2),
+            {
+              alt: `Page ${index + 1}`,
+              loading: index <= eagerTo ? 'eager' : 'lazy',
+              onLoad: () => {
+                if (returning.current && returnTo()) arrived();
+              },
+            },
+            { 'data-page': index }
+          )}
+        </Fragment>
+      );
     return url ? (
       <img
         key={index}
         data-page={index}
         src={url}
+        style={pagesMode ? pageShape(index, (sheet?.length ?? 1) === 2) : undefined}
         alt={`Page ${index + 1}`}
         /*
          * Or the browser drags the picture instead of scrolling.
@@ -1599,8 +2378,8 @@ export function Reader({
           ‹ {backLabel}
         </button>
         <span className="manga-reader-title" title={chapter.name}>
-          {chapterText(chapter.number)}
-          {total !== null && count < total && (
+          {chapterText(viewing?.number ?? chapter.number)}
+          {!viewing && total !== null && count < total && (
             <span className="meta">
               {count} of {total} loaded
             </span>
@@ -1624,12 +2403,16 @@ export function Reader({
           mode={viewMode}
           onMode={pickMode}
           detected={prefs.autoMode ? detected : null}
-          onShift={twoUp ? () => setShifted((v) => !v) : undefined}
+          onShift={twoUp ? shiftPairs : undefined}
+          onShiftHere={twoUp && sheetIndex > firstBookSheet && firstBookSheet >= 0 ? shiftHere : undefined}
+          shiftedHere={shiftedHere}
           twoUp={twoUp}
           shifted={shifted}
           missing={total === null ? 0 : urls.filter((u) => !u).length}
           reloading={reloading}
           onReload={total === null ? undefined : () => void reloadPages()}
+          above={behind.length}
+          onClearAbove={clearAbove}
         />
       )}
 
@@ -1674,19 +2457,23 @@ export function Reader({
             key={c.id}
             className="manga-strip manga-strip-before"
             data-chapter-block={c.id}
+            data-chapter-number={c.number}
             style={{ '--page-width': `${prefs.width}%` } as React.CSSProperties}
           >
             {/* In the slot the notices take in the chapter being read, so the pages below keep their places and are not drawn again. */}
             {null}
-            {c.urls.map((url, index) =>
-              url ? (
-                <img key={index} src={url} alt={`Page ${index + 1}`} draggable={false} decoding="async" />
+            {c.urls.map((url, index) => {
+              const shape = c.shapes[index] ? { aspectRatio: String(c.shapes[index]) } : undefined;
+              return url ? (
+                <img key={index} src={url} style={shape} alt={`Page ${index + 1}`} draggable={false} decoding="async" />
+              ) : shape ? (
+                <div key={index} className="manga-page-rest" style={shape} />
               ) : (
                 <div key={index} className="manga-page-waiting">
                   {index + 1}
                 </div>
-              )
-            )}
+              );
+            })}
             <p className="meta manga-chapter-break">End of chapter {chapterText(c.number)}</p>
           </div>
         )),
@@ -1699,14 +2486,17 @@ export function Reader({
         >
           {behind.length > 0 && notices}
           {sheets
-            ? sheets.map((sheet) => (
+            ? sheets.flatMap((sheet) => [
+                // The group's part of an image with a page in it: above that page's sheet when the page is its bottom, below when its top (`stackedPages`).
+                ...sheet.filter((i) => stacked[i]?.keep === 'bottom').map(creditSheet),
                 <div
                   key={sheet.join('+')}
                   className={`manga-sheet${sheet.length === 2 ? ' two' : ''}${prefs.rightToLeft ? ' rtl' : ''}`}
                 >
                   {sheet.map(renderPage)}
-                </div>
-              ))
+                </div>,
+                ...sheet.filter((i) => stacked[i]?.keep === 'top').map(creditSheet),
+              ])
             : urls.map((_, index) => renderPage(index))}
         </div>,
       ]}
@@ -1731,7 +2521,8 @@ export function Reader({
           <button
             className={hasNext ? 'btn primary' : 'btn manga-last-chapter'}
             onClick={() => {
-              if (hasNext && !nextIsOk()) return;
+              // In Endless, the same as the arrow: carry on into the next and go down to it.
+              if (hasNext) return goNext(true);
               onFinished(chapter.number);
             }}
           >
@@ -1772,13 +2563,13 @@ export function Reader({
               className="manga-reader-arrow"
               aria-label="Previous chapter"
               title="Previous chapter"
-              disabled={!onGo || !hasPrevious}
-              onClick={() => onGo?.(-1)}
+              disabled={!onGo || (!hasPrevious && behind.length === 0)}
+              onClick={goPrevious}
             >
               <Icon.previous />
             </button>
             <span className="manga-reader-count">
-              {pageLabel} / {total}
+              {viewing ? `${viewing.page + 1} / ${viewing.pages}` : `${pageLabel} / ${total}`}
             </span>
             {/*
               * The skip sits *before* Next, and the group is pinned to the
@@ -1822,15 +2613,11 @@ export function Reader({
                 * visibly the plain one.
                 */}
               <button
-                className={`manga-reader-arrow${willFinish ? ' finishing' : ''}`}
-                aria-label={willFinish ? 'Finish, and next chapter' : 'Next chapter, without marking this one read'}
-                title={willFinish ? 'Finished — next chapter' : 'Next chapter (not marked read)'}
-                disabled={!onGo || !hasNext}
-                onClick={() => {
-                  if (!nextIsOk()) return;
-                  if (willFinish || finishedNow()) onFinished(chapter.number);
-                  else onGo?.(1);
-                }}
+                className={`manga-reader-arrow${willFinish && !viewing ? ' finishing' : ''}`}
+                aria-label={viewing ? 'Next chapter' : willFinish ? 'Finish, and next chapter' : 'Next chapter, without marking this one read'}
+                title={viewing ? 'Next chapter' : willFinish ? 'Finished — next chapter' : 'Next chapter (not marked read)'}
+                disabled={!onGo || (!hasNext && !viewing)}
+                onClick={() => goNext(!viewing && (willFinish || finishedNow()))}
               >
                 <Icon.next />
               </button>
@@ -1858,7 +2645,11 @@ export function Reader({
       )}
 
       {/* With the controls away, the one line that says where you are — and the time, as the old app did. */}
-      {!visible && total !== null && <ReaderStatus text={`${chapterText(chapter.number)}  ${pageLabel}/${total}`} />}
+      {!visible && total !== null && <ReaderStatus
+          text={
+            viewing ? `${chapterText(viewing.number)}  ${viewing.page + 1}/${viewing.pages}` : `${chapterText(chapter.number)}  ${pageLabel}/${total}`
+          }
+        />}
     </div>,
     document.body
   );

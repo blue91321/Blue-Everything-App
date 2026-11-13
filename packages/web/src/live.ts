@@ -63,8 +63,12 @@ let running = false;
  */
 let pending = new Set<ChangeScope>();
 
+/** Screens taking the whole window now (see `holdUpdates`). */
+let holds = 0;
+
 function notify(scope: ChangeScope): void {
   pending.add(scope);
+  if (holds > 0) return;
   if (notifyTimer) clearTimeout(notifyTimer);
   notifyTimer = setTimeout(() => {
     notifyTimer = null;
@@ -74,6 +78,33 @@ function notify(scope: ChangeScope): void {
       for (const each of scopes) listener(each);
     }
   }, DEBOUNCE_MS);
+}
+
+/**
+ * Hold every refetch until the returned function is called, then do them once.
+ *
+ * For a screen that covers the whole app, which is the manga reader
+ * (2026-11-11). Each chapter finished in *Endless* recorded a read, the server
+ * announced it, and every screen hidden under the reader refetched and drew
+ * again: the library alone is a megabyte of JSON and nine hundred tiles. On an
+ * iPhone already holding two chapters of pictures, that was what the page died
+ * of, twice, both times two seconds after the next chapter opened. Nothing
+ * hidden needs to be current until it is shown, and what changed meanwhile is
+ * kept, so closing the reader refetches once, with everything it missed.
+ */
+export function holdUpdates(): () => void {
+  holds++;
+  if (notifyTimer) {
+    clearTimeout(notifyTimer);
+    notifyTimer = null;
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    holds--;
+    if (holds === 0 && pending.size > 0) notify(pending.values().next().value!);
+  };
 }
 
 async function readStream(signal: AbortSignal): Promise<void> {

@@ -32,8 +32,14 @@
  */
 import { useEffect } from 'react';
 
-const UNLOAD_SCREENS = 3;
-const RELOAD_SCREENS = 2;
+/*
+ * Two and one and a half (2026-11-11; it was three and two). Still a screen
+ * and a half of pictures ready either side, which a quarter-second pass keeps
+ * ahead of any ordinary scroll, and fewer held when a second crash came at the
+ * moment a chapter carried on.
+ */
+const UNLOAD_SCREENS = 2;
+const RELOAD_SCREENS = 1.5;
 const PASS_MS = 250;
 /** A transparent 1×1 GIF: decodes to four bytes. */
 const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';

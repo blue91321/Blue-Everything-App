@@ -32,9 +32,11 @@ import {
 import { alreadyRaised, clampReadAhead, cleanReleaseScope, inReleaseScope, isPutAway, MAX_READ_AHEAD, type ReadingPosition, type Store } from '../library.js';
 import { KEEP_CHAPTERS, readAheadAt } from '../page-cache.js';
 import { beside, reachedTheEnd, skippedBetween, skipTarget } from '../../web/chapter-nav.js';
+import { BACK_SHARE, magnetTarget, reachFor } from '../../web/magnet.js';
+import { MAX_MS, NATURAL_PER_SPEED, settlePlan, settleTarget } from '../../web/settle.js';
 import { fromLine, toLine } from '../../web/log-csv.js';
 import { isWholeImage } from '../../web/image-bytes.js';
-import { applyReadMark, placeIsAtEnd, type Readable } from '../read-marks.js';
+import { applyReadMark, placeIsAtEnd, placeOvertaken, type Readable } from '../read-marks.js';
 import { totalChaptersFrom } from '../mangaupdates.js';
 import {
   readableChapter,
@@ -58,11 +60,12 @@ import { dueForSwitch, pickReplacement } from '../find-sources.js';
 import { isPrivateAddress, refusal, secretMatches } from '../flaresolverr.js';
 import { fetchPage, pagesInFlight, PageFetchError, sharedPage, SLOW_FAILURE_MS } from '../page-fetch.js';
 import { glideDistance, glideStep, MAX_SPEED, releaseVelocity, STOP_SPEED } from '../../web/glide.js';
-import { chooseFirstAlone, contentKind, cutsCarryOn, EDGE, fitsTwo, formatFromTags, pairPages, seamJoined, type PageInfo } from '../../web/page-layout.js';
+import { apartPages, marginScores, seamsDecide, marginLean, asBookPages, chooseFirstAlone, contentKind, cutsCarryOn, EDGE, learnMargins, stackedPages, fitsTwo, formatFromTags, leanFromTags, pairPages, seamJoined, type PageInfo } from '../../web/page-layout.js';
 import { normaliseTags } from '../tags.js';
 import { DEFAULT_HIDDEN_TAGS, hasTag, hiddenBy, tagsForLevel } from '../mature.js';
 import { extensionUsage } from '../extension-usage.js';
 import { pickSource } from '../find-sources.js';
+import { isLatin, namesFromRecords, searchQueries } from '../names.js';
 import { chapterFolder, mendManifest, nextInQueue, pickEdition, type ArchiveManifest, type QueueItem } from '../archive.js';
 import { mkdirSync as mkdirTmp, mkdtempSync, readdirSync as listTmp, rmSync as rmTmp, writeFileSync as writeTmp } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -262,6 +265,32 @@ check(
   'the same query ranks the same way twice',
   JSON.stringify(rankMatches('eleceed', found)) === JSON.stringify(rankMatches('eleceed', found))
 );
+
+/* ------------------------------------------------------------------ */
+console.log(`\nevery name a series goes by\n`);
+
+// MMO!, as MangaDex has it: the romanised title the library knows, and the English one the sources that translate it use.
+const mmoRecords = [
+  { names: ['Mob Dakedo Saikyou wo Mezashimasu!'], english: null },
+  {
+    names: ['MMO! Jiyuu ni Game wo Kouryaku Shitara Ningen Banare Shitemashita', 'MMO! Playing the Game Freely Led to Superhuman Abilities', 'MMO！自由にゲームを攻略したら人間離れしてました'],
+    english: 'MMO! Playing the Game Freely Led to Superhuman Abilities',
+  },
+];
+const mmoTitle = 'MMO! Jiyuu ni Game wo Kouryaku Shitara Ningen Banare Shitemashita';
+const mmoNames = namesFromRecords([mmoTitle], mmoRecords);
+check("the record that is this series gives its names, English first", mmoNames[0] === 'MMO! Playing the Game Freely Led to Superhuman Abilities', JSON.stringify(mmoNames));
+check('  ...and not another series sharing a word', !mmoNames.some((n) => n.startsWith('Mob')));
+check('  ...and nothing in Japanese script, which the sources here cannot search', mmoNames.every(isLatin));
+check('a record matching none of the names gives nothing', namesFromRecords(['Eleceed'], mmoRecords).length === 0);
+const queries = searchQueries([mmoTitle, ...mmoNames, 'MMO! Jiyuu Ni Game Wo Kouryaku Shitara Ningen Banare Shitemashita', 'A', 'B', 'C']);
+check('a search asks its own title first, then the others, each spelling once, three at most', queries.length === 3 && queries[0] === mmoTitle && queries[1].startsWith('MMO! Playing'), JSON.stringify(queries));
+const byNames = rankMatches([mmoTitle, 'MMO! Playing the Game Freely Led to Superhuman Abilities'], [
+  { title: 'Mob Dakedo Saikyou wo Mezashimasu! - Game Sekai ni Tensei shita Ore wa Jiyuu ni', sourceName: 'MangaFire (EN)' },
+  { title: 'MMO! Playing the game freely led to superhuman abilities', sourceName: 'MangaHub (EN)' },
+  { title: 'Kimi wo Mae ni shitara Ore wa mou', sourceName: 'MangaFox (EN)' },
+]);
+check('a source listing it under its English name ranks first, as the same title', byNames[0].sourceName === 'MangaHub (EN)' && byNames[0].score === 100, JSON.stringify(byNames.map((m) => [m.sourceName, m.score])));
 
 /* ------------------------------------------------------------------ */
 console.log('\nreading the shape of a chapter list\n');
@@ -1201,6 +1230,11 @@ console.log('\na check that failed is asked again sooner\n');
   check('the last page is the end', placeIsAtEnd({ page: 39, pages: 40 }));
   check('so is the page before it (a short last page)', placeIsAtEnd({ page: 38, pages: 40 }));
   check('two pages short is not', !placeIsAtEnd({ page: 37, pages: 40 }));
+  // A place a later read finished is let go at startup; one newer than every read stays.
+  check('a place overtaken by reading that chapter after it is let go', placeOvertaken({ chapter: 26, at: 100 }, [{ chapter: 26, at: 109 }]));
+  check('  ...or a later chapter', placeOvertaken({ chapter: 26, at: 100 }, [{ chapter: 27, at: 150 }]));
+  check('  ...but not by a read from before it was saved', !placeOvertaken({ chapter: 26, at: 100 }, [{ chapter: 26, at: 90 }]));
+  check('  ...nor by an earlier chapter', !placeOvertaken({ chapter: 26, at: 100 }, [{ chapter: 25, at: 150 }]));
   check('a two-page chapter needs its last page', !placeIsAtEnd({ page: 0, pages: 2 }) && placeIsAtEnd({ page: 1, pages: 2 }));
   check('a one-page chapter at its only page is the end', placeIsAtEnd({ page: 0, pages: 1 }));
 
@@ -1230,6 +1264,69 @@ console.log('\na check that failed is asked again sooner\n');
   for (const n of [1, 3, 4]) applyReadMark(c, n, true, n * 10);
   for (const n of [1, 2, 3, 4, 5]) applyReadMark(c, n, true, n * 10);
   check('a re-sent log fills the gaps and nothing else', JSON.stringify(c.readChapters) === '[1,2,3,4,5]', JSON.stringify(c.readChapters));
+}
+
+/* ---- pages mode's pull ---- */
+{
+  console.log('\npages mode pulls, gently');
+  // Sheets 760px tall on an 812px phone, one every 764px: the screen sits at 0, 764, 1528...
+  const screen = 812;
+  const reach = reachFor(760, screen);
+  const spots = [0, 1, 2, 3, 4].map((i) => ({ at: i * 764, reach }));
+  const max = 4 * 764 + 200;
+  check('the reach is a fifth of the page', Math.abs(reach - 152) < 0.01, String(reach));
+  check('stopped near a page, ahead of the way you were going: slid onto it', magnetTarget(spots, 764 - 100, max, 1) === 764);
+  check('stopped halfway between two: left alone', magnetTarget(spots, 764 + 382, max, 1) === null);
+  check('already there: left alone', magnetTarget(spots, 765, max, 1) === null);
+  // A mouse wheel notch is about 100px: pausing after one must not slide you back.
+  check('one wheel notch past a page: not pulled back', magnetTarget(spots, 764 + 100, max, 1) === null);
+  check('a flick that overshot by a little: pulled back', magnetTarget(spots, 764 + 30, max, 1) === 764, String(BACK_SHARE));
+  check('the other way round, the same', magnetTarget(spots, 764 - 100, max, -1) === null && magnetTarget(spots, 764 + 100, max, -1) === 764);
+  check('nothing known about the way: the full reach both sides', magnetTarget(spots, 764 + 100, max, 0) === 764);
+  check('a spot past the end is kept to what can be scrolled to', magnetTarget([{ at: 5000, reach: 400 }], max - 50, max, 1) === max);
+  check('no pages: nothing', magnetTarget([], 100, max, 1) === null);
+
+  console.log('\npages mode: the friction is made to fit');
+  const stops = [0, 1, 2, 3, 4].map((i) => i * 764);
+  // A slide sampled every 4ms: where it ends, whether it went backwards or past, how fast it began, and its fastest.
+  const slide = (from: number, velocity: number) => {
+    const to = settleTarget(stops, from, velocity, max);
+    if (to === null) return null;
+    const plan = settlePlan(from, to, velocity);
+    let prev = from;
+    let steady = true;
+    let fastest = 0;
+    let lastStep = Infinity;
+    let slowing = true;
+    for (let t = 4; t <= plan.duration; t += 4) {
+      const y = plan.at(t);
+      const step = Math.abs(y - prev) / 4;
+      if ((y - prev) * Math.sign(to - from) < -0.001 || Math.abs(y - from) > Math.abs(to - from) + 0.001) steady = false;
+      if (step > lastStep + 1e-9) slowing = false;
+      fastest = Math.max(fastest, step);
+      lastStep = step;
+      prev = y;
+    }
+    return { to, ms: plan.duration, steady, slowing, fastest, end: plan.at(plan.duration), start: plan.at(1) - from };
+  };
+  const natural = (v: number) => v * NATURAL_PER_SPEED;
+  const over = slide(0, 2)!;
+  check('a flick that would carry past a page stops on it: friction up', natural(2) > 764 && over.to === 764 && over.end === 764 && over.steady, `${over.to} in ${Math.round(over.ms)}ms`);
+  check('  ...starting at the speed it was let go at, and only ever slowing', Math.abs(over.start - 2) < 0.01 && over.slowing, over.start.toFixed(3));
+  const short = slide(0, 0.8)!;
+  check('a short flick that would fall short reaches the next page: friction down', natural(0.8) < 764 && short.to === 764 && short.end === 764 && short.steady, `${short.to} in ${Math.round(short.ms)}ms`);
+  check('  ...never faster than it was thrown: friction lowered, not sped up', short.slowing && short.fastest <= 0.8 + 1e-6, short.fastest.toFixed(3));
+  check('  ...and it takes no longer than MAX_MS', short.ms <= MAX_MS, String(Math.round(short.ms)));
+  check('a flick too weak for the next page settles back on its own', settleTarget(stops, 40, 0.35, max) === 0);
+  check('let go slowly past halfway: on to the next', settleTarget(stops, 400, 0.05, max) === 764);
+  check('let go slowly short of halfway: back to the one it was on', settleTarget(stops, 300, 0.05, max) === 0);
+  check('a flick upwards goes back a page', settleTarget(stops, 764, -1, max) === 0);
+  check('a flick lands ahead of where it was thrown from', settleTarget(stops, 770, 1, max) === 1528);
+  check('a hard flick crosses pages and lands on the one nearest where it would have stopped', settleTarget(stops, 0, 6, max) === 3056, String(natural(6)));
+  const back = slide(800, -0.1)!;
+  check('a slow release settles from still and does not wobble', back.to === 764 && back.steady && back.end === 764);
+  check('already in the middle of a page: nowhere to go', settleTarget(stops, 764, 0, max) === 764);
+  check('no pages: nothing to settle on', settleTarget([], 100, 1, max) === null);
 }
 
 /* ---- when Next finishes a chapter ---- */
@@ -1488,8 +1585,98 @@ console.log('\npages mode: which pages sit side by side, and what a chapter is')
   check('a spread across pages 2 and 3 puts the cover alone', chooseFirstAlone(book, true) === true);
   const fromFirst = [page(art, plain), page(plain, art), page(plain, plain), page(plain, plain)];
   check('a spread across pages 1 and 2 pairs from the first', chooseFirstAlone(fromFirst, true) === false);
-  check('  ...read left to right, the other edges are the seam', chooseFirstAlone(fromFirst, false) === null);
+  check('  ...read left to right, the other edges are the seam', seamsDecide(fromFirst, false) === null);
+  // With no picture across, the white fold decides (2026-11-12): read left to right, pages 1 and 2 meet at their plain edges.
+  check('  ...and with none across, the white fold pairs them from the first', chooseFirstAlone(fromFirst, false) === false);
   check('nothing drawn across any gutter decides nothing', chooseFirstAlone([page(plain, plain), page(plain, plain), page(plain, plain)], true) === null);
+
+  // A scanlation group's own pages, by size: MMO! Jiyuu ni Game wo chapter 1.2, as measured.
+  const sized = (w: number, h: number): PageInfo => ({ ...page(plain, plain), aspect: w / h, width: w, height: h });
+  const mmo = [sized(1500, 2100), ...Array.from({ length: 25 }, () => sized(1360, 1920)), sized(1419, 1463)];
+  const apart = apartPages(mmo);
+  check('a notice and a credits page of another size are set apart', apart[0] && apart[26] && apart.slice(1, 26).every((a) => !a));
+  const mmoSheets = pairPages(mmo.map((p) => p.aspect), false, true, apart);
+  check('the notice alone, then the book pairs from its first page', same(mmoSheets.slice(0, 3), [[0], [1, 2], [3, 4]]), JSON.stringify(mmoSheets.slice(0, 3)));
+  check('  ...so images 4 and 5 face each other, as reported', mmoSheets.some((s) => same(s, [3, 4])));
+  check('  ...and the credits page is alone at the end', same(mmoSheets.at(-1), [26]) && same(mmoSheets.at(-2), [25]));
+  check('  ..."move along one" still moves the book, not the notice', same(pairPages(mmo.map((p) => p.aspect), true, true, apart).slice(0, 3), [[0], [1], [2, 3]]));
+  check('a chapter all one size sets nothing apart', apartPages(Array.from({ length: 49 }, () => sized(1200, 1707))).every((a) => !a));
+  check('a page a little wider is still a page', !apartPages([...Array.from({ length: 18 }, () => sized(1125, 1600)), sized(1153, 1600)])[18]);
+  check('pages of every size: nothing is set apart', apartPages([sized(800, 1200), sized(820, 1150), sized(900, 1300), sized(760, 1100)]).every((a) => !a));
+  check('a page not read yet is not set apart', !apartPages([null, ...Array.from({ length: 5 }, () => sized(1000, 1400))])[0]);
+  check('a notice says nothing about which seams join', chooseFirstAlone([sized(1500, 2100), ...Array.from({ length: 5 }, () => sized(1360, 1920))], true) === null);
+
+  // A page stacked under a notice and over the credits, and plain margins on one edge: MMO! chapter 12.1, as measured.
+  // 'L' is paper down the right edge and a picture down the left, 'R' the other way round.
+  // Every edge its own picture, so no seam reads as one picture across a gutter.
+  let drawn = 0;
+  const picture = () => {
+    const k = ++drawn;
+    return Array.from({ length: EDGE }, (_, i) => 128 + 100 * Math.sin(i * (0.3 + 0.37 * k) + k));
+  };
+  const edged = (w: number, h: number, lean: '' | 'L' | 'R' = ''): PageInfo => ({
+    ...sized(w, h),
+    left: lean === 'R' ? plain : picture(),
+    right: lean === 'L' ? plain : picture(),
+  });
+  const leansOf = (spec: string) => [...spec].map((c) => (c === '.' ? '' : c) as '' | 'L' | 'R');
+  // Images 2 to 12, leaning as measured: p3L p4R p5L p6R p8L p10R p11L.
+  const mmo12 = [edged(1363, 4872), ...leansOf('.LRLR.L.RL.').map((l) => edged(1363, 1920, l)), edged(1363, 3326)];
+  const stack = stackedPages(mmo12);
+  check('a notice with the first page under it keeps its bottom, a page tall', stack[0]?.keep === 'bottom' && Math.abs(stack[0].share - 1920 / 4872) < 0.001);
+  check('  ...the last page over the credits keeps its top', stack[12]?.keep === 'top' && Math.abs(stack[12].share - 1920 / 3326) < 0.001);
+  check('  ...and neither is set apart: each is a page of the book', apartPages(mmo12).every((a) => !a));
+  check('  ...shaped as a page for pairing', Math.abs((asBookPages(mmo12)[0]?.aspect ?? 0) - 1363 / 1920) < 0.002);
+  check('a page stacked in the middle of a chapter is left as it is', stackedPages([edged(1363, 1920), edged(1363, 1920), edged(1363, 4000), edged(1363, 1920), edged(1363, 1920), edged(1363, 1920)]).every((x) => !x));
+  check('margins not known: the white fold is assumed, so 2 and 3 face each other', chooseFirstAlone(mmo12, true) === true);
+  // A gradient or flat tone run to the edge is not drawing: it says nothing about where the fold was, nor makes a spread.
+  const ramp = Array.from({ length: EDGE }, (_, i) => 250 - i * 3);
+  check('a page with paper down one edge and a gradient down the other says nothing', marginLean({ ...sized(800, 1127), left: plain, right: ramp, leftDetail: 0, rightDetail: 1.2 }) === 0);
+  check('  ...where the same edge drawn says which side it was on', marginLean({ ...sized(800, 1127), left: plain, right: ramp, leftDetail: 0, rightDetail: 9 }) === 1);
+  check('two edges fading to the same grey are not one picture', seamJoined(art, art.map((x) => x + 2), 1.1, 1.4) === null);
+  check('  ...two drawn edges matching are', seamJoined(art, art.map((x) => x + 2), 14, 18) === true);
+  // The two halves of a spread are drawn at the fold by design: their margins do not vote against the spread.
+  const halves = [page(plain, plain), page(art, plain), page(plain, art), page(plain, plain)];
+  const halvesScore = marginScores(halves, true, 'inner');
+  check("a spread's halves cast no margin votes", halvesScore.alone === 0 && halvesScore.paired === 0, JSON.stringify(halvesScore));
+  // And a series learns its side from its first spread: MMO! 11.2-like, a spread at 2|3 and plain edges at the fold elsewhere.
+  const taught = [edged(1363, 1920), { ...edged(1363, 1920), left: art, right: plain }, { ...edged(1363, 1920), left: plain, right: art }, ...leansOf('RLRLRL').map((l) => edged(1363, 1920, l))];
+  check('a spread teaches the series its side', seamsDecide(taught, true) === true && learnMargins(taught, true, seamsDecide(taught, true)!) === 'inner', String(seamsDecide(taught, true)));
+  check('inner margins: the first page alone, so 2 and 3 face each other', chooseFirstAlone(mmo12, true, 'inner') === true);
+  const mmo12Sheets = pairPages(asBookPages(mmo12).map((p) => p?.aspect ?? null), true, true, apartPages(mmo12));
+  check('  ...and 12 and 13, as reported', same(mmo12Sheets.slice(0, 2), [[0], [1, 2]]) && same(mmo12Sheets.at(-1), [11, 12]), JSON.stringify(mmo12Sheets));
+  // What each row looks like: a page is light and grey, a notice dark and coloured. MMO! chapter 13.1, as measured.
+  const looks = (p: PageInfo, lum: number, colour: number, rows = 96): PageInfo => ({ ...p, rows: { lum: Array(rows).fill(lum), colour: Array(rows).fill(colour) } });
+  const page13 = () => looks(edged(800, 1127), 197, 0);
+  const mmo13 = [looks(edged(800, 1734), 50, 0.085), ...Array.from({ length: 11 }, page13), looks(edged(800, 825), 20, 0.06)];
+  check('a tall notice at the page width with no page in it is not cut', stackedPages(mmo13).every((x) => !x));
+  check('  ...and is set apart, alone before the first page', apartPages(mmo13)[0] === true);
+  const mmo12Looked = mmo12.map((p, i) => (i === 0 || i === 12 ? p : looks(p, 192, 0)));
+  mmo12Looked[0] = { ...mmo12[0], rows: { lum: [...Array(58).fill(58), ...Array(38).fill(139)], colour: [...Array(58).fill(0.09), ...Array(38).fill(0.018)] } };
+  check('  ...while a page stacked under a notice still is, once its rows are read', stackedPages(mmo12Looked)[0]?.keep === 'bottom');
+  // Two white margins crossed by a panel border here and there "match" by being white in the same places: no picture across.
+  const flecked = (at: number[]) => Array.from({ length: EDGE }, (_, i) => (at.includes(i) ? 80 : 250));
+  check('two margins with a few panel borders crossing are not a picture across the gutter', seamJoined(flecked([5, 18, 30]), flecked([5, 18, 31])) === null);
+  check('  ...while a picture across still is', seamJoined(art, art.map((x) => x + 3)) === true);
+  // A margin flecked by the scan is still paper beside a drawn edge.
+  check('a flecked margin beside a drawn edge says which side of the book a page was on', marginLean({ ...sized(800, 1127), left: art, right: flecked([12, 40]) }) === -1);
+  // MMO! chapter 13.1 as measured: the notice alone, the title page alone, 3+4, 5+6 … 11+12, the credits.
+  const mmo13Leans = [looks(edged(800, 1734), 50, 0.085), ...leansOf('..LR.....R.').map((l) => looks(edged(800, 1127, l), 197, 0)), looks(edged(800, 825), 20, 0.06)];
+  const mmo13Sheets = pairPages(asBookPages(mmo13Leans).map((p) => p?.aspect ?? null), chooseFirstAlone(mmo13Leans, true, 'inner') ?? false, true, apartPages(mmo13Leans));
+  check('  ...and pairs MMO! 13.1 with its title page alone', same(mmo13Sheets.slice(0, 3), [[0], [1], [2, 3]]) && same(mmo13Sheets.at(-2), [10, 11]), JSON.stringify(mmo13Sheets));
+  // The Duke's Chef 28: a 1500×2100 notice, then page 2 with a slim banner on top (1127×1835 against 1127×1600, 14.7% taller).
+  const duke28 = [looks(edged(1500, 2100), 17, 0), { ...looks(edged(1127, 1600), 210, 0), width: 1127, height: 1835, aspect: 1127 / 1835, rows: { lum: [...Array(12).fill(240), ...Array(84).fill(210)], colour: Array(96).fill(0) } }, ...Array.from({ length: 8 }, () => looks(edged(1127, 1600), 210, 0))];
+  const duke28Stack = stackedPages(duke28);
+  check('a page with a banner on it, after a notice, is a page with a banner', !duke28Stack[0] && duke28Stack[1]?.keep === 'bottom', JSON.stringify(duke28Stack.slice(0, 2)));
+  const duke28Sheets = pairPages(asBookPages(duke28).map((p) => p?.aspect ?? null), false, true, apartPages(duke28));
+  check('  ...so pages 2 and 3 face each other', same(duke28Sheets.slice(0, 2), [[0], [1, 2]]), JSON.stringify(duke28Sheets.slice(0, 3)));
+  // Tsuihousareru Tabi ni chapter 30.1: p5L p7L p9L p10R, margins on the outer edge where its page numbers are.
+  const tsui = leansOf('....L.L.LR').map((l) => edged(1000, 1420, l));
+  check('outer margins: paired from the first, so 9 and 10 face each other', chooseFirstAlone(tsui, true, 'outer') === false);
+  check('Move along one on MMO teaches inner', learnMargins(mmo12, true, true) === 'inner');
+  check('  ...on Tsuihousareru, outer', learnMargins(tsui, true, false) === 'outer');
+  check('  ...and on a chapter with no plain edges, nothing', learnMargins(Array.from({ length: 8 }, () => edged(1000, 1420)), true, true) === null);
+  check('a picture across a gutter still outranks the margins', chooseFirstAlone(book, true, 'outer') === true);
 
   const info = (aspect: number, colour: number, top = plain, bottom = plain): PageInfo => ({ aspect, colour, left: plain, right: plain, top, bottom });
   check('tall slices are a strip', contentKind([info(0.1, 0.4), info(0.1, 0.4), info(0.12, 0.3), info(0.7, 0.3)]) === 'scroll');
@@ -1510,10 +1697,12 @@ console.log('\npages mode: which pages sit side by side, and what a chapter is')
 
   // Tags first.
   check('Long Strip is a strip', formatFromTags(['Adaptation', 'Full Color', 'Long Strip', 'Web Comic']) === 'scroll');
-  check('Manga is a book', formatFromTags(['Manga', 'Action', 'Isekai']) === 'pages');
+  check('Manga only leans to a book: the pictures are still asked', formatFromTags(['Manga', 'Action', 'Isekai']) === null && leanFromTags(['Manga', 'Action', 'Isekai']) === 'pages');
+  check('Manga and Manhwa together: left to the pictures', formatFromTags(['Manga', 'Manhwa']) === null && leanFromTags(['Manga', 'Manhwa']) === 'pages');
+  check('a strip tag leaves nothing to lean on', leanFromTags(['Manga', 'Long Strip']) === null);
   check('Manhwa and Manhua are strips', formatFromTags(['Manhwa', 'Fantasy']) === 'scroll' && formatFromTags(['Manhua']) === 'scroll');
   check('a Japanese series published as a webtoon is still a strip', formatFromTags(['Manga', 'Long Strip']) === 'scroll');
-  check('spelling and case do not matter', formatFromTags(['long-strip']) === 'scroll' && formatFromTags(['4-Koma']) === 'pages');
+  check('spelling and case do not matter', formatFromTags(['long-strip']) === 'scroll' && leanFromTags(['4-Koma']) === 'pages');
   check('Full Color alone says nothing', formatFromTags(['Full Color', 'Action']) === null && formatFromTags(undefined) === null);
 }
 
@@ -1646,8 +1835,12 @@ console.log('\nsmaller pictures');
   const smallest = await compress({ body: png, type: 'image/png' }, 'smallest');
   check('smallest is smaller again', smallest.body.length < small.body.length, `${small.body.length} → ${smallest.body.length}`);
   const wide = await sharp({ create: { width: 1800, height: 1200, channels: 3, background: '#808080' } }).png().toBuffer();
-  const wideOut = await sharp((await compress({ body: wide, type: 'image/png' }, 'smallest')).body).metadata();
+  const wideCopy = await compress({ body: wide, type: 'image/png' }, 'smallest');
+  const wideOut = await sharp(wideCopy.body).metadata();
   check('a page wider than the cap is brought down to it', wideOut.width === 900 && wideOut.height === 600, `${wideOut.width}x${wideOut.height}`);
+  // Pages mode pairs by the page's real size, so a shrunk copy says what it was shrunk from (x-original-size).
+  check('  ...and says the size it was shrunk from', wideCopy.width === 1800 && wideCopy.height === 1200, `${wideCopy.width}x${wideCopy.height}`);
+  check('  ...where a copy at its own size does not', small.width === undefined && small.height === undefined);
   const tall = await sharp({ create: { width: 800, height: 20000, channels: 3, background: '#808080' } }).png().toBuffer();
   const tallOut = await compress({ body: tall, type: 'image/png' }, 'smaller');
   check('a strip taller than WebP allows comes back as JPEG', tallOut.type === 'image/jpeg', tallOut.type);

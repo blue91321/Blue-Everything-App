@@ -17,6 +17,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { extensionCheck, setupState, startSetup } from '../setup.js';
 import { retitleFromSource } from '../titles.js';
+import { namesFor } from '../names.js';
 import { chapterElsewhere, localOnly } from './shared.js';
 
 export function sourceRoutes(app: FastifyInstance): void {
@@ -266,6 +267,13 @@ export function sourceRoutes(app: FastifyInstance): void {
     // Defaults to the series' own title, because that is what you want in nine
     // cases out of ten and typing it again is a chore.
     const query = (typeof q === 'string' && q.trim()) || series.title;
+    /*
+     * And searched by every name it goes by when that is what was asked
+     * (`names.ts`): the comparison opens on the title, and a source listing the
+     * series in English is the same series. A name typed by hand is searched
+     * as typed.
+     */
+    const byNames = query === series.title;
 
     /*
      * This is the "on demand" in on-demand: searching sources is something you
@@ -280,13 +288,17 @@ export function sourceRoutes(app: FastifyInstance): void {
     }
 
     try {
-      const outcome = await new SuwayomiAdapter(sourceUrl, store.ignoredSources.map((s) => s.id)).search(query, {
-        // `?all=1` is the comparison screen's "include other languages" — a
-        // one-off, deliberately not a change to the setting.
-        languages: all === '1' ? null : store.readLanguages,
-      });
+      const adapter = new SuwayomiAdapter(sourceUrl, store.ignoredSources.map((s) => s.id));
+      // `?all=1` is the comparison screen's "include other languages" — a
+      // one-off, deliberately not a change to the setting.
+      const languages = all === '1' ? null : store.readLanguages;
+      const outcome = byNames
+        ? await adapter.searchNames(await namesFor(series.title, [...(series.altTitles ?? []), series.source?.title, series.origin?.title]), { languages })
+        : { ...(await adapter.search(query, { languages })), queries: [query] };
       return {
         results: outcome.matches,
+        // Every name searched, so the screen can say it looked under the English title too.
+        queries: outcome.queries,
         searched: outcome.searched,
         skipped: outcome.skipped,
         languages: all === '1' ? null : store.readLanguages,

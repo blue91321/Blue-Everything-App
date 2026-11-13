@@ -48,6 +48,7 @@ import {
   sourcesToSearch,
 } from './sources.js';
 import { fromSuwayomiFilter, isIndexSource, type SourceFilter } from './browse.js';
+import { searchQueries } from './names.js';
 
 /** A series as its source describes it — see `SuwayomiAdapter.details`. */
 export type SeriesDetails = {
@@ -494,6 +495,33 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       skipped,
       available: [...counts].map(([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count),
     };
+  }
+
+  /**
+   * `search`, once for each of a series' names (`searchQueries` in `names.ts`:
+   * up to three), merged, and each result ranked by the name it is closest
+   * to. A source listing the series under its English title then ranks it with
+   * the ones listing it under the romanised one, instead of below the forty
+   * series that share a word with the romanised one. Asked one name after
+   * another, so a search is never more than four requests at a time.
+   */
+  async searchNames(
+    names: readonly string[],
+    options: { limit?: number; languages?: readonly string[] | null } = {}
+  ): Promise<SearchOutcome & { queries: string[] }> {
+    const queries = searchQueries(names);
+    if (queries.length === 0) throw new SourceError('nothing to search for');
+    const merged = new Map<string, SourceMatch>();
+    let first: SearchOutcome | null = null;
+    for (const query of queries) {
+      const outcome = await this.search(query, { languages: options.languages ?? null, limit: 400 });
+      first ??= outcome;
+      for (const m of outcome.matches) {
+        const key = `${m.sourceName}:${m.id}`;
+        if (!merged.has(key)) merged.set(key, m);
+      }
+    }
+    return { ...first!, matches: rankMatches(names, [...merged.values()]).slice(0, options.limit ?? 40), queries };
   }
 
   /**

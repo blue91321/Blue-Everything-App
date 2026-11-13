@@ -170,6 +170,15 @@ export const Icon = {
       <path d="M8 21h12M18 19l2 2-2 2" />
     </svg>
   ),
+  /** The pairs moved along by one from a page on: a page alone, then the pairs after it. */
+  shiftFromHere: () => (
+    <svg {...base}>
+      <rect x="2" y="5" width="5" height="12" rx="1" />
+      <rect x="10" y="5" width="6" height="12" rx="1" />
+      <rect x="16" y="5" width="6" height="12" rx="1" />
+      <path d="M10 21h10M18 19l2 2-2 2" />
+    </svg>
+  ),
   /** Pictures as they came, smaller, smallest: a picture at three sizes. */
   pictureFull: () => (
     <svg {...base}>
@@ -204,10 +213,12 @@ export const Icon = {
       <path d="M20 4v7h-7" />
     </svg>
   ),
-  reset: () => (
+  /** Letting go of the chapters above: a page going, dashed, over the one staying. */
+  clearAbove: () => (
     <svg {...base}>
-      <path d="M4 11a8 8 0 1 1 2.3 5.7" />
-      <path d="M4 4v7h7" />
+      <rect x="6" y="2.5" width="12" height="7" rx="1" strokeDasharray="2 2.2" />
+      <rect x="6" y="12" width="12" height="9.5" rx="1" />
+      <path d="M12 9.5v-4M10 7.5l2 2 2-2" />
     </svg>
   ),
   /** The controls hiding when a chapter opens: a book and a clock. */

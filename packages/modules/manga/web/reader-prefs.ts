@@ -164,11 +164,17 @@ export function useReaderPrefs(): [ReaderPrefs, (change: Partial<ReaderPrefs>) =
  * kept so its next chapter opens the right way at once rather than as a strip
  * that then turns into pages. Per device like the rest, and only the last 200.
  */
-const FORMATS = 'manga.reader.formats';
+const FORMATS = 'manga.reader.formats.2';
+/**
+ * The list before 2026-11-12, when a Manga tag settled a series as pages
+ * without the pictures being asked. Its strips are still believed; its pages
+ * are asked about again, which is how a webtoon tagged Manga gets put right.
+ */
+const OLD_FORMATS = 'manga.reader.formats';
 
-function formats(): Record<string, ReaderMode> {
+function formats(key = FORMATS): Record<string, ReaderMode> {
   try {
-    const raw = JSON.parse(localStorage.getItem(FORMATS) ?? '{}') as Record<string, unknown>;
+    const raw = JSON.parse(localStorage.getItem(key) ?? '{}') as Record<string, unknown>;
     return Object.fromEntries(Object.entries(raw).filter((e): e is [string, ReaderMode] => e[1] === 'scroll' || e[1] === 'pages'));
   } catch {
     return {};
@@ -176,7 +182,80 @@ function formats(): Record<string, ReaderMode> {
 }
 
 export function rememberedFormat(series: string | undefined): ReaderMode | null {
-  return series ? (formats()[series] ?? null) : null;
+  if (!series) return null;
+  return formats()[series] ?? (formats(OLD_FORMATS)[series] === 'scroll' ? 'scroll' : null);
+}
+
+const PAIRING = 'manga.reader.pairing';
+
+/**
+ * How a chapter's pages were paired by hand in pages mode (2026-11-12), kept
+ * so reopening it does not undo the fix: `first`, whether the first page of
+ * the book is alone, where **Move along one** set it; `alone`, pages put on
+ * their own by **From here**, each where a page is missing from the scan and
+ * the pairing after it moves along by one. Per chapter, the last 200.
+ */
+export type ChapterPairing = { first?: boolean; alone?: number[] };
+
+function pairings(): Record<string, ChapterPairing> {
+  try {
+    return JSON.parse(localStorage.getItem(PAIRING) ?? '{}') as Record<string, ChapterPairing>;
+  } catch {
+    return {};
+  }
+}
+
+export function rememberedPairing(chapter: string | undefined): ChapterPairing {
+  if (!chapter) return {};
+  const v = pairings()[chapter];
+  if (!v || typeof v !== 'object') return {};
+  return {
+    first: typeof v.first === 'boolean' ? v.first : undefined,
+    alone: Array.isArray(v.alone) ? v.alone.filter((n): n is number => Number.isInteger(n) && n >= 0) : undefined,
+  };
+}
+
+export function rememberPairing(chapter: string | undefined, pairing: ChapterPairing): void {
+  if (!chapter) return;
+  try {
+    const all = pairings();
+    delete all[chapter];
+    if (pairing.first !== undefined || (pairing.alone && pairing.alone.length > 0)) all[chapter] = pairing;
+    const keys = Object.keys(all);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 200))) delete all[k];
+    localStorage.setItem(PAIRING, JSON.stringify(all));
+  } catch {
+    // Kept for this visit only.
+  }
+}
+
+const MARGINS = 'manga.reader.margins';
+
+/**
+ * This device's copy of which edge a series keeps its margins on
+ * (`Series.pageMargins`, on the PC), so a chapter saved here and read away
+ * from the PC pairs the same way. Written whenever the PC says.
+ */
+export function rememberedMargins(series: string | undefined): 'inner' | 'outer' | null {
+  if (!series) return null;
+  try {
+    const v = (JSON.parse(localStorage.getItem(MARGINS) ?? '{}') as Record<string, unknown>)[series];
+    return v === 'inner' || v === 'outer' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberMargins(series: string | undefined, side: 'inner' | 'outer' | null): void {
+  if (!series) return;
+  try {
+    const all = JSON.parse(localStorage.getItem(MARGINS) ?? '{}') as Record<string, string>;
+    if (side) all[series] = side;
+    else delete all[series];
+    localStorage.setItem(MARGINS, JSON.stringify(all));
+  } catch {
+    // Known for this visit only.
+  }
 }
 
 export function rememberFormat(series: string | undefined, mode: ReaderMode): void {

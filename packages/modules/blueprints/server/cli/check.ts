@@ -83,6 +83,8 @@ check('the same wire twice is kept once', cleanGraph({ nodes: [{ id: 'a', type: 
 check('a wire into an event, to nowhere, from no such pin or to itself is dropped', messy.wires.map((w) => w.id).join() === 'w1,w2');
 check('too many boxes are cut at the limit', cleanGraph({ nodes: Array.from({ length: 300 }, (_, i) => ({ id: `n${i}`, type: 'wait', fields: {} })), wires: [] }).nodes.length === LIMITS.nodes);
 check('nonsense is an empty graph', cleanGraph('nope').nodes.length === 0 && cleanGraph(null).wires.length === 0);
+// A notification no longer waits for a good break: a saved "when" is dropped as it is read, so it shows at once.
+check('a notification saved with a When loses it', !('when' in cleanGraph({ nodes: [{ id: 'n', type: 'nudge', fields: { title: 'x', when: 'good' } }], wires: [] }).nodes[0]!.fields));
 
 console.log('\nWhich way a run goes');
 const graph: Graph = cleanGraph({

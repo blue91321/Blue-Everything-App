@@ -250,6 +250,43 @@ export const NODES: NodeSpec[] = [
     gives: [{ key: 'task', label: 'the task' }],
   },
   {
+    // 2026-11-11, asked for as "while the switch is on, trigger every 4 seconds":
+    // this, a Repeat until stopped, and the run ended when the switch goes off.
+    type: 'on-switch',
+    kind: 'event',
+    label: 'A switch turns on or off',
+    glyph: '🔘',
+    blurb:
+      'When "Flip a switch" changes a switch, from this blueprint or another. With a Repeat after it, set to go until stopped, it is "while the switch is on". Nothing runs while it is off.',
+    fields: [
+      { key: 'name', label: 'Switch', kind: 'text', default: '', placeholder: 'reload' },
+      {
+        key: 'to',
+        label: 'When it turns',
+        kind: 'choice',
+        options: [
+          { id: 'on', label: 'on' },
+          { id: 'off', label: 'off' },
+          { id: 'either', label: 'on or off' },
+        ],
+        default: 'on',
+      },
+      {
+        key: 'off',
+        label: 'When it turns off again',
+        kind: 'choice',
+        options: [
+          { id: 'stop', label: 'stop what this started' },
+          { id: 'keep', label: 'let it carry on' },
+        ],
+        default: 'stop',
+        showWhen: { key: 'to', is: ['on'] },
+      },
+    ],
+    outputs: THEN,
+    gives: [{ key: 'switch', label: 'on or off, as it is now' }],
+  },
+  {
     type: 'on-task-added',
     kind: 'event',
     label: 'A task is added',
@@ -738,21 +775,10 @@ export const NODES: NodeSpec[] = [
     kind: 'action',
     label: 'Notification',
     glyph: '🔔',
-    blurb: "The app's popup on the PC, as a notification of its own: right now, as soon as you are free, or at the next good break. Not a nudge, so it is not held back by reminders being off or by quiet hours. Silent unless you give it a sound.",
+    blurb: "The app's popup on the PC, as a notification of its own, shown the moment the box runs, in a game or not. Not a nudge, so nothing holds it back: not a game, reminders being off or quiet hours. Silent unless you give it a sound.",
     fields: [
       { key: 'title', label: 'Say', kind: 'text', default: '', placeholder: 'Drink some water' },
       { key: 'body', label: 'More', kind: 'longtext', default: '', placeholder: 'optional' },
-      {
-        key: 'when',
-        label: 'When',
-        kind: 'choice',
-        options: [
-          { id: 'good', label: 'At the next good break' },
-          { id: 'soon', label: 'Whenever it can' },
-          { id: 'now', label: 'Right now, even mid-game' },
-        ],
-        default: 'good',
-      },
       { key: 'color', label: 'Colour on the PC', kind: 'color', default: '' },
       // How long the popup stays up once shown (2026-11-11; it was "Give up
       // after (minutes)" for one still waiting, with the popup always 12s).

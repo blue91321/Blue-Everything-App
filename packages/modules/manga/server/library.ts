@@ -147,6 +147,13 @@ export type Series = SeriesIds & {
    */
   rating?: number;
   /**
+   * Which edge of a page this series' scans keep plain paper on, inner (at the
+   * spine) or outer, which pages mode pairs by when nothing else decides it —
+   * see `MarginSide` in `web/page-layout.ts`. Learned from **Move along one**
+   * in the reader. Absent means not known, and margins decide nothing.
+   */
+  pageMargins?: 'inner' | 'outer';
+  /**
    * Names it went by before, newest last — see `titles.ts`. Kept when linking
    * renames a series after its source, so the Library's title box still finds
    * it by the name you knew. Optional, and absent means none.
@@ -357,6 +364,8 @@ export interface Glimpse {
   /** As on `Series` — see `read-marks.ts`. */
   unreadAt?: Record<string, number>;
   addedAt: number;
+  /** As on `Series`. */
+  pageMargins?: 'inner' | 'outer';
 }
 
 export type Store = {

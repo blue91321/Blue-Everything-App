@@ -1266,6 +1266,27 @@ and immediate after. A title still unknown when the budget runs out is **shown
 and counted**, because hiding every unknown would empty a first visit to a slow
 source.
 
+**Every name a series goes by** (`names.ts`, 2026-11-12). Searching other
+sources used one name, the library's, and 3 of 912 series had another stored:
+*MMO! Jiyuu ni Game wo Kouryaku Shitara Ningen Banare Shitemashita* is listed
+by Thunder Scans (who translate it), MangaHub and MangaDex's English entry as
+*MMO! Playing the Game Freely Led to Superhuman Abilities*, and none of the
+three was found. `namesFor` asks MangaDex once a month per series (a day after
+a failure) for the record one of whose names is a name already known, and
+keeps its English and other Latin-script names in `data/manga-names.json`.
+`searchNames` on the adapter searches each of up to three names one after
+another and ranks every result by the name it is closest to (`rankMatches`
+takes a list). Used by the comparison screen (when it searches the series'
+own title; a name typed is searched as typed), "read from another source"
+and the archive's fallback (`chapterElsewhere`), Find sources, Switch sources
+and the switch after two days. The comparison counts chapters only for the
+results that are the series, and the rest when **Other titles** is opened: a
+long title's search had spent 14 of its 16 counts on series sharing a word
+with it. Measured on MMO!: the comparison's first five were the five real
+copies, MangaHub and Thunder Scans "up to 13.1" beside Atsumaru, with 5 counts;
+"read from another source" for 13.1 found MangaHub and Thunder Scans, where it
+had found nothing; about 12 seconds for two names against 4.5 for one.
+
 **Opening a series fetches its chapters the first time.** The chapter list is
 read from Suwayomi's stored copy so opening one does not scrape a site — and a
 series just linked has no stored copy, so it opened empty, on whichever source
@@ -2064,8 +2085,9 @@ of it is in the gear, first, and per device (`reader-prefs.ts`): `mode`,
 three switches start off, right to left starts on.
 
 **Pages** is a sheet per page or pair, the
-document snapping to each (`html.manga-snap`, `scroll-snap-type: y
-mandatory`), so the window still does the scrolling and the resume, jump,
+screen pulled gently onto each once it stops (`magnet.ts`; it was CSS scroll
+snapping until 2026-11-12, see the last bullet below), so the window still
+does the scrolling and the resume, jump,
 counter and position machinery is the strip's. Pages are found by
 `data-page` rather than as the strip's children, since they now sit inside
 sheets (`pageEls`), and a place resolves to its sheet's top (`placeY`). Two
@@ -2090,10 +2112,11 @@ next, right to left).
   is why the edges could not rescue it. Printed page numbers would have; they
   are not read.
 - **Dragging turns the page.** With *Drag the page to scroll* on, the page
-  follows a mouse drag with the snapping lifted, and letting go turns on or
-  back by the way it went (up for on; sideways as a book's page turns, rightwards
-  for on when reading right to left), a quick flick counting however short and
-  under 40px putting it back. The turn slides and then lands by hand if the
+  follows a mouse drag, and letting go sideways turns on or back as a book's
+  page turns (rightwards for on when reading right to left). An up-and-down
+  drag turned a page too, until the pull replaced the snapping: it is now a
+  scroll, sliding on after letting go and landing on a page (`settle.ts`,
+  below). The turn slides and then lands by hand if the
   slide has not got there, since a smooth scroll does not run at all in a
   window that is not drawing.
 
@@ -2103,9 +2126,8 @@ rightwards, leftwards, a 20px nudge and down went to sheets 2, 3, 2, 2 and 1.
 **Then no dead space, as a strip has none.** Asked for as the page filling
 nearly the whole screen with the pages before and after showing above and
 below. A sheet is as tall as its pages, which fit the screen's height less 26px
-above and below (`--fit`), sheets 4px apart, and the screen snaps to the
-**middle** of each (`scroll-snap-align: center`, `centred` for the keys and the
-drag): at 768px tall a pair fills 26–742 with the pair before ending at 22 and
+above and below (`--fit`), sheets 4px apart, and the screen settles on the
+**middle** of each (`centred`, for the keys, the jumps and the pull): at 768px tall a pair fills 26–742 with the pair before ending at 22 and
 the next starting at 746. A page too wide for its half is made smaller, never
 cut, and a page still coming keeps a page's shape (`aspect-ratio`).
 
@@ -2156,12 +2178,208 @@ gear shifts them by a page for that chapter, for what the edges cannot see. A
 layout that changes as pages are read (a wide page found, the pairs moving) puts
 you back on your page in a layout effect, as a width change always did.
 
+**A scanlation group's own pages are alone** (`apartPages`, 2026-11-12),
+reported as two facing pages of *MMO! Jiyuu ni Game wo* chapter 1.2 on two
+sheets. Its first image is Thunder Scans' "WARNING" notice, so pairing from it
+put every page after it one out; the edges where the two pages meet differ by
+60 of 255, so no seam rescued it. What gives such a page away is its size: a
+chapter's own pages come from one scan at one size, and that chapter is 25
+pages of 1360×1920 between a 1500×2100 notice and a 1419×1463 credits page.
+*The Duke's Chef* (36 of 1127×1600, one odd page each end), *The Best Noble In
+Another World* and *Skill Lender's Retrieving* look the same; *Noble
+Reincarnation* is 49 pages of one size. So a page more than 3% off the size
+most pages share (where at least three in five, and four pages, share one) is
+alone like a spread, and pairing starts again after it, with "first alone" and
+*Move along one* about the first page of the book. A chapter whose pages all
+differ sets nothing apart. `analysePage` now keeps each page's pixel size. In
+the pane at 375×812, two side by side: notice alone, then 2+3, 4+5, 6+7, and
+the credits alone.
+
+**Or stacked onto a page** (`stackedPages`, the same day): chapter 12.1 of the
+same series puts the notice and the first page in one 1363×4872 image, and the
+last page and the credits in one 1363×3326, against 1363×1920 pages. A first
+image at the page width and over 15% taller keeps its bottom, a page tall, and
+a last one its top: pages mode shows that part as the page (`object-fit:
+cover` on the page's own box) and pairs it as the page it is (`asBookPages`,
+which also cuts its edges to that part). **The rest is kept on a sheet of its
+own** (`creditSheet`): the notice before the first page, the credits after
+the last, because people want to know who translated a chapter (asked for the
+same day, after the first version cut it off). Neither carries `data-page`,
+so the counter, the jumps and the end of a chapter go by the pages, and a
+chapter opened from its start (or by Next) opens on the notice, as it did
+before (`placeY`). Scroll mode shows the whole image. In the pane, 12.1 read
+notice, [1], [2,3] … [12,13], credits, and Next opened 12.2 at its notice.
+
+**Cut with a box, not `object-fit`** (`cropped`). The first version set
+`aspect-ratio` and `object-fit: cover` on the `<img>`, and on the iPhone page
+13 was drawn whole at its own tall shape, credits and all, with page 12 shrunk
+beside it to match; Chrome had drawn it right. Each part is now a `div` of the
+part's shape that hides its overflow (`.manga-page-crop`), with the whole
+picture inside at full width pinned to its top or bottom. Measured in the pane
+at 375×812, two side by side: page 13 a 188×264 box the same size as page 12,
+the credits sheet full width (375×387), the notice 351×760 showing exactly the
+top 0.61 of its picture. And `analysePage` now reads the size first and keeps
+it whatever else fails, colour unknown (NaN, not black and white) where it
+could not be read, and pages mode reads the first and last pages before the
+rest, so a stacked end is laid out at once rather than once every page is read.
+**Not verified**: how Safari draws the box, which needs the phone.
+
+**A tall notice is not always a page with a notice on it** (`typicalLook`,
+`PAGE_LIKE`). Chapters 2.1, 2.2 and 13.1 of the same series, from a smaller
+scan, open with an 800×1734 "WARNING" before pages of 800×1127: the page
+width and taller, so its bottom was cut out as "page 1" and paired with the
+title page. Each page's reading now keeps every row of its small copy
+(`PageInfo.rows`, brightness and colour), and the part to be kept must look
+like the chapter's pages: brightness apart over 255 plus twice the colour
+apart, at most 0.45. Over every such image in the series a real page part was
+0.07 to 0.32 away and a part of the notice 0.65. One not read is cut by size.
+
+**And the edges are averaged, not sampled** (`sideEdge` in
+`page-analysis.ts`, `SEAM_INK`, `inkShare`). The left and right were read by
+handing the browser a column one pixel wide to resize to 48, which came back
+as 48 single pixels: a white margin with a panel border crossing it read as a
+picture, and two of those matched across a gutter by being white in the same
+places. 13.1 was paired one page out on such a "seam" (6|7: 6% and 8% inked).
+The sides are now read 4 pixels deep at full size and each of the 48 samples
+is the average of its stretch. A seam counts only where a quarter of each edge
+is darker than paper (200), and a margin is paper by being under a tenth
+inked and light, art by being over 15% inked, not by its spread: 13.1's
+margins are flecked by the scan and did not read as paper before. With both,
+13.1 is decided by its margins (pages 4, 5 and 11), and the rest stand:
+checked with the reader's own functions on MMO! 1.2, 5.1, 11.2, 12.1, 12.2 and
+13.1 and *Tsuihousareru* 30.1, and in the pane at 375×812 on 12.1 and 13.1:
+the notice, the title page, 3+4 … 11+12, the credits. The top and bottom are
+still read by `line`, which `cutsCarryOn` was measured on.
+
+**A page missing from the scan, and From here** (`ChapterPairing`,
+`shiftHere`). Scanlations drop pages: lined up by picture against Thunder's,
+Reset's chapters 7.2 and 8.1 of *MMO!* each lack a page and 10.1 its title
+page. One missing page puts every pair after it one page out, and **Move along
+one** fixes those by breaking the ones before. So the gear has **From here**,
+past the first pair: the page showing goes on its own (a single in
+`pairPages`, as a page set apart is) and the pairing after it moves along by
+one; pressed on such a page, it goes back. Finding the gap by itself was
+tried and left out: the margins tell the side of the book for two or three
+pages a chapter, and in Reset's 8.1 the gap could have been anywhere in four
+pages between the two that did. Both fixes, the whole-chapter one and these,
+are kept per chapter on the device (`manga.reader.pairing`, the last 200), as
+a choice rather than a toggle, so a change in what the reader decides by
+itself does not turn a kept fix around; a whole-chapter move clears the pages
+put on their own. In the pane at 375×812 on Reset's 8.1: Shift, then From here
+on 9+10, gave 1 | 2 | 3+4 | 5+6 | 7+8 | 9 | 10+11 | 12+13 | 14+15 and the
+credits, with page 9 left in the middle of the screen; it was still so after a
+reload, and pressing again undid it.
+
+**Pages shrunk by Automatic keep their real size** (`original-size.ts`,
+`x-original-size`). Pairing tells a notice from a page by its size, and
+Automatic picks each page's size as the connection allows: *Isekai Ni
+Kitakedo* chapter 3 came to the phone as 44 pages as they were, 34
+recompressed and 10 shrunk to 900 wide, and the ten were set apart, alone in
+the middle of the chapter. The server now says the size it shrank a copy from
+(`compress` returns it, both page routes send it), the reader keeps it with the
+blob and its object URL, a saved copy keeps it as a header, and `analysePage`
+reports that size while reading pixels at the size that came. Verified in the
+pane with every third page asked for at "smallest": no page alone.
+
+**Unknown, the fold is white** (`DEFAULT_MARGINS`, asked for as "look for the
+white fold"). A series nobody had taught its side paired from the first page,
+which is the outer side's answer, and *Isekai Ni Kitakedo* chapter 4 came out
+one page off on that until **Shift** taught it; 21 of its 39 pages have paper
+down one edge, every one agreeing with the inner pairing. The inner side is the
+printed convention, the art kept out of the binding, and every picture drawn
+across a gutter found in a survey of eight series agreed (*MMO!* 11.2, *The
+Duke's Chef* 27 and 28). So unknown is now inner, still only where a chapter's
+margins clearly say (`MARGIN_DECIDES`). *Tsuihousareru* keeps its margins
+outside and is set so. Three rules came with it, from the same request:
+
+- **A picture across the fold decides first, and teaches** (`seamsDecide`).
+  The first chapter of a series with no side that has one teaches the series
+  its side, as Shift does, once every page is read. Verified in the pane on
+  *The Duke's Chef* 27 with the save blocked: 5+6 together, and "inner" sent.
+- **Its halves cast no margin votes**: drawn at the fold by design, they
+  would count against the very pairing the picture proves (`marginScores`).
+- **A gradient or flat tone at an edge is neither paper nor drawing**
+  (`TONE_DETAIL`, `leftDetail`/`rightDetail`): the reading keeps, per side
+  edge, how much the pixels vary within each of its 48 stretches. Over 155
+  inked side edges in six chapters, credit pages, black bleeds and flat colour
+  backgrounds were 0 to 2.0, drawn edges 2.7 and up (median 21.7), including
+  those that averaged as smoothly as a gradient; the line is 2.5. Such an edge
+  says nothing about the fold and cannot make a spread with the page beside
+  it. Screentone, being dots, counts as drawing.
+
+Checked with the reader's own functions, side unknown: *Isekai* 3, 4 and 6
+inner, 4 giving 24+25; *MMO!* 12.1, 13.1 and 1.2 as fixed by hand, 11.2 and
+5.1 by their spreads; *The Duke's Chef* 27 and 28 by theirs.
+
+**A banner on a page, after a notice** (`stackedPages`, the same day). *The
+Duke's Chef* 28 opens with a 1500×2100 "WARNING", then page 2 with a slim "read
+at en-thunderscans.com" banner on top: 1127×1835 against pages of 1127×1600,
+14.7% taller. Only the very first image was looked at, and only one over 15%
+taller, so page 2 was taken for a notice and 2 and 3 were left on their own.
+The search now passes over up to two of the group's own pages of another size
+at either end, stopping at the first page-sized image, and `STACKED_TALLER` is
+5%: what keeps a merely tall page from being cut is `PAGE_LIKE`, not the
+height. The banner gets a sheet of its own beside its page wherever that page
+is (the render places each `creditSheet` by its page, no longer only before
+the first image and after the last). In the pane at 375×812: 1 (the notice),
+the banner, 2+3, 4+5.
+
+**The pairing waits while a finger is on the page** (`moving`,
+`stillAgain`). Reported as the pull going on while dragging. The pull itself
+already stood down while a finger was down; what moved was a change of
+pairing, as the pages are read one by one in the background, putting you back
+on your page mid-drag. Now while a finger, a mouse drag or the slide after
+one is moving the page, the pairing on screen is kept, and a new one is laid
+out once nothing is (asked after letting go and every 120ms until then).
+Touching also stops the slide outright, which only the pointer's handler did
+before. In the pane, a synthetic finger held on the page while **Shift**
+changed the pairing: no pixel moved and the old pairing stayed until it lifted,
+then the new one was laid out.
+
+**And which edge keeps its margin, per series** (`Series.pageMargins`,
+`marginScores`). 12.1 pairs 2+3 and 12+13, reported, and nothing above says
+so: no picture crosses a gutter, and a page alone first is not the default. A
+page with plain paper down one edge and a picture off the other says which
+side of the book it was on, once you know which edge a series keeps plain:
+in MMO the inner one (3, 5, 7 and 11 plain on the right, 4 and 6 on the left,
+read right to left), but in *Tsuihousareru Tabi ni* 30.1, also Thunder Scans,
+the outer one, where its printed page numbers sit (7 at the outer edge of
+image 9, 8 of image 10, which face each other). It depends on the raws, and
+the margins are about 8% wide in both, so nothing in the pictures tells the
+two apart. So the side is stored per series on the PC, comes with the page
+list (and is kept on the device for saved chapters), and decides pairing when
+no picture across a gutter does and it gives one pairing at least 3 more
+pages that agree (`MARGIN_DECIDES`). **Move along one** teaches it
+(`learnMargins`): pressed on a chapter whose margins say clearly which pairing
+is which, it stores the side that makes them agree with the pairing asked for
+(`PUT /api/manga/:id/page-margins`), so the series' other chapters follow.
+MMO was set to inner and *Tsuihousareru* to outer by hand. Measured with the
+side unknown, the evidence is strong where it exists: *Maken Tsukai* 19, *The
+Duke's Chef* 27 and *Noble Reincarnation* 42 lean 15 to 21 one way. In the
+pane at 375×812, two side by side: 12.1 paired [1], [2,3] … [12,13] with the
+first image showing its bottom and the last its top, and 1.2 kept 4+5.
+
 **Switching by itself** asks the series' **tags first** (`formatFromTags`,
 added the same evening on Blake's word): Long Strip or Webtoon is a strip
-whatever else is said, then Manga or 4-Koma a book, then Manhwa or Manhua a
-strip; Full Color decides nothing. The chapter list passes the library's tags
-and a series' page its source's genres, so on nearly every series it is decided
-as the chapter opens, before a page arrives. The offline shelf has none.
+whatever else is said, and Manhwa or Manhua a strip unless it says Manga too;
+Full Color decides nothing. The chapter list passes the library's tags and a
+series' page its source's genres, so on most series it is decided as the
+chapter opens, before a page arrives. The offline shelf has none.
+
+**Manga only leans** (`leanFromTags`, 2026-11-12): a series tagged Manga or
+4-Koma opens as pages, and its first six pictures are still asked, and they
+win. Manga settled it until *Houfuku no Ansatsu Ningyou* opened as pages:
+MangaFire gives the type Manga to nearly every Japanese series, including ones
+drawn as a webtoon, and that one is 106 page-shaped colour slices a chapter
+whose cuts (where not blank paper) differ by 3.6 to 9.8 of 255, a strip by
+`cutsCarryOn`. Where the pictures say nothing (colour pages), the lean stands.
+Measured the same way on three real manga tagged Manga (*Noble Reincarnation*,
+*Skill Lender's Retrieving*, *Maken Tsukai*, the closest call when the rule
+was set): at most one cut in five under 13, so all three stay books. What was
+remembered per series moved to `manga.reader.formats.2`: from the old list
+only strips are believed, so a series it remembered as pages is asked again
+once. In the pane at 375×812 with writes faked, *Houfuku* opened as pages and
+turned to a strip within a second, and kept it.
 
 Only with no telling tag are the pictures read: the first six pages of a series
 it has not seen (`contentKind`). Mostly tall slices are a strip; so are cuts the
@@ -2184,7 +2402,8 @@ it is on is kept for that series the same way. Measured on the running app:
 *Skill Lender's Retrieving*, black-and-white pages with a colour spread first,
 went to Pages; Eleceed, slices at 0.04 wide to tall, stayed a strip.
 
-**Carrying on** (scroll mode): once a chapter is read to its end
+**Carrying on** (scroll mode; since 2026-11-12 every chapter carried on from
+stays, see **Chapters either side, tried and taken back** below): once a chapter is read to its end
 (`reachedTheEnd`, what makes Next finish it), it is finished as Next would
 finish it (`onFinished`, so the read is recorded and the host opens the next)
 and the next chapter opens **below** it. The one just read stays above, its
@@ -2224,6 +2443,218 @@ change; jumped to the middle, the two pages on screen were drawn and the page in
 view stayed at the same pixel; carrying on 66 → 67 → 68 left one chapter above
 each time, 83 of 88 pages released, and the reload record named 68.
 **Not verified**: memory on an iPhone itself.
+
+**It died again, on the same series, at the same moment** (2026-11-11): 79
+carrying on into 80, the page gone 2.5 seconds after 80's page list was asked
+for. What happens in those seconds was in the log, and it was not pictures:
+finishing 79 sent the read (`POST /api/manga/journal`), which announces `all`,
+so every screen hidden under the reader refetched and drew again, the
+library's megabyte of JSON and nine hundred tiles among them, on top of two
+chapters of pictures and the next one starting. Two changes:
+
+- **While a reader takes the screen, refetches wait** (`holdUpdates` in core's
+  `live.ts`, taken by `useTakeScreen`). What was announced meanwhile is kept,
+  and closing the reader refetches once with all of it. Nothing hidden needs
+  to be current until it is shown, and the reader itself reads nothing from
+  the change stream. Verified in the browser pane with writes faked: a
+  settings change announced with a chapter open fetched nothing; closing it
+  fetched the chapter list, the library and the rest, once.
+- **Pages are let go of at two screens away and taken back at one and a
+  half**, from three and two.
+- **The new chapter no longer draws the old one's pages for a render**
+  (`owner` in `Reader.tsx`). The page list is cleared by the loader's effect,
+  which runs after the render in which the chapter changed, so in that render
+  the new chapter's strip drew every page of the chapter just finished, as new
+  `<img>`s, below the copy carried above it. Reported as the start of chapter
+  82 looking squished tall, which is what the first page of the chapter before
+  looks like for an instant in a slot being laid out. `urls` and `total` read
+  as empty until the loader has started on the chapter being shown. Not seen
+  here: the pane was hidden, which lays out no pages, so Endless never reaches
+  an end to carry on from.
+
+**Then: "when something loaded, it shot me forwards", the chapter number
+changing before the chapter, and scrolling back up** (2026-11-12):
+
+- **Nothing above you moves you** (`holdStill` in `Reader.tsx`). Safari has
+  no scroll anchoring, so anything above the screen changing height moves
+  the page being read: a placeholder giving way to a picture with no size yet,
+  a picture arriving, a chapter taken off the top. The page under the read
+  line is remembered by its place in the *document* (its top plus the scroll),
+  which scrolling leaves alone and a change above it does not; after every
+  render and every picture that loads, if it moved, the window moves by as
+  much. `overflow-anchor: none` while the reader is open, so Chrome's own
+  anchoring does not correct a second time. It replaced `keepInPlace`, which
+  covered only a chapter taken off the top. Off in pages mode and while
+  returning to a saved place.
+- **The number at the top follows the chapter you are in**: first by asking
+  which block was under the read line, the same day replaced by what follows,
+  where the chapter being read *is* that one.
+
+**Chapters either side, tried and taken back** (2026-11-12). Asked for as the
+number at the top being the chapter you are in, scrolling back up loading the
+chapter before and dropping the one below, and nothing loading before halfway.
+Built as a window of chapters loaded and dropped either side of the one under
+the read line, and taken out the same day on two reports: pressing Next booted
+you back to the chapter before (the new chapter had no pages yet, the one
+before was loaded above it, and `holdStill` latched onto that), and scrolling
+felt wrong. Every chapter added or taken away above you is a scroll put back by
+hand, and on an iPhone a scroll put back also stops a flick dead. Asked
+instead: the old Endless, keeping the space and letting go of the pictures.
+
+- **The chapters above keep their space for the whole session** (`Carried`,
+  no `KEEP_BEHIND`). Nothing above you is ever taken away, so nothing has to be
+  put back.
+- **One far from the screen rests** (`rest`, past `REST_SCREENS`, 4): each
+  page becomes a `.manga-page-rest` blank of exactly the size it was drawn at,
+  and its picture and bytes are let go. Within `WAKE_SCREENS` (2) it wakes: its
+  pages (`paths`) are asked for again, from this device's saved copy or the
+  PC's cache, and drawn into the same space. Pictures held follow the screen,
+  not how far you have read; `far-pages.ts` still lets go of single pages
+  nearer than that.
+- **The number at the top is the chapter under the read line** (`viewing`,
+  `behindInView`): scrolled back up into a chapter above, it and the counter
+  say that one.
+- **The next chapter is fetched onto the device from halfway** (`holdFromHalfway`),
+  or from the start of a chapter under four screens: `holdNext` used to start
+  the moment a chapter's pages were in. What the PC fetches and keeps is as it
+  was. Carrying on itself still happens at the end of the chapter.
+- **`holdStill` finds its page by halving** (`takeAnchor`), since a long session
+  is thousands of pages and it runs as you scroll.
+- **The opening screens no longer wait for the read to reach the server** before
+  moving on (`logRead` is written down at once and sent in the background), or
+  a slow connection holds up the next chapter.
+
+- **The arrows go between the chapters on screen** (`goNext`, `goPrevious`),
+  asked for as Next scrolling to the next chapter in Endless. Next from the
+  chapter being read carries on into the next one (`carryOn`, as reaching the
+  end does) and goes down to its start; from the end it finishes this one, from
+  partway it only moves, as Next always has. From a chapter kept above, Next
+  and Previous go to the start of the one after or before it, and Previous
+  from the chapter being read goes up to the one kept above. The end-of-chapter
+  button does what Next does. A chapter left by Next before all its pages came
+  has the rest fetched into it, so scrolling back finds them. **Going down to
+  it is a jump to its first page** (`returning`, as a saved place is), which
+  waits for the page: scrolling at once, the first version, went nowhere,
+  since a chapter with no pages yet has no height and the scroll stopped at the
+  foot of the one before. Reported as Next booting you back on first load and
+  working once both chapters were in.
+
+- **The gear's Refresh lets go of the chapters above** (`clearAbove`, in
+  Reset's place, asked for to get rid of the previous chapters): they go, and
+  you stay where you are in this one, or go to its start from one of them.
+  Reset put brightness and size back; the sliders do that by hand.
+
+- **Next in pages mode starts the next chapter on its first sheet**
+  (2026-11-12, reported twice as Next landing on about page 19 of 24). Not
+  reproducible here (a hidden pane lays out no pages), so the three ways the
+  last chapter's place could reach the new one are all closed in the chapter
+  change: a page turn's landing still to come (`landing`, cancelled, and any
+  smooth scroll stopped), the put-back after a re-layout using the place
+  measured in the chapter before (`lastPlace` now carries its chapter), and a
+  carry-on mark nothing came of (`seamless` is a time, `carrying()` good for
+  ten seconds). And a chapter not being returned to is headed for its first
+  sheet as a jump is (`returning`), whatever the snapping does as it fills in.
+- **In pages mode the page you are on is the one in the middle of the screen**
+  (`where`, from `sheetAt`), reported as the bottom bar not hopping pages. The
+  read line near the top is a strip's question: a sheet is centred with the
+  foot of the one before showing above it, so the line fell on that one, the
+  counter and the place kept were a page behind, and a re-layout put you back
+  on it. A hop from the bar also lifts the snapping for the jump and puts it
+  back 120ms later (`landing`), as a drag does. At the very top it is the
+  first page, as at the foot it is the last.
+- **That was not it: in pages mode a page not drawn yet had no size**
+  (`pageShape`). Reported again (Next to page 26 of 29, and every hop but
+  page 1 going there) and then reproduced in the browser pane at 375×812,
+  which lays pages mode out because a sheet is sized by the screen: sheets 17
+  to 31 were 0px tall. Pages load as you come near them, so on a phone most of
+  a chapter was flat, a hop was worked out over flat pages and moved as they
+  filled, and anything past the last drawn page landed on the same spot. Each
+  page is now the screen's height, at its own width once read (`aspects`)
+  and the chapter's typical shape before, narrowed to fit as a drawn one is.
+  After: no flat sheets, hops to 10, 30 and 15 landed on 10, 30 and 15, and
+  hops in the chapter Next opened landed too.
+- **And a hop is `scrollIntoView` on the sheet, with the snapping left on**
+  (`jumpTo`). Next worked after the above and hops from the bar still went
+  back to the page you were on, on the iPhone only: Safari keeps which sheet
+  it is snapped to and puts you back on it after a change to the page, and
+  lifting the snapping for 120ms around a `scrollTo` (the try before) can put
+  it back before the jump has reached a phone's screen. The place is the
+  target at once (`lastPlace`), and the sheet is looked at again at 500ms and
+  1100ms and gone to once more if it moved, unless the screen was touched
+  since (`lastTouch`). In the pane at 375×812 hops to 12, 40, 3 and 25 landed
+  and stayed; Safari's own snapping cannot be checked here.
+- **Pages mode finishes a chapter by the strip's rule too** (`endInSight`):
+  the last sheet on screen, or under a tenth of the chapter left and under two
+  and a half screens, which with a sheet to a screen is the last two or so.
+  It had only the first, so a chapter left from its second-to-last page, or
+  wherever the counter misjudged, was never recorded: chapters 58 and 61 of
+  *The Best Noble In Another World* went that way, found in the server's log
+  (no read sent as each was left) and marked read by hand. Every page has its
+  size before it loads in pages mode, so it does not wait for them. At 375×812
+  on a 47-page chapter, Next finished it from page 45 and not from 44.
+- **No scroll snapping at all now: a slight pull instead** (`magnet.ts`,
+  2026-11-12, asked for as "slight magnetism instead of being forceful about
+  it"). The browser's mandatory snapping was behind most of the bugs above:
+  Safari remembers which sheet it is snapped to and puts you back on it after
+  any change, so every way of moving the screen (a hop, a page turn, a drag, a
+  chapter change) had to lift the snapping and put it back around itself, and
+  those timings were what broke. Now the screen scrolls freely, and once it
+  has been still for 160ms (`MAGNET_WAIT_MS`) with no finger down and no drag,
+  slide or jump under way, a sheet whose middle is within a fifth of a page of
+  the screen's middle is slid the rest of the way (`magnetTarget`, asserted by
+  `manga-check`). Further off, it leaves the screen alone. **It pulls forwards
+  further than back**: a sheet behind the way you were scrolling pulls only
+  from 30% of that, or a mouse wheel's 100px notch would be slid straight
+  back. A slide that does not run (a pane not drawing) is finished by hand at
+  700ms unless the screen was touched since. The keys, hops and Next go
+  exactly to a sheet's middle, so the pull has nothing to do after them. In
+  the pane at 375×812 on a 56-page chapter: stopped 80px short going down,
+  slid on; 60px past, stayed; 20px past, slid back; halfway, stayed; hops to
+  20, 40, 5 and 30 landed dead centre and stayed; the arrow keys turned one
+  sheet each; Next opened the next chapter at its first page. **Not verified**:
+  how the pull feels under a finger on an iPhone.
+- **And a finger's scroll lands on a page by itself** (`settle.ts`, the same
+  day, asked for as changing "the friction of the scroll to get the page near
+  the center of the screen": more when a slow scroll would carry past, less
+  when a short flick would fall short). The pull above was not seen on the
+  phone, and could not do this anyway: the browser's momentum cannot be told
+  where to stop. So in pages mode the reader takes the finger over (a
+  non-passive `touchmove` on the window, cancelled from the first move, as
+  iOS needs), the page follows it, and letting go hands its speed to
+  `settleFrom`. The target is the page nearest where the same flick would
+  have stopped at iOS's own deceleration, of the pages ahead it can reach.
+  **The slide is friction and only friction** (`settlePlan`): it starts at
+  the release speed and slows at an even rate, x = d(1 − (1 − t/T)²) with
+  T = 2d/v, so only the rate is chosen, raised to stop short or lowered to
+  reach. It never goes faster than it was thrown, which `manga-check`
+  samples. That is the second version: the first was a cubic that, for a
+  flick too weak to reach the page, sped up on the way, reported as jittery
+  on short flicks with "change friction and not speed things up". Lowered
+  friction is bounded by time: a page needing longer than `MAX_MS` (2s) is
+  out of reach, and a flick reaching nothing ahead (under about 0.5px/ms for
+  a whole page), or a release under 0.3px/ms, settles on whichever page is
+  nearest, eased from rest. The finger's speed is read from the events' own
+  timestamps, not the handler's clock. A
+  sideways swipe turns a page; two fingers, a zoomed-in page and the
+  controls are left to the browser. A mouse drag in pages mode lands the
+  same way, and the pull is left for the wheel and the scrollbar. In the
+  pane at 375×812 with synthetic touches, sheets 537px apart: a 60px flick
+  at 1px/ms and a slow 150px scroll each came to rest on the next page's
+  middle, a 4px/ms flick crossed three, a flick up went back one, a slow
+  300px drag went on and a 200px one went back, a sideways swipe turned one
+  each way. After the friction rework, flicks at 0.75, 1.25 and 2.5px/ms
+  each began at or under the finger's speed, only slowed, and came to rest on
+  a page's middle; one at 0.3px/ms eased back onto the page it left.
+  **Not verified**: how it feels on an iPhone.
+
+Verified in the browser pane, writes faked: Refresh after carrying on left
+only the chapter being read, and greyed itself; Next from 79 kept 79 above and
+opened 80 below it; Next and Previous then moved between the two without
+reopening anything. **Not verified**: scrolling through a session, which a
+hidden pane cannot do (it lays out no pages), and anything on a phone.
+
+**Not verified**: memory on an iPhone, again; the server's log is the only
+witness to a crash there.
 
 **Taking a chapter off the top moved Chrome a chapter up.** The first version
 scrolled back by the removed chapter's height, which is right in Safari and
@@ -3111,6 +3542,20 @@ by F1), and to cost nothing outside the game. Four pieces:
 - **Flip a switch / Is a switch on?**: named, shared by every blueprint, in
   memory (all off when the app starts, as a script's variables are). The
   screen's side column lists those on. `{switch}` is on or off after a flip.
+- **When a switch turns on or off** (2026-11-11, `on-switch`), asked for as
+  "while the switch is on, trigger every 4 seconds". It had been built as
+  *Every 1 minute* → *Repeat every 4s, 15 times* → *Is a switch on?*, which
+  took up to a minute to start and ticked all day with the switch off. Now
+  it is *switch turns on* → *Repeat until stopped*, and **turning it off
+  stops what the box started** (`off: 'stop'`, the default, the way
+  `release: 'stop'` ends a held key's run), so nothing runs while it is off.
+  Only a real change fires it (`switchChanged`, from *Flip a switch*). It is
+  **the one event a blueprint's own Do box may start** (`own` on `fire`):
+  the hotkey half and the loop half of one blueprint talk through the
+  switch, and the depth limit of three still bounds a switch box flipping
+  its own switch. A run set off by a hotkey or Run carries `hand` down, so
+  toggling a loop twenty times in ten minutes is not the runaway guard's
+  business. `smoke` drives it with the agent played by hand.
 - **Counter** and **Random number** (Logic). They were one box, *Every so
   many times*, until asked to be split the same day: a counter whose number
   comes in by a wire, and a random number generator to feed it. See
@@ -3180,11 +3625,14 @@ box, since starting *a match ends* by hand would be a match that did not end.
 wrote an ordinary nudge, so it waited for a good moment, kept quiet hours and
 went to the phone like any reminder. It is **Notification** now, asked for as
 "not tied to the nudge system but keep the UI": the same fields, but the app's
-popup on its own (`notices` in the server half, in memory). *Right now* shows
-at once; *as soon as I am free* and *at the next good break* wait, shown from
-the attention happening when it says so (`readyFor`: free and at the PC, or a
-stopping point or free with no game open), and give up after a day
-(`NOTICE_WAITS_MS`). **Stays on screen for** is the box's own time (2026-11-11,
+popup on its own (`showNotice` in the server half). **It shows the moment the
+box runs, in a game or not** (2026-11-11). It kept a *When* choice from the
+nudge's UI (*at the next good break*, the default, and *whenever it can*) that
+held it in memory until the attention happening said the moment had come, and
+reported from use: a Warframe hotkey's "toggled" waited until the game was
+closed. Holding something for a good moment is the nudge engine's job, so the
+choice went, and a saved *when* is dropped as it is read (`blueprints-check`
+asserts it). **Stays on screen for** is the box's own time (2026-11-11,
 asked for in place of "Give up after (minutes)", when the popup was always up
 for 12 seconds): seconds, minutes, or *until I close it* (`staysFor` in
 `rules.ts`, 0 to the popup, which is how it already meant "stay up"). A box
@@ -3192,8 +3640,7 @@ saved before keeps 12 seconds, its old time, since the unknown field is
 dropped as it is read. Reminders being off and quiet hours do not hold it, since it is not a
 reminder, so the banner below and its `HELD_BECAUSE` check went from the board.
 **Silent unless given a sound** (*Sound*, one of the app's tones, with a volume),
-because a blueprint often plays its own beside it. A restart forgets one
-waiting, as it ends a Wait. The type stays `nudge`, so saved blueprints keep it.
+because a blueprint often plays its own beside it. The type stays `nudge`, so saved blueprints keep it.
 The paragraphs below are its history as a nudge.
 
 **And it says when it cannot show** (2026-11-03). Going quiet outranks

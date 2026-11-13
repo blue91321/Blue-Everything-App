@@ -716,7 +716,8 @@ export function Chapters({
      */
     if (!isIncognito()) {
       // Written down on this device first, then sent — see `reading-log.ts`.
-      await logRead(seriesId, [chapterNumber], logTitle);
+      // Written down here at once; the send is not waited for, or a slow connection holds up the next chapter (and Endless scrolling into it).
+      void logRead(seriesId, [chapterNumber], logTitle).then(() => list.reload());
       void updateSnapshot(seriesId, { read: chapterNumber });
     }
     const all = list.data?.chapters ?? [];

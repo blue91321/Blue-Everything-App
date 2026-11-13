@@ -616,6 +616,25 @@ export function libraryRoutes(app: FastifyInstance): void {
    * Rate a series, 1 to 10, or take the rating off with null. Like the star:
    * only a rating is stored, and it is your data, editable from the phone.
    */
+  /**
+   * Which edge of a page this series keeps plain paper on (`Series.pageMargins`),
+   * or null to forget it. Learned by the reader when **Move along one** is
+   * pressed on a chapter whose margins say which pairing is which. Any of your
+   * devices, like the star: it is about how you read.
+   */
+  app.put('/api/manga/:id/page-margins', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const side = (request.body as { side?: unknown } | null)?.side;
+    if (side !== null && side !== 'inner' && side !== 'outer') return reply.code(400).send({ error: 'side is inner, outer or null' });
+    const store = read();
+    const series = store.series.find((s) => s.id === id) ?? store.glimpses.find((g) => g.id === id);
+    if (!series) return reply.code(404).send({ error: 'no such series' });
+    if (side) series.pageMargins = side;
+    else delete series.pageMargins;
+    write(store);
+    return { pageMargins: series.pageMargins ?? null };
+  });
+
   app.put('/api/manga/:id/rating', async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = request.body as { rating?: unknown } | null;

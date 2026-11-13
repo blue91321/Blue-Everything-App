@@ -250,7 +250,8 @@ export function SeriesDetail({
           setResume(null);
           if (recordId) {
             // Logged on the device, so a failure is sent later rather than lost.
-            await logRead(recordId, [n], result.title);
+            // Written down here at once; the send is not waited for, or a slow connection holds up the next chapter (and Endless scrolling into it).
+            void logRead(recordId, [n], result.title);
             // As the server did: read here, and your place moves past it.
             setPage((p) =>
               p

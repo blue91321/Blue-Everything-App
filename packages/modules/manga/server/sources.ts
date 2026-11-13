@@ -308,11 +308,13 @@ export function titleScore(query: string, title: string): number {
  * is what made the list unreadable when MangaFire registered seven of them.
  */
 export function rankMatches<T extends { title: string; sourceName: string }>(
-  query: string,
+  query: string | readonly string[],
   matches: readonly T[]
 ): Array<T & { score: number }> {
+  // Several names (`names.ts`): each result is scored against the one it is closest to.
+  const queries = typeof query === 'string' ? [query] : query.length > 0 ? query : [''];
   return matches
-    .map((match, index) => ({ ...match, score: titleScore(query, match.title), index }))
+    .map((match, index) => ({ ...match, score: Math.max(...queries.map((q) => titleScore(q, match.title))), index }))
     .sort(
       (a, b) =>
         b.score - a.score ||

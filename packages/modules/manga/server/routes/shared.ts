@@ -22,6 +22,7 @@ import {
   type ChapterToArchive,
 } from '../archive.js';
 import { titleKey } from '../titles.js';
+import { nameKeys, namesFor } from '../names.js';
 import type { FastifyBaseLogger } from 'fastify';
 
 let log: FastifyBaseLogger | null = null;
@@ -144,9 +145,11 @@ export async function chapterElsewhere(
   searched: number;
 }> {
   const own = series.source;
-  const names = new Set([series.title, ...series.altTitles, own?.title ?? ''].map(titleKey).filter(Boolean));
+  // Every name it goes by (`names.ts`): a source listing it in English is the same series.
+  const allNames = await namesFor(series.title, [...series.altTitles, own?.title]);
+  const names = nameKeys(allNames);
   const adapter = new SuwayomiAdapter(url, store.ignoredSources.map((s) => s.id));
-  const { matches } = await adapter.search(series.title, { languages: store.readLanguages });
+  const { matches } = await adapter.searchNames(allNames, { languages: store.readLanguages, limit: 200 });
   const candidates = matches
     .filter((m) => names.has(titleKey(m.title)))
     .filter((m) => !(own && m.sourceName === own.sourceName && m.id === own.mangaId))

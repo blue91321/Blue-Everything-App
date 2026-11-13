@@ -10,7 +10,7 @@ import { chapterValue } from '../identity.js';
 import { applyReadMark, placeIsAtEnd } from '../read-marks.js';
 import { isWholeImage } from '../../web/image-bytes.js';
 import { PageFetchError, sharedPage } from '../page-fetch.js';
-import { compressCached, qualityFrom } from '../compress.js';
+import { compressCached, originalSizeHeader, qualityFrom } from '../compress.js';
 import { read, write, readPositions, writePosition, type ReadingPosition, type Store } from '../library.js';
 import { SourceError, effectiveUrl } from '../sources.js';
 import { DEFAULT_BASE_URL } from '../suwayomi.js';
@@ -260,6 +260,11 @@ export function readingRoutes(app: FastifyInstance): void {
        * `holdNext` in `manga-api.ts`.
        */
       readAhead: read().readAheadChapters,
+      /** Which edge the series keeps its margins on, for pairing pages (`Series.pageMargins`); null when not known. */
+      pageMargins: (() => {
+        const store = read();
+        return (store.series.find((s) => s.id === id) ?? store.glimpses.find((g) => g.id === id))?.pageMargins ?? null;
+      })(),
     });
 
     /*
@@ -352,6 +357,7 @@ export function readingRoutes(app: FastifyInstance): void {
           // How long this took before a byte was sent, so the reader can tell
           // a slow connection from a slow site — see `quality.ts`.
           .header('x-made-in', String(Math.round(reply.elapsedTime)))
+          .headers(originalSizeHeader(out))
           .send(out.body)
       );
     };

@@ -102,3 +102,15 @@ export function placeIsAtEnd(place: { page: number; pages: number }): boolean {
   if (place.pages <= 2) return place.page >= place.pages - 1;
   return place.page >= place.pages - 2;
 }
+
+/**
+ * Whether a saved place has been overtaken by a read: that chapter or a later
+ * one finished at or after the place was saved (2026-11-12). `settleAfterRead`
+ * clears such a place as the read arrives, but only since 2026-10-04: a place
+ * saved before then outlived the read that finished it, and the chapter list
+ * offered to "continue" a chapter read to its last page weeks before. Asked
+ * of every place once at startup.
+ */
+export function placeOvertaken(place: { chapter: number; at: number }, readLog: ReadonlyArray<{ chapter: number; at: number }>): boolean {
+  return readLog.some((r) => r.chapter >= place.chapter && r.at >= place.at);
+}

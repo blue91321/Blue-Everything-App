@@ -147,6 +147,27 @@ export async function search(query: string, limit = 10): Promise<Candidate[]> {
   });
 }
 
+/** One MangaDex record's names: every title and alternative title, and the English one where there is one. */
+export type NamedRecord = { names: string[]; english: string | null };
+
+/**
+ * The names of the series MangaDex finds for a title, best match first: one
+ * request, for `names.ts`, which keeps the answer for a month. Every rating, for
+ * the reason `search` gives.
+ */
+export async function namesOnMangaDex(query: string, limit = 5): Promise<NamedRecord[]> {
+  const params = new URLSearchParams({ title: query, limit: String(Math.min(limit, 10)) });
+  for (const rating of ['safe', 'suggestive', 'erotica', 'pornographic']) params.append('contentRating[]', rating);
+  const body = await get(`/manga?${params.toString()}`);
+  const data = Array.isArray(body?.data) ? body.data : [];
+  return data.map((m: any): NamedRecord => {
+    const title = (m.attributes?.title ?? {}) as Record<string, string>;
+    const alts = (m.attributes?.altTitles ?? []) as Record<string, string>[];
+    const names = [...Object.values(title), ...alts.flatMap((a) => Object.values(a))].map(text).filter((n): n is string => !!n);
+    return { names, english: text(title.en) ?? text(alts.find((a) => a.en)?.en) };
+  });
+}
+
 /** The cover bytes, fetched here because the browser may not hotlink them. */
 export async function fetchCover(url: string): Promise<{ body: ArrayBuffer; contentType: string }> {
   if (!url.startsWith(`${COVERS}/`)) throw new MangaDexError('not a MangaDex cover');

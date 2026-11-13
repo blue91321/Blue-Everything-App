@@ -1186,6 +1186,59 @@ console.log('\nhabit modes: a gap after doing it, and a gauge that drains');
   await post('/api/attention', report({ reason: 'back at the desktop' }));
   check('leaving the game stops watching', (await agentHello()).watch.length === 0);
 
+  /*
+   * "While the switch is on, every so often" (2026-11-11): a hotkey flips a
+   * switch, and the same blueprint's "A switch turns on" repeats until it goes
+   * off again. The agent is played by hand.
+   */
+  const whileOn = (await post('/api/blueprints', { template: 'empty', name: 'smoke: while on' })).json();
+  voiceBlueprints.push(whileOn.id);
+  await app.inject({
+    method: 'PUT',
+    url: `/api/blueprints/${whileOn.id}`,
+    payload: {
+      enabled: true,
+      graph: {
+        nodes: [
+          { id: 'hk', type: 'on-hotkey', x: 0, y: 0, fields: { listen: 'register', keys: 'ctrl+alt+shift+f9', again: 'another' } },
+          { id: 'flip', type: 'set-switch', x: 300, y: 0, fields: { name: 'Smoke Loop', to: 'flip' } },
+          { id: 'sw', type: 'on-switch', x: 0, y: 200, fields: { name: 'smoke loop', to: 'on' } },
+          { id: 'rep', type: 'repeat', x: 300, y: 200, fields: { every: 0.2, unit: 'seconds', until: 'stopped', first: 'now' } },
+          { id: 'four', type: 'press-keys', x: 600, y: 200, fields: { mode: 'one', keys: '4', hold: 30 } },
+        ],
+        wires: [
+          { id: 'a', from: 'hk', pin: 'then', to: 'flip' },
+          { id: 'b', from: 'sw', pin: 'then', to: 'rep' },
+          { id: 'c', from: 'rep', pin: 'each', to: 'four' },
+        ],
+      },
+    },
+  });
+  const loopHello = await agentHello();
+  check('a switch box is on while it has a switch named', (await statusOf(whileOn.id))?.state === 'on', JSON.stringify(await statusOf(whileOn.id)));
+  const pressLoop = async (ms: number) => {
+    const got: string[] = [];
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = (await post('/api/blueprints/agent', { version: loopHello.version })).json() as { tasks: Array<Record<string, unknown>> };
+      for (const task of poll.tasks) {
+        got.push(String(task.keys));
+        await post('/api/blueprints/agent', { version: loopHello.version, done: [{ id: task.id }] });
+      }
+    }
+    return got;
+  };
+  check('nothing runs while the switch is off', (await pressLoop(400)).length === 0 && !(await stillGoingFor(whileOn.id)));
+  await post('/api/blueprints/hotkey', { keys: 'ctrl+alt+shift+f9' });
+  const onPresses = await pressLoop(900);
+  check('turning it on, from the same blueprint, starts the loop', onPresses.length >= 3 && onPresses.every((k) => k === '4'), JSON.stringify(onPresses));
+  check('  ...which keeps going while it is on', await stillGoingFor(whileOn.id));
+  await post('/api/blueprints/hotkey', { keys: 'ctrl+alt+shift+f9' });
+  await pressLoop(300);
+  check('  ...and turning it off stops it', !(await stillGoingFor(whileOn.id)));
+  check('  ...and presses nothing more', (await pressLoop(500)).length === 0);
+
   // A blueprint whose only trigger is a phrase can't start while voice is off.
   const spoken = (await post('/api/blueprints', { template: 'empty', name: 'smoke: voice only' })).json();
   voiceBlueprints.push(spoken.id);

@@ -74,7 +74,8 @@ async function slot<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-export type Picture = { body: Buffer; type: string };
+/** A picture; `width` and `height` are the size it was shrunk from, where it was (sent as `x-original-size`). */
+export type Picture = { body: Buffer; type: string; width?: number; height?: number };
 
 /** A smaller copy of a picture, or the picture itself when that is not smaller or cannot be made. */
 export async function compress(picture: Picture, level: Quality): Promise<Picture> {
@@ -92,7 +93,8 @@ export async function compress(picture: Picture, level: Quality): Promise<Pictur
       const body = tall
         ? await resized.jpeg({ quality, mozjpeg: true }).toBuffer()
         : await resized.webp({ quality, effort: 4 }).toBuffer();
-      return body.length < picture.body.length ? { body, type: tall ? 'image/jpeg' : 'image/webp' } : picture;
+      if (body.length >= picture.body.length) return picture;
+      return { body, type: tall ? 'image/jpeg' : 'image/webp', ...(scale < 1 ? { width: meta.width, height: meta.height } : {}) };
     });
   } catch {
     return picture;
@@ -112,6 +114,10 @@ let madeBytes = 0;
 const making = new Map<string, Promise<Picture>>();
 
 /** `compress`, remembered under `key` (the page's own path) for the level. */
+/** The header saying what size a smaller copy was made from, for pages mode (`original-size.ts` in the reader). */
+export const originalSizeHeader = (picture: Picture): Record<string, string> =>
+  picture.width && picture.height ? { 'x-original-size': `${picture.width}x${picture.height}` } : {};
+
 export function compressCached(key: string, picture: Picture, level: Quality): Promise<Picture> {
   if (level === 'original') return Promise.resolve(picture);
   const id = `${level}|${key}`;

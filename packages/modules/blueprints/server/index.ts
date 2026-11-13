@@ -215,7 +215,8 @@ const counters = new Map<string, { count: number; target: number; from: 'field' 
 /* ---- Running -------------------------------------------------------- */
 
 /** Which run, how deep: read when an action's own write announces something. */
-const context = new AsyncLocalStorage<{ depth: number; blueprint: string }>();
+/** `hand`: started by a person (a hotkey, Run), so what it sets off is a person's doing too. */
+const context = new AsyncLocalStorage<{ depth: number; blueprint: string; hand: boolean }>();
 
 /**
  * Real runs still going, so a hotkey pressed again, Stop, or changing or
@@ -239,11 +240,11 @@ function stopReason(signal: AbortSignal): string {
  * cannot be asked.
  */
 /*
- * Notifications waiting for their moment, in memory: "as soon as I am free"
- * or "at the next good break". Shown from the attention happening, which says
- * when the state moves and when a stopping point arrives, and dropped once
- * they have waited as long as their box allows. A restart forgets them, as it
- * ends a Wait.
+ * A notification is shown the moment its box runs, in a game or not
+ * (2026-11-11). It once waited for "the next good break" or for you to be free,
+ * which made it a nudge by another name: one set to wait held a hotkey's
+ * "toggled" until the game was closed. Holding things for a good moment is the
+ * nudge engine's job; this is the box for something to show now.
  */
 interface Notice {
   title: string;
@@ -251,29 +252,8 @@ interface Notice {
   color: string;
   sound: string;
   volume: number;
-  when: 'now' | 'soon' | 'good';
   /** How long the popup stays up once shown, in seconds; 0 until it is closed. */
   seconds: number;
-  giveUpAt: number;
-}
-/**
- * How long one waits for its moment. The box no longer says (its time is how
- * long it stays up), so a day: a "next good break" from yesterday is not one.
- */
-const NOTICE_WAITS_MS = 24 * 60 * MINUTE;
-const notices: Notice[] = [];
-const WAITS_FOR = { now: 'now', soon: 'once you are free', good: 'at the next good break' } as const;
-
-/**
- * Whether now is a moment for one: *as soon as I am free* is any time you are
- * at the PC and not in a game or focused; *at the next good break* is a
- * stopping point, or that same freedom with no game open at all.
- */
-function readyFor(when: Notice['when'], stopping = false): boolean {
-  if (when === 'now') return true;
-  if (!attention || attention.away) return false;
-  if (when === 'good') return stopping || (attention.state === 'free' && attention.games.length === 0);
-  return attention.state === 'free' || stopping;
 }
 
 /** The app's popup, now, silent unless the notification has a sound. */
@@ -282,19 +262,6 @@ async function showNotice(n: Notice): Promise<void> {
     { do: 'popup', title: n.title, body: n.body, color: n.color, seconds: n.seconds, sound: n.sound, volume: n.volume },
     'show the notification'
   );
-}
-
-/** Show whatever has been waiting for a moment like this one, and let go of what has waited too long. */
-function deliverNotices(stopping: boolean): void {
-  const now = Date.now();
-  for (let i = notices.length - 1; i >= 0; i--) {
-    const n = notices[i]!;
-    if (n.giveUpAt <= now) notices.splice(i, 1);
-    else if (readyFor(n.when, stopping)) {
-      notices.splice(i, 1);
-      void showNotice(n).catch(() => undefined);
-    }
-  }
 }
 
 /** A drawn sound in a few words, for the run log: a beep, a sweep, or so many lines. */
@@ -499,6 +466,11 @@ function triggerState(node: GraphNode, voice: VoiceFacts): { state: 'live' | 'id
       if (!agentAround()) return { state: 'idle', why: 'waiting for the app on the PC' };
       if (game && !gameOpen(game)) return { state: 'idle', why: `waiting for ${gameName(game).replace(/\b\w/g, (c) => c.toUpperCase())} to be open` };
       return { state: 'live', why: game ? `${keys} while it is open` : keys };
+    }
+    case 'on-switch': {
+      const name = switchName(node);
+      if (!name) return { state: 'dead', why: 'the switch box has no switch named' };
+      return { state: 'live', why: switches.get(name) ? `"${name}" is on` : `waiting for "${name}" to be flipped` };
     }
     case 'on-stop':
     case 'on-game-start':
@@ -790,24 +762,17 @@ function effectsFor(run: Run, vars: Record<string, string>, signal: AbortSignal)
           // "Notification": the app's popup, on its own, not through the nudge queue.
           const title = text(node, 'title', vars);
           if (!title) throw new Error('"Notification" has nothing to say yet.');
-          const when = node.fields.when === 'now' ? 'now' : node.fields.when === 'soon' ? 'soon' : 'good';
           const note: Notice = {
             title,
             body: text(node, 'body', vars),
             color: String(node.fields.color ?? ''),
             sound: String(node.fields.sound ?? 'none'),
             volume: Number(node.fields.volume ?? 50),
-            when,
             seconds: staysFor(node.fields),
-            giveUpAt: Date.now() + NOTICE_WAITS_MS,
           };
-          if (dry) return when === 'now' || readyFor(when) ? `Would show: ${title}` : `Would show ${WAITS_FOR[when]}: ${title}`;
-          if (when === 'now' || readyFor(when)) {
-            await showNotice(note);
-            return `Showed: ${title}`;
-          }
-          notices.push(note);
-          return `Will show ${WAITS_FOR[when]}: ${title}`;
+          if (dry) return `Would show: ${title}`;
+          await showNotice(note);
+          return `Showed: ${title}`;
         }
         case 'add-task': {
           const title = text(node, 'title', vars);
@@ -1087,6 +1052,7 @@ function effectsFor(run: Run, vars: Record<string, string>, signal: AbortSignal)
           if (dry) return `Would turn "${name}" ${vars.switch}`;
           switches.set(name, to);
           changes.emitChange(SCOPE);
+          if (was !== to) switchChanged(name, to);
           return `Turned "${name}" ${vars.switch}`;
         }
         case 'new-note': {
@@ -1158,7 +1124,7 @@ async function start(
   try {
     // The walk writes into `run.steps` as it goes, so a run recorded while it
     // waits shows how far it got.
-    await context.run({ depth, blueprint: bp.id }, () =>
+    await context.run({ depth, blueprint: bp.id, hand }, () =>
       walk(bp.graph, from, { ...effectsFor(run, filled, abort.signal), halt: () => abort.abort(new RunStopped('The run ended.')) }, run.steps, filled)
     );
   } finally {
@@ -1306,8 +1272,32 @@ function hotkeyPressed(keys: string, watched = false): void {
   }
 }
 
-/** An event happened: start every switched-on blueprint with a box that matches. */
-function fire(type: string, matches: (node: GraphNode) => boolean, vars: Record<string, string>): void {
+/**
+ * A switch changed: end what "A switch turns on" started where its box says
+ * turning off does, then start what listens for this change. Only on a real
+ * change, so turning on a switch already on starts nothing a second time.
+ */
+function switchChanged(name: string, on: boolean): void {
+  if (!on) {
+    for (const bp of list) {
+      for (const node of bp.graph.nodes) {
+        if (node.type === 'on-switch' && switchName(node) === name && String(node.fields.to ?? 'on') === 'on' && node.fields.off !== 'keep') {
+          stopRuns(bp.id, `Stopped: "${name}" was turned off.`, node.id);
+        }
+      }
+    }
+  }
+  const now = on ? 'on' : 'off';
+  fire('on-switch', (n) => switchName(n) === name && (n.fields.to === 'either' || String(n.fields.to ?? 'on') === now), { switch: now }, true);
+}
+
+/**
+ * An event happened: start every switched-on blueprint with a box that matches.
+ * `own` lets a blueprint's own Do box start it: a switch is how one half of a
+ * blueprint (the hotkey) talks to the other (the loop), and the depth limit
+ * still bounds a switch box that flips its own switch.
+ */
+function fire(type: string, matches: (node: GraphNode) => boolean, vars: Record<string, string>, own = false): void {
   const parent = context.getStore();
   const depth = parent ? parent.depth + 1 : 0;
   if (depth > MAX_DEPTH) return;
@@ -1315,7 +1305,7 @@ function fire(type: string, matches: (node: GraphNode) => boolean, vars: Record<
   for (const bp of list) {
     if (!bp.enabled || bp.stopped) continue;
     // A blueprint's own action does not start that same blueprint again.
-    if (parent?.blueprint === bp.id) continue;
+    if (parent?.blueprint === bp.id && !own) continue;
     for (const node of bp.graph.nodes) {
       if (node.type !== type || !matches(node)) continue;
       if (recentRuns(bp.id, now) >= RUNS_PER_WINDOW) {
@@ -1330,7 +1320,8 @@ function fire(type: string, matches: (node: GraphNode) => boolean, vars: Record<
       }
       // Handed off: a listener must not hold up the request that said it.
       setImmediate(() => {
-        void start(bp, node.id, vars, false, depth).catch((error) =>
+        // Set off by a hotkey or Run, it is a person's doing, so the runaway guard does not count it.
+        void start(bp, node.id, vars, false, depth, parent?.hand ?? false).catch((error) =>
           console.warn(`[blueprints] ${bp.name} failed:`, (error as Error).message)
         );
       });
@@ -1350,7 +1341,6 @@ function listen(): Array<() => void> {
       const heard = hotkeyVersion();
       const was = statusKey();
       attention = { state: a.state, away: a.away, game: a.game, games: a.games ?? [] };
-      if (notices.length) deliverNotices(Boolean(a.stoppingPoint));
       // A game opening or closing moves a blueprint between on and idle: say so.
       if (statusKey() !== was) changes.emitChange(SCOPE);
       // A hotkey for one game starts or stops being listened for: tell the agent now.

@@ -18,16 +18,23 @@
  *     the scroll it was waiting for, too small to see.
  */
 import { useLayoutEffect } from 'react';
+import { holdUpdates } from '@app/live';
 
 /** Readers and waiting screens open now: moving from one to the next overlaps. */
 let holders = 0;
 
-/** Hide the app while this component is on screen. */
+/**
+ * Hide the app while this component is on screen, and hold its refetches
+ * until it is shown again (`holdUpdates`): a hidden library redrawing itself
+ * after every chapter finished was what killed the page on an iPhone.
+ */
 export function useTakeScreen(): void {
   useLayoutEffect(() => {
     holders++;
     document.body.classList.add('manga-reading');
+    const release = holdUpdates();
     return () => {
+      release();
       holders--;
       if (holders > 0) return;
       document.body.classList.remove('manga-reading');

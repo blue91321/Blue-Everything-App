@@ -228,9 +228,13 @@ export function Compare({
     setRows((current) => (current ?? []).map((r) => (keyOf(r) === key ? { ...r, ...change } : r)));
 
   async function count(found: Row[]) {
-    // Same-title results first, because those are the comparison; the rest are
-    // counted after, for anybody who opens that section.
-    const order = [...found.filter(isSameTitle), ...found.filter((r) => !isSameTitle(r))].slice(0, COUNTED);
+    /*
+     * The results that are this series, and only those (2026-11-12). Each
+     * count is a page load on that site, and with the other titles after
+     * them, a long title's search spent 14 of 16 counts on series that shared
+     * a word with it. The rest are counted when "Other titles" is opened.
+     */
+    const order = found.filter((r) => !r.profile && !r.counting && !r.countFailed).slice(0, COUNTED);
     for (const r of order) patch(keyOf(r), { counting: true });
 
     let next = 0;
@@ -272,7 +276,8 @@ export function Compare({
       const { results, ...asked } = await manga.source.search(series.id, q, allLanguages);
       setRows(results);
       setScope(asked);
-      void count(results);
+      otherCounted.current = false;
+      void count(results.filter(isSameTitle));
     } catch (error) {
       setProblem(error instanceof Error ? error.message : 'the search failed');
     } finally {
@@ -312,6 +317,13 @@ export function Compare({
     }
   }
 
+  /** Whether the other titles have been counted, once "Other titles" was opened. */
+  const otherCounted = useRef(false);
+  const countOthers = () => {
+    if (otherCounted.current || !rows) return;
+    otherCounted.current = true;
+    void count(rows.filter((r) => !isSameTitle(r)));
+  };
   const sameRows = (rows ?? []).filter(isSameTitle);
   const other = sinkEmpty((rows ?? []).filter((r) => !isSameTitle(r)));
   const verdict = judgeSources(sameRows.map((r) => toSourceRow(r, reviews)));
@@ -396,6 +408,8 @@ export function Compare({
                 .map(languageName)
                 .join(', ')}${scope.skipped ? ` — ${scope.skipped} in other languages left out` : ''}. `
             : `Searched every installed source (${scope.searched}). `}
+          {/* Every name it was looked for under: a source listing it in English is the same series. */}
+          {scope.queries && scope.queries.length > 1 && `Looked for it as ${scope.queries.map((q) => `"${q}"`).join(', ')}. `}
           <button
             className="btn subtle"
             disabled={searching}
@@ -464,7 +478,7 @@ export function Compare({
       {same.map((r) => renderRow(r, verdict.flags[keyOf(r)]))}
 
       {other.length > 0 && (
-        <details className="manga-compare-other">
+        <details className="manga-compare-other" onToggle={(e) => e.currentTarget.open && countOthers()}>
           <summary>
             Other titles ({other.length}) — possibly this series under another name, left out of the comparison
           </summary>

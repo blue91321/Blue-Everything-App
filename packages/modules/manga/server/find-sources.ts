@@ -35,6 +35,7 @@ import { goneFromSource, SWITCH_AFTER_MS } from '../web/shelf.js';
 import { DEFAULT_BASE_URL, SuwayomiAdapter } from './suwayomi.js';
 import { suwayomiProcess } from './process.js';
 import { retitleFromSource, titleKey } from './titles.js';
+import { nameKeys, namesFor, searchQueries } from './names.js';
 import { fillTags } from './tags.js';
 
 export interface FindSourcesState {
@@ -153,10 +154,12 @@ export async function switchOne(adapter: SuwayomiAdapter, id: string, why: strin
   const series = now.series.find((s) => s.id === id);
   if (!series?.source || !when(series)) return { kind: 'skipped' };
   const from = series.source;
-  const names = new Set([series.title, from.title, ...(series.altTitles ?? []), series.origin?.title ?? ''].map(titleKey).filter(Boolean));
+  // Every name it goes by (`names.ts`), MangaDex's English title among them.
+  const allNames = await namesFor(series.title, [from.title, ...(series.altTitles ?? []), series.origin?.title]);
+  const names = nameKeys(allNames);
   const usage = new Map<string, number>();
   for (const s of now.series) if (s.source) usage.set(s.source.sourceName, (usage.get(s.source.sourceName) ?? 0) + 1);
-  const queries = [...new Set([series.title, from.title, series.altTitles?.[0]].filter((q): q is string => !!q?.trim()))].slice(0, 2);
+  const queries = searchQueries(allNames);
   const seen = new Map<string, SourceMatch>();
   let answered = false;
   for (const query of queries) {
@@ -293,14 +296,14 @@ async function run(ids: string[]): Promise<void> {
       state.done += 1;
       continue;
     }
-    const names = new Set(
-      [series.title, ...(series.altTitles ?? []), series.origin?.title ?? ''].map(titleKey).filter(Boolean)
-    );
+    // Every name it goes by (`names.ts`), MangaDex's English title among them.
+    const allNames = await namesFor(series.title, [...(series.altTitles ?? []), series.origin?.title]);
+    const names = nameKeys(allNames);
     const usage = new Map<string, number>();
     for (const s of now.series) if (s.source) usage.set(s.source.sourceName, (usage.get(s.source.sourceName) ?? 0) + 1);
 
-    // Its title first, then the one other name it is likeliest to be listed under.
-    const queries = [...new Set([series.title, series.origin?.title, series.altTitles?.[0]].filter((q): q is string => !!q?.trim()))].slice(0, 2);
+    // Its title first, then its other names, English first, up to three.
+    const queries = searchQueries(allNames);
     let hit: SourceMatch | null = null;
     let answered = false;
     for (const query of queries) {

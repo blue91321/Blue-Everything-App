@@ -34,7 +34,8 @@
 import type { FastifyInstance } from 'fastify';
 import { isGuest } from '@everything/server/module-api';
 import { fetchPagesThroughHost, PageFetchError } from './page-fetch.js';
-import { read, write } from './library.js';
+import { read, readPositions, write, writePosition } from './library.js';
+import { placeOvertaken } from './read-marks.js';
 import { sweepReleases, SWEEP_EVERY_MS } from './releases.js';
 import { effectiveUrl } from './sources.js';
 import { DEFAULT_BASE_URL } from './suwayomi.js';
@@ -91,6 +92,25 @@ export async function routes(app: FastifyInstance): Promise<void> {
   if (!isGuest) {
     const mended = mendEditions();
     if (mended.series > 0) app.log.info(mended, 'manga: kept one edition of each kept chapter');
+  }
+
+  /*
+   * A place a later read has finished is let go (`placeOvertaken`): kept from
+   * before reads cleared places, it made Continue offer the last page of a
+   * chapter long since read.
+   */
+  {
+    const store = read();
+    const rows = [...store.series, ...store.glimpses];
+    const cleared: string[] = [];
+    for (const [id, place] of Object.entries(readPositions())) {
+      const row = rows.find((r) => r.id === id);
+      if (row && placeOvertaken(place, row.readLog)) {
+        writePosition(id, null);
+        cleared.push(row.title);
+      }
+    }
+    if (cleared.length > 0) app.log.info({ cleared }, 'manga: let go of places a later read had finished');
   }
 
   {

@@ -20,6 +20,7 @@ export const KEYWORDS: Record<string, string[]> = {
   'on-back': ['come back', 'return', 'welcome', 'back at the desk', 'sit down', 'afk over'],
   'on-habit': ['habit done', 'habit ticked', 'complete a habit', 'drink water'],
   'on-task-done': ['task finished', 'task complete', 'check off', 'done'],
+  'on-switch': ['while a switch is on', 'while on', 'switch turns on', 'switch turns off', 'toggled', 'loop while', 'mode on', 'every few seconds'],
   'on-task-added': ['new task', 'task created', 'todo added'],
   'on-time': ['schedule', 'alarm', 'clock', 'daily', 'every day at', 'morning', 'night', 'at a time'],
   'on-every': ['interval', 'timer', 'every minute', 'every hour', 'periodic', 'recurring', 'every so often'],

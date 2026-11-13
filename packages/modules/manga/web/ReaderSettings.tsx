@@ -9,7 +9,10 @@
  * own switch in Scroll, the pages' in Pages.
  *
  * Shaped like the panel in the app it replaced: the choices, two sliders, then
- * Reset and More along the foot, with the rarely touched ones behind More. It
+ * Refresh, Reload and More along the foot, with the rarely touched ones behind
+ * More. Refresh took Reset's place (2026-11-12): Endless keeps every chapter
+ * read above the one being read, and that is the way to let go of them; the
+ * sliders put back brightness and size by hand. It
  * shows only what a web app can do: that app also locked the screen's rotation
  * and set the screen's own brightness, and a web app on an iPhone can do
  * neither, so the brightness slider dims the pages, and says so in its tooltip.
@@ -20,7 +23,7 @@ import { useState, type ReactNode } from 'react';
 import { Icon } from './Icons';
 import { automaticText, QualityChoice } from './QualityChoice';
 import { automaticNow, qualityPrefs, setQualityPrefs } from './quality';
-import { BRIGHTNESS_MIN, DEFAULT_PREFS, HIDE_CHOICES, WIDTH_MIN, type ReaderMode, type ReaderPrefs } from './reader-prefs';
+import { BRIGHTNESS_MIN, HIDE_CHOICES, WIDTH_MIN, type ReaderMode, type ReaderPrefs } from './reader-prefs';
 
 /**
  * One choice: a picture, a word or two, and the full sentence as its tooltip
@@ -43,10 +46,14 @@ export function ReaderSettings({
   detected = null,
   onShift,
   shifted = false,
+  onShiftHere,
+  shiftedHere = false,
   twoUp = false,
   missing = 0,
   reloading = false,
   onReload,
+  above = 0,
+  onClearAbove,
 }: {
   prefs: ReaderPrefs;
   onChange: (change: Partial<ReaderPrefs>) => void;
@@ -58,6 +65,10 @@ export function ReaderSettings({
   /** Move the pairs along by one page; only offered while two pages show side by side. */
   onShift?: () => void;
   shifted?: boolean;
+  /** Move the pairs along by one from the page showing on, for a page missing from the scan; offered past the first pair. */
+  onShiftHere?: () => void;
+  /** Whether the page showing is on its own by **From here**. */
+  shiftedHere?: boolean;
   /** Whether two pages are side by side now. */
   twoUp?: boolean;
   /** Pages of this chapter not on screen yet: slow, failed, or still coming. */
@@ -68,6 +79,9 @@ export function ReaderSettings({
    * any, otherwise every page, for one that loaded but drew wrong.
    */
   onReload?: () => void;
+  /** Chapters kept above this one in Endless, and letting go of them (2026-11-12, in Reset's place). */
+  above?: number;
+  onClearAbove?: () => void;
 }) {
   const [panel, setPanel] = useState<'main' | 'more'>('main');
   // Per device, beside the reader's own settings — see `quality.ts`.
@@ -204,6 +218,19 @@ export function ReaderSettings({
                 onClick={onShift}
               />
             )}
+            {twoUp && onShiftHere && (
+              <Tile
+                icon={<Icon.shiftFromHere />}
+                label="From here"
+                title={
+                  shiftedHere
+                    ? 'This page is on its own by hand: put it back with the page beside it'
+                    : 'Pairs right until here, then wrong? A page is missing from the scan: move the pairs along by one from this page on, for this chapter'
+                }
+                on={shiftedHere}
+                onClick={onShiftHere}
+              />
+            )}
           </div>
         </>
       )}
@@ -244,13 +271,15 @@ export function ReaderSettings({
       <div className="manga-reader-settings-foot">
         <button
           className="btn subtle manga-reader-more"
-          title="Brightness and size back to normal"
-          disabled={prefs.brightness === DEFAULT_PREFS.brightness && zoom === 100}
-          onClick={() =>
-            onChange({ brightness: DEFAULT_PREFS.brightness, ...(mode === 'pages' ? { pagesZoom: DEFAULT_PREFS.pagesZoom } : { width: DEFAULT_PREFS.width }) })
+          title={
+            above > 0
+              ? `Let go of the ${above} chapter${above === 1 ? '' : 's'} above this one, keeping your place`
+              : 'Nothing above this chapter to let go of (Endless keeps the chapters you read above it)'
           }
+          disabled={!onClearAbove || above === 0}
+          onClick={onClearAbove}
         >
-          <Icon.reset /> Reset
+          <Icon.clearAbove /> Refresh
         </button>
         {onReload && (
           <button

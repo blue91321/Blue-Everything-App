@@ -37,7 +37,7 @@ export const TEMPLATES: Template[] = [
       chain([
         { type: 'on-stop' },
         { type: 'if-habit', pin: 'no' },
-        { type: 'nudge', fields: { title: 'Drink some water', when: 'soon' } },
+        { type: 'nudge', fields: { title: 'Drink some water' } },
       ]),
   },
   {

@@ -28,6 +28,7 @@ import { beginTransfer, qualityPrefs, withQuality } from './quality';
 import { useEffect, useState } from 'react';
 import { getToken } from '@app/api';
 import { blobIsWholeImage, isWholeImage } from './image-bytes';
+import { noteOriginal, originalHeader, readOriginalSize, type Size } from './original-size';
 
 import {
   permission as folderPermission,
@@ -297,7 +298,7 @@ export async function cachedResponse(url: string): Promise<Response | undefined>
  * itself the next time it is read with a connection, rather than staying broken
  * on the train for good.
  */
-export async function replaceSavedPage(url: string, body: ArrayBuffer, type: string): Promise<void> {
+export async function replaceSavedPage(url: string, body: ArrayBuffer, type: string, original: Size | null = null): Promise<void> {
   const path = inFolder.get(url);
   if (path) {
     await rewriteFolderPage(path, body);
@@ -307,7 +308,9 @@ export async function replaceSavedPage(url: string, body: ArrayBuffer, type: str
   try {
     const cache = await caches.open(CACHE);
     if (await cache.match(url, { ignoreVary: true })) {
-      await cache.put(url, new Response(body, { headers: { 'content-type': type } }));
+      const headers: Record<string, string> = { 'content-type': type };
+      if (original) headers['x-original-size'] = `${original[0]}x${original[1]}`;
+      await cache.put(url, new Response(body, { headers }));
     }
   } catch {
     // Storage refused. The page still shows; it is simply not mended here.
@@ -442,7 +445,7 @@ export function fetchPage(url: string): Promise<Blob> {
     try {
       const response = await fetch(url, { headers: { authorization: `Bearer ${getToken()}` } });
       if (!response.ok) throw new Error(`page failed (${response.status})`);
-      const blob = await response.blob();
+      const blob = noteOriginal(await response.blob(), readOriginalSize(response.headers.get('x-original-size')));
       finish(blob.size, Number(response.headers.get('x-made-in')) || 0);
       return blob;
     } catch (error) {
@@ -557,7 +560,7 @@ async function saveOne(cache: Cache, item: Queued, job: Job): Promise<void> {
               if (!path) throw new Error('folder');
               files[at] = path;
             } else {
-              await cache.put(url, new Response(body, { headers: { 'content-type': type } }));
+              await cache.put(url, new Response(body, { headers: { 'content-type': type, ...originalHeader(blob) } }));
             }
             job.bytes += body.byteLength;
           }

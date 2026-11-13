@@ -9,6 +9,7 @@
  */
 import { apiRequest, getToken } from '@app/api';
 import { cachedResponse, fetchPage, replaceSavedPage, savedPages } from './offline-store';
+import { blobOriginal, noteOriginal, objectUrlFor, readOriginalSize } from './original-size';
 import { blobIsWholeImage } from './image-bytes';
 import { beginTransfer, readingLevel, withQuality } from './quality';
 import { keptBlob } from '@app/offline-sync';
@@ -181,6 +182,8 @@ export interface SourceSearch {
   readLanguages?: string[];
   /** Every language the installed sources cover, most sources first. */
   available?: Array<{ code: string; count: number }>;
+  /** Every name the series was searched under (its title, then others such as the English one). An older server does not say. */
+  queries?: string[];
 }
 
 /**
@@ -813,7 +816,7 @@ export const manga = {
      * A saved chapter's pages come from this device — no request, no Suwayomi,
      * no PC needed. Otherwise the server is asked.
      */
-    pages: async (id: string, chapterId: string): Promise<{ pages: string[]; readAhead?: number; saved?: true }> => {
+    pages: async (id: string, chapterId: string): Promise<{ pages: string[]; readAhead?: number; pageMargins?: 'inner' | 'outer' | null; saved?: true }> => {
       const saved = await savedPages(id, chapterId);
       if (saved) return { pages: saved, saved: true };
       // Fetched while the chapter before it was read: see `holdNext`.
@@ -823,8 +826,11 @@ export const manga = {
         const list = await held.list.catch(() => null);
         if (list) return list;
       }
-      return call<{ pages: string[]; readAhead?: number }>(`/api/manga/${id}/chapters/${chapterId}/pages`);
+      return call<{ pages: string[]; readAhead?: number; pageMargins?: 'inner' | 'outer' | null }>(`/api/manga/${id}/chapters/${chapterId}/pages`);
     },
+    /** Which edge this series keeps its margins on, learned in the reader — see `MarginSide` in `page-layout.ts`. */
+    setPageMargins: (id: string, side: 'inner' | 'outer' | null) =>
+      call<{ pageMargins: 'inner' | 'outer' | null }>(`/api/manga/${id}/page-margins`, { method: 'PUT', body: JSON.stringify({ side }) }),
     /** Forget the saved place — the other half of removing a History row. */
     clearPosition: (id: string) => call<{ ok: true }>(`/api/manga/${id}/position`, { method: 'DELETE' }),
     markRead: (id: string, chapter: number, read = true) =>
@@ -862,12 +868,12 @@ export const manga = {
         if (ahead) {
           held?.blobs.delete(path);
           const blob = await ahead;
-          if (blob) return URL.createObjectURL(blob);
+          if (blob) return objectUrlFor(blob);
         }
         const saved = await cachedResponse(path);
         if (saved) {
-          const blob = await saved.blob();
-          if (await blobIsWholeImage(blob)) return URL.createObjectURL(blob);
+          const blob = noteOriginal(await saved.blob(), readOriginalSize(saved.headers.get('x-original-size')));
+          if (await blobIsWholeImage(blob)) return objectUrlFor(blob);
         }
       }
       // `fresh` reaches the server too: its own page cache could hold the bad copy.
@@ -884,7 +890,7 @@ export const manga = {
           finish(0, 0);
           throw new Error(`page failed (${response.status})`);
         }
-        blob = await response.blob();
+        blob = noteOriginal(await response.blob(), readOriginalSize(response.headers.get('x-original-size')));
         finish(blob.size, Number(response.headers.get('x-made-in')) || 0);
       } else {
         // The same request as the download's, when this chapter is saving as you read it.
@@ -892,8 +898,8 @@ export const manga = {
       }
       if (!(await blobIsWholeImage(blob))) throw new Error('the page arrived damaged');
       // Mend a saved chapter with the good copy, if this page was one.
-      void replaceSavedPage(path, await blob.arrayBuffer(), blob.type || 'image/jpeg');
-      return URL.createObjectURL(blob);
+      void replaceSavedPage(path, await blob.arrayBuffer(), blob.type || 'image/jpeg', blobOriginal(blob));
+      return objectUrlFor(blob);
     },
   },
 };
@@ -928,7 +934,7 @@ const HOLD_BYTES = 32 * 1024 * 1024;
 
 let held: {
   key: string;
-  list: Promise<{ pages: string[]; readAhead?: number }>;
+  list: Promise<{ pages: string[]; readAhead?: number; pageMargins?: 'inner' | 'outer' | null }>;
   blobs: Map<string, Promise<Blob | null>>;
   opened: boolean;
 } | null = null;
@@ -941,7 +947,7 @@ export async function holdNext(seriesId: string, chapterId: string): Promise<voi
   if (await savedPages(seriesId, chapterId)) return;
   const me = {
     key,
-    list: call<{ pages: string[]; readAhead?: number }>(`/api/manga/${seriesId}/chapters/${chapterId}/pages`),
+    list: call<{ pages: string[]; readAhead?: number; pageMargins?: 'inner' | 'outer' | null }>(`/api/manga/${seriesId}/chapters/${chapterId}/pages`),
     blobs: new Map<string, Promise<Blob | null>>(),
     opened: false,
   };

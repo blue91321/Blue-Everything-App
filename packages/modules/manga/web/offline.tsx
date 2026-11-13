@@ -162,7 +162,8 @@ function OfflineSeries({ series, onBack }: { series: SavedSeries; onBack: () => 
         onFinished={async (n) => {
           saver.flush();
           lastPlace.current = null;
-          await logRead(series.seriesId, [n], series.title);
+          // Written down here at once; the send is not waited for, or a slow connection holds up the next chapter (and Endless scrolling into it).
+          void logRead(series.seriesId, [n], series.title);
           // As the server will: finishing it, or a later one, settles the place.
           await updateSnapshot(series.seriesId, { read: n, ...(place && place.chapter <= n ? { position: null } : {}) });
           // The next saved one up — only what is on this device can be opened here.
