@@ -13,20 +13,11 @@
  * look like a settings mistake.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { FEATURES, isFeatureId, resolveFeatures, type FeatureId } from '@everything/shared/features';
 import { config } from './config.js';
 import { featuresFile } from './paths.js';
 import { parseJsonText } from './json.js';
-
-/**
- * Anchored to this file, never to the working directory — the same rule the
- * database path follows, and for the same reason: Task Scheduler starts
- * processes in C:\Windows\System32, where a relative path finds nothing.
- */
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 /**
  * The one definition of where `features.json` lives.

@@ -22,9 +22,9 @@
  * While the bug stands, Play prefers the Web Player over the desktop app
  * (`preferWebPlayer`, read by `pickDevice`).
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { changes, dataDir, db, getSettings, nudges } from '@everything/server/module-api';
+import { changes, dataDir, db, getSettings, nudges, writeFileAtomic } from '@everything/server/module-api';
 import { resolvePush } from '@everything/shared';
 import { apiGet, apiSend } from '../oauth.js';
 import { isWebPlayer, newsIn, type ForumNews, type ForumReply, type ForumThread } from './desktop-bug-rules.js';
@@ -82,9 +82,7 @@ export function readDesktopBug(): DesktopBugState {
 }
 
 function write(state: DesktopBugState): DesktopBugState {
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${FILE}.tmp`, JSON.stringify(state, null, 1));
-  renameSync(`${FILE}.tmp`, FILE);
+  writeFileAtomic(FILE, JSON.stringify(state, null, 1));
   changes.emitChange('integrations');
   return state;
 }

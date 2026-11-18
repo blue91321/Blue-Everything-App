@@ -58,7 +58,7 @@ export function Appearance() {
       <div className="card">
         <div className="title">Theme</div>
         <div className="row" style={{ marginTop: 10, flexWrap: 'wrap' }}>
-          {THEME_LABELS.map(({ id, label, hint }) => (
+          {THEME_LABELS.map(({ id, label }) => (
             <button
               key={id}
               className={theme === id ? 'btn primary' : 'btn'}

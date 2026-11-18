@@ -13,9 +13,9 @@
  * zones included, so this is only ever the fallback, and a failure to fetch it
  * is said plainly rather than guessed around.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 import type { Airport } from './store.js';
 
 const SOURCE = 'https://raw.githubusercontent.com/mwgg/Airports/master/airports.json';
@@ -44,10 +44,7 @@ async function download(): Promise<Map<string, Row>> {
     if (!/^[A-Z]{3}$/.test(code) || typeof a.lat !== 'number' || typeof a.lon !== 'number' || !a.tz) continue;
     out[code] = [a.name ?? code, a.city ?? '', a.country ?? '', a.lat, a.lon, a.tz];
   }
-  mkdirSync(dataDir, { recursive: true });
-  const temp = `${FILE}.tmp`;
-  writeFileSync(temp, JSON.stringify(out), 'utf8');
-  renameSync(temp, FILE);
+  writeFileAtomic(FILE, JSON.stringify(out));
   return new Map(Object.entries(out));
 }
 

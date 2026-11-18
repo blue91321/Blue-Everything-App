@@ -402,7 +402,7 @@ check('  ...and no run leads into a Random number', !numbered.wires.some((w) => 
 check('a Random number wired into a Counter is reached', !unreachable(numbered).has('r'));
 const askedFor: Array<number | null> = [];
 const countSteps = await walk(numbered, 'go', {
-  check: async (node, _spec, inputs) => {
+  check: async (_node, _spec, inputs) => {
     askedFor.push(await inputs.number('x'));
     return { yes: true, said: 'numbered' };
   },
@@ -600,7 +600,7 @@ const into = (command: OldCommand) => {
 };
 check('a habit command becomes "I say" then a tick, counting what was said', into(old('habit', 'h1')) === 'on-voice > tick-habit(h1,said,1)', into(old('habit', 'h1')));
 check('a website command opens it', into(old('url', 'https://example.com/a')) === 'on-voice > open-url(https://example.com/a)');
-check('a hotkey command presses it', into(old('hotkey', 'alt+m')) === 'on-voice > press-keys(one,alt+m,30,[])', into(old('hotkey', 'alt+m')));
+check('a hotkey command presses it', into(old('hotkey', 'alt+m')) === 'on-voice > press-keys(one,alt+m,30,[],anywhere,)', into(old('hotkey', 'alt+m')));
 check('a media command presses the media key', into(old('media', 'next')) === 'on-voice > media(next)');
 check('a launch command starts the game by its name', into(old('launch', 'Warframe.x64.exe')) === 'on-voice > launch-game(warframe.x64.exe)');
 check('"queue" music plays shuffled, as it has for a while', into(old('music', 'queue')) === 'on-voice > play-music(shuffle)');

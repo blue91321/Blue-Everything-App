@@ -78,51 +78,6 @@ export function weightOf(song: Song, weights: Weights): number {
 }
 
 /**
- * `length` songs drawn at random, each weighted, none repeated within
- * `repeatAfter` of its last play.
- *
- * The gap is capped at one less than the number of songs, or a short list
- * would run out of anything allowed to play. `rand()` answers [0, 1).
- */
-export function randomRun(
-  songs: readonly Song[],
-  weights: Weights,
-  length: number,
-  repeatAfter: number,
-  rand: () => number
-): Song[] {
-  if (songs.length === 0) return [];
-  const gap = Math.max(0, Math.min(Math.floor(repeatAfter), songs.length - 1));
-  const w = songs.map((s) => weightOf(s, weights));
-  const lastAt = new Map<number, number>();
-  const out: Song[] = [];
-  for (let slot = 0; slot < length; slot++) {
-    let total = 0;
-    const allowed: number[] = [];
-    for (let i = 0; i < songs.length; i++) {
-      const last = lastAt.get(i);
-      if (last !== undefined && slot - last <= gap) continue;
-      if (w[i]! <= 0) continue;
-      allowed.push(i);
-      total += w[i]!;
-    }
-    if (allowed.length === 0) break;
-    let pick = rand() * total;
-    let chosen = allowed[allowed.length - 1]!;
-    for (const i of allowed) {
-      pick -= w[i]!;
-      if (pick < 0) {
-        chosen = i;
-        break;
-      }
-    }
-    lastAt.set(chosen, slot);
-    out.push(songs[chosen]!);
-  }
-  return out;
-}
-
-/**
  * The next song, one at a time, for as long as asked — so the queue can be
  * topped up indefinitely without the rules drifting between top-ups.
  *

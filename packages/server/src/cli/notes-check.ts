@@ -10,7 +10,6 @@
  * about text, and a database would only slow down asking about them.
  */
 import {
-  blocksToText,
   csvRow,
   derivedTitle,
   extractTags,
@@ -32,7 +31,6 @@ import {
   safeFileName,
   stringifyFrontMatter,
   type Block,
-  type Inline,
 } from '@everything/shared/notes';
 
 let failures = 0;

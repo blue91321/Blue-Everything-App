@@ -13,7 +13,8 @@
  * `data/ui-text.json`, per copy, like `closing.json`. Not a table: it is a
  * handful of strings, read whole, and a migration would be a column per idea.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { writeFileAtomic } from './atomic-write.js';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -56,9 +57,7 @@ export function readUiText(): UiTextState {
 }
 
 function writeUiText(state: UiTextState): void {
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${FILE}.tmp`, JSON.stringify(state, null, 2));
-  renameSync(`${FILE}.tmp`, FILE);
+  writeFileAtomic(FILE, JSON.stringify(state, null, 2));
 }
 
 const changeSchema = z

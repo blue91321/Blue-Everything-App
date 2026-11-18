@@ -65,6 +65,15 @@ export function hiddenBy(genres: readonly string[], hide: readonly string[]): st
 }
 
 /**
+ * Whether a title has the tags asked for (2026-11-16, "only series with those
+ * tags"): every one of them, or with `any` at least one. None asked for is yes.
+ */
+export function hasWanted(genres: readonly string[], only: readonly string[], any = false): boolean {
+  if (only.length === 0) return true;
+  return any ? only.some((t) => hasTag(genres, t)) : only.every((t) => hasTag(genres, t));
+}
+
+/**
  * What an older screen's `safe` asked for, as tags: `adult` was ecchi and the
  * explicit words, `mature` was those and Mature too.
  */
@@ -77,11 +86,29 @@ export function tagsForLevel(level: string | undefined): string[] {
 const CONCURRENCY = 6;
 const BUDGET_MS = 8_000;
 
+/**
+ * The titles to show: none with a tag in `hide`, and, when `only` names tags,
+ * only those that have them (all, or with `any` one). **A title whose tags are
+ * still unknown is shown for `hide` and left out for `only`**: shown, it would
+ * break "only these", and it is counted (`uncheckedOut`) so the screen can say
+ * so. A hidden tag wins over a wanted one.
+ */
 export async function withoutTags(
   adapter: SuwayomiAdapter,
   matches: SourceMatch[],
-  hide: readonly string[]
-): Promise<{ matches: SourceMatch[]; hidden: number; hiddenBy: Record<string, number>; unchecked: number }> {
+  hide: readonly string[],
+  only: readonly string[] = [],
+  any = false
+): Promise<{
+  matches: SourceMatch[];
+  hidden: number;
+  hiddenBy: Record<string, number>;
+  unchecked: number;
+  /** Left out for not having the tags asked for. */
+  missing: number;
+  /** Left out because their tags were not known in time, with tags asked for. */
+  uncheckedOut: number;
+}> {
   const genres = new Map<string, string[]>();
   try {
     for (const [id, list] of await adapter.storedGenres(matches.map((m) => m.id))) {
@@ -109,15 +136,34 @@ export async function withoutTags(
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, todo.length) }, worker));
 
   const counts: Record<string, number> = {};
+  let hidden = 0;
+  let missing = 0;
+  let uncheckedOut = 0;
   const kept = matches.filter((m) => {
-    const by = hiddenBy(genres.get(m.id) ?? [], hide);
-    if (by) counts[by] = (counts[by] ?? 0) + 1;
-    return by === null;
+    const known = genres.get(m.id);
+    const by = hiddenBy(known ?? [], hide);
+    if (by) {
+      counts[by] = (counts[by] ?? 0) + 1;
+      hidden += 1;
+      return false;
+    }
+    if (only.length === 0) return true;
+    if (!known) {
+      uncheckedOut += 1;
+      return false;
+    }
+    if (!hasWanted(known, only, any)) {
+      missing += 1;
+      return false;
+    }
+    return true;
   });
   return {
     matches: kept,
-    hidden: matches.length - kept.length,
+    hidden,
     hiddenBy: counts,
     unchecked: matches.filter((m) => !genres.has(m.id)).length,
+    missing,
+    uncheckedOut,
   };
 }

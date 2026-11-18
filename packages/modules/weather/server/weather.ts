@@ -18,9 +18,9 @@
  * than a blank screen: you press the button when you want, and what you saw last
  * stays on screen until you do, labelled with its age.
  */
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 
 const STORE = join(dataDir, 'weather.json');
 
@@ -146,8 +146,7 @@ export function read(): Store {
 }
 
 export function write(next: Store): void {
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(STORE, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+  writeFileAtomic(STORE, `${JSON.stringify(next, null, 2)}\n`);
 }
 
 /**

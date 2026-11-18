@@ -19,6 +19,8 @@ npm run dev -w @everything/server     # on :8787, migrations applied on boot
 | `src/paths.ts` | Every path on disk, resolved from this file's location. |
 | `src/features.ts`, `src/modules.ts` | Which built-in features and which packages are on, and loading the packages. |
 | `src/module-api.ts` | What a package's server half may import (`@everything/server/module-api`). |
+| `src/atomic-write.ts` | `writeFileAtomic`: how every JSON store is written (whole or not at all, retried when OneDrive holds the file). |
+| `src/private-address.ts` | Whether an address points inside this PC or its networks, for anything fetching an address somebody else chose. |
 | `src/notes/` | Notes' storage, and importing and exporting other apps' formats. |
 | `src/instances.ts` | Friends' copies of the server (Settings → People). |
 | `src/cli/` | The checks: `smoke`, `vault-check`, `features-check`, … (`npm run checks` runs them). |

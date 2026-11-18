@@ -1189,7 +1189,6 @@ function Box({
               habits={habits}
               placeholders={placeholders}
               wiredIn={f.kind === 'number' && wired.has(fieldPort(f.key))}
-              wiredLetters={wired}
               variables={variables}
               preview={previews[f.key] ?? null}
               onHear={(patch) => {
@@ -1663,7 +1662,6 @@ function Field({
   habits,
   placeholders,
   wiredIn,
-  wiredLetters,
   variables,
   preview,
   percent = null,
@@ -1677,7 +1675,6 @@ function Field({
   placeholders: string[];
   /** A number wired into it, which is used instead of the one typed. */
   wiredIn: boolean;
-  wiredLetters: Set<string>;
   variables: Record<string, number | string>;
   /** What a sum, or the number on its wire, comes to. */
   preview: Preview | null;

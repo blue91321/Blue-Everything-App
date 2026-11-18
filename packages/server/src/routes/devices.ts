@@ -8,7 +8,7 @@ import { readOnboarding } from '../onboarding.js';
 import { defaultName, ownName } from '../names.js';
 import { db } from '../db/client.js';
 import { devices } from '../db/schema.js';
-import { activeFeatures, isEnabled, missingFeatures } from '../features.js';
+import { activeFeatures, missingFeatures } from '../features.js';
 import { VERSION } from '../version.js';
 import { moduleIsRunning, runningModuleIds, runningPackages } from '../modules.js';
 

@@ -26,6 +26,7 @@ import { habitEntries, habits } from '../db/schema.js';
 import { happenedAt } from '../happened-at.js';
 import { happenings } from '../happenings.js';
 import { spokenCommands, spokenProvided } from '../spoken-port.js';
+import { normalisePush } from './tasks.js';
 
 /**
  * The bucket a moment belongs to: `2026-08-05` for daily habits, `2026-W32`
@@ -341,12 +342,6 @@ function parsePhrases(raw: string): string[] {
   } catch {
     return [];
   }
-}
-
-/** Three states into a nullable integer — see the same helper in `tasks.ts`. */
-function normalisePush(body: { pushToPhone?: boolean | null }) {
-  if (body.pushToPhone === undefined) return {};
-  return { pushToPhone: body.pushToPhone === null ? null : body.pushToPhone ? 1 : 0 };
 }
 
 export async function habitRoutes(app: FastifyInstance): Promise<void> {

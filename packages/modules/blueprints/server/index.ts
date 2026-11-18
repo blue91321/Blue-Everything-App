@@ -23,11 +23,14 @@
  * three deep it is not started; and a blueprint that runs more than twenty
  * times in ten minutes switches itself off and says why on its card.
  *
- * ### Nudges go through the queue
+ * ### A Notification is not a nudge
  *
- * "Nudge me" writes an ordinary nudge, so it waits for a good moment, respects
- * quiet hours and goes to the phone exactly as every other reminder does. A
- * blueprint is a way of deciding *what* to say, never of getting round *when*.
+ * The Notification box (its type is still `nudge`, so saved blueprints keep
+ * it) shows the app's popup the moment the box runs, in a game or not
+ * (`showNotice`). It does not go through the nudge queue, so quiet hours and
+ * reminders being off do not hold it. It did until 2026-11-07; holding
+ * something for a good moment is the nudge engine's job, and a hotkey's
+ * "toggled" waiting for the game to close was the result.
  *
  * ### Keys are the agent's
  *
@@ -350,12 +353,13 @@ const parked = new Set<() => void>();
  * has run by itself.
  */
 export type AgentTask =
-  | { do: 'keys'; keys: string; hold: number }
+  /** `into`: press only with one of these exes in front, else skip (the agent answers `false`). */
+  | { do: 'keys'; keys: string; hold: number; into?: string[] }
   | { do: 'url'; url: string }
   | { do: 'media'; action: string }
   | { do: 'launch'; name: string; path?: string; url?: string }
   /** Played by the agent, so the gaps between presses are the PC's own timing. */
-  | { do: 'timeline'; bars: TimelineBar[]; totalMs: number }
+  | { do: 'timeline'; bars: TimelineBar[]; totalMs: number; into?: string[] }
   /** Check in now: a nudge was just queued, and shows on the agent's next report. */
   | { do: 'check' }
   /** Is this key or button down right now? Answered with true or false. */
@@ -386,14 +390,59 @@ const jobs: Job[] = [];
 const lastPressed = new Map<string, number>();
 
 /**
- * Whether a hotkey box is listening now: switched on, and if it names a game,
- * that game in front. So a hotkey for Warframe costs nothing at all, not even
- * a registration, until Warframe is being played.
+ * Where a hotkey box counts a press (2026-11-16): anywhere, only with a game
+ * in front, or only with the game it names in front. A watched key is always
+ * for one game. A box from before "Only when" that names a game means it.
+ */
+type HotkeyOnly = 'anywhere' | 'any-game' | 'game';
+function hotkeyOnly(node: GraphNode): HotkeyOnly {
+  if (node.fields.listen === 'watch') return 'game';
+  const only = String(node.fields.only ?? '');
+  if (only === 'any-game' || only === 'game') return only;
+  return only === 'anywhere' ? 'anywhere' : node.fields.game ? 'game' : 'anywhere';
+}
+
+/**
+ * Whether a hotkey box is listening now: for a game, only while that game is
+ * open; for any game, only while one is. So a hotkey for Warframe costs
+ * nothing at all, not even a registration, until Warframe is being played, and
+ * takes its keys from nobody meanwhile.
  */
 function listening(node: GraphNode): boolean {
-  const game = String(node.fields.game ?? '');
-  if (!game) return node.fields.listen !== 'watch';
-  return gameOpen(game);
+  switch (hotkeyOnly(node)) {
+    case 'anywhere':
+      return true;
+    case 'any-game':
+      return anyGameOpen();
+    case 'game': {
+      const game = String(node.fields.game ?? '');
+      return !!game && gameOpen(game);
+    }
+  }
+}
+
+/** Whether any game is open, by the heartbeat. */
+function anyGameOpen(): boolean {
+  return !!attention && (attention.state === 'in-game' || attention.games.length > 0);
+}
+
+/**
+ * Whether a press counts where it was made: the window in front at that
+ * moment, which the agent sends (`front`, its exe). A registered key is taken
+ * while its game is open, so with the game behind a browser it is still heard
+ * here, and this is what makes "in front" mean in front. An agent older than
+ * this sends nothing, and the heartbeat's answer stands in, a few seconds late.
+ */
+function pressCounts(node: GraphNode, front: string | null): boolean {
+  const only = hotkeyOnly(node);
+  if (only === 'anywhere') return true;
+  const playing = attention?.state === 'in-game' ? (attention.game?.toLowerCase() ?? null) : null;
+  if (only === 'game') {
+    const game = String(node.fields.game ?? '').toLowerCase();
+    return !!game && (front !== null ? front === game : playing === game);
+  }
+  if (front === null) return playing !== null;
+  return front === playing || (attention?.games ?? []).includes(front);
 }
 
 /** Whether a game is open: running, in front or not. The list is the heartbeat's. */
@@ -443,7 +492,7 @@ async function readVoiceFacts(): Promise<VoiceFacts> {
   return voiceFacts;
 }
 
-function triggerState(node: GraphNode, voice: VoiceFacts): { state: 'live' | 'idle' | 'dead'; why: string } {
+function triggerState(node: GraphNode, voice: VoiceFacts, seen: ReadonlySet<string>): { state: 'live' | 'idle' | 'dead'; why: string } {
   switch (node.type) {
     case 'on-voice': {
       if (phrasesOf(node.fields).length === 0) return { state: 'dead', why: '"When I say" has no phrases yet' };
@@ -459,19 +508,20 @@ function triggerState(node: GraphNode, voice: VoiceFacts): { state: 'live' | 'id
     case 'on-hotkey': {
       const watching = node.fields.listen === 'watch';
       const keys = String((watching ? node.fields.watch : node.fields.keys) ?? '');
-      const game = String(node.fields.game ?? '');
+      const only = hotkeyOnly(node);
+      const game = only === 'game' ? String(node.fields.game ?? '') : '';
       if (!keys) return { state: 'dead', why: 'the hotkey box has no keys set' };
       if (watching && !game) return { state: 'dead', why: 'a watched key needs a game to watch in' };
+      if (only === 'game' && !game) return { state: 'dead', why: 'the hotkey box has no game picked' };
       if (agentProblems.some((p) => p.startsWith(`${keys} `))) return { state: 'dead', why: `${keys} is taken by another program` };
       if (!agentAround()) return { state: 'idle', why: 'waiting for the app on the PC' };
-      if (game && !gameOpen(game)) return { state: 'idle', why: `waiting for ${gameName(game).replace(/\b\w/g, (c) => c.toUpperCase())} to be open` };
-      return { state: 'live', why: game ? `${keys} while it is open` : keys };
+      const named = gameName(game).replace(/\b\w/g, (c) => c.toUpperCase());
+      if (game && !gameOpen(game)) return { state: 'idle', why: `waiting for ${named} to be open` };
+      if (only === 'any-game' && !anyGameOpen()) return { state: 'idle', why: 'waiting for a game to be open' };
+      return { state: 'live', why: game ? `${keys} in ${named}` : only === 'any-game' ? `${keys} in a game` : keys };
     }
-    case 'on-switch': {
-      const name = switchName(node);
-      if (!name) return { state: 'dead', why: 'the switch box has no switch named' };
-      return { state: 'live', why: switches.get(name) ? `"${name}" is on` : `waiting for "${name}" to be flipped` };
-    }
+    case 'on-switch':
+      return switchState(node, voice, seen);
     case 'on-stop':
     case 'on-game-start':
     case 'on-away':
@@ -482,10 +532,44 @@ function triggerState(node: GraphNode, voice: VoiceFacts): { state: 'live' | 'id
   }
 }
 
-function statusOf(bp: Blueprint, voice: VoiceFacts): { state: BlueprintState; why: string } {
+/**
+ * "A switch turns on or off" can start only when something flips that switch,
+ * and only "Flip a switch" does (2026-11-16, asked for as: if the only way for
+ * the switch to be flipped is in a game, idle the blueprint). So the box is as
+ * able to start as the best of the switched-on blueprints that flip it the
+ * right way, this one included: a Warframe loop whose switch only a Warframe
+ * hotkey flips is idle until Warframe is open, and with nothing to flip it at
+ * all it cannot start. A switch already on is live: what it started is going.
+ *
+ * `seen` holds the switches being asked about, so two that flip each other
+ * (or a blueprint whose switch only its own switch box flips) end the asking
+ * rather than going round: a switch cannot be the thing that turns itself on.
+ */
+function switchState(node: GraphNode, voice: VoiceFacts, seen: ReadonlySet<string>): { state: 'live' | 'idle' | 'dead'; why: string } {
+  const name = switchName(node);
+  if (!name) return { state: 'dead', why: 'the switch box has no switch named' };
+  const to = String(node.fields.to ?? 'on');
+  if (switches.get(name) && to !== 'off') return { state: 'live', why: `"${name}" is on` };
+  if (seen.has(name)) return { state: 'dead', why: `"${name}" only flips itself` };
+  // Turning a switch on needs a box that can turn it on, and off one that can turn it off.
+  const turns = (n: GraphNode) => {
+    const way = String(n.fields.to ?? 'flip');
+    return way === 'flip' || to === 'either' || way === to;
+  };
+  const flippers = list.filter((b) => b.enabled && !b.stopped && b.graph.nodes.some((n) => n.type === 'set-switch' && switchName(n) === name && turns(n)));
+  if (flippers.length === 0) return { state: 'dead', why: `nothing flips "${name}"` };
+  const next = new Set(seen).add(name);
+  const states = flippers.map((b) => ({ b, s: statusOf(b, voice, next) }));
+  if (states.some(({ s }) => s.state === 'on')) return { state: 'live', why: `waiting for "${name}" to be flipped` };
+  const idle = states.find(({ s }) => s.state === 'idle');
+  if (idle) return { state: 'idle', why: idle.s.why };
+  return { state: 'dead', why: `nothing that flips "${name}" can start: ${states[0]!.s.why}` };
+}
+
+function statusOf(bp: Blueprint, voice: VoiceFacts, seen: ReadonlySet<string> = new Set()): { state: BlueprintState; why: string } {
   if (!bp.enabled) return { state: 'off', why: 'switched off' };
   if (bp.stopped) return { state: 'stopped', why: bp.stopped };
-  const events = bp.graph.nodes.filter((n) => specOf(n.type)?.kind === 'event').map((n) => triggerState(n, voice));
+  const events = bp.graph.nodes.filter((n) => specOf(n.type)?.kind === 'event').map((n) => triggerState(n, voice, seen));
   if (events.length === 0) return { state: 'disabled', why: 'it has no "When" box, so nothing starts it' };
   const live = events.find((e) => e.state === 'live');
   if (live) return { state: 'on', why: live.why };
@@ -549,6 +633,26 @@ function pressedBy(task: AgentTask): string[] {
   if (task.do === 'keys') return [task.keys];
   if (task.do !== 'timeline') return [];
   return task.bars.map((b) => b.keys);
+}
+
+/**
+ * Which windows a "Press keys" box may press into (its "Only into"), as the
+ * exes the agent compares with the window in front at the moment of the
+ * press. Null for whatever is in front. For any game, the games open now by
+ * the heartbeat; none open means nothing to press into, so it is skipped.
+ */
+async function pressInto(node: GraphNode): Promise<{ exes: string[]; label: string } | null> {
+  const only = String(node.fields.only ?? 'anywhere');
+  if (only === 'game') {
+    const game = String(node.fields.game ?? '').toLowerCase();
+    if (!game) throw new Error('"Press keys" is set to press only into a game, and has no game picked.');
+    return { exes: [game], label: await gameLabel(game) };
+  }
+  if (only === 'any-game') {
+    const open = new Set([...(attention?.games ?? []), ...(attention?.state === 'in-game' && attention.game ? [attention.game.toLowerCase()] : [])]);
+    return { exes: [...open], label: 'a game' };
+  }
+  return null;
 }
 
 /**
@@ -986,21 +1090,24 @@ function effectsFor(run: Run, vars: Record<string, string>, signal: AbortSignal)
           return { said: `Answered "${typed}"${saveAs ? `, kept as {${saveAs}}` : ''}`, pin: 'answered' };
         }
         case 'press-keys': {
+          const into = await pressInto(node);
+          const where = into ? ` (only into ${into.label})` : '';
+          const skipped = (what: string) => `Skipped ${what}: ${into!.label} was not in front`;
           if (node.fields.mode === 'timeline') {
             const bars = playable(parseTimeline(node.fields.timeline));
             if (bars.length === 0) throw new Error('"Press keys" has no keys on its timeline yet.');
             const totalMs = timelineLength(bars);
             const what = `${bars.map((b) => b.keys).join(', ')} over ${totalMs} ms`;
-            if (dry) return `Would play ${what}`;
-            await agentDo({ do: 'timeline', bars, totalMs }, 'play the timeline');
-            return `Played ${what}`;
+            if (dry) return `Would play ${what}${where}`;
+            const played = await agentDo({ do: 'timeline', bars, totalMs, ...(into ? { into: into.exes } : {}) }, 'play the timeline');
+            return into && played === false ? skipped(what) : `Played ${what}`;
           }
           const keys = String(node.fields.keys);
           if (!keys) throw new Error('"Press keys" has no keys set yet.');
           const hold = Number(node.fields.hold);
-          if (dry) return `Would press ${keys}${hold ? `, held ${hold} ms` : ''}`;
-          await agentDo({ do: 'keys', keys, hold }, `press ${keys}`);
-          return `Pressed ${keys}`;
+          if (dry) return `Would press ${keys}${hold ? `, held ${hold} ms` : ''}${where}`;
+          const pressed = await agentDo({ do: 'keys', keys, hold, ...(into ? { into: into.exes } : {}) }, `press ${keys}`);
+          return into && pressed === false ? skipped(keys) : `Pressed ${keys}`;
         }
         case 'open-url': {
           const url = text(node, 'url', vars);
@@ -1245,7 +1352,7 @@ function hotkeyReleased(keys: string): void {
 }
 
 /** A hotkey the agent heard: start, stop or restart what listens for it. */
-function hotkeyPressed(keys: string, watched = false): void {
+function hotkeyPressed(keys: string, watched = false, front: string | null = null): void {
   // The blueprint's own press of these keys, coming back.
   if (Date.now() - (lastPressed.get(keys) ?? 0) < ECHO_MS) return;
   for (const bp of list) {
@@ -1254,7 +1361,7 @@ function hotkeyPressed(keys: string, watched = false): void {
       if (node.type !== 'on-hotkey' || hotkeyOf(node, watched) !== keys) continue;
       // A watched press was checked against the window in front by the agent at
       // that moment, which is fresher than the heartbeat `listening` reads.
-      if (!watched && !listening(node)) continue;
+      if (!watched && (!listening(node) || !pressCounts(node, front))) continue;
       const going = [...active.values()].some((r) => r.blueprint === bp.id && r.from === node.id && !r.abort.signal.aborted);
       const again = String(node.fields.again);
       if (going && again === 'ignore') continue;
@@ -1648,14 +1755,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
   /** A hotkey the agent heard. */
   app.post('/api/blueprints/hotkey', QUIET, async (request, reply) => {
     if (!agentSide(request)) return reply.code(403).send({ error: 'Only the agent says this.' });
-    const body = (request.body ?? {}) as { keys?: unknown; watched?: unknown; up?: unknown };
+    const body = (request.body ?? {}) as { keys?: unknown; watched?: unknown; up?: unknown; front?: unknown };
     const watched = body.watched === true;
     // A watched key may be bare or a mouse button; a registered one has a modifier.
     const keys = normalKeys(String(body.keys ?? ''), !watched, watched);
     if (!keys) return reply.code(400).send({ error: 'Not a hotkey.' });
     agentSeenAt = Date.now();
     if (body.up === true) hotkeyReleased(keys);
-    else hotkeyPressed(keys, watched);
+    else hotkeyPressed(keys, watched, typeof body.front === 'string' && body.front ? body.front.toLowerCase().slice(0, 260) : null);
     return { ok: true };
   });
 

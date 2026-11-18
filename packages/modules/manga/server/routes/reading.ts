@@ -5,7 +5,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { and, eq, inArray } from 'drizzle-orm';
-import { db, nudges, changes, config, isGuest } from '@everything/server/module-api';
+import { db, nudges, changes, isGuest } from '@everything/server/module-api';
 import { chapterValue } from '../identity.js';
 import { applyReadMark, placeIsAtEnd } from '../read-marks.js';
 import { isWholeImage } from '../../web/image-bytes.js';
@@ -20,11 +20,16 @@ import {
   cachedPageList,
   chapterIsComplete,
   fillChapter,
+  forgetChapter,
   keepPage,
   readAheadAt,
   rememberChapter,
 } from '../page-cache.js';
-import { archivedPage, archivedPageList } from '../archive.js';
+import { archivedPage, archivedPageList, refetchKeptChapter } from '../archive.js';
+import { currentPagePath, forgetPositions } from '../page-path.js';
+
+/** A chapter id as the reader sends it with a page (`c`): Suwayomi's, which is a number. */
+const CHAPTER_ID = /^\d{1,20}$/;
 import { happenedAt, hostFetch, hostJson, hostKept, mangaIdFor, reader } from './shared.js';
 
 export function readingRoutes(app: FastifyInstance): void {
@@ -249,10 +254,20 @@ export function readingRoutes(app: FastifyInstance): void {
     }
   }
 
+  /*
+   * Each page's URL carries its chapter (`c`), and everything that keeps a page
+   * finds it by that as well as by its path: a path names a chapter by its
+   * position in the list, which moves when a source posts a chapter late, so two
+   * chapters can share one (`page-path.ts`). The device keeps saved pages by
+   * this URL too, so the chapter in it keeps two chapters' saved pages apart.
+   */
+  const pageUrl = (id: string, chapterId: string, path: string) =>
+    `/api/manga/${id}/page?p=${encodeURIComponent(path)}&c=${encodeURIComponent(chapterId)}`;
+
   app.get('/api/manga/:id/chapters/:chapterId/pages', async (request, reply) => {
     const { id, chapterId } = request.params as { id: string; chapterId: string };
     const asUrls = (pages: string[]) => ({
-      pages: pages.map((path) => `/api/manga/${id}/page?p=${encodeURIComponent(path)}`),
+      pages: pages.map((path) => pageUrl(id, chapterId, path)),
       /*
        * How many chapters to fetch ahead (`Store.readAheadChapters`), so the
        * reader follows the same setting on the device: at more than 0 it also
@@ -331,10 +346,12 @@ export function readingRoutes(app: FastifyInstance): void {
    */
   app.get('/api/manga/:id/page', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { p, fresh, q } = request.query as { p?: string; fresh?: string; q?: string };
+    const { p, fresh, q, c: asked } = request.query as { p?: string; fresh?: string; q?: string; c?: string };
     if (!p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
       return reply.code(400).send({ error: 'not a page' });
     }
+    // The chapter the page is of, from a page list made since chapters were sent with pages; absent from an older one.
+    const c = asked && CHAPTER_ID.test(asked) ? asked : null;
     /*
      * `fresh=1` is "tap to try again": the copy that would not draw may be one
      * of these two, so both are passed over and the source asked. The answer
@@ -349,7 +366,8 @@ export function readingRoutes(app: FastifyInstance): void {
      */
     const level = qualityFrom(q);
     const send = async (body: Buffer, type: string) => {
-      const out = await compressCached(p!, { body, type }, level);
+      // By chapter and path, for the reason the kept copies are: see above.
+      const out = await compressCached(`${c ?? ''}|${p}`, { body, type }, level);
       return (
         reply
           .header('content-type', out.type)
@@ -367,16 +385,18 @@ export function readingRoutes(app: FastifyInstance): void {
     // damaged on disk falls through to the source rather than being served.
     const whole = (b: Buffer) => isWholeImage(b.subarray(0, 32), b.subarray(Math.max(0, b.length - 1024)), b.length);
     const mangaId = mangaIdFor(read(), id);
-    let saved = skipKept ? undefined : isGuest ? undefined : archivedPage(id, p, mangaId);
+    let saved = skipKept ? undefined : isGuest ? undefined : archivedPage(id, p, mangaId, c);
     if (!skipKept && isGuest && mangaId && (await hostKept()).has(mangaId)) {
-      const response = await hostFetch(`/api/manga/host/archive/page?manga=${encodeURIComponent(mangaId)}&p=${encodeURIComponent(p)}`);
+      const response = await hostFetch(
+        `/api/manga/host/archive/page?manga=${encodeURIComponent(mangaId)}&p=${encodeURIComponent(p)}${c ? `&chapter=${c}` : ''}`
+      );
       if (!('error' in response) && response.ok) {
         saved = { body: Buffer.from(await response.arrayBuffer()), type: response.headers.get('content-type') ?? 'image/jpeg' };
       }
     }
     if (saved && whole(saved.body)) return send(saved.body, saved.type);
 
-    const kept = skipKept ? undefined : cachedPage(id, p);
+    const kept = skipKept ? undefined : cachedPage(id, p, c);
     if (kept && whole(kept.body)) return send(kept.body, kept.type);
 
     const ctx = await reader(id);
@@ -385,9 +405,10 @@ export function readingRoutes(app: FastifyInstance): void {
     try {
       // Asked again on a refusal before giving up, and shared with anyone else
       // asking for this page now — see `page-fetch.ts`. Not for "try again".
-      const { body, type } = await sharedPage(`${ctx.url}${p}`, { share: !skipKept });
+      // By the chapter's address now, not the one this list was made with: see `page-path.ts`.
+      const { body, type } = await sharedPage(`${ctx.url}${await currentPagePath(ctx.url, c, p)}`, { share: !skipKept });
       // Kept if its chapter is one of the last ten; ignored otherwise.
-      keepPage(id, p, body, type);
+      keepPage(id, p, body, type, c);
       // A page never changes once it exists, and a reader fetches it again on
       // every revisit — so this is the one image here worth caching hard.
       return send(body, type);
@@ -395,6 +416,43 @@ export function readingRoutes(app: FastifyInstance): void {
       // 504 when it timed out twice, so the reader knows waiting again will not help.
       const code = error instanceof PageFetchError && error.status === 504 ? 504 : 502;
       return reply.code(code).send({ error: error instanceof Error ? error.message : 'could not fetch the page' });
+    }
+  });
+
+  /**
+   * "Wrong pages? Fetch this chapter again", from the reader's gear: for pages
+   * that are another chapter's, when the automatic checks did not see it
+   * (`mendDuplicates`, `dropDuplicateCopies`, and the reader's own comparison).
+   *
+   * Throws away every copy this PC keeps of the chapter, the reading cache's
+   * and the Local collection's (queued again at the front), forgets where
+   * chapters sit in the list, and answers with the page list asked afresh of
+   * the source by the chapter's id, which is right by construction. The device
+   * drops its own saved copy before asking. A friend's copy cannot change the
+   * host's collection, so there it does the rest and says so.
+   */
+  app.post('/api/manga/:id/chapters/:chapterId/refetch', async (request, reply) => {
+    const { id, chapterId } = request.params as { id: string; chapterId: string };
+    if (!CHAPTER_ID.test(chapterId)) return reply.code(400).send({ error: 'which chapter?' });
+    const ctx = await reader(id);
+    if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
+    forgetPositions();
+    try {
+      /*
+       * The source first, and only then is anything let go of: a chapter the
+       * source no longer gives keeps every copy this PC has, which may be the
+       * only one left.
+       */
+      const pages = await ctx.adapter.pages(chapterId);
+      if (pages.length === 0) return reply.code(502).send({ error: 'the source lists no pages for it now, so the copies here stay' });
+      const cached = forgetChapter(id, chapterId);
+      const kept = isGuest ? false : refetchKeptChapter(id, chapterId, mangaIdFor(read(), id));
+      const openedAt = Date.now();
+      if (pages.length > 0 && rememberChapter(id, chapterId, pages, openedAt)) void fillChapter(ctx.url, id, chapterId);
+      return { pages: pages.map((path) => pageUrl(id, chapterId, path)), cached, kept, hostKeeps: isGuest };
+    } catch (error) {
+      if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
+      throw error;
     }
   });
 

@@ -117,6 +117,3 @@ function markConverted(ids: string[]): void {
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(DONE_FILE, `${JSON.stringify({ converted: [...new Set(ids)], at: new Date().toISOString() }, null, 2)}\n`, 'utf8');
 }
-
-/** The kinds that become blueprints, for the check. */
-export const voiceKindsConverted = CONVERTED;

@@ -18,7 +18,7 @@
  * is a note that exists and has no backlinks, which looks like the link being
  * broken rather than the write being incomplete.
  */
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { createNoteSchema, updateNoteSchema } from '@everything/shared';
 import { derivedTitle, extractTags, noteKey, normaliseFolder, noteToText } from '@everything/shared/notes';

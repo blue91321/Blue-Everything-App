@@ -53,16 +53,6 @@ export const mediaActions = [
 export const mediaActionSchema = z.enum(mediaActions);
 export type MediaAction = z.infer<typeof mediaActionSchema>;
 
-export const MEDIA_LABEL: Record<MediaAction, string> = {
-  playpause: 'Play / pause',
-  next: 'Skip forward',
-  previous: 'Skip back',
-  stop: 'Stop',
-  volumeup: 'Volume up',
-  volumedown: 'Volume down',
-  mute: 'Mute / unmute',
-};
-
 /** Modifiers a hotkey may carry, spelled the way people write them. */
 export const HOTKEY_MODIFIERS = ['ctrl', 'control', 'alt', 'shift', 'win', 'super', 'meta'] as const;
 

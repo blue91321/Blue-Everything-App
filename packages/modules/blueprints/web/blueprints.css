@@ -1688,15 +1688,8 @@
   stroke-width: 1;
   fill: none;
 }
-.bp-shape-wave.ghost,
-.bp-shape-pitchline.ghost {
+.bp-shape-wave.ghost {
   opacity: 0.35;
-}
-.bp-shape-pitch,
-.bp-shape-pitchline {
-  stroke: var(--accent);
-  stroke-width: 2.5;
-  fill: none;
 }
 .bp-shape-graph {
   width: 100%;
@@ -1715,28 +1708,6 @@
   fill: var(--muted);
   font-size: 11px;
 }
-.bp-shape-envelope {
-  stroke: var(--text);
-  stroke-width: 1.5;
-  stroke-dasharray: 4 3;
-  fill: none;
-}
-.bp-shape-handle {
-  fill: var(--accent);
-  stroke: var(--surface);
-  stroke-width: 2;
-  cursor: grab;
-}
-.bp-shape-handle.small {
-  r: 6px;
-  fill: var(--text);
-}
-.bp-shape-handle:focus-visible {
-  outline: none;
-  stroke: var(--text);
-  stroke-width: 3;
-}
-.bp-shape-kinds,
 .bp-shape-waves,
 .bp-shape-nums {
   display: flex;

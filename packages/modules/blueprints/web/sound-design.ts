@@ -14,7 +14,7 @@
  * asserts it.
  */
 
-import { speechInputOf, speechLength, speechSamples, type SpeechInput } from './speech.js';
+import { noise, speechInputOf, speechLength, speechSamples, type SpeechInput } from './speech.js';
 
 export const SOUND_RATE = 44_100;
 /** However many times and however long, no sound runs past this: it is a signal, not music. */
@@ -171,17 +171,6 @@ export function designLength(d: SoundDesign): number {
   const one = d.kind === 'click' ? CLICK_MS[d.click] : shapeLength(d.lines);
   if (one <= 0) return 0;
   return Math.min(MAX_SOUND_MS, one * d.times + d.gap * (d.times - 1));
-}
-
-/** A fixed-seed noise source, so a click sounds the same every time and everywhere. */
-function noise(seed: number): () => number {
-  let s = seed >>> 0 || 1;
-  return () => {
-    s ^= s << 13;
-    s ^= s >>> 17;
-    s ^= s << 5;
-    return ((s >>> 0) / 4294967296) * 2 - 1;
-  };
 }
 
 /** One wave's value at a point in its cycle, -1 to 1 (the edged ones kept down): what the graph draws. */

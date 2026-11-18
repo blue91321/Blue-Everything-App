@@ -42,7 +42,8 @@ import { DEFAULT_BASE_URL } from './suwayomi.js';
 import { suwayomiProcess, portOf, whenSuwayomiUp } from './process.js';
 import { fillTags } from './tags.js';
 import { updateExtensionsIfDue } from './setup.js';
-import { mendEditions, sweepArchive } from './archive.js';
+import { mendDuplicates, mendEditions, sweepArchive } from './archive.js';
+import { dropDuplicateCopies } from './page-cache.js';
 import { retitleFromSource } from './titles.js';
 import { archiveTools, autoKeep, hostFetch, useLogger, workArchive } from './routes/shared.js';
 import { libraryRoutes } from './routes/library.js';
@@ -92,6 +93,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
   if (!isGuest) {
     const mended = mendEditions();
     if (mended.series > 0) app.log.info(mended, 'manga: kept one edition of each kept chapter');
+    /*
+     * Two kept chapters with the same pictures, kept by an address that had
+     * come to mean the chapter beside it (`page-path.ts`): fetched again.
+     */
+    const twice = mendDuplicates();
+    if (twice.length > 0) app.log.info({ chapters: twice }, 'manga: kept chapters that were another chapter, fetching again');
+    const cached = dropDuplicateCopies();
+    if (cached.length > 0) app.log.info({ chapters: cached }, 'manga: cached chapters that were another chapter, dropped');
   }
 
   /*

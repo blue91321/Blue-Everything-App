@@ -25,6 +25,7 @@
  * two of those this gives up with a 504 and says why, about 90 seconds in.
  */
 import { isWholeImage } from '../web/image-bytes.js';
+import { testPageFor } from './test-source.js';
 
 export const PAGE_TIMEOUT_MS = 45_000;
 /** Pauses before the second and third attempts. */
@@ -120,6 +121,15 @@ export function sharedPage(
   url: string,
   { share = true, ...test }: { share?: boolean; now?: () => number; get?: typeof fetch } = {}
 ): Promise<{ body: Buffer; type: string }> {
+  // A page of Test A or Test B (`test-source.ts`): drawn here, or refused, and never fetched.
+  let path = '';
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    path = '';
+  }
+  const made = path ? testPageFor(path) : null;
+  if (made) return made;
   const go = () => (throughHost ? throughHost(new URL(url).pathname, !share) : fetchPage(url, test));
   if (!share) return go();
   const already = inFlight.get(url);

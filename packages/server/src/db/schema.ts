@@ -9,7 +9,6 @@
  *   - Booleans are integers, because SQLite has no boolean type.
  *   - No SQLite-only SQL anywhere in queries.
  */
-import { sql } from 'drizzle-orm';
 import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { randomUUID } from 'node:crypto';
 

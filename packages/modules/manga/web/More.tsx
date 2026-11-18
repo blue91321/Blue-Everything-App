@@ -22,7 +22,7 @@ import { Cover } from './Cover';
 import { isIncognito, setIncognito } from './incognito';
 import { logCsv, logSize, syncLog, unsentCount } from './reading-log';
 import { SourceCard } from './SourceCard';
-import { manga, type Candidate, type FlareState, type Library, type SeriesSummary } from './manga-api';
+import { manga, type Candidate, type FlareState, type Library, type SeriesSummary, type TestSourceState } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
   ongoing: 'ongoing',
@@ -109,6 +109,56 @@ function FlareCard({ local }: { local: boolean }) {
       </div>
       {state.installing?.total ? <progress max={state.installing.total} value={state.installing.received} style={{ width: '100%', marginTop: 8 }} /> : null}
       {(problem || state.problem) && <p className="banner">{problem || state.problem}</p>}
+    </div>
+  );
+}
+
+/**
+ * Test A and Test B (`server/test-source.ts`): two made-up series for trying
+ * the screens, on this PC only. Not shown anywhere else.
+ */
+function TestSeriesCard({ local }: { local: boolean }) {
+  const [state, setState] = useState<TestSourceState | null>(null);
+  const [problem, setProblem] = useState('');
+  useEffect(() => {
+    if (!local) return;
+    manga.testSource.get().then(setState, () => setState(null));
+  }, [local]);
+  if (!local || !state?.available) return null;
+  const set = async (patch: Partial<Pick<TestSourceState, 'on' | 'bMode'>>) => {
+    setProblem('');
+    try {
+      setState(await manga.testSource.set(patch));
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
+  };
+  return (
+    <div className="card">
+      <div className="row between" style={{ alignItems: 'center', gap: 8 }}>
+        <div className="grow">
+          <div className="title">Test series (this PC only)</div>
+          <div className="meta">
+            {state.on
+              ? 'Test A and Test B are in your Library, each on a made-up source of its own. They are one series under two names, so Other sources, reading a chapter from another source and Switch sources lead from one to the other. Nothing is fetched from anywhere, and Suwayomi need not be running.'
+              : 'Adds Test A and Test B to your Library: made-up series on made-up sources, for trying the screens. Test A always works; Test B fails the way you pick, so you can use the app’s own ways round it to read Test A. Only on this PC, and switching off takes both out again.'}
+          </div>
+        </div>
+        <button className={`btn${state.on ? '' : ' primary'}`} onClick={() => void set({ on: !state.on })}>
+          {state.on ? 'Remove' : 'Add'}
+        </button>
+      </div>
+      {state.on && (
+        <label className="row wrap" style={{ gap: 8, marginTop: 10, alignItems: 'center' }}>
+          <span className="meta">Test B</span>
+          <select value={state.bMode} onChange={(e) => void set({ bMode: e.target.value as TestSourceState['bMode'] })}>
+            <option value="pages">opens, but its pages will not load</option>
+            <option value="down">its source does not answer</option>
+            <option value="gone">its source has taken it down</option>
+          </select>
+        </label>
+      )}
+      {problem && <p className="banner">{problem}</p>}
     </div>
   );
 }
@@ -878,6 +928,7 @@ export function More({
 
       {!setupFirst && sourceCard}
       <FlareCard local={local} />
+      <TestSeriesCard local={local} />
     </div>
   );
 }

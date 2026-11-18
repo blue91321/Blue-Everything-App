@@ -17,7 +17,7 @@
  */
 import { useEffect, useState } from 'react';
 import { useNow } from '@app/clock';
-import { useAsync } from '@app/useAsync';
+import { useAction, useAsync } from '@app/useAsync';
 import { popStep, pushStep } from '@app/view-history';
 import type { FeatureViewProps } from '@app/features/index';
 import { TripMap } from './TripMap';
@@ -40,25 +40,6 @@ import {
   type Trip,
   type TripsState,
 } from './trips-api';
-
-/** One way of reporting a failed write, everywhere on this screen. */
-function useAction() {
-  const [busy, setBusy] = useState(false);
-  const [problem, setProblem] = useState('');
-  async function run<T>(what: () => Promise<T>): Promise<T | undefined> {
-    setProblem('');
-    setBusy(true);
-    try {
-      return await what();
-    } catch (error) {
-      setProblem((error as Error).message);
-      return undefined;
-    } finally {
-      setBusy(false);
-    }
-  }
-  return { busy, problem, setProblem, run };
-}
 
 export default function Trips({ local, focus, onFocused }: FeatureViewProps) {
   useNow();

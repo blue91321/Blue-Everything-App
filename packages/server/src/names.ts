@@ -18,7 +18,8 @@
  * a copy's, the plan A rule, and in Docker there would be no copy's files to
  * read.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { writeFileAtomic } from './atomic-write.js';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { config, isGuest } from './config.js';
@@ -51,9 +52,7 @@ export function ownName(): string | null {
 }
 
 function writeName(name: string | null): void {
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${FILE}.tmp`, JSON.stringify({ name }));
-  renameSync(`${FILE}.tmp`, FILE);
+  writeFileAtomic(FILE, JSON.stringify({ name }));
 }
 
 /** A guest's name, handed to the host. Quietly: the host may be restarting. */

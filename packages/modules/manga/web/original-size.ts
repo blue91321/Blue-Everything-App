@@ -38,6 +38,12 @@ export function blobOriginal(blob: Blob): Size | null {
   return byBlob.get(blob) ?? null;
 }
 
+/**
+ * The bytes of a picture that came as it was (not shrunk), by object URL: what
+ * `chapter-prints.ts` compares to notice one chapter showing another's pages.
+ */
+const bytesByUrl = new Map<string, number>();
+
 /** `URL.createObjectURL`, keeping the size the picture was shrunk from with the URL. */
 export function objectUrlFor(blob: Blob): string {
   const url = URL.createObjectURL(blob);
@@ -45,8 +51,16 @@ export function objectUrlFor(blob: Blob): string {
   if (size) {
     byUrl.set(url, size);
     if (byUrl.size > KEPT) byUrl.delete(byUrl.keys().next().value!);
+  } else {
+    bytesByUrl.set(url, blob.size);
+    if (bytesByUrl.size > KEPT) bytesByUrl.delete(bytesByUrl.keys().next().value!);
   }
   return url;
+}
+
+/** The bytes of the picture at this URL, when it came as it was; null when shrunk or not known. */
+export function bytesOf(url: string): number | null {
+  return bytesByUrl.get(url) ?? null;
 }
 
 /** The size the picture at this URL was shrunk from, or null when it is as it was (or not known). */

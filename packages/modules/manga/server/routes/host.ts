@@ -87,11 +87,12 @@ export function hostRoutes(app: FastifyInstance): void {
 
   app.get('/api/manga/host/archive/page', async (request, reply) => {
     if (!fromCopy(request)) return reply.code(403).send({ error: 'only for copies on this PC' });
-    const { manga, p } = request.query as { manga?: string; p?: string };
+    const { manga, p, chapter } = request.query as { manga?: string; p?: string; chapter?: string };
     if (!manga || !MANGA_ID.test(manga) || !p || !/^\/api\/v1\/manga\/\d+\/chapter\/\d+\/page\/\d+$/.test(p)) {
       return reply.code(400).send({ error: 'not a page' });
     }
-    const saved = archivedPage('', p, manga);
+    // By its chapter when the copy says, since a path alone can name two: see `page-path.ts`.
+    const saved = archivedPage('', p, manga, chapter && MANGA_ID.test(chapter) ? chapter : null);
     if (!saved) return reply.code(404).send({ error: 'not kept' });
     return reply.header('content-type', saved.type).send(saved.body);
   });

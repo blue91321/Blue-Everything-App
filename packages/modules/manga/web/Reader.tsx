@@ -1,6 +1,34 @@
 /**
  * Reading one chapter.
  *
+ * ### Finding your way round this file
+ *
+ * `Reader` is one long component, because nearly everything in it shares the
+ * scroll position and the list of pages. It is in ten parts, in this order,
+ * each under a banner. Search for `==== 4.` to go to part 4.
+ *
+ *  1. Leaving the chapter
+ *  2. What has loaded, failed or is slow
+ *  3. The page you are on, the strip, and what is carried between chapters
+ *  4. Loading: retries, the loader, and holding the next chapter
+ *  5. Your place: returning, jumping, measuring, and the end of a chapter
+ *  6. Scroll or pages: the mode, keeping still, and pairing pages into sheets
+ *  7. Endless: carrying on, and the chapters kept above
+ *  8. Dragging, sliding and settling on a page
+ *  9. The controls: showing and hiding them
+ * 10. Drawing: notices, a page, a sheet, and the whole reader
+ *
+ * The rules themselves are in files of their own with no screen in them, which
+ * `manga-check` asserts: what "next" and "the end" mean (`chapter-nav.ts`),
+ * which pages pair (`page-layout.ts`, read by `page-analysis.ts`), the slide
+ * after a drag (`glide.ts`), landing on a page (`settle.ts`, `magnet.ts`),
+ * letting go of far pictures (`far-pages.ts`), picture size (`quality.ts`)
+ * and the settings (`reader-prefs.ts`). Change a rule there, not here.
+ *
+ * **Before changing how it scrolls, reproduce the problem first**, at 375x812
+ * in the browser pane. Scroll mode lays out no pages in a hidden pane, and
+ * several bugs here only ever showed on an iPhone.
+ *
  * ### A continuous strip, or pages
  *
  * Most sources here are manhwa or webtoon, drawn as one tall strip and cut into
@@ -140,6 +168,8 @@ import { magnetTarget, reachFor, SETTLED_PX, type MagnetSpot } from './magnet';
 import { settlePlan, settleTarget } from './settle';
 import { useTakeScreen } from './take-screen';
 import { useFarPages } from './far-pages';
+import { bytesOf } from './original-size';
+import { forgetPrint, markFixed, notePrint, wasFixed } from './chapter-prints';
 
 const IN_FLIGHT = 3;
 /**
@@ -201,7 +231,33 @@ const SLOW_NOTICE_MS = 10_000;
 const GAVE_UP_SLOWLY_MS = 40_000;
 
 /** Another source's copy of this chapter, from `/elsewhere`. */
-export type ElsewhereChapter = { sourceName: string; lang: string | null; mangaId: string; chapterId: string; chapterName: string };
+export type ElsewhereChapter = {
+  sourceName: string;
+  lang: string | null;
+  mangaId: string;
+  /** The series' name on that source. Optional: an older server does not send it. */
+  title?: string;
+  chapterId: string;
+  chapterName: string;
+};
+
+/**
+ * Reading from another source than the one the series follows, picked from
+ * "Read this chapter from another source": what the reader's "Is this
+ * correct?" needs to ask about it.
+ */
+export type SourceCheck = {
+  /** The source being read from now. */
+  sourceName: string;
+  /** The source the series follows, which the copy stood in for. */
+  fromName: string;
+  /** Whether the chapter open is that copy, so Go back has a chapter to go back to. */
+  reading: boolean;
+  /** Follow the series on `sourceName` from now on. */
+  onConfirm: () => Promise<void>;
+  /** Back to the followed source's chapter, or, moved on from the copy, only stop asking. */
+  onBack: () => void;
+};
 
 /** The line across the screen that counts as "where you are" — just under the top. */
 const READ_LINE = 8;
@@ -237,6 +293,7 @@ export function Reader({
   nextId = null,
   ahead = null,
   onElsewhere,
+  sourceCheck = null,
   tags,
 }: {
   /** A followed series. */
@@ -299,6 +356,11 @@ export function Reader({
    */
   onElsewhere?: (copy: ElsewhereChapter) => void;
   /**
+   * Set while a chapter has been read from another source than the series
+   * follows: a button under the top bar asks whether to follow it there.
+   */
+  sourceCheck?: SourceCheck | null;
+  /**
    * Reading ahead, what is ready after this chapter — "next 3 saved ✓",
    * "saving 13 · 40%". Shown under the chapter's number, so whether the next
    * press will open at once or wait is visible before it is pressed.
@@ -311,6 +373,8 @@ export function Reader({
    */
   tags?: string[];
 }) {
+  /* ==== 1. Leaving the chapter =============================================================== */
+
   /*
    * Back closes the reader and puts you back on the chapter list.
    *
@@ -368,6 +432,9 @@ export function Reader({
         `(Cancel, then ⋯ → Other sources on the chapter list, to find one that has them.)`
     );
   };
+
+  /* ==== 2. What has loaded, failed or is slow ================================================ */
+
   const [rawUrls, setUrls] = useState<(string | null)[]>([]);
   /**
    * The source's own page paths, kept so one page can be asked for again.
@@ -422,6 +489,88 @@ export function Reader({
       setElsewhere({ state: 'failed', message: error instanceof Error ? error.message : 'could not look' });
     }
   };
+  /**
+   * "Is this correct?" open, and in it the list of other sources (`others`),
+   * the confirm under way, and what went wrong with it.
+   */
+  const [checking, setChecking] = useState(false);
+  const [others, setOthers] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [checkProblem, setCheckProblem] = useState('');
+  const asking = sourceCheck !== null;
+  useEffect(() => {
+    if (asking) return;
+    setChecking(false);
+    setOthers(false);
+    setCheckProblem('');
+  }, [asking]);
+  useEffect(() => {
+    if (!checking) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setChecking(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [checking]);
+  const confirmSource = async () => {
+    if (!sourceCheck) return;
+    setConfirming(true);
+    setCheckProblem('');
+    try {
+      await sourceCheck.onConfirm();
+      setChecking(false);
+    } catch (error) {
+      setCheckProblem(error instanceof Error ? error.message : 'could not switch');
+    } finally {
+      setConfirming(false);
+    }
+  };
+  /*
+   * Another chapter's pages (2026-11-18): every copy let go of and the chapter
+   * asked for afresh by its id, by hand from the gear or by itself once when
+   * this chapter's pages are the same as another's read on this device
+   * (`chapter-prints.ts`). `loadKey` makes the loader below run again.
+   * `twin` is the chapter it still matches after that, said on screen.
+   */
+  const [loadKey, setLoadKey] = useState(0);
+  const [refetching, setRefetching] = useState(false);
+  const [twin, setTwin] = useState<{ chapterId: string; number: number } | null>(null);
+  const [refetchNote, setRefetchNote] = useState('');
+  const fetchAgain = async (also: string[] = []) => {
+    if (!seriesId || refetching) return;
+    setRefetching(true);
+    setRefetchNote('');
+    try {
+      // The other chapter's record goes, being possibly what was wrong. This
+      // one's stays: noting it again replaces it, and it carries the mark that
+      // it was already fetched again, which is what stops the reader doing so
+      // by itself round and round.
+      for (const other of also) {
+        forgetPrint(seriesId, other);
+        await manga.reader.refetch(seriesId, other);
+      }
+      const answer = await manga.reader.refetch(seriesId, chapter.id);
+      setTwin(null);
+      setRefetchNote(
+        answer.hostKeeps
+          ? 'Fetched again. The Local collection is the host’s, so it keeps its copy.'
+          : answer.kept
+            ? 'Fetched again, and the Local collection is saving it again.'
+            : 'Fetched again.'
+      );
+      setLoadKey((k) => k + 1);
+    } catch (error) {
+      setRefetchNote(`Could not fetch it again: ${error instanceof Error ? error.message : 'no answer'}`);
+    } finally {
+      setRefetching(false);
+    }
+  };
+  const fetchAgainRef = useRef(fetchAgain);
+  fetchAgainRef.current = fetchAgain;
+  useEffect(() => {
+    setTwin(null);
+    setRefetchNote('');
+  }, [chapter.id]);
   const [rawTotal, setTotal] = useState<number | null>(null);
   /**
    * Which chapter `rawUrls` and `rawTotal` are about (2026-11-11).
@@ -451,6 +600,8 @@ export function Reader({
     return () => window.scrollTo(0, y);
   }, []);
   useTakeScreen();
+
+  /* ==== 3. The page you are on, the strip, and what is carried between chapters ============== */
 
   /** The page crossing the read line — what the counter says. */
   const [page, setPage] = useState(resume?.page ?? 0);
@@ -547,6 +698,8 @@ export function Reader({
     returning.current = null;
     setHeading(null);
   };
+
+  /* ==== 4. Loading: retries, the loader, and holding the next chapter ======================== */
 
   /**
    * Fetch one page again.
@@ -651,8 +804,11 @@ export function Reader({
         let next = 0;
         /** Pages that failed on the first pass, given one more go at the end. */
         const later: number[] = [];
+        /** What came, by page, for `notePrint` below. */
+        const got: (string | null)[] = new Array(pages.length).fill(null);
         const show = (index: number, url: string) => {
           made.push(url);
+          got[index] = url;
           setUrls((current) => {
             const copy = [...current];
             copy[index] = url;
@@ -686,6 +842,27 @@ export function Reader({
           }
         };
         await Promise.all(Array.from({ length: Math.min(IN_FLIGHT, pages.length) }, worker));
+
+        /*
+         * The same pages as another chapter of this series read here: one of
+         * them is showing the other's (`chapter-prints.ts`). Fetched again by
+         * itself, once; still the same after that, it is said on screen with a
+         * button to fetch both again.
+         */
+        if (alive && seriesId && !preview) {
+          const same = notePrint(
+            seriesId,
+            chapter.id,
+            chapter.number,
+            got.map((u) => (u ? (bytesOf(u) ?? -1) : -1))
+          );
+          if (same && !wasFixed(seriesId, chapter.id)) {
+            markFixed(seriesId, chapter.id);
+            void fetchAgainRef.current();
+            return;
+          }
+          if (same) setTwin(same);
+        }
 
         /*
          * Every page of this one is in, so the next is fetched onto this device
@@ -747,7 +924,7 @@ export function Reader({
       alive = false;
       for (const url of made) if (!handedOff.current.has(url)) URL.revokeObjectURL(url);
     };
-  }, [seriesId, preview, chapter.id]);
+  }, [seriesId, preview, chapter.id, loadKey]);
 
   // Back to the top when the chapter changes, or reading the next one starts you
   // at the bottom of it — unless this chapter is being continued.
@@ -807,6 +984,8 @@ export function Reader({
     jumpOnCarry.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chapter.id]);
+
+  /* ==== 5. Your place: returning, jumping, measuring, and the end of a chapter =============== */
 
   /** Scroll to the place being headed for; true once every page up to it has loaded. */
   const returnTo = (): boolean => {
@@ -1034,11 +1213,9 @@ export function Reader({
     };
   }, []);
 
-  /*
-   * The controls: up when the chapter opens, away after the countdown for that
-   * moment, back on a tap. Held up while there is nothing to read, when Back is
-   * all there is, and while the gear's panel is open.
-   */
+  /* ==== 6. Scroll or pages: the mode, keeping still, and pairing pages into sheets =========== */
+
+  /* The reading settings, per device: `reader-prefs.ts`. */
   const [prefs, setPrefs] = useReaderPrefs();
   /*
    * Changing the page width or the layout moves everything below the top of
@@ -1344,7 +1521,7 @@ export function Reader({
   useEffect(() => {
     if (!pagesMode) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement | null)?.closest?.('input, textarea, select, .manga-reader-settings')) return;
+      if ((e.target as HTMLElement | null)?.closest?.('input, textarea, select, .manga-reader-settings, .manga-source-check')) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // Right to left, the next page is to the left.
       const nextKey = prefs.rightToLeft ? 'ArrowLeft' : 'ArrowRight';
@@ -1369,6 +1546,8 @@ export function Reader({
     }
     setPrefs({ mode });
   };
+
+  /* ==== 7. Endless: carrying on, and the chapters kept above ================================= */
 
   /*
    * ### Carrying on
@@ -1592,6 +1771,8 @@ export function Reader({
     []
   );
 
+  /* ==== 8. Dragging, sliding and settling on a page ========================================== */
+
   /*
    * Dragging the page to scroll it, with a mouse.
    *
@@ -1789,7 +1970,7 @@ export function Reader({
     const start = (e: TouchEvent) => {
       t = null;
       if (e.touches.length !== 1) return;
-      if ((e.target as HTMLElement | null)?.closest?.('.manga-reader-chrome, .manga-reader-settings, button, a, input, select, textarea')) return;
+      if ((e.target as HTMLElement | null)?.closest?.('.manga-reader-chrome, .manga-reader-settings, .manga-source-check, button, a, input, select, textarea')) return;
       if ((window.visualViewport?.scale ?? 1) > 1.01) return;
       const p = e.touches[0];
       t = { x: p.clientX, y: p.clientY, last: p.clientY, carry: 0, axis: null, sheet: sheetAt(), samples: [{ t: e.timeStamp, y: p.clientY }] };
@@ -1937,7 +2118,7 @@ export function Reader({
     if (!prefs.dragToScroll || e.pointerType !== 'mouse' || e.button !== 0) return;
     // Not from the controls: a drag that begins on a button is somebody missing
     // the button, and scrolling the page under them is the wrong apology.
-    if ((e.target as HTMLElement).closest('.manga-reader-chrome, button, a, input')) return;
+    if ((e.target as HTMLElement).closest('.manga-reader-chrome, .manga-source-check, button, a, input')) return;
     if (caught) dragged.current = true;
     moving.current = true;
     drag.current = {
@@ -2011,6 +2192,14 @@ export function Reader({
     if (d?.moved && e.type === 'pointerup') startGlide(releaseVelocity(d.samples, performance.now()));
     if (d) stillAgain();
   };
+
+  /* ==== 9. The controls: showing and hiding them ============================================= */
+
+  /*
+   * The controls: up when the chapter opens, away after the countdown for that
+   * moment, back on a tap. Held up while there is nothing to read, when Back is
+   * all there is, and while the gear's panel is open.
+   */
   const [shown, setShown] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2115,11 +2304,13 @@ export function Reader({
    */
   function onTap(event: React.MouseEvent) {
     const target = event.target as HTMLElement;
-    if (target.closest('button, a, input, .manga-reader-chrome, .manga-returning, .manga-reader-settings')) return;
+    if (target.closest('button, a, input, .manga-reader-chrome, .manga-returning, .manga-reader-settings, .manga-source-check')) return;
     if (settingsOpen) showSettings(false);
     else if (shown) sleep();
     else wake('tap');
   }
+
+  /* ==== 10. Drawing: notices, a page, a sheet, and the whole reader ========================== */
 
   const visible = shown || held;
   const count = urls.filter(Boolean).length;
@@ -2394,7 +2585,124 @@ export function Reader({
         >
           <Icon.gear />
         </button>
+        {/*
+          * Under the bar and going with it, so it is there whenever the
+          * controls are and never over a page while reading.
+          */}
+        {sourceCheck && !checking && (
+          <button className="manga-source-pill" onClick={() => setChecking(true)}>
+            Reading from {sourceCheck.sourceName} · keep it?
+          </button>
+        )}
       </div>
+
+      {/*
+        * Not a dialog over the page: a small card under the top bar that stays
+        * while you read, with nothing dimmed and nothing to dismiss, so the
+        * pages behind it can be scrolled through and checked before answering.
+        * It stays put when the controls go (`.chrome-off` moves it up).
+        */}
+      {/*
+        * Still the same pages as another chapter after fetching this one
+        * again: one of the two is the other. The card the source question uses,
+        * so it leaves the pages in view to check.
+        */}
+      {twin && !(sourceCheck && checking) && (
+        <div className="manga-source-check" role="region" aria-labelledby="manga-twin-title">
+          <div className="manga-source-check-head">
+            <strong id="manga-twin-title">Same pages as chapter {twin.number}</strong>
+            <span className="meta">one of the two is the other</span>
+            <button className="manga-source-check-hide" aria-label="Hide this" onClick={() => setTwin(null)}>
+              ✕
+            </button>
+          </div>
+          <div className="manga-source-check-actions">
+            <button className="btn primary" disabled={refetching} onClick={() => void fetchAgain([twin.chapterId])}>
+              {refetching ? 'Fetching…' : 'Fetch both again'}
+            </button>
+          </div>
+          {refetchNote && <p className="meta">{refetchNote}</p>}
+        </div>
+      )}
+
+      {sourceCheck && checking && (
+        <div className="manga-source-check" role="region" aria-labelledby="manga-source-check-title">
+          <div className="manga-source-check-head">
+            <strong id="manga-source-check-title">Is this correct?</strong>
+            <span className="meta">
+              {sourceCheck.reading ? `Ch. ${chapter.number} from ${sourceCheck.sourceName}` : `Read from ${sourceCheck.sourceName}`}
+            </span>
+            <button
+              className="manga-source-check-hide"
+              aria-label="Hide this question"
+              title="Hide (the button under the top bar brings it back)"
+              onClick={() => setChecking(false)}
+            >
+              ✕
+            </button>
+          </div>
+          <div className="manga-source-check-actions">
+            <button
+              className="btn primary"
+              disabled={confirming}
+              title={`Follow this series on ${sourceCheck.sourceName} from now on, in place of ${sourceCheck.fromName}. What you have read stays.`}
+              onClick={() => void confirmSource()}
+            >
+              {confirming ? 'Switching…' : 'Confirm source'}
+            </button>
+            <button
+              className="btn"
+              disabled={confirming}
+              onClick={() => {
+                setOthers(true);
+                if (!elsewhere || elsewhere.state === 'failed') void findElsewhere();
+              }}
+            >
+              Check a different source
+            </button>
+            <button
+              className="btn subtle"
+              disabled={confirming}
+              title={sourceCheck.reading ? `Back to ${sourceCheck.fromName}'s chapter ${chapter.number}` : 'Stop asking'}
+              onClick={() => {
+                setChecking(false);
+                sourceCheck.onBack();
+              }}
+            >
+              Go back
+            </button>
+          </div>
+          {others && (
+            <div className="manga-source-check-others">
+              {(!elsewhere || elsewhere.state === 'looking') && (
+                <span className="meta">Looking for chapter {chapter.number} on your other sources…</span>
+              )}
+              {elsewhere?.state === 'failed' && <span className="meta">Could not look: {elsewhere.message}</span>}
+              {elsewhere?.state === 'found' &&
+                (() => {
+                  // The copy open now is one of them; it is the one being asked about.
+                  const rest = elsewhere.options.filter((o) => o.chapterId !== chapter.id);
+                  if (rest.length === 0) {
+                    return <span className="meta">No other source with this series lists chapter {chapter.number}.</span>;
+                  }
+                  return rest.map((o) => (
+                    <button
+                      key={`${o.sourceName}:${o.chapterId}`}
+                      className="btn"
+                      onClick={() => {
+                        setOthers(false);
+                        onElsewhere?.(o);
+                      }}
+                    >
+                      {o.sourceName}
+                    </button>
+                  ));
+                })()}
+            </div>
+          )}
+          {checkProblem && <p className="banner">{checkProblem}</p>}
+        </div>
+      )}
 
       {settingsOpen && visible && (
         <ReaderSettings
@@ -2413,6 +2721,9 @@ export function Reader({
           onReload={total === null ? undefined : () => void reloadPages()}
           above={behind.length}
           onClearAbove={clearAbove}
+          onWrongPages={seriesId ? () => void fetchAgain() : undefined}
+          refetching={refetching}
+          refetchNote={refetchNote}
         />
       )}
 

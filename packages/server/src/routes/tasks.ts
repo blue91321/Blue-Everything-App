@@ -30,14 +30,15 @@ function normaliseDue(body: { dueAt?: number | null; dueIsAllDay?: boolean }) {
 }
 
 /**
- * Three states into a nullable integer, since SQLite has no boolean.
+ * Three states into a nullable integer, since SQLite has no boolean. Used for
+ * a task and for a habit (`habits.ts`), which carry the same choice.
  *
  * `undefined` (not in the patch) has to stay out of the object entirely or
  * Drizzle would write it; `null` is a deliberate "go back to following the
  * default" and must be written. Those two look the same in a spread, which is
  * why this is a function rather than an inline ternary.
  */
-function normalisePush(body: { pushToPhone?: boolean | null }) {
+export function normalisePush(body: { pushToPhone?: boolean | null }) {
   if (body.pushToPhone === undefined) return {};
   return { pushToPhone: body.pushToPhone === null ? null : body.pushToPhone ? 1 : 0 };
 }

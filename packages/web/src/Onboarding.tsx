@@ -20,11 +20,11 @@
  * master switch every nudge obeys, manga's included, so a friend here for the
  * reader is never asked to allow something only to ignore it.
  */
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { api, setToken, type AppSettings } from './api';
 import { isAndroid, isInstalled, isIOS, isMobile } from './device';
 import { checkPushSupport, enablePush } from './push';
-import { featureEnabled } from './features';
+import { featureEnabled, onboardingSteps } from './features';
 import { ClosingChoice } from './Closing';
 
 export interface OnboardingScreen {
@@ -33,7 +33,8 @@ export interface OnboardingScreen {
   glyph: string;
 }
 
-type Step = 'name' | 'install' | 'parts' | 'closing' | 'notify';
+/** Core's steps, and a package's question as `package:<id>` (`onboarding.tsx` in the package). */
+type Step = 'name' | 'install' | 'parts' | 'closing' | 'notify' | `package:${string}`;
 
 /** Not installed on a phone, where installing is what makes it an app (and, on an iPhone, what push needs). */
 const wantsInstall = () => (isIOS() || isAndroid()) && !isInstalled();
@@ -66,17 +67,22 @@ export function Onboarding({
   /** Finished: the first screen it shows is opened. */
   onDone: (shown: string[] | null) => void;
 }) {
+  const [chosen, setChosen] = useState<string[] | null>(shown);
+  // A package's question is asked only for a screen they chose to show.
+  const [packageSteps] = useState(onboardingSteps);
+  const asked = packageSteps.filter((p) => chosen === null || chosen.includes(p.id));
   // Closing is asked on a computer only: on a phone, closing the app just closes it.
   const steps: Step[] = [
     'name',
     ...(wantsInstall() ? (['install'] as const) : []),
     'parts',
     ...(isMobile() ? [] : (['closing'] as const)),
+    ...asked.map((p) => `package:${p.id}` as const),
     'notify',
   ];
   const [step, setStep] = useState<Step>('name');
   const after = (s: Step) => steps[steps.indexOf(s) + 1] ?? 'notify';
-  const [chosen, setChosen] = useState<string[] | null>(shown);
+  const packageStep = step.startsWith('package:') ? asked.find((p) => `package:${p.id}` === step) : undefined;
   const [problem, setProblem] = useState('');
 
   const save = async (patch: { done?: boolean; shown?: string[] | null; preset?: 'manga' | 'everything' | 'custom'; known?: string[] }) => {
@@ -124,6 +130,11 @@ export function Onboarding({
               </button>
             </div>
           </>
+        )}
+        {packageStep && (
+          <Suspense fallback={<p className="meta">Loading…</p>}>
+            <packageStep.Step onNext={() => setStep(after(step))} />
+          </Suspense>
         )}
         {step === 'notify' && <Notify onFinish={() => void finish()} />}
         {problem && <p className="banner">{problem}</p>}

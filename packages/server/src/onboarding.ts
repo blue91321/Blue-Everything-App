@@ -17,7 +17,8 @@
  * A file rather than a settings column: two values, read with the session, and
  * a migration is a step in a journal every copy must take forever.
  */
-import { readFileSync, renameSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { writeFileAtomic } from './atomic-write.js';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { isGuest } from './config.js';
@@ -71,9 +72,7 @@ export function readOnboarding(): Onboarding {
 }
 
 function writeOnboarding(next: Onboarding): void {
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${FILE}.tmp`, JSON.stringify(next));
-  renameSync(`${FILE}.tmp`, FILE);
+  writeFileAtomic(FILE, JSON.stringify(next));
 }
 
 export async function onboardingRoutes(app: FastifyInstance): Promise<void> {

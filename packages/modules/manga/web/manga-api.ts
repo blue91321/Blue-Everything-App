@@ -8,7 +8,7 @@
  * is no sense keeping a second copy of where it is stored.
  */
 import { apiRequest, getToken } from '@app/api';
-import { cachedResponse, fetchPage, replaceSavedPage, savedPages } from './offline-store';
+import { cachedResponse, fetchPage, removeChapter, replaceSavedPage, savedPages } from './offline-store';
 import { blobOriginal, noteOriginal, objectUrlFor, readOriginalSize } from './original-size';
 import { blobIsWholeImage } from './image-bytes';
 import { beginTransfer, readingLevel, withQuality } from './quality';
@@ -104,6 +104,14 @@ export interface FindSourcesState {
 }
 
 /** FlareSolverr on this PC: installed or not, running or not, and how a download is going. */
+/** The test series' switch, and how Test B fails: its pages, its source, or the series gone. */
+export interface TestSourceState {
+  on: boolean;
+  bMode: 'pages' | 'down' | 'gone';
+  /** False off this PC, or on a friend's copy: the card is not shown. */
+  available: boolean;
+}
+
 export interface FlareState {
   installed: boolean;
   version: string | null;
@@ -667,6 +675,13 @@ export const manga = {
   },
 
   /** The Cloudflare helper — see `flaresolverr.ts` on the server. Installing and removing it are for the PC. */
+  /** Test A and Test B, on the PC that runs the app only (`server/test-source.ts`). */
+  testSource: {
+    get: () => call<TestSourceState>('/api/manga/test-source'),
+    set: (patch: Partial<Pick<TestSourceState, 'on' | 'bMode'>>) =>
+      call<TestSourceState>('/api/manga/test-source', { method: 'PUT', body: JSON.stringify(patch) }),
+  },
+
   flaresolverr: {
     get: () => call<FlareState>('/api/manga/flaresolverr'),
     install: () => call<FlareState>('/api/manga/flaresolverr/install', { method: 'POST' }),
@@ -706,7 +721,7 @@ export const manga = {
       ),
     check: (id: string, chapterId: string) =>
       call<PageCheck>(`/api/manga/${id}/source/check?chapterId=${encodeURIComponent(chapterId)}`),
-    link: (id: string, match: SourceMatch) =>
+    link: (id: string, match: Pick<SourceMatch, 'id' | 'title' | 'sourceName'>) =>
       call<SeriesSummary>(`/api/manga/${id}/source`, {
         method: 'PUT',
         body: JSON.stringify({ mangaId: match.id, title: match.title, sourceName: match.sourceName }),
@@ -728,7 +743,7 @@ export const manga = {
      * `hide` names the tags to leave out; `hidden`, `hiddenBy` and `unchecked`
      * say what that did. Older servers send none of them.
      */
-    list: (source: string, type: 'popular' | 'latest', page: number, hide: readonly string[] = []) =>
+    list: (source: string, type: 'popular' | 'latest', page: number, hide: readonly string[] = [], only: readonly string[] = [], any = false) =>
       call<{
         results: BrowseResult[];
         hasNextPage: boolean;
@@ -736,9 +751,14 @@ export const manga = {
         hidden?: number;
         hiddenBy?: Record<string, number>;
         unchecked?: number;
+        /** Left out for not having the tags in `only`, and for tags not known in time. */
+        missing?: number;
+        uncheckedOut?: number;
       }>(
         `/api/manga/browse/list?source=${encodeURIComponent(source)}&type=${type}&page=${page}` +
-          hide.map((t) => `&hide=${encodeURIComponent(t)}`).join('')
+          hide.map((t) => `&hide=${encodeURIComponent(t)}`).join('') +
+          only.map((t) => `&only=${encodeURIComponent(t)}`).join('') +
+          (any && only.length > 1 ? '&any=1' : '')
       ),
     /** Chapter counts for results whose count was not stored: a dozen at most, fetched from the site. */
     chapters: (ids: string[]) =>
@@ -827,6 +847,20 @@ export const manga = {
         if (list) return list;
       }
       return call<{ pages: string[]; readAhead?: number; pageMargins?: 'inner' | 'outer' | null }>(`/api/manga/${id}/chapters/${chapterId}/pages`);
+    },
+    /**
+     * "Wrong pages? Fetch this chapter again": every copy of the chapter is let
+     * go of, on this device (saved, held ahead) and on the PC (its reading cache
+     * and the Local collection), and its page list asked afresh of the source by
+     * its id. See the route.
+     */
+    refetch: async (id: string, chapterId: string) => {
+      dropHeld(id);
+      await removeChapter(id, chapterId).catch(() => undefined);
+      return call<{ pages: string[]; cached: boolean; kept: boolean; hostKeeps: boolean }>(
+        `/api/manga/${id}/chapters/${chapterId}/refetch`,
+        { method: 'POST' }
+      );
     },
     /** Which edge this series keeps its margins on, learned in the reader — see `MarginSide` in `page-layout.ts`. */
     setPageMargins: (id: string, side: 'inner' | 'outer' | null) =>

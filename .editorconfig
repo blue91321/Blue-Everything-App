@@ -1,0 +1,30 @@
+# How files in this repo are laid out, for any editor that reads EditorConfig
+# (VS Code with the extension, JetBrains, Vim, and most others).
+#
+# This states what the code already does. There is no formatter config in the
+# repo: `npx prettier` with no options rewrites a file in double quotes at 80
+# columns, which is not this code's style. If you format a file by hand, use
+#   npx prettier --single-quote --print-width 180 --trailing-comma es5 <file>
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Markdown ends a line with two spaces to break it.
+[*.md]
+trim_trailing_whitespace = false
+
+# Windows scripts keep their bytes exactly (see .gitattributes). A .ps1 with
+# anything outside ASCII needs its byte-order mark, or Windows PowerShell 5.1
+# reads it as ANSI; publish-check refuses one without.
+[*.ps1]
+charset = utf-8-bom
+end_of_line = crlf
+indent_size = 4
+
+[*.{cmd,bat}]
+end_of_line = crlf

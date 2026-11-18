@@ -64,6 +64,12 @@ export * as schema from './db/schema.js';
 export { dataDir } from './paths.js';
 
 /**
+ * How a package writes a file under `dataDir`: whole or not at all, and tried
+ * again when OneDrive or a scanner holds the file for a moment.
+ */
+export { writeFileAtomic } from './atomic-write.js';
+
+/**
  * The checkout itself, for the one package whose subject is the app's own
  * source (Code). Anything else wanting a path should want `dataDir`.
  */
@@ -89,6 +95,13 @@ export { config, isGuest, instanceRoot } from './config.js';
 
 /** Whether a request is from this PC and not a proxy or a web page: the test every local-only route uses. For a package's route outside `/api/`, where no token is asked for. */
 export { isTrustedLocal, routePath } from './auth.js';
+
+/**
+ * For a package that fetches an address somebody else chose (a pasted link, a
+ * page another program asks for): whether it points inside this PC or its
+ * networks. See `private-address.ts` for how to use the pair safely.
+ */
+export { isPrivateAddress, isPrivateHostName } from './private-address.js';
 
 /** A guest copy's key to the host, for what copies share. See `instances.ts`. */
 export { copyOfDevice, readHostKey } from './instances.js';

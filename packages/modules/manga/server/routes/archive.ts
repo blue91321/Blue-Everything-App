@@ -4,7 +4,7 @@
  * Registered by `routes` in `../index.ts`, in this order with the other groups.
  */
 import type { FastifyInstance } from 'fastify';
-import { config, isGuest } from '@everything/server/module-api';
+import { isGuest } from '@everything/server/module-api';
 import { read, write } from '../library.js';
 import { SourceError } from '../sources.js';
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';

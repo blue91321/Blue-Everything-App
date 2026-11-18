@@ -34,7 +34,7 @@ move into Docker one day while the agent stays native.
 | `packages/agent` | The Windows agent: attention sensor, tray icon, popup, sounds. [README](packages/agent/README.md) |
 | `packages/web` | The app itself, a React PWA with no router. [README](packages/web/README.md) |
 | `packages/shared` | Types, schemas and rules all three agree on. [README](packages/shared/README.md) |
-| `packages/modules/<id>` | **Packages** that ship with the app: manga, voice, vault, integrations, weather, trips, push, code, blueprints. Each can be switched off or deleted. |
+| `packages/modules/<id>` | **Packages** that ship with the app: manga, voice, vault, integrations, weather, trips, calendar, push, code, blueprints. Each can be switched off or deleted. |
 | `modules/` | Packages *installed* from a zip (Settings → Packages). Gitignored. |
 | `scripts/` | Start, stop, update, package a release, and the checks. |
 | `instances/` | Friends' copies of the server (Settings → People). Gitignored. |
@@ -109,6 +109,8 @@ phone appears on the PC with no polling.
 | The Code screen (reading and editing the app's own files) | `packages/modules/code/`: `server/files.ts` decides what is offered and how a save is written |
 | Blueprints (boxes and wires that make the app do things) | `packages/modules/blueprints/`: `web/catalogue.ts` is every box, `web/engine.ts` the walk, `agent/` hears hotkeys and presses keys; core says what happened through `packages/server/src/happenings.ts` |
 | A package | its folder under `packages/modules/`; start at its README |
+| A file a package or core keeps on disk | write it with `writeFileAtomic` (`packages/server/src/atomic-write.ts`, exported from `module-api`), never `writeFileSync` and a rename by hand |
+| Fetching an address somebody else chose (a pasted link) | check it with `isPrivateAddress` and `isPrivateHostName` (`packages/server/src/private-address.ts`, exported from `module-api`) |
 | The tray, popup or sounds | `packages/agent/src/tray.ts`, `popup.ts`, `overlay.ts`, `sound.ts` |
 | Voice commands (a phrase that does something) | a blueprint with a *When I say* box; voice matches through core's `packages/server/src/spoken-port.ts` |
 | System-wide hotkeys (registering, for voice and blueprints) | `packages/agent/src/hotkeys.ts`, with the key table in `keys.ts` |
@@ -117,6 +119,14 @@ phone appears on the PC with no polling.
 ## Rules worth knowing before you start
 
 - **Core never imports a package.** See above.
+- **The compiler refuses unused code** in all three packages (`noUnusedLocals`,
+  `noUnusedParameters`): an import, variable or parameter nothing reads fails
+  `npm run typecheck`. Delete it, or start a parameter's name with `_` when
+  the position has to be there.
+- **A very long component has numbered banners**, `/* ==== 4. Loading ==== */`,
+  and the big ones list them at the top of the file (`Reader.tsx`). Search
+  for `==== ` to see a file's parts. Keep new code under the banner it
+  belongs to.
 - **The server must not shell out to the operating system** in new code: no
   PowerShell, no `cmd /c start`, no Windows paths. Anything that needs the
   machine is the agent's job, asked for over HTTP. (A few old routes still do;

@@ -13,7 +13,6 @@ import { z } from 'zod';
  * a copy it finds in `instances/`, so it is left out of what a person can pair.
  */
 export const deviceKinds = ['windows-agent', 'phone', 'browser', 'extension', 'instance'] as const;
-export const deviceKindSchema = z.enum(deviceKinds);
 
 export const pairableDeviceKinds = ['windows-agent', 'phone', 'browser', 'extension'] as const;
 

@@ -26,11 +26,10 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import {
-  MODULES_STATE_FILE,
   MODULE_MANIFEST,
   fullPanelId,
   isModuleId,
@@ -43,6 +42,7 @@ import { parseJsonText } from './json.js';
 import { featuresFilePath } from './features.js';
 import { installedModulesRoot, modulesStateFile, shippedModulesRoot } from './paths.js';
 import { isGuest } from './config.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 /**
  * The one definition of where packages live, exported rather than re-derived.
@@ -117,7 +117,7 @@ function readState(): Record<string, boolean> {
 }
 
 function writeState(state: Record<string, boolean>): void {
-  writeFileSync(modulesStatePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  writeFileAtomic(modulesStatePath, `${JSON.stringify(state, null, 2)}\n`);
 }
 
 /**

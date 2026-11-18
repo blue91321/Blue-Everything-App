@@ -638,8 +638,8 @@ function stretches(plan: SpeechPlan): Stretch[] {
   return out;
 }
 
-/** A fixed-seed noise source, so the same words make the same bytes everywhere. */
-function noise(seed: number): () => number {
+/** A fixed-seed noise source, so the same words (and the same click, in `sound-design.ts`) make the same bytes everywhere. */
+export function noise(seed: number): () => number {
   let s = seed >>> 0 || 1;
   return () => {
     s ^= s << 13;

@@ -29,7 +29,6 @@ import { spawnSync } from 'node:child_process';
 const here = dirname(fileURLToPath(import.meta.url));
 const serverRoot = resolve(here, '../..');
 const realSrc = resolve(serverRoot, 'src');
-const copySrc = resolve(serverRoot, 'src.featurecheck');
 /** Where this suite is allowed to write. Removed at the end, whatever happens. */
 const work = resolve(serverRoot, '.featurecheck');
 /** The real shipped packages, copied rather than touched when one is deleted. */

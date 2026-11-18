@@ -70,16 +70,15 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
-  writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { dataDir, nameFor } from '@everything/server/module-api';
+import { dataDir, nameFor, writeFileAtomic } from '@everything/server/module-api';
 import { read } from './library.js';
 import { sharedPage } from './page-fetch.js';
 import { cachedPageAnywhere } from './page-cache.js';
+import { sameChapterTwice } from '../web/duplicate-pages.js';
 import { compress } from './compress.js';
 
 /** Where an archive goes when nothing else has been chosen. */
@@ -158,6 +157,22 @@ export interface ArchiveChapter {
    * half one scan and half another.
    */
   from?: ElsewhereChapter;
+  /**
+   * When its pages were thrown away and fetched again for being another
+   * chapter's (`mendDuplicates`). Found the same again after that, the source
+   * itself gives the same pages, and it is left with an error saying so rather
+   * than fetched round and round.
+   */
+  twiceAt?: number;
+  /**
+   * Being fetched again over its own pages, which may be another chapter's
+   * (`mendDuplicates`, `refetchKeptChapter`). Its files are **overwritten as the
+   * new pages arrive, never deleted first**: if the source has since lost the
+   * chapter, the copy here is all there is, and keeping it is the point of the
+   * collection. Meanwhile it is not served (`archivedPageList`, `archivedPage`),
+   * so the reader asks the source by the chapter's id instead.
+   */
+  refetch?: boolean;
 }
 
 /** Where a chapter was saved from instead. `whole`: the whole chapter that a part (3.1) is in (3). */
@@ -277,27 +292,13 @@ export function extensionFor(type: string): string {
  * ------------------------------------------------------------------ */
 
 /**
- * Written whole and renamed into place, and the rename is tried again for a
- * moment when Windows refuses it. A manifest is rewritten after every page,
- * and something else holding the file an instant (OneDrive syncing the folder,
- * a virus scanner) made the rename fail with EPERM and stopped the download:
- * seen on Eleceed, mid-chapter, with the app in a OneDrive folder.
+ * Written whole and renamed into place (`writeFileAtomic`, which tries the
+ * rename again when Windows refuses it). A manifest is rewritten after every
+ * page, and OneDrive holding the file an instant stopped a download with
+ * EPERM: seen on Eleceed, mid-chapter, with the app in a OneDrive folder.
  */
 function writeJson(path: string, value: unknown): void {
-  mkdirSync(join(path, '..'), { recursive: true });
-  const tmp = `${path}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  for (let attempt = 0; ; attempt++) {
-    try {
-      renameSync(tmp, path);
-      return;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (attempt >= 10 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) throw error;
-      // A short, synchronous wait: the callers are synchronous, and it is a few hundred ms at most.
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * (attempt + 1));
-    }
-  }
+  writeFileAtomic(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export function readIndex(): ArchiveIndex {
@@ -422,18 +423,35 @@ export function archivedPageList(seriesId: string, chapterId: string, mangaId?: 
   if (!folder) return null;
   // The edition kept, whichever of the source's entries for that number was opened.
   const chapter = readManifest(folder)?.chapters.find((c) => c.chapterId === chapterId || c.sameAs?.includes(chapterId));
-  if (!chapter || chapter.pages.length === 0) return null;
+  if (!chapter || chapter.pages.length === 0 || chapter.refetch) return null;
   return chapter.pages.map((p) => p.path);
 }
 
-/** One archived page's bytes, looked up by the path the reader asks for. */
-export function archivedPage(seriesId: string, path: string, mangaId?: string | null): { body: Buffer; type: string } | null {
+/**
+ * One archived page's bytes, looked up by the path the reader asks for, in the
+ * chapter it asks for when it says (`chapterId`, or one of its `sameAs`).
+ *
+ * **The path alone is ambiguous.** It names a chapter by its position in the
+ * series' list, which moves when a source posts a chapter late (`page-path.ts`),
+ * so two kept chapters can hold the same path. Looked up by path alone, the
+ * first of them answered for both: S-Class Hunter's 60 was served 59's pages
+ * from a collection that held both correctly. Without a chapter (an older
+ * screen), the first that has it, as before.
+ */
+export function archivedPage(
+  seriesId: string,
+  path: string,
+  mangaId?: string | null,
+  chapterId?: string | null
+): { body: Buffer; type: string } | null {
   const folder = folderOf(seriesId, mangaId);
   if (!folder) return null;
   const manifest = readManifest(folder);
   if (!manifest) return null;
 
   for (const chapter of manifest.chapters) {
+    if (chapterId && chapter.chapterId !== chapterId && !chapter.sameAs?.includes(chapterId)) continue;
+    if (chapter.refetch) continue;
     const page = chapter.pages.find((p) => p.path === path);
     if (!page) continue;
     const file = join(archiveRoot(), folder, chapter.folder, page.file);
@@ -1029,7 +1047,18 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
   mkdirSync(dir, { recursive: true });
 
   for (const path of paths) {
-    if (chapter.pages.some((p) => p.path === path && existsSync(join(dir, p.file)))) continue;
+    /*
+     * A page kept on an earlier attempt is matched by its page number, not its
+     * path: the path names the chapter's position in the list, which may have
+     * moved since (`page-path.ts`), while the number of a page in this chapter
+     * does not. Its path is brought up to date, so the list served is current.
+     */
+    // Not while it is being fetched again: every page is asked for, over the one here.
+    const already = chapter.refetch ? undefined : chapter.pages.find((p) => samePage(p.path, path) && existsSync(join(dir, p.file)));
+    if (already) {
+      already.path = path;
+      continue;
+    }
 
     /*
      * From the reading cache when it is there: a chapter read and then kept
@@ -1040,7 +1069,7 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
      * cut-off page archived is a gap that would be served in preference to the
      * source forever.
      */
-    const fromCache = cachedPageAnywhere(path);
+    const fromCache = cachedPageAnywhere(path, item.from?.chapterId ?? item.chapterId);
     /*
      * Made smaller first when the collection is set to (`archiveQuality`,
      * `compress.ts`). Read per page, so changing it takes effect on the next
@@ -1060,11 +1089,9 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
     const position = matched ? Number.parseInt(matched[1], 10) + 1 : paths.indexOf(path) + 1;
     const file = `${String(position).padStart(3, '0')}.${extensionFor(type)}`;
 
-    const tmp = join(dir, `${file}.part`);
-    writeFileSync(tmp, body);
-    renameSync(tmp, join(dir, file));
+    writeFileAtomic(join(dir, file), body);
 
-    chapter.pages = [...chapter.pages.filter((p) => p.path !== path), { path, file, type, bytes: body.length }].sort(
+    chapter.pages = [...chapter.pages.filter((p) => !samePage(p.path, path)), { path, file, type, bytes: body.length }].sort(
       (a, b) => a.file.localeCompare(b.file)
     );
     chapter.at = Date.now();
@@ -1076,7 +1103,106 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
   chapter.done = chapter.pages.length >= paths.length;
   chapter.error = chapter.done ? null : 'some pages are still missing';
   chapter.at = Date.now();
+  if (chapter.done) delete chapter.refetch;
   writeManifest(folder, manifest);
+  // A chapter that came out the same as another is fetched again: see `mendDuplicates`.
+  if (chapter.done) mendDuplicates(item.seriesId);
+}
+
+/** The same page of a chapter: the same page number, whatever position the path gave the chapter. */
+function samePage(a: string, b: string): boolean {
+  if (a === b) return true;
+  const x = PAGE_PATH.exec(a);
+  const y = PAGE_PATH.exec(b);
+  return Boolean(x && y && x[1] === y[1]);
+}
+
+/**
+ * Kept chapters of one series with the same pictures (`sameChapterTwice`), the
+ * mark of pages fetched by an address gone stale (`page-path.ts`): their pages
+ * are thrown away and they are queued again, to be fetched by their chapter ids
+ * now. Which of two is wrong cannot be told from the bytes, so both go.
+ *
+ * Once only per chapter (`twiceAt`): one found the same again after being
+ * fetched afresh is the source's own doing, and it keeps its pages with an
+ * error saying so. A chapter saved from another source is left out, being
+ * another scan. Run after each chapter is kept and once at startup over every
+ * series. Returns the chapters queued again.
+ */
+export function mendDuplicates(seriesId?: string): string[] {
+  const index = readIndex();
+  const queued: string[] = [];
+  let queueChanged = false;
+  for (const entry of index.series) {
+    if (seriesId && entry.seriesId !== seriesId) continue;
+    const manifest = readManifest(entry.folder);
+    if (!manifest) continue;
+    const pageNumber = (p: ArchivePage) => Number.parseInt(PAGE_PATH.exec(p.path)?.[1] ?? '-1', 10);
+    const candidates = manifest.chapters.filter((c) => c.done && !c.from);
+    const sizes = (c: ArchiveChapter): number[] => {
+      const out: number[] = Array.from({ length: Math.max(c.expected ?? 0, c.pages.length) }, () => -1);
+      for (const p of c.pages) {
+        const at = pageNumber(p);
+        if (at >= 0 && at < out.length) out[at] = p.bytes;
+      }
+      return out;
+    };
+    const twice = sameChapterTwice(candidates.map((c) => ({ id: c.chapterId, sizes: sizes(c) })));
+    if (twice.size === 0) continue;
+    for (const chapter of candidates) {
+      if (!twice.has(chapter.chapterId)) continue;
+      const partner = candidates.find((o) => o !== chapter && twice.has(o.chapterId) && sameChapterTwice([
+        { id: 'a', sizes: sizes(chapter) },
+        { id: 'b', sizes: sizes(o) },
+      ]).size > 0);
+      if (chapter.twiceAt) {
+        chapter.error = `the source gives the same pages as chapter ${partner?.number ?? '?'}`;
+        continue;
+      }
+      // Over its own files as the new ones come, never deleted first: see `refetch`.
+      chapter.refetch = true;
+      chapter.done = false;
+      chapter.error = null;
+      chapter.twiceAt = Date.now();
+      chapter.at = Date.now();
+      queued.push(chapter.chapterId);
+      if (!index.queue.some((q) => q.seriesId === entry.seriesId && q.chapterId === chapter.chapterId)) {
+        index.queue.push({ seriesId: entry.seriesId, chapterId: chapter.chapterId, number: chapter.number, name: chapter.name, tries: 0, error: null });
+        queueChanged = true;
+      }
+    }
+    writeManifest(entry.folder, manifest);
+  }
+  if (queueChanged) writeIndex(index);
+  return queued;
+}
+
+/**
+ * Throw away a kept chapter's pages and fetch it again, asked for by hand from
+ * the reader ("Wrong pages? Fetch this chapter again") for when the automatic
+ * check above did not see it. By its id or one of its `sameAs`. Returns whether
+ * it was kept here at all.
+ */
+export function refetchKeptChapter(seriesId: string, chapterId: string, mangaId?: string | null): boolean {
+  const index = readIndex();
+  const entry = entryFor(index, seriesId, mangaId);
+  if (!entry) return false;
+  const manifest = readManifest(entry.folder);
+  const chapter = manifest?.chapters.find((c) => c.chapterId === chapterId || c.sameAs?.includes(chapterId));
+  if (!manifest || !chapter) return false;
+  // Over its own files as the new ones come, never deleted first: see `refetch`.
+  chapter.refetch = true;
+  chapter.done = false;
+  chapter.error = null;
+  chapter.at = Date.now();
+  // Asked for by hand: the automatic check may look again once it is back.
+  delete chapter.twiceAt;
+  writeManifest(entry.folder, manifest);
+  const waiting = index.queue.filter((q) => !(q.seriesId === entry.seriesId && q.chapterId === chapter.chapterId));
+  // To the front: somebody is waiting on it.
+  index.queue = [{ seriesId: entry.seriesId, chapterId: chapter.chapterId, number: chapter.number, name: chapter.name, tries: 0, error: null }, ...waiting];
+  writeIndex(index);
+  return true;
 }
 
 /* ------------------------------------------------------------------ *

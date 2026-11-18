@@ -5,9 +5,8 @@
  * route; split into files, they are module functions here. The logger is the
  * server's, handed over by `useLogger` when the routes are registered.
  */
-import { and } from 'drizzle-orm';
 import { changes, config, isGuest, readHostKey } from '@everything/server/module-api';
-import { search } from '../mangadex.js';
+import { testByManga } from '../test-source.js';
 import { read, type Glimpse, type Series, type Store } from '../library.js';
 import { thumbPath } from '../present.js';
 import { groupKey } from '../browse.js';
@@ -137,6 +136,8 @@ export async function chapterElsewhere(
     sourceName: string;
     lang: string | null;
     mangaId: string;
+    /** The series' name on that source, for following it there (the reader's "Is this correct?"). */
+    title: string;
     chapterId: string;
     chapterName: string;
     matching: number;
@@ -159,6 +160,7 @@ export async function chapterElsewhere(
     sourceName: string;
     lang: string | null;
     mangaId: string;
+    title: string;
     chapterId: string;
     chapterName: string;
     matching: number;
@@ -183,6 +185,7 @@ export async function chapterElsewhere(
             sourceName: m.sourceName,
             lang: m.lang,
             mangaId: m.id,
+            title: m.title,
             chapterId: hit.id,
             chapterName: hit.name,
             matching: around.filter((n) => numbers.has(n)).length,
@@ -350,6 +353,9 @@ export async function reader(seriesId: string): Promise<ReaderContext> {
 
   const url = effectiveUrl(store, DEFAULT_BASE_URL);
   if (!url) return { error: 'no source is configured', code: 400 as const };
+
+  // Test A and Test B need no Suwayomi: the adapter answers them itself (`test-source.ts`).
+  if (testByManga(series.source.mangaId)) return { store, series, adapter: new SuwayomiAdapter(url), url };
 
   if (store.manageSuwayomi && store.suwayomiJar) {
     const state = await suwayomiProcess.ensureRunning(store.suwayomiJar, url, store.suwayomiMode);

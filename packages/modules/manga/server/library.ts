@@ -29,10 +29,10 @@
  * existed, and it is narrower on purpose — it is the honest version.
  */
 import { isQuality, type Quality } from './compress.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { dataDir, isGuest } from '@everything/server/module-api';
+import { dataDir, isGuest, writeFileAtomic } from '@everything/server/module-api';
 import type { SeriesIds, SeriesStatus } from './identity.js';
 import { DEFAULT_LANGUAGES, type SuwayomiMode } from './sources.js';
 
@@ -794,10 +794,7 @@ export function write(next: Store): void {
       if (typeof s.failingSince !== 'number') s.failingSince = now;
     } else if (s.failingSince !== undefined) delete s.failingSince;
   }
-  mkdirSync(dataDir, { recursive: true });
-  const tmp = `${STORE}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-  renameSync(tmp, STORE);
+  writeFileAtomic(STORE, `${JSON.stringify(next, null, 2)}\n`);
 }
 
 /* ---- reading positions, in a file of their own ---- */
@@ -831,10 +828,7 @@ export function writePosition(seriesId: string, position: ReadingPosition | null
   const before = all[seriesId] ?? null;
   if (position) all[seriesId] = position;
   else delete all[seriesId];
-  mkdirSync(dataDir, { recursive: true });
-  const tmp = `${POSITIONS}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(all)}\n`, 'utf8');
-  renameSync(tmp, POSITIONS);
+  writeFileAtomic(POSITIONS, `${JSON.stringify(all)}\n`);
   return before;
 }
 

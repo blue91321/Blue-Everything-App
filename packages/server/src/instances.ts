@@ -61,6 +61,7 @@ import { hashToken } from './auth.js';
 import { config, isGuest, instanceRoot } from './config.js';
 import { dataDir, repoRoot, serverSrc } from './paths.js';
 import { serveOnPort, serveStatus, stopServingPort, tailnetName } from './tailscale.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 /** Where guest copies live. */
 export const instancesRoot = resolve(repoRoot, 'instances');
@@ -98,8 +99,7 @@ function readInfo(name: string): CopyInfo | null {
 
 function writeInfo(name: string, info: CopyInfo): void {
   const file = resolve(folderOf(name), 'instance.json');
-  writeFileSync(`${file}.tmp`, JSON.stringify(info, null, 2));
-  renameSync(`${file}.tmp`, file);
+  writeFileAtomic(file, JSON.stringify(info, null, 2));
 }
 
 /** Every guest copy's name, from the folders under `instances/`. */
@@ -127,8 +127,7 @@ export async function mintInstanceKey(name: string): Promise<void> {
   await db.insert(devices).values({ name: deviceName(name), kind: 'instance', tokenHash: hashToken(token) });
 
   const file = resolve(folder, KEY_FILE);
-  writeFileSync(`${file}.tmp`, token);
-  renameSync(`${file}.tmp`, file);
+  writeFileAtomic(file, token);
 }
 
 async function revokeInstanceKey(name: string): Promise<void> {
@@ -471,8 +470,7 @@ function addInvite(file: string, code: string, lifeMs: number): number {
   const now = Date.now();
   const kept = readInvites(file).filter((i) => i.expiresAt > now);
   kept.push({ hash: createHash('sha256').update(code).digest('hex'), expiresAt: now + lifeMs });
-  writeFileSync(`${file}.tmp`, JSON.stringify(kept));
-  renameSync(`${file}.tmp`, file);
+  writeFileAtomic(file, JSON.stringify(kept));
   return now + lifeMs;
 }
 
@@ -510,8 +508,7 @@ async function redeem(code: string, deviceName: string, kind: (typeof pairableDe
   if (!match) return null;
   // Spent before the token exists, so the same link cannot be used twice even
   // by two devices opening it at once.
-  writeFileSync(`${file}.tmp`, JSON.stringify(invites.filter((i) => i !== match && i.expiresAt > now)));
-  renameSync(`${file}.tmp`, file);
+  writeFileAtomic(file, JSON.stringify(invites.filter((i) => i !== match && i.expiresAt > now)));
 
   const token = randomBytes(32).toString('base64url');
   await db.insert(devices).values({ name: deviceName, kind, tokenHash: hashToken(token) });

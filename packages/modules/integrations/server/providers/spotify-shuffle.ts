@@ -24,10 +24,10 @@
  * so a sync runs first. A song in several lists appears once.
  */
 import { randomInt, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { changes, dataDir, db, schema } from '@everything/server/module-api';
+import { changes, dataDir, db, schema, writeFileAtomic } from '@everything/server/module-api';
 import { apiGet, apiSend, grantedScopes } from '../oauth.js';
 import { getAccount } from '../store.js';
 import { syncPlaylists } from './spotify.js';
@@ -113,9 +113,7 @@ export function setWeight(kind: 'song' | 'artist', id: string, weight: number): 
   const table = kind === 'song' ? w.songs : w.artists;
   if (weight === 1) delete table[id];
   else table[id] = weight;
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${WEIGHTS}.tmp`, JSON.stringify(w, null, 2));
-  renameSync(`${WEIGHTS}.tmp`, WEIGHTS);
+  writeFileAtomic(WEIGHTS, JSON.stringify(w, null, 2));
   return w;
 }
 
@@ -559,9 +557,7 @@ function persist(s: Session): void {
     savedAt: Date.now(),
   };
   try {
-    mkdirSync(dataDir, { recursive: true });
-    writeFileSync(`${SESSION_FILE}.tmp`, JSON.stringify(saved));
-    renameSync(`${SESSION_FILE}.tmp`, SESSION_FILE);
+    writeFileAtomic(SESSION_FILE, JSON.stringify(saved));
   } catch {
     // Not saved: a restart will end it, as it always did.
   }
@@ -1034,9 +1030,7 @@ export function readShuffleSettings(): ShuffleSettings {
 export function saveShuffleSettings(part: Partial<Omit<ShuffleSettings, 'saved'>>): ShuffleSettings {
   const next = { ...readShuffleSettings(), ...part, saved: true };
   next.queueAhead = Math.round(Math.min(QUEUE_AHEAD_MAX, Math.max(QUEUE_AHEAD_MIN, next.queueAhead)));
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${SETTINGS}.tmp`, JSON.stringify(next, null, 2));
-  renameSync(`${SETTINGS}.tmp`, SETTINGS);
+  writeFileAtomic(SETTINGS, JSON.stringify(next, null, 2));
   return next;
 }
 

@@ -57,12 +57,13 @@ import { thumbPath } from '../present.js';
 import { betterTitle, retitleFromSource, titleKey } from '../titles.js';
 import { goneFromSource, notAnswering, sorted, sourceHasNothing, SWITCH_AFTER_MS, switchDueAt } from '../../web/shelf.js';
 import { dueForSwitch, pickReplacement } from '../find-sources.js';
-import { isPrivateAddress, refusal, secretMatches } from '../flaresolverr.js';
+import { isPrivateAddress } from '@everything/server/module-api';
+import { refusal, secretMatches } from '../flaresolverr.js';
 import { fetchPage, pagesInFlight, PageFetchError, sharedPage, SLOW_FAILURE_MS } from '../page-fetch.js';
 import { glideDistance, glideStep, MAX_SPEED, releaseVelocity, STOP_SPEED } from '../../web/glide.js';
 import { apartPages, marginScores, seamsDecide, marginLean, asBookPages, chooseFirstAlone, contentKind, cutsCarryOn, EDGE, learnMargins, stackedPages, fitsTwo, formatFromTags, leanFromTags, pairPages, seamJoined, type PageInfo } from '../../web/page-layout.js';
 import { normaliseTags } from '../tags.js';
-import { DEFAULT_HIDDEN_TAGS, hasTag, hiddenBy, tagsForLevel } from '../mature.js';
+import { DEFAULT_HIDDEN_TAGS, hasTag, hasWanted, hiddenBy, tagsForLevel } from '../mature.js';
 import { extensionUsage } from '../extension-usage.js';
 import { pickSource } from '../find-sources.js';
 import { isLatin, namesFromRecords, searchQueries } from '../names.js';
@@ -71,6 +72,8 @@ import { mkdirSync as mkdirTmp, mkdtempSync, readdirSync as listTmp, rmSync as r
 import { tmpdir } from 'node:os';
 import { join as joinTmp } from 'node:path';
 import { compress } from '../compress.js';
+import { movedPath } from '../page-path.js';
+import { sameChapterTwice } from '../../web/duplicate-pages.js';
 import { levelForSpeed, sampleSpeed, withQuality } from '../../web/quality.js';
 
 let failures = 0;
@@ -957,6 +960,10 @@ console.log('\ntags\n');
   check('BL does not catch a word with those letters in it', !hasTag(['Bloody', 'Public Life'], 'BL'));
   check('any other tag matches as written, ignoring case and hyphens', hasTag(['Slice-of-Life'], 'slice of life') && hasTag(['romance'], 'Romance'));
   check('and only that tag', !hasTag(['Romantic Comedy'], 'Romance'));
+  check('only these tags: every one, by default', hasWanted(['Isekai', 'Romance'], ['Romance', 'Isekai']) && !hasWanted(['Romance'], ['Romance', 'Isekai']));
+  check('...or any one of them', hasWanted(['Romance'], ['Romance', 'Isekai'], true) && !hasWanted(['Action'], ['Romance', 'Isekai'], true));
+  check('...matched as hidden ones are, families and all', hasWanted(['Yaoi'], ['BL']) && hasWanted(['Slice-of-Life'], ['slice of life']));
+  check('...and none asked for is everything', hasWanted([], []) && hasWanted(['Action'], [], true));
   check('a hidden title says which tag hid it', hiddenBy(['Action', 'Romance'], ['Ecchi', 'Romance']) === 'Romance');
   check('an older screen still gets the three it meant', tagsForLevel('mature').length === 3 && tagsForLevel('adult').join() === 'Ecchi,Adult');
   check('and anything that is not a tag is dropped', tags.every((t) => typeof t === 'string' && t.length > 0), String(tags.length));
@@ -1848,6 +1855,35 @@ console.log('\nsmaller pictures');
   check('a GIF is left alone', (await compress({ body: png, type: 'image/gif' }, 'smallest')).body === png);
   check('full size is the picture itself', (await compress({ body: png, type: 'image/png' }, 'original')).body === png);
   check('something that is not a picture comes back as it was', (await compress({ body: Buffer.from('nope'), type: 'image/jpeg' }, 'smaller')).body.toString() === 'nope');
+}
+
+/* ---- a page's address names its chapter's place in the list, which moves (page-path.ts, 2026-11-18) ---- */
+{
+  // S-Class Hunter: 59 posted after 60 and 61, so 60 moved from position 60 to 61.
+  const kept = '/api/v1/manga/12911/chapter/60/page/3';
+  check('a kept address is moved to where its chapter is now', movedPath(kept, 61) === '/api/v1/manga/12911/chapter/61/page/3', movedPath(kept, 61));
+  check('  ...and left alone where it has not moved', movedPath(kept, 60) === kept);
+  check('  ...or where its place is not known', movedPath(kept, null) === kept);
+  check('  ...and anything not a page address is left alone', movedPath('/elsewhere', 4) === '/elsewhere');
+
+  const ch59 = [1595364, 1922529, 1514389, 1565147];
+  const ch60 = [2104772, 2017628, 2684168, 2343938];
+  const same = sameChapterTwice([
+    { id: '59', sizes: ch59 },
+    { id: '60', sizes: ch59 },
+    { id: '61', sizes: ch60 },
+  ]);
+  check('two chapters with the same pages are found', same.has('59') && same.has('60') && !same.has('61'), [...same].join(','));
+  check('  ...and different pages are not', sameChapterTwice([{ id: 'a', sizes: ch59 }, { id: 'b', sizes: ch60 }]).size === 0);
+  check(
+    '  ...nor two pages alike, which a notice and a short chapter can be',
+    sameChapterTwice([{ id: 'a', sizes: [500, 700, -1, -1] }, { id: 'b', sizes: [500, 700, 9, 8] }]).size === 0
+  );
+  check(
+    '  ...compared only where both have the page, three at least',
+    sameChapterTwice([{ id: 'a', sizes: [5, 6, 7, -1] }, { id: 'b', sizes: [5, 6, 7, 8] }]).size === 2
+  );
+  check('  ...and never with a different number of pages', sameChapterTwice([{ id: 'a', sizes: [5, 6, 7] }, { id: 'b', sizes: [5, 6, 7, 8] }]).size === 0);
 }
 
 process.exit(failures === 0 ? 0 : 1);

@@ -15,10 +15,10 @@
  * Written to a temporary file and renamed into place, so a crash mid-write
  * leaves the old file rather than half of the new one.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 
 export const STORE_FILE = join(dataDir, 'trips.json');
 
@@ -205,10 +205,7 @@ export function read(): Store {
 }
 
 export function write(next: Store): void {
-  mkdirSync(dataDir, { recursive: true });
-  const temp = `${STORE_FILE}.${process.pid}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-  renameSync(temp, STORE_FILE);
+  writeFileAtomic(STORE_FILE, `${JSON.stringify(next, null, 2)}\n`);
 }
 
 /** The month a lookup is counted against, on this machine's calendar. */

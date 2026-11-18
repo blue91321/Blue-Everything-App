@@ -22,6 +22,7 @@ const SERVER = [
   'vault-check',
   'vault-api',
   'trips-check',
+  'calendar-check',
   'import-check',
   'voice-check',
   'weather-check',

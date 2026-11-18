@@ -12,9 +12,9 @@
  * worth of use. A chapter read before the log recorded sources has no source,
  * and counts nowhere rather than being guessed at.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 
 type Named = { source: { sourceName: string } | null; readLog?: Array<{ chapter: number; source: string | null }> };
 type ExtensionSource = { id: string; name: string; lang: string; pkg: string };
@@ -106,8 +106,6 @@ export function setFlag(pkg: string, flagged: boolean, by?: string): string[] {
   } else {
     delete askedBy[pkg];
   }
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${FLAGS}.tmp`, JSON.stringify({ pkgs, askedBy }));
-  renameSync(`${FLAGS}.tmp`, FLAGS);
+  writeFileAtomic(FLAGS, JSON.stringify({ pkgs, askedBy }));
   return pkgs;
 }

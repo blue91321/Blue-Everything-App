@@ -9,7 +9,6 @@ import { nudgeQualitySchema } from './attention.js';
 /* ------------------------------------------------------------------ */
 
 export const nudgeStates = ['pending', 'delivered', 'acknowledged', 'snoozed', 'dismissed', 'expired'] as const;
-export const nudgeStateSchema = z.enum(nudgeStates);
 
 export const createNudgeSchema = z.object({
   title: z.string().min(1).max(300),

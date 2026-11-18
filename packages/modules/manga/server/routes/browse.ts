@@ -4,7 +4,6 @@
  * Registered by `routes` in `../index.ts`, in this order with the other groups.
  */
 import type { FastifyInstance } from 'fastify';
-import { changes } from '@everything/server/module-api';
 import { PageFetchError, sharedPage } from '../page-fetch.js';
 import { compressCached, originalSizeHeader, qualityFrom } from '../compress.js';
 import { search, type Candidate } from '../mangadex.js';
@@ -36,6 +35,7 @@ import { suwayomiProcess } from '../process.js';
 import { tagsForLevel, withoutTags } from '../mature.js';
 import { retitleFromSource } from '../titles.js';
 import { COVER_CACHE, present } from './shared.js';
+import { isTestSourceId } from '../test-source.js';
 
 export function browseRoutes(app: FastifyInstance): void {
   /* ---- browsing ---- */
@@ -85,13 +85,14 @@ export function browseRoutes(app: FastifyInstance): void {
    * The sources Browse can list from — the languages you read, like search —
    * and which one it lists from now.
    */
-  app.get('/api/manga/browse', async (_request, reply) => {
+  app.get('/api/manga/browse', async (request, reply) => {
     const ctx = await ready();
     if ('error' in ctx) return reply.code(ctx.code).send({ error: ctx.error });
     try {
       const all = await ctx.adapter.listSources();
       const sources = sourcesToSearch(all, ctx.store.readLanguages)
-        .searched.filter((s) => s.lang !== 'localsourcelang')
+        // Test A's and Test B's sources only to this PC (`test-source.ts`).
+        .searched.filter((s) => s.lang !== 'localsourcelang' && (request.isLocal || !isTestSourceId(s.id)))
         .sort((a, b) => Number(isIndexSource(a.name)) - Number(isIndexSource(b.name)) || a.name.localeCompare(b.name));
       // `kept` is the Local collection, the series kept on the PC, which is no
       // Suwayomi source. It is where Browse opens until a source is chosen, and
@@ -124,12 +125,14 @@ export function browseRoutes(app: FastifyInstance): void {
 
   /** One page of a source's popular list or its newest releases. */
   app.get('/api/manga/browse/list', async (request, reply) => {
-    const { source, type, page, safe, hide } = request.query as {
+    const { source, type, page, safe, hide, only, any } = request.query as {
       source?: string;
       type?: string;
       page?: string;
       safe?: string;
       hide?: string | string[];
+      only?: string | string[];
+      any?: string;
     };
     if (!source || !SOURCE_ID.test(source)) return reply.code(400).send({ error: 'which source?' });
     if (type !== 'popular' && type !== 'latest') return reply.code(400).send({ error: 'popular or latest' });
@@ -154,11 +157,16 @@ export function browseRoutes(app: FastifyInstance): void {
        * how they are matched and found. `safe` is what a screen from before
        * tags sends, and means the same three it used to.
        */
-      const tags = (hide === undefined ? tagsForLevel(safe) : Array.isArray(hide) ? hide : [hide])
-        .map((t) => t.trim())
-        .filter((t) => t.length > 0 && t.length <= 40)
-        .slice(0, 50);
-      const filtered = tags.length > 0 ? await withoutTags(ctx.adapter, got.matches, tags) : null;
+      const tidy = (list: string[]) =>
+        list
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0 && t.length <= 40)
+          .slice(0, 50);
+      const tags = tidy(hide === undefined ? tagsForLevel(safe) : Array.isArray(hide) ? hide : [hide]);
+      // `only` names tags a title must have to be shown: all of them, or with `any=1` one.
+      const wanted = tidy(only === undefined ? [] : Array.isArray(only) ? only : [only]);
+      const filtered =
+        tags.length > 0 || wanted.length > 0 ? await withoutTags(ctx.adapter, got.matches, tags, wanted, any === '1') : null;
       return {
         results: await withChapterCounts(
           ctx.adapter,
@@ -169,6 +177,8 @@ export function browseRoutes(app: FastifyInstance): void {
         hidden: filtered?.hidden ?? 0,
         hiddenBy: filtered?.hiddenBy ?? {},
         unchecked: filtered?.unchecked ?? 0,
+        missing: filtered?.missing ?? 0,
+        uncheckedOut: filtered?.uncheckedOut ?? 0,
       };
     } catch (error) {
       if (error instanceof SourceError) return reply.code(502).send({ error: error.message });
@@ -292,7 +302,9 @@ export function browseRoutes(app: FastifyInstance): void {
         : Promise.resolve(null);
 
       const [mine, rest] = await Promise.all([preferred, others]);
-      const ranked = query ? rankMatches(query, [...mine, ...(rest?.matches ?? [])]) : mine.map((m) => ({ ...m, score: 0 }));
+      const ranked = (query ? rankMatches(query, [...mine, ...(rest?.matches ?? [])]) : mine.map((m) => ({ ...m, score: 0 }))).filter(
+        (m) => request.isLocal || !isTestSourceId(m.sourceId)
+      );
       const groups = groupMatches(
         await withChapterCounts(
           ctx.adapter,

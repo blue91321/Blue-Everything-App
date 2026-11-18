@@ -175,6 +175,8 @@ export function cleanGraph(raw: unknown): Graph {
 function upgradeFields(type: string, raw: unknown): Record<string, unknown> | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const fields = raw as Record<string, unknown>;
+  // A hotkey that named a game before "Only when" (2026-11-16) meant that game.
+  if (type === 'on-hotkey' && fields.only === undefined && fields.game) return { ...fields, only: 'game' };
   if (type === 'play-sound' && (fields.sound === 'beep' || fields.sound === 'sweep')) {
     return { ...fields, sound: 'custom', shape: soundShapeText(shapeFromBeep(fields)) };
   }
@@ -277,23 +279,6 @@ export function nextAll(graph: Graph, from: string, pin: string): string[] {
 /** Where a box's output leads first, if anywhere. */
 export function next(graph: Graph, from: string, pin: string): string | null {
   return nextAll(graph, from, pin)[0] ?? null;
-}
-
-/** For a way out with several wires, each wire's place top to bottom (1, 2, …). */
-export function wireOrder(graph: Graph): Map<string, number> {
-  const order = new Map<string, number>();
-  const done = new Set<string>();
-  for (const w of graph.wires) {
-    if (w.port || done.has(`${w.from}:${w.pin}`)) continue;
-    done.add(`${w.from}:${w.pin}`);
-    const targets = nextAll(graph, w.from, w.pin);
-    if (targets.length < 2) continue;
-    for (const other of graph.wires) {
-      if (other.port || other.from !== w.from || other.pin !== w.pin) continue;
-      order.set(other.id, targets.indexOf(other.to) + 1);
-    }
-  }
-  return order;
 }
 
 /** A repeat's gap in words: "2 seconds", "1.5 minutes", "25 milliseconds". */

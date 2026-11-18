@@ -23,7 +23,7 @@
  * the running set no longer matches it, and the tray's **Restart** is one
  * click away.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { FEATURE_LIST, isFeatureId, resolveFeatures, type FeatureId } from '@everything/shared/features';
@@ -31,6 +31,7 @@ import { config } from '../config.js';
 import { activeFeatures, enabledFeatures, featuresFilePath, missingFeatures } from '../features.js';
 import { VERSION } from '../version.js';
 import { parseJsonText } from '../json.js';
+import { writeFileAtomic } from '../atomic-write.js';
 
 /**
  * Imported, never re-derived.
@@ -176,7 +177,7 @@ export async function featureRoutes(app: FastifyInstance): Promise<void> {
       next[spec.id] = spec.id === body.id ? body.enabled : current;
     }
 
-    writeFileSync(featuresPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+    writeFileAtomic(featuresPath, `${JSON.stringify(next, null, 2)}\n`);
 
     const wanted = resolveFeatures(chosenInFile()).enabled;
     return {

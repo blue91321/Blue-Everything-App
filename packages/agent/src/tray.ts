@@ -174,7 +174,6 @@ const Shell_NotifyIconW = shell32.func('int __stdcall Shell_NotifyIconW(uint32_t
 
 /* Constants, named so the calls below read as Win32. */
 const NIM_ADD = 0x00000000;
-const NIM_MODIFY = 0x00000001;
 const NIM_DELETE = 0x00000002;
 const NIF_MESSAGE = 0x00000001;
 const NIF_ICON = 0x00000002;

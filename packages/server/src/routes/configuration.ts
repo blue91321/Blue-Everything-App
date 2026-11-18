@@ -21,12 +21,13 @@
  * friend's copy, which runs this checkout and is not its to change.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { isGuest } from '../config.js';
 import { scanModules, setModuleEnabled } from '../modules.js';
 import { configuration, dataDir, repoRoot, restartScript, updateScript } from '../paths.js';
+import { writeFileAtomic } from '../atomic-write.js';
 
 /**
  * What Just Manga keeps. The same list as `JUST_MANGA_KEEPS` in
@@ -34,8 +35,6 @@ import { configuration, dataDir, repoRoot, restartScript, updateScript } from '.
  * this; `modules-check` holds the two to each other.
  */
 export const JUST_MANGA_PACKAGES = ['manga', 'push'] as const;
-
-type Configuration = 'everything' | 'just-manga';
 
 const configFile = resolve(repoRoot, 'configuration.json');
 /** On a clone: the packages that were on when it switched to Just Manga. */
@@ -103,10 +102,10 @@ export async function configurationRoutes(app: FastifyInstance): Promise<void> {
     if (!existsSync(restartScript)) return reply.code(500).send({ error: 'scripts/restart.ps1 is missing' });
     if (to === 'just-manga') {
       const others = leftOut();
-      writeFileSync(beforeFile(), JSON.stringify({ on: others.filter((m) => m.enabled).map((m) => m.id) }, null, 2) + '\n');
+      writeFileAtomic(beforeFile(), JSON.stringify({ on: others.filter((m) => m.enabled).map((m) => m.id) }, null, 2) + '\n');
       for (const m of others) setModuleEnabled(m.id, false);
       for (const id of JUST_MANGA_PACKAGES) setModuleEnabled(id, true);
-      writeFileSync(configFile, JSON.stringify({ configuration: 'just-manga' }, null, 2) + '\n');
+      writeFileAtomic(configFile, JSON.stringify({ configuration: 'just-manga' }, null, 2) + '\n');
     } else {
       let on: string[] | null = null;
       try {

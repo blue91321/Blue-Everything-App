@@ -18,9 +18,10 @@
  * reading a chapter from another source, Find sources, Switch sources and the
  * switch after two days of failures.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { readFileSync } from 'node:fs';
+import { isTestTitle } from './test-source.js';
+import { join } from 'node:path';
+import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 import { namesOnMangaDex, type NamedRecord } from './mangadex.js';
 import { titleKey } from './titles.js';
 
@@ -89,10 +90,7 @@ function load(): Record<string, Entry> {
 
 function save(): void {
   try {
-    mkdirSync(dirname(FILE), { recursive: true });
-    const tmp = `${FILE}.tmp`;
-    writeFileSync(tmp, JSON.stringify(cache ?? {}));
-    renameSync(tmp, FILE);
+    writeFileAtomic(FILE, JSON.stringify(cache ?? {}));
   } catch {
     // Known for this run only.
   }
@@ -107,7 +105,7 @@ function save(): void {
 export async function namesFor(title: string, known: ReadonlyArray<string | null | undefined> = [], now = Date.now()): Promise<string[]> {
   const own = uniqueNames([title, ...known]);
   const key = titleKey(title);
-  if (!key) return own;
+  if (!key || isTestTitle(title)) return own;
   const entry = load()[key];
   const fresh = entry && now - entry.at < (entry.failed ? NAMES_RETRY_MS : NAMES_FRESH_MS);
   let found: string[];

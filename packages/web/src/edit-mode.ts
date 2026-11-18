@@ -15,10 +15,6 @@ import { useEffect, useState } from 'react';
 let on = false;
 const listeners = new Set<() => void>();
 
-export function editMode(): boolean {
-  return on;
-}
-
 export function setEditMode(next: boolean): void {
   if (next === on) return;
   on = next;

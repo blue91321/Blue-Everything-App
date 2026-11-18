@@ -10,7 +10,6 @@
  *
  * Runs entirely in memory. Touches no database and needs no server.
  */
-import { vocabularyFor } from '../../../modules/voice/server/actions.js';
 import {
   parseWakeAlikes,
   soundKey,

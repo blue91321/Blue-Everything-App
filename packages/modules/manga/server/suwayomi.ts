@@ -49,6 +49,9 @@ import {
 } from './sources.js';
 import { fromSuwayomiFilter, isIndexSource, type SourceFilter } from './browse.js';
 import { searchQueries } from './names.js';
+// Test A and Test B, answered before Suwayomi is asked: see `test-source.ts`.
+import { forgetPositions } from './page-path.js';
+import { TEST_CHAPTERS, testByManga, testBySource, testChapters, testDetails, testListing, testPages, testSearch, testSources } from './test-source.js';
 
 /** A series as its source describes it — see `SuwayomiAdapter.details`. */
 export type SeriesDetails = {
@@ -290,14 +293,17 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     const data = await this.gql<{
       sources: { nodes: Array<SourceNode & { supportsLatest: boolean }> };
     }>(`query { sources { nodes { id displayName lang supportsLatest } } }`);
-    return (data.sources?.nodes ?? [])
-      .filter((s) => !this.ignored.includes(String(s.id)))
-      .map((s) => ({
-        id: String(s.id),
-        name: s.displayName,
-        lang: s.lang,
-        supportsLatest: s.supportsLatest === true,
-      }));
+    return [
+      ...(data.sources?.nodes ?? [])
+        .filter((s) => !this.ignored.includes(String(s.id)))
+        .map((s) => ({
+          id: String(s.id),
+          name: s.displayName,
+          lang: s.lang,
+          supportsLatest: s.supportsLatest === true,
+        })),
+      ...testSources(),
+    ];
   }
 
   /**
@@ -317,6 +323,10 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
         const genre = Array.isArray(node.genre) ? node.genre.filter((g): g is string => typeof g === 'string') : [];
         out.set(String(node.id), genre);
       }
+    }
+    for (const id of mangaIds) {
+      const t = testByManga(id);
+      if (t) out.set(id, testDetails(t).genres);
     }
     return out;
   }
@@ -342,7 +352,9 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
         numbers.set(key, list);
       }
     }
-    return new Map([...numbers].map(([id, list]) => [id, distinctChapters(list)]));
+    const counts = new Map([...numbers].map(([id, list]) => [id, distinctChapters(list)]));
+    for (const id of mangaIds) if (testByManga(id)) counts.set(id, TEST_CHAPTERS);
+    return counts;
   }
 
   /**
@@ -358,6 +370,8 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     query?: string,
     filters?: Json[]
   ): Promise<{ matches: SourceMatch[]; hasNextPage: boolean }> {
+    const test = testBySource(source.id);
+    if (test) return testListing(test, type === 'SEARCH' ? query : undefined);
     const found = await this.gql<{
       fetchSourceManga: {
         hasNextPage: boolean;
@@ -396,6 +410,7 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
 
   /** A source's own filters, as it declares them. */
   async filters(sourceId: string): Promise<SourceFilter[]> {
+    if (testBySource(sourceId)) return [];
     const data = await this.gql<{ source: { filters: Json[] } }>(
       `query Filters($id: LongString!) {
          source(id: $id) { filters { ${FILTER_FIELDS} ... on GroupFilter { name filters { ${FILTER_FIELDS} } } } }
@@ -439,7 +454,9 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       `query { sources { nodes { id displayName lang } } }`
     );
     const installed = (data.sources?.nodes ?? []).filter((s) => !this.ignored.includes(String(s.id)));
-    if (installed.length === 0) {
+    // Test A and Test B, while switched on, found as any source's results are.
+    const tests = testSearch(query).filter((m) => m.sourceId !== exclude && (!only || only.includes(m.sourceId!)));
+    if (installed.length === 0 && tests.length === 0) {
       throw new SourceError('Suwayomi is running but has no sources installed — add an extension repository first');
     }
 
@@ -470,6 +487,7 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
     };
 
     await Promise.all(Array.from({ length: Math.min(4, sources.length) }, worker));
+    out.push(...tests);
 
     /*
      * Ranked against the query, not sorted by source.
@@ -534,6 +552,8 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
    * that errors over a blurb loses the chapters and the Follow button with it.
    */
   async details(mangaId: string, { stored = false }: { stored?: boolean } = {}): Promise<SeriesDetails> {
+    const test = testByManga(mangaId);
+    if (test) return testDetails(test);
     const id = Number.parseInt(mangaId, 10);
     if (!Number.isSafeInteger(id)) throw new SourceError('not a Suwayomi manga id');
     const FIELDS = 'id title author artist description genre status thumbnailUrl realUrl source { id displayName lang }';
@@ -587,6 +607,8 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
   }
 
   async chapters(mangaId: string, refresh = true): Promise<SourceChapter[]> {
+    const test = testByManga(mangaId);
+    if (test) return testChapters(test);
     const id = Number.parseInt(mangaId, 10);
     if (!Number.isSafeInteger(id)) throw new SourceError('not a Suwayomi manga id');
 
@@ -627,6 +649,8 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       }
     }
 
+    // Asking the site again may renumber the list: see `page-path.ts`.
+    forgetPositions();
     /*
      * `fetchChapters: true` makes the server go and ask the source rather than
      * answering from its own database. That is the whole point for a release
@@ -664,6 +688,8 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
   }
 
   async pages(chapterId: string): Promise<string[]> {
+    const test = testPages(chapterId);
+    if (test) return test;
     const id = Number.parseInt(chapterId, 10);
     if (!Number.isSafeInteger(id)) throw new SourceError('not a Suwayomi chapter id');
 

@@ -164,6 +164,40 @@ const offlineModules = import.meta.glob<{ default: ComponentType<OfflineViewProp
   '../../../modules/*/web/offline.tsx',
 ]);
 
+/**
+ * A question a package asks during onboarding (the calendar's "remind you
+ * before events?"), found like the views: `onboarding.tsx` beside its meta.
+ * Core's onboarding asks each for a screen the person chose to show, before
+ * its own last step, without naming a package.
+ */
+const onboardingModules = import.meta.glob<{ default: ComponentType<OnboardingStepProps> }>([
+  './*/onboarding.tsx',
+  '../../../modules/*/web/onboarding.tsx',
+]);
+
+export interface OnboardingStepProps {
+  /** Answered: on to the next step. */
+  onNext: () => void;
+}
+
+export interface OnboardingStep {
+  id: string;
+  Step: LazyExoticComponent<ComponentType<OnboardingStepProps>>;
+}
+
+/** The onboarding questions of the packages that are on, in menu order. */
+export function onboardingSteps(): OnboardingStep[] {
+  return Object.entries(metaModules)
+    .map(([path, mod]) => {
+      const load: (typeof onboardingModules)[string] | undefined = onboardingModules[`${locate(path).prefix}onboarding.tsx`];
+      if (load === undefined || !featureEnabled(mod.meta.id)) return null;
+      return { id: mod.meta.id, order: mod.meta.order, Step: lazy(load) };
+    })
+    .filter((s): s is OnboardingStep & { order: number } => s !== null)
+    .sort((a, b) => a.order - b.order)
+    .map(({ id, Step }) => ({ id, Step }));
+}
+
 export interface OfflineViewProps {
   /** Back to the offline screen. */
   onClose: () => void;

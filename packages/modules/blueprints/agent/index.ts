@@ -23,6 +23,7 @@ import type { TimelineBar } from '../web/keys.js';
 import { isHeld, playTimeline, press } from './keys.js';
 import { launch, openUrl, pressMediaKey } from './machine.js';
 import { createWatcher, type Watched } from './watch.js';
+import { getForegroundWindow } from '../../../agent/src/win32.js';
 
 /** How long the server may hold a poll open. Under its own 25-second cap. */
 const WAIT_MS = 20_000;
@@ -31,11 +32,11 @@ const NOT_THERE_MS = 5 * 60_000;
 
 /** Something to do on this PC, as the server's `AgentTask`, with the id to report it by. */
 type Task =
-  | { id: string; do: 'keys'; keys: string; hold: number }
+  | { id: string; do: 'keys'; keys: string; hold: number; into?: string[] }
   | { id: string; do: 'url'; url: string }
   | { id: string; do: 'media'; action: string }
   | { id: string; do: 'launch'; name: string; path?: string; url?: string }
-  | { id: string; do: 'timeline'; bars: TimelineBar[]; totalMs: number }
+  | { id: string; do: 'timeline'; bars: TimelineBar[]; totalMs: number; into?: string[] }
   | { id: string; do: 'check' }
   | { id: string; do: 'held'; keys: string }
   | { id: string; do: 'popup'; title: string; body: string; color: string; seconds: number; sound?: string; volume?: number }
@@ -90,6 +91,20 @@ async function perform(task: Task, checkNow: () => void): Promise<boolean | numb
     return playSoundFile(path, task.volume ?? 100);
   }
   if (task.do === 'held') return isHeld(task.keys);
+  /*
+   * "Only into": pressed only with one of these in front, asked now rather
+   * than by the server, whose idea of the window in front is a heartbeat old.
+   * Skipped is `false`, which the server says as "skipped" and carries on.
+   */
+  if ((task.do === 'keys' || task.do === 'timeline') && task.into) {
+    let front = '';
+    try {
+      front = getForegroundWindow()?.exe ?? '';
+    } catch {
+      front = '';
+    }
+    if (!front || !task.into.includes(front)) return false;
+  }
   if (task.do === 'keys') return press(task.keys, task.hold);
   if (task.do === 'timeline') return playTimeline(task.bars);
   if (task.do === 'url') return openUrl(task.url);
@@ -113,8 +128,15 @@ export function startBlueprints(
   let hotkeys: Hotkeys | null = null;
   try {
     hotkeys = createHotkeys('EverythingBlueprintHotkeys', (keys) => {
+      // The window in front at the press, for a box set to count it only in a game (`pressCounts`).
+      let front = '';
+      try {
+        front = getForegroundWindow()?.exe ?? '';
+      } catch {
+        // Not known: the server goes by its last heartbeat.
+      }
       void client
-        .send('/api/blueprints/hotkey', { method: 'POST', body: JSON.stringify({ keys }) })
+        .send('/api/blueprints/hotkey', { method: 'POST', body: JSON.stringify({ keys, front }) })
         .catch((error: Error) => log(`blueprints: could not report ${keys}: ${error.message}`));
     });
   } catch (error) {

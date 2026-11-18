@@ -45,7 +45,7 @@ import { createServer, isIP } from 'node:net';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { changes, config, dataDir } from '@everything/server/module-api';
+import { changes, config, dataDir, isPrivateAddress, isPrivateHostName } from '@everything/server/module-api';
 import { read } from './library.js';
 import { RUNTIME_DIR, suwayomiProcess } from './process.js';
 import { effectiveUrl } from './sources.js';
@@ -352,21 +352,6 @@ async function launch(): Promise<number> {
 
 // ———————————————————————————————— what may be passed on ————————————————————————————————
 
-/** Whether an address is somewhere a request from here must never be sent: this PC, a home network, the tailnet, link-local. */
-export function isPrivateAddress(address: string): boolean {
-  const v = isIP(address);
-  if (v === 4) {
-    const [a, b] = address.split('.').map(Number) as [number, number];
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
-  }
-  if (v === 6) {
-    const s = address.toLowerCase();
-    if (s.startsWith('::ffff:')) return isPrivateAddress(s.slice(7));
-    return s === '::' || s === '::1' || s.startsWith('fc') || s.startsWith('fd') || s.startsWith('fe8') || s.startsWith('fe9') || s.startsWith('fea') || s.startsWith('feb') || s.startsWith('ff');
-  }
-  return true;
-}
-
 /** Why a request may not be passed on, or null when it may. Names are looked up, so one that points inside is refused too. */
 export async function refusal(body: unknown, resolve: (host: string) => Promise<string[]> = defaultResolve): Promise<string | null> {
   if (!body || typeof body !== 'object') return 'not a FlareSolverr request';
@@ -383,7 +368,7 @@ export async function refusal(body: unknown, resolve: (host: string) => Promise<
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return 'only web pages';
   if (parsed.username || parsed.password) return 'no passwords in addresses';
   const host = parsed.hostname.replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.ts.net') || host.endsWith('.internal')) return 'not a public site';
+  if (isPrivateHostName(host)) return 'not a public site';
   const addresses = isIP(host) ? [host] : await resolve(host).catch(() => [] as string[]);
   if (!addresses.length) return 'the site has no address';
   if (addresses.some(isPrivateAddress)) return 'not a public site';

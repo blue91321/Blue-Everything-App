@@ -99,6 +99,9 @@ type NavId = string;
 const DEFAULT_DRAWER_BREAKPOINT = 1200;
 
 export function App() {
+
+  /* ==== 1. Who is signed in, and which screen is showing ===================================== */
+
   const [session, setSession] = useState<Session | null>(null);
   /** Why a sign-in link to a person's copy did not work, for the pairing screen. */
   const [inviteProblem, setInviteProblem] = useState<string | null>(null);
@@ -194,6 +197,9 @@ export function App() {
       off();
     };
   }, []);
+
+  /* ==== 2. The menu: edit mode, folders, the logo, the drawer and its width ================== */
+
   // Re-render when the choices in Settings change.
   useMenuEntries();
   // Edit mode: outlined text renames, ⠿ moves. See edit-mode.ts.
@@ -261,6 +267,8 @@ export function App() {
   /** Docked open beside the content, as opposed to overlaying or hidden. */
   const isDesktop = wide && !collapsed;
   const drawer = useEdgeDrawer(!isDesktop);
+
+  /* ==== 3. Checking the session, and what follows from it ==================================== */
 
   /**
    * Re-check who we are, **without taking the app off the screen**.
@@ -374,6 +382,8 @@ export function App() {
       unsubscribe();
     };
   }, [session]);
+
+  /* ==== 4. Being sent somewhere (nav.ts), and which section is marked ======================== */
 
   /**
    * "Take me to that thing" — the right-click menu's half of the navigation.
@@ -495,6 +505,8 @@ export function App() {
     setSearch(null);
   }, []);
 
+  /* ==== 5. Not signed in yet: connecting, offline, or pairing ================================ */
+
   if (checking) {
     return (
       <div className="pair">
@@ -504,6 +516,8 @@ export function App() {
   }
   if (!session && unreachable) return <Offline onBack={() => setUnreachable(false)} />;
   if (!session) return <Pairing onPaired={checkSession} note={inviteProblem} />;
+
+  /* ==== 6. What this install has: the list of screens and menu entries ======================= */
 
   /*
    * A tab appears only when both halves agree it exists: the server has the
@@ -627,6 +641,8 @@ export function App() {
     );
   }
 
+  /* ==== 7. Where the drawer is, moving between screens, and menu folders ===================== */
+
   const shown = isDesktop || drawer.open || drawer.dragX !== null;
   const offset = drawer.dragX ?? (drawer.open ? DRAWER_WIDTH : 0);
 
@@ -686,6 +702,8 @@ export function App() {
     if (wide) setCollapsed(!next);
     else drawer.setOpen(next);
   };
+
+  /* ==== 8. Drawing: the menu, the page heading and the screen ================================ */
 
   /*
    * Nothing else in the app navigates itself, so this is the whole of the port.

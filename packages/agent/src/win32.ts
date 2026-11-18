@@ -18,7 +18,8 @@ const GetWindowTextW = user32.func('int GetWindowTextW(void* hWnd, _Out_ uint16_
 const GetWindowThreadProcessId = user32.func('uint32 GetWindowThreadProcessId(void* hWnd, _Out_ uint32* lpdwProcessId)');
 
 const RECT = koffi.struct('RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' });
-const MONITORINFO = koffi.struct('MONITORINFO', {
+// Registered under its name: the prototypes below refer to it as text.
+koffi.struct('MONITORINFO', {
   cbSize: 'uint32',
   rcMonitor: RECT,
   rcWork: RECT,
@@ -28,7 +29,7 @@ const GetWindowRect = user32.func('int GetWindowRect(void* hWnd, _Out_ RECT* lpR
 const MonitorFromWindow = user32.func('void* MonitorFromWindow(void* hwnd, uint32 dwFlags)');
 const GetMonitorInfoW = user32.func('int GetMonitorInfoW(void* hMonitor, _Inout_ MONITORINFO* lpmi)');
 
-const LASTINPUTINFO = koffi.struct('LASTINPUTINFO', { cbSize: 'uint32', dwTime: 'uint32' });
+koffi.struct('LASTINPUTINFO', { cbSize: 'uint32', dwTime: 'uint32' });
 const GetLastInputInfo = user32.func('int GetLastInputInfo(_Inout_ LASTINPUTINFO* plii)');
 const GetTickCount = kernel32.func('uint32 GetTickCount()');
 

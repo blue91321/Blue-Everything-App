@@ -114,3 +114,30 @@ export function useAsync<T>(
 
   return { data, error, loading, refreshing, receivedAt, reload };
 }
+
+/**
+ * The other half of a screen: doing something, where `useAsync` reads.
+ *
+ * `run` carries out one write and never throws. While it is going `busy` is
+ * true, for disabling the button that started it; if it fails, `problem` is
+ * the reason in words, for showing beside that button, and `run` answers
+ * `undefined`. One way of reporting a failed write for a whole screen, so no
+ * button on it fails silently.
+ */
+export function useAction() {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  async function run<T>(what: () => Promise<T>): Promise<T | undefined> {
+    setProblem('');
+    setBusy(true);
+    try {
+      return await what();
+    } catch (error) {
+      setProblem((error as Error).message);
+      return undefined;
+    } finally {
+      setBusy(false);
+    }
+  }
+  return { busy, problem, setProblem, run };
+}

@@ -28,7 +28,7 @@ Windows agent (Node)  ────┐
 - `packages/server` — Fastify + SQLite (Drizzle). The only writer of the database.
 - `packages/web` — React PWA. Served by the server on the same origin; also the Windows UI in a browser.
 - `packages/shared` — types and Zod schemas shared by all three.
-- `packages/modules/<id>` — the shipped packages (manga, voice, vault, integrations, weather, trips, push, code, blueprints).
+- `packages/modules/<id>` — the shipped packages (manga, voice, vault, integrations, weather, trips, calendar, push, code, blueprints).
 
 **For a map rather than a history, read [ARCHITECTURE.md](ARCHITECTURE.md)**,
 and the README in each package. This file is the record of why; those say
@@ -857,6 +857,143 @@ and four markers drawn, with no sideways scroll at 375px. **Not verified here**:
 live status, which needs a key, and how the screen looks, since the browser pane
 was hidden and would not take a screenshot.
 
+### Calendar: your own events, links, files, and a reminder before each
+
+`packages/modules/calendar/` (2026-11-13), asked for as "a calendar section
+and a way to import ICS files, maybe also connect with Google Calendar". Three
+choices were put and taken as recommended: Google by **pasting the calendar's
+secret iCal address** rather than an OAuth connection (a link needs no Google
+Cloud project, works the same for Outlook and Apple, and a read-only link is
+all a reminder needs); **your own events are made and edited here**, linked
+calendars read-only beside them; and reminders asked about **in onboarding, or
+the first time the calendar is opened** for somebody who updated into it,
+yes by default, with when set per event. `npm run calendar-check -w
+@everything/server` proves the rules with no network.
+
+**An event is a wall clock in a zone, not an instant** (`time.ts`): a weekly
+3pm meeting is at 3pm on both sides of a clock change, which an instant plus
+seven days is not. Instants are worked out when needed, with the trips
+package's `zonedToUtc` copied as `instantOf` (a package may not import
+another). The screen shows every event in the device's zone; an all-day event
+is a date, and the same date everywhere. A new event is made in the device's
+zone, which is what "3pm" meant when it was typed.
+
+**Repeats are RFC 5545's RRULE as calendars use it** (`recur.ts`): daily,
+weekly, monthly, yearly, every N, a count or an end date, weekdays with an
+ordinal ("second Tuesday", "last Friday"), days of the month (negative from
+the end) and months. BYSETPOS and the hourly and finer ones are left out, and a
+file that used them says so on the import's preview. Days are worked out as
+dates and the event's own time put on each. The editor offers the usual
+shapes (every day, weekday, week, month on a date or a weekday, year) and
+keeps a file's rule it cannot show as one of them, as "As it is".
+
+**Changing one of a series** asks *only this one*, *this and later ones* or
+*all of them*. One is taken out of the series (`skip`) and becomes an event of
+its own; later ones end the series the day before and start a new one; all
+moves the series' own first day by as much as this one moved. **Taken-out days
+move with a series whose time moved** (`shiftSkips`): they are walls, so a
+weekly 3pm with the 16th taken out, moved to 10am, takes out 10am on the 16th,
+or the 16th would come back beside the copy moved off it. Found by doing
+exactly that in the pane.
+
+#### Files and links
+
+**`.ics` is read by hand** (`ics.ts`), the call `zip.ts` and the PNG writer
+make: lines unfolded, parameters with quotes, text unescaped, and only
+`VEVENT`s (alarms in a file are its own app's; reminders here are this app's).
+Zones are taken by name: an IANA name, Mozilla's prefixed form, or a **Windows
+name**, which Outlook writes ("Eastern Standard Time"), mapped from a table of
+the common ones. A file's own `VTIMEZONE` blocks are not followed; a zone
+nobody knows is read in this PC's and the preview says so. A moved occurrence
+(`RECURRENCE-ID`) is taken out of its series and kept as its own event; a
+cancelled one is only taken out. **An import is previewed first and writes
+nothing**, like the vault's and the notes', and is merged by UID, so importing
+the same file twice changes nothing the second time (`merge.ts`).
+
+**A link is an address somebody pastes that the server fetches by itself**, so
+`link.ts` holds it to what a calendar link is: https only (webcal rewritten;
+plain http refused, since the address is the secret), no password in it,
+three redirects each checked again, 20 seconds, 10MB, and the answer must be a
+calendar. **It never reaches inside**: the name is looked up as the connection
+is made (a `lookup` hook on the request, not a check before it, so a name
+cannot answer one address to the check and another to the fetch), and this
+PC, the home network, the tailnet and link-local are refused, by core's
+`isPrivateAddress`, which the manga package's FlareSolverr door uses too. Verified: `127.0.0.1` refused by
+address, `localtest.me` (a public name pointing at 127.0.0.1) refused at the
+lookup. A link is shown with its secret part hidden, never sent back whole.
+
+**A link's events are kept on disk as fetched**, with when, so the calendar
+shows with the link unreachable and says how old it is; a failed fetch is
+written on the calendar beside the events it could not replace. **A refresh
+keeps each event's id** by UID, and with it the reminders already raised and
+any reminder times you set on it here (a linked event is read-only except
+those). Refreshed when the screen reads a link not asked for in an hour, and
+by the reminder timer when one is six hours old. `triedAt` is what that counts
+from, not `fetchedAt`, or a link that keeps failing would be asked every
+second.
+
+#### Reminders, and the one timer
+
+A reminder is an ordinary nudge (`reminders.ts`): it waits for a good moment
+and holds back during a game. What it carries is a **deadline a few minutes
+before the start** (five, or the start itself for a reminder at the start), so
+a meeting is not missed for a match that ran long, in the calendar's colour.
+**An all-day event's has none**: a birthday is not worth breaking into a game
+for. Each expires when its event ends.
+
+When: the event's own offsets, else its calendar's, else the usual (15 minutes
+before an event at a time; 9:00 on the day for an all-day one, stored as
+minutes before midnight, negative for after). A calendar can be set to remind
+about nothing (a holiday calendar), and a hidden one never reminds.
+
+**One timeout to the next reminder**, Trips' arrangement: re-armed after every
+change and at least every six hours, `unref`ed, cleared on close; the same wake
+refreshes old links. What was raised is recorded by occurrence and offset
+(`raised`), so a restart or the PC waking raises nothing twice; a reminder may
+still be raised until its event starts, or ten minutes past its own time.
+**Changing or deleting an event takes back its reminders still waiting** and
+forgets them, so the event as it is now is reminded of afresh; one already
+shown stays recorded, so fixing a typo does not remind you twice.
+
+Verified with a throwaway database and data folder (so nothing appeared on
+screen): an event ten minutes away raised `📅 Probe meeting`, "Today at 12:03
+PM to 12:33 PM · Room 4", deadline five minutes before, expiring at the end, in
+the calendar's blue; moving it expired that one and raised the moved one.
+
+#### Asking about reminders, from a package
+
+**Core's onboarding asks packages' questions without naming them**
+(`onboardingSteps` in `features/index.ts`): a package's `web/onboarding.tsx`
+is found by glob like its view, and asked before core's last step, only for a
+screen the person chose to show. The calendar's is `ask.tsx`, which the screen
+also shows as a card until answered, for an install whose onboarding was done
+before the calendar existed.
+
+#### Smaller things
+
+- **The calendar a screen saw before anything was saved has a fixed id**
+  (`mine`). It was a random id made on every read of a missing file, so an
+  event added to it was refused as "no such calendar". Found on the first add.
+- **One `Intl.DateTimeFormat` per zone, kept.** Making one costs far more than
+  using one: a 3,000-event import went from 1.8s to 0.27s, and reading a month
+  of it from 1.4s to 0.2s.
+- **The month is a dot per event on a phone** (a container query on the
+  screen's own width), the chosen day's list under it saying what they are; the
+  week starts on the locale's first day (`Intl.Locale` week info).
+- **"Coming up" on the Dashboard** (`calendar:upcoming`): today's events and the
+  rest of the week, at most eight, a row opening the calendar on its day.
+- **Routes announce under the package's own scope** (`calendar`,
+  `announce: false` on each), so a change reloads the calendar's readers and
+  not every screen.
+
+Verified in the pane at 375×812 and 1280×800 against the running app with
+throwaway events and calendars, then deleted: Google's public US holidays
+calendar added by link (317 events), a weekly event moved for one occurrence
+and then all of them, a `.ics` with a Tokyo-time series imported and shown at
+16:00 here, the Dashboard card, and no sideways scroll at phone width.
+**Not verified**: a real secret link (only a public one), and the onboarding
+step on a new copy.
+
 ### Manga is laid out like a reader
 
 `packages/modules/manga/web/view.tsx`. The screen takes the shape of the
@@ -1265,6 +1402,29 @@ eight-second budget — and Suwayomi keeps what it fetched, so a page is slow on
 and immediate after. A title still unknown when the budget runs out is **shown
 and counted**, because hiding every unknown would empty a first visit to a slow
 source.
+
+**And shows only series with tags you pick** (2026-11-16, asked for as
+"positive filtering so only series with those tags can appear"). **One list of
+tags, each tapped round three states** (`HideTags`, `cycle`): off, **hidden**
+(red), **shown only** (blue), off again. That replaced a second section of
+"show only" chips the same day, on being told that did not make sense: the same
+tag was offered twice, once per section. The list's order never moves as you
+tap (Ecchi, Mature and Adult, the common ones, any typed, then a dozen of your
+library's own), so a tag stays under your finger; a typed one arrives red, as a
+first tap leaves it. With two or more blue, **all of the blue ones** (the
+default) or **any of them**. The red and blue are fixed colours, not the
+accent, which may itself be red or blue. Per device beside the hidden ones
+(`loadWantedTags`); sent as `&only=` (and `&any=1`), matched by `hasWanted` in
+`mature.ts` with the same families the hidden ones use, so BL finds Yaoi. A
+hidden tag wins over a wanted one, and hiding a wanted tag takes it out of the
+wanted ones. **A title whose tags are not known in time is left out**, where
+for hiding it is shown: shown, it would break "only these". Both are counted
+(`missing`, `uncheckedOut`) and said under the tabs, and an empty page says it
+had nothing with those tags rather than that the source listed nothing. Paged
+as before, so a narrow filter may need More a few times. Measured on
+MangaFire's popular page with the three hidden: 38 shown, 11 with Romance, 5
+with Romance and Fantasy, 30 with either; in the pane at 375×812, Romance and
+Isekai together showed none on page one and said so, and either showed 12.
 
 **Every name a series goes by** (`names.ts`, 2026-11-12). Searching other
 sources used one name, the library's, and 3 of 912 series had another stored:
@@ -1758,6 +1918,78 @@ sources — JPEG, WebP and PNG — and accepted every one, while refusing
 TopManhua's error messages. A check that refused real pages would have emptied
 every chapter, which is why that was measured rather than assumed.
 
+#### A page's address names a place in the list, and that place moves
+
+Found on *S-Class Hunter Heals with Monsters* (2026-11-18), reported as
+chapters 59 and 60 being identical. **Suwayomi names a chapter in a page's
+address by its position in the series' list (`sourceOrder`), not by its id**:
+`/api/v1/manga/12911/chapter/60/page/0` is "page 1 of the chapter at position
+60". Thunder Scans posted 60 and 61, and 59 half an hour later; Suwayomi
+renumbered (59 took 60, 60 moved to 61, 61 to 62), so every address kept from
+before named the chapter beside it. The Local collection held all three
+correctly (60 and 61 saved at 10:26, 59 at 10:56), but both 59 and 60 listed
+the address `chapter/60/page/N`, and `archivedPage` found a page by address
+alone and answered with the first chapter that had it: 60 was served 59's
+pages. The reading cache, the smaller-copy cache and the device's saved
+copies (kept by URL) found pages the same way, and a page fetched by a kept
+address asked Suwayomi for the wrong chapter. Measured at Suwayomi: positions
+60, 61 and 62 now give 59, 60 and 61's pictures byte for byte.
+
+- **A page's URL carries its chapter** (`&c=<chapterId>`, `pageUrl` in
+  `routes/reading.ts`), and the Local collection, the reading cache and the
+  smaller copies find a page by its chapter as well as its address
+  (`archivedPage`, `cachedPage`, `cachedPageAnywhere`, `keepPage`). The
+  device keeps saved pages by URL, so the chapter in it keeps two chapters
+  apart there too. A URL without one (an older screen) is served as before.
+- **Nothing is fetched by a kept address** (`page-path.ts`): before Suwayomi is
+  asked, the chapter's position is asked afresh (`chapter(id) { sourceOrder }`,
+  remembered a minute, forgotten whenever a chapter list is fetched from the
+  site) and the address moved to it (`currentPagePath`, `movedPath`). In the
+  page route, the reading cache's fill and a friend's copy's fetches.
+- **The Local collection matches a kept page by its page number**, not its
+  address, when resuming a chapter (`samePage`), and brings its address up to
+  date.
+
+**Found by itself next time, in three places**, all by the same rule
+(`web/duplicate-pages.ts`, no imports, asserted by `manga-check`): two
+chapters of one series whose pages are the same sizes to the byte, page for
+page, at three pages or more where both have one, are the same pictures.
+
+- **The Local collection** (`mendDuplicates`, at startup and after each chapter
+  is kept): both chapters are fetched again over their own files (`refetch`),
+  which are overwritten as new pages arrive and never deleted first, since
+  the copy here may be the only one left. Meanwhile neither is served from the
+  collection. Found the same again after that (`twiceAt`), the source itself
+  gives the same pages, and it says so in the chapter's error rather than
+  fetching round and round. Its first run found Eleceed 246.3 and 246.4, 92
+  pages each and the same: MangaFire posts them with the same pages (its
+  positions 524 and 525 give the same picture), so they are fetched once more
+  and then left with that error.
+- **The reading cache** (`dropDuplicateCopies`, at startup and after a chapter
+  is filled): both dropped, to be fetched again.
+- **The device** (`chapter-prints.ts`): each chapter read notes its pages'
+  sizes as they came (a page made smaller on the way is left out), the last
+  400 chapters in `localStorage`. A chapter matching another of the series
+  read here is fetched again by itself, once (`fixed`, in memory too, or a
+  device that refuses storage fetches it again for ever: the first version
+  did, by losing the mark another way); still matching after that, a card
+  says **Same pages as chapter N** with **Fetch both again**.
+
+**And by hand**, for when none of that notices: the gear's More has *Showing
+another chapter's pages? Fetch this chapter again*. `POST
+/api/manga/:id/chapters/:chapterId/refetch` asks the source for the page list
+by the chapter's id first, and only when it gives one lets go of the reading
+cache's copy and sets the Local collection's to be fetched again
+(`refetchKeptChapter`, to the front of the queue); the device drops its saved
+copy and what it held ahead. A source that no longer gives the chapter leaves
+every copy here alone. A friend's copy cannot change the host's collection.
+
+Verified on the running app: 59, 60 and 61's first pages served through the
+app matched their kept files (they had been 59, 59 and 61); chapter 60 asked
+past every kept copy came from Suwayomi's position 61 and was 60's. In the pane
+at 375×812 on Test A with a planted print: one fetch again by itself, then the
+card; the gear's button fetched it again once more and redrew it.
+
 #### A page that fails is asked for again before you are
 
 Most pages that fail are **refused, not slow**. MangaFire's image server now
@@ -1837,6 +2069,27 @@ Three changes, for whatever the cause next time:
   it falls back to your source's chapter from the top. Measured on the chapter
   that started this: Manga Demon and MangaHub both had chapter 64, found in
   12.8 seconds, and Manga Demon's opened with 15 pages to Thunder Scans' 14.
+- **And then "Is this correct?"** (2026-11-17, `SourceCheck` in `Reader.tsx`,
+  `switched` in `Chapters.tsx`). Once a chapter has been read from another
+  source, a button hangs under the top bar, *Reading from X · keep it?*, going
+  with the controls so it never covers a page. Pressing it opens **Is this
+  correct?**: not a dialog but a card under the bar, 70px tall at 375px with
+  the three answers on one row, nothing dimmed and nothing to dismiss, so the
+  pages can be scrolled and looked at before answering (asked for as "so the
+  user can actually check", after a first version covered them). It stays in
+  one place as the controls come and go: it moved up into the bar's place at
+  first, and a tap meant for the gear landed on its ✕ when the bar hid on its
+  timer. Its ✕ hides it back to the button. The three answers: **Confirm source** follows the series on that
+  source (`PUT /api/manga/:id/source`, linking by hand; each copy now carries
+  its series' `title` there), and the chapter open becomes the series' own;
+  **Check a different source** lists the other copies of the chapter in the
+  question itself, leaving out the one open; **Go back to Y** reopens the
+  followed source's chapter from the top, or, moved on since, only stops
+  asking. It is asked until answered or the reader closes, so finishing the
+  copy and reaching a chapter the followed source cannot load still has it on
+  screen. Verified on Test B at 375×812: each of the three, Confirm leaving
+  Test B on Test A's source (and named Test A, as linking renames to a
+  source's English name).
 - **Two ways to ask again by hand.** A slow slot has **Try again now**, a
   fresh request alongside the one still waiting, whichever answers first. And
   the gear has **Reload**: the pages not on screen yet, fresh and in reading
@@ -2765,6 +3018,43 @@ and More, with the two countdowns behind More.
   on a dashed ring those grow each dash by half its width at both ends until the
   gaps close and the cog is a ring.
 
+### Test A and Test B: a test platform on this PC
+
+`server/test-source.ts` (2026-11-17), asked for as test series "only visible
+or usable by me or Claude on my machine", to try the screens without leaning
+on a real site. **Manga → More → Test series (this PC only)** adds two series
+to the Library, each on a made-up source of its own: **Test A** always works,
+12 chapters of 8 pages drawn on the PC (sharp renders an SVG naming the series,
+chapter and page; a plain one-colour PNG if sharp will not load), and **Test
+B** fails the way the card's choice says: its pages refused after 0.6s
+(`pages`), its source not answering (`down`), or the series gone ("No chapters
+found", `gone`). Each lists the other's name as one of its own (`altTitles`),
+as a real series with an English and a romanised name does, so **every way
+round a failing source leads from B to A**: the reader's "read this chapter
+from another source", Other sources, Switch sources and the switch after two
+days.
+
+**Answered inside the source adapter, not beside it**: `SuwayomiAdapter`'s
+listing, searching, details, chapters and pages ask `test-source.ts` first,
+and `sharedPage` draws or refuses a test page before fetching, so every route,
+the sweep and the Local collection meet them as they would a real source, and
+none of that code knows. Suwayomi is never asked about them and need not be
+running (`reader()` skips starting it). Ids no real source hands out (sources
+`9100000000000000001` and `…02`, series `990000001` and `…02`, a chapter its
+series' id and three digits), and nothing about them reaches MangaDex
+(`namesFor` skips their titles).
+
+**This PC only**: the routes are local-only, the switch is off on a friend's
+copy, and the Library list, Browse's sources and its search leave them out for
+a request from any other device. Off takes both out of the Library, with
+anything kept of them in the Local collection. Changing how B fails clears the
+last mode's error, which would otherwise stand until its next check.
+
+Verified on the running app: Test B's chapter 3 in the reader at 375×812,
+all 8 pages failed, *Read this chapter from another source* listed "Test A
+source" and opened its chapter 3, drawn; Other sources on B listed Test A
+first; `down` and `gone` each gave their own error.
+
 ### Finding sources, and a chapter from somewhere else
 
 **No source yet → Find sources** (`find-sources.ts`): each series without a
@@ -2787,8 +3077,9 @@ pages, matching five neighbours. The Archive row says so.
 
 **A page already in the reading cache is copied, not fetched**
 (`cachedPageAnywhere` in `page-cache.ts`): keeping a series you were just
-reading takes those chapters off this disk. By path alone, since Suwayomi's
-path carries its chapter id, and only a whole picture. The host's own cache
+reading takes those chapters off this disk. By chapter and path, since a path
+names its chapter's place in the list, which moves (see **A page's address
+names a place in the list**), and only a whole picture. The host's own cache
 only: a friend's copy's cache is its own folder, which the host does not read.
 
 **The archive's writes retry a refused rename** for up to ~3s: the same run hit
@@ -3716,6 +4007,50 @@ list of running games (`games`, added to core's attention happening, which
 also speaks when that list changes), rather than first in it. The screen is
 told when a status moves: a game opening or closing, the agent checking in
 after being away, and voice switched (it reads `settings`).
+
+**A switch box is only as able to start as what flips it** (2026-11-16,
+`switchState`), asked for as "if the only way for the switch to be flipped is
+in a game, idle the blueprint". *A switch turns on or off* read **on** always,
+so *Warframe Hotkeys* (an F1 watched in Warframe flipping a switch, and the
+loop on that switch, in one blueprint) read on all day with Warframe closed.
+Now the box asks every switched-on blueprint with a *Flip a switch* that can
+turn that switch the right way (to on for "turns on", the other way counting
+for both), this one included, and takes the best answer: on if one can start,
+idle with its reason (*waiting for Warframe to be open*) if the best waits,
+disabled ("nothing flips …") if none can. A switch already on is live. The
+switches being asked about are carried down (`seen`), so a switch only its own
+switch box flips, or two that flip each other, end the asking as unable to
+start themselves rather than going round.
+
+**A hotkey can count only in a game** (2026-11-16, *Only when* on the hotkey
+box, `hotkeyOnly`): anywhere, while a game is in front, or while a game you
+pick is in front. It is registered only while that game (or any game) is open,
+so it takes its keys from nobody otherwise, and **a press counts only with the
+game in front at that moment**: the agent sends the exe of the window in front
+with every press (`front`, `pressCounts`), since the heartbeat that says which
+game is in front can be seconds behind an alt-tab. An agent older than this
+sends none and the heartbeat stands in. A box saved before with a game named
+reads as *a game I pick* (`upgradeFields`), which changes one thing: a
+registered key for a game used to count while the game was open and now counts
+only with it in front, as asked. A watched key was always checked that way.
+`showWhen` took an `or`, so the game picker shows for a watched key or for
+*a game I pick*. Verified on the real blueprints: *Warframe Hotkeys* idle,
+waiting for Warframe, the hotkey box drawing as before. **Not verified**: a
+press in a game, since nothing here plays one.
+
+**And Press keys can press only into a game** (2026-11-16, *Only into* on the
+box, `pressInto`), asked after it was pointed out that *Warframe Hotkeys*,
+toggled on in Warframe, went on pressing 4 every five seconds into whatever
+was in front once you alt-tabbed out, and after Warframe closed (a switch
+stays on until flipped). Whatever is in front, a game when one is in front, or
+a game you pick. The server sends the exes allowed (the game picked, or the
+games open by the heartbeat) with the task as `into`, and **the agent compares
+them with the window in front at the moment of the press**: a press that
+would land elsewhere is not made, the agent answers `false`, the step reads
+"Skipped 4: Warframe was not in front", and the run carries on, so alt-tabbing
+back resumes it. A timeline is checked once, before it plays. Verified on this
+PC with a throwaway blueprint and Warframe closed: both kinds skipped, the run
+went on, nothing was typed. *Warframe Hotkeys*' press of 4 was set to Warframe.
 
 **Adding a box is a search** (`web/search.ts`): by name, by what it does, and
 by the other things somebody might call it (`KEYWORDS`), so "while playing",
@@ -4871,6 +5206,74 @@ the Packages screen are a different axis: they report the app's version while
 they ship with it, and gain their own `version` in the manifest if one is ever
 downloaded separately. Keeping those apart is what stops "one version for the
 app" and "this package is newer than that one" contradicting each other.
+
+## Keeping the code easy to change (2026-11-15)
+
+A pass over all of it, asked for as getting rid of tech debt "so less bugs pop
+up in the future" and so that anyone can read and edit the code at a glance.
+Measured first: 136,000 lines, and less debt than that suggests. No TODOs, no
+`@ts-ignore`, about forty unused imports, locals and exports, five unused CSS
+rule groups. What was done, and the rules that came out of it:
+
+- **The compiler refuses unused code everywhere.** `noUnusedLocals`,
+  `noUnusedParameters`, `noImplicitOverride` and `noFallthroughCasesInSwitch`
+  are on for the server and the agent as they were (in part) for the PWA.
+  A parameter that has to be there and is not read starts with `_`. A koffi
+  struct registered only for its name is a bare `koffi.struct(...)` call with
+  no binding (`win32.ts`).
+- **One way to write a file: `writeFileAtomic`** (`server/src/atomic-write.ts`,
+  on `module-api`). There were about twenty copies of "write `x.tmp`, rename
+  it over `x`". Three retried when Windows refused the rename (the archive,
+  blueprints, the calendar), each differently, and the rest did not, the manga
+  library and reading places among them, in an app that lives in a OneDrive
+  folder. Now all of them retry EPERM, EBUSY and EACCES ten times over about
+  2.7 seconds. Weather's store, `modules.json`, `features.json` and the
+  configuration files were plain `writeFileSync` and go through it too.
+  `modules-check` asserts it. **Do not write a store any other way.**
+- **One `isPrivateAddress`** (`server/src/private-address.ts`, on
+  `module-api`), with `isPrivateHostName` beside it. The calendar had copied
+  the manga package's, and the two had already drifted: the calendar refused
+  `.lan` and `.home.arpa` names and FlareSolverr's door did not. Both use
+  the one list now, so the door is the stricter of the two.
+- **Smaller merges**: `useAction` (Trips and Calendar had the same hook) is
+  core's, beside `useAsync`; `normalisePush` is exported from `routes/tasks.ts`
+  for habits; blueprints' two `noise` generators are one, in `speech.ts`.
+- **The integrations routes are a folder**, `server/routes/`, by subject
+  (accounts, spotify, friends, follows, music, coursework, shared), moved line
+  for line the way manga's were: a script compared every non-import line
+  before and after. `routes.ts` lists them. Its header said the OAuth
+  callback was under `/api/`, which had not been true since the callback
+  moved; it says where it is now.
+- **Long components have numbered banners**, `/* ==== 4. Loading ==== */`:
+  `Reader.tsx` (ten parts, listed at the top of the file with the rule files
+  it leans on), `App.tsx`, `Chapters.tsx` and `SoundShape.tsx`. No logic
+  moved. **The reader was deliberately not taken apart**: its 2,400-line
+  component shares the scroll position and page list across nearly every
+  statement, its bugs have mostly been ones only an iPhone showed, and scroll
+  mode cannot be checked in a hidden pane. Splitting it into hooks is worth
+  doing only with the phone in hand, a part at a time.
+- **Left as they are, on purpose**: `voice/server/routes.ts` and
+  `blueprints/server/index.ts` are long, but they are many short routes and
+  functions over module-level state (`let`), which another file can read and
+  not assign, so splitting them is a rewrite and not a move. About 340 exports
+  are used only in their own file; they are mostly types and constants and
+  were left exported. The trips and calendar zone arithmetic stay two copies:
+  different signatures, and the calendar's `time.ts` has no imports so its
+  check can assert it.
+- **The Dockerfile says in its first line that it is stale**, with what it
+  leaves out, since somebody opening it has not read this file.
+- **`.editorconfig`** states the layout the code already has, and the
+  `prettier` options to use when formatting a file by hand.
+
+**Not done, and worth doing:** there is no linter. About seventy
+`eslint-disable-next-line react-hooks/exhaustive-deps` comments are written
+for one that is not installed. ESLint with the hooks rules and
+`no-floating-promises` would catch two kinds of bug this file records (a hook
+after an early return, error #310; an async handler whose rejection nobody
+saw), at the price of three dev dependencies. And `drizzle-kit` is still a dev
+dependency with a `drizzle.config.ts`, though it must never be run and its
+scripts are gone: removing both would remove the trap and the esbuild override
+it needs.
 
 ## Typechecking
 

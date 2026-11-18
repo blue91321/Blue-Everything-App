@@ -12,9 +12,9 @@
  * guest sends its whole set, so there is nothing to merge and nothing that can
  * drift: the set on disk is whatever that copy last said.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 
 const FILE = join(dataDir, 'manga-shared-ratings.json');
 
@@ -34,9 +34,7 @@ export function setShared(copy: string, ratings: Record<string, { rating: number
   const all = readShared();
   if (Object.keys(ratings).length === 0) delete all[copy];
   else all[copy] = { at: Date.now(), ratings };
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${FILE}.tmp`, JSON.stringify(all));
-  renameSync(`${FILE}.tmp`, FILE);
+  writeFileAtomic(FILE, JSON.stringify(all));
 }
 
 /** Everyone else's rating of one series, by who rated it. */

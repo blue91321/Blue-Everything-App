@@ -33,7 +33,7 @@ import { chapterText } from './judge';
 import { sourceLabel } from './Library';
 import { ageOf, manga, type SeriesSummary, type SourceChapter } from './manga-api';
 import { SourceTrouble } from './SourceTrouble';
-import { Reader } from './Reader';
+import { Reader, type ElsewhereChapter } from './Reader';
 import { usePositionSaver } from './usePositionSaver';
 import {
   clearProblem,
@@ -158,6 +158,9 @@ export function Chapters({
   /** The chapter that was open when the page was reloaded: straight back into it. */
   reopenChapterId?: string;
 }) {
+
+  /* ==== 1. What is loaded, what is open, and how the list is shown =========================== */
+
   /*
    * Back closes the chapter list and returns to whichever tab opened it.
    *
@@ -172,6 +175,12 @@ export function Chapters({
   /** What the device's reading log calls this series — a name, so the exported file is readable. */
   const logTitle = series?.title ?? list.data?.seriesTitle ?? '';
   const [open, setOpen] = useState<SourceChapter | null>(null);
+  /**
+   * A chapter read from another source than the series follows, and the
+   * followed source's chapter it stood in for: the reader asks "Is this
+   * correct?" about it until answered or closed.
+   */
+  const [switched, setSwitched] = useState<{ copy: ElsewhereChapter; from: SourceChapter } | null>(null);
   const [resume, setResume] = useState<{ page: number; offset: number } | null>(null);
   /*
    * Read while you wait: on while you are reading from it, off when you close
@@ -217,6 +226,9 @@ export function Chapters({
       // Honoured while the screen is open, even unremembered.
     }
   };
+
+  /* ==== 2. Your place, what is saved, and which copy of a chapter the list shows ============= */
+
   const saver = usePositionSaver(seriesId);
   // Watched by the Back beside the ☰, shown once this one has scrolled away.
   const backRef = useRef<HTMLButtonElement>(null);
@@ -269,6 +281,8 @@ export function Chapters({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
+
+  /* ==== 3. Saving chapters to this device ==================================================== */
 
   function save(chapter: SourceChapter, first = false) {
     if (!data) return;
@@ -345,6 +359,8 @@ export function Chapters({
   /** Chapters of this series saving or waiting to, with the PC reachable: what makes Read while you wait worth offering. */
   const downloadingHere = offlineSupported && !net.offline && (savingNow !== null || waitingHere > 0);
   const firstChapter = data && data.chapters.length > 0 ? [...data.chapters].sort((a, b) => a.number - b.number)[0]! : null;
+
+  /* ==== 4. Opening a chapter, and reading while it saves ===================================== */
 
   /**
    * This chapter and the `count` after it, in the order Next will open them.
@@ -480,6 +496,8 @@ export function Chapters({
     else if (nextUp) read(nextUp);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [continueOnOpen, data]);
+
+  /* ==== 5. Done to the series: refresh, unlink, unfollow, keep, shelves, rating, star ======== */
 
   async function refresh() {
     setBusy(true);
@@ -663,6 +681,8 @@ export function Chapters({
     }
   }
 
+  /* ==== 6. Moving between chapters, and finishing one ======================================== */
+
   function go(direction: -1 | 1) {
     if (!open) return;
     saver.flush();
@@ -738,6 +758,8 @@ export function Chapters({
     }
   }
 
+  /* ==== 7. Drawing: the waiting screen, the reader, or the list ============================== */
+
   if (waiting) {
     return (
       <WaitForChapter
@@ -775,6 +797,7 @@ export function Chapters({
           saver.flush();
           setOpen(null);
           setResume(null);
+          setSwitched(null);
           // Reading ahead is a way of reading, so it ends when the reading does.
           setAhead(false);
           // So the card and the row say the page you just left, not the one before.
@@ -806,8 +829,39 @@ export function Chapters({
            */
           saver.flush();
           setResume(null);
+          // Checking a different source from a copy goes back to the same followed chapter as the first did.
+          setSwitched((had) => ({ copy, from: had && open.id === had.copy.chapterId ? had.from : open }));
           setOpen({ ...open, id: copy.chapterId, name: `${copy.chapterName} (${copy.sourceName})`, scanlator: null, uploadedAt: null });
         }}
+        sourceCheck={
+          switched
+            ? {
+                sourceName: switched.copy.sourceName,
+                fromName: data ? sourceLabel(data.sourceName) : 'your source',
+                reading: open.id === switched.copy.chapterId,
+                onConfirm: async () => {
+                  const { copy } = switched;
+                  await manga.source.link(seriesId, {
+                    id: copy.mangaId,
+                    title: copy.title ?? series?.title ?? data?.seriesTitle ?? '',
+                    sourceName: copy.sourceName,
+                  });
+                  // The copy is this series' own chapter now, so it loses the "(source)" after its name.
+                  if (open.id === copy.chapterId) setOpen({ ...open, name: copy.chapterName });
+                  setSwitched(null);
+                  list.reload();
+                },
+                onBack: () => {
+                  if (open.id === switched.copy.chapterId) {
+                    saver.flush();
+                    setResume(null);
+                    setOpen(switched.from);
+                  }
+                  setSwitched(null);
+                },
+              }
+            : null
+        }
         onPosition={(p) =>
           saver.note({ chapter: open.number, chapterId: open.id, chapterName: open.name, ...p })
         }

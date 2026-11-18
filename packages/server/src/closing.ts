@@ -17,7 +17,8 @@
  *
  * The agent does the watching and the stopping (it owns the PC); this decides.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { writeFileAtomic } from './atomic-write.js';
 import { resolve } from 'node:path';
 import { and, gt, inArray, isNotNull, isNull, ne, or, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -48,9 +49,7 @@ export function readClosing(): Closing {
 }
 
 function writeClosing(next: Closing): void {
-  mkdirSync(dataDir, { recursive: true });
-  writeFileSync(`${FILE}.tmp`, JSON.stringify(next));
-  renameSync(`${FILE}.tmp`, FILE);
+  writeFileAtomic(FILE, JSON.stringify(next));
 }
 
 /** What needs the background right now, for that side, in words. Empty means nothing does. */

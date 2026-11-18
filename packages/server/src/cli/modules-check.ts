@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isSafeEntryName, readZip, stripCommonPrefix, ZipError, type ZipEntry } from '../zip.js';
+import { isSafeEntryName, readZip, stripCommonPrefix, type ZipEntry } from '../zip.js';
 import { fullPanelId, validateModuleManifest } from '@everything/shared/modules';
 import { installFromZip, modulesDir, removeModule, scanModules, setModuleEnabled } from '../modules.js';
 
@@ -344,6 +344,29 @@ try {
     if (existsSync(join(modulesDir, TEST_ID))) removeModule(TEST_ID);
   } catch {
     // Already gone, which is the outcome wanted.
+  }
+}
+
+/*
+ * The one function every store on disk is written through (`atomic-write.ts`).
+ */
+{
+  const { writeFileAtomic } = await import('../atomic-write.js');
+  const work = mkdtempSync(join(tmpdir(), 'everything-write-'));
+  try {
+    const file = join(work, 'made', 'on', 'the', 'way', 'store.json');
+    writeFileAtomic(file, '{"a":1}');
+    check('writeFileAtomic makes the folder and writes the file', readFileSync(file, 'utf8') === '{"a":1}');
+    writeFileAtomic(file, '{"a":2}');
+    check('  ...replaces what was there', readFileSync(file, 'utf8') === '{"a":2}');
+    check('  ...and leaves no .tmp beside it', !existsSync(`${file}.tmp`));
+    writeFileAtomic(join(work, 'bytes.bin'), new Uint8Array([1, 2, 3]));
+    check('  ...and takes bytes as well as text', readFileSync(join(work, 'bytes.bin')).length === 3);
+    // A folder where the file should go cannot be renamed over: that must throw, not hang or pass.
+    mkdirSync(join(work, 'taken.json'));
+    threw('  ...and a write that cannot land says so', () => writeFileAtomic(join(work, 'taken.json'), 'x'), /./);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
   }
 }
 

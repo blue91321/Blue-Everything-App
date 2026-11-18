@@ -7,7 +7,7 @@ screen.
 
 | Where | What |
 | --- | --- |
-| `server/routes.ts` | Its API, `/api/integrations/*`, and its two timers (the coursework sync and the Spotify forum watch). |
+| `server/routes.ts`, `server/routes/` | Its API, `/api/integrations/*`, one file per group (accounts, spotify, friends, follows, music), and its two timers (`routes/coursework.ts` and the Spotify forum watch). `routes.ts` lists them. |
 | `server/providers/` | One file per service, plus `spotify-shuffle.ts` (the shuffle) and the rules files beside it. |
 | `server/store.ts`, `sync.ts`, `oauth.ts` | Storage, syncing, and connecting accounts. |
 | `agent/` | Riot's friends list, read from the League client on this PC. |

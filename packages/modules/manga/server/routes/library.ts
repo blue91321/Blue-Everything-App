@@ -6,7 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
-import { db, nudges, config, devices, isGuest, nameFor } from '@everything/server/module-api';
+import { db, nudges, devices, isGuest, nameFor } from '@everything/server/module-api';
 import { available as compressionAvailable, isQuality } from '../compress.js';
 import { chapterValue } from '../identity.js';
 import { search, fetchCover, MangaDexError } from '../mangadex.js';
@@ -31,7 +31,8 @@ import { readableChapter } from '../sources.js';
 import { findSourcesState, goneCount, startFindingSources, switchNow, unlinkedCount } from '../find-sources.js';
 import { searchOldHistory } from '../old-history.js';
 import { othersRatings, setShared } from '../shared-ratings.js';
-import { keptMangaIds } from '../archive.js';
+import { keptMangaIds, stopArchive } from '../archive.js';
+import { TEST_A, TEST_B, isTestMangaId, setTestState, testState, type TestBMode } from '../test-source.js';
 import { COVER_CACHE, askHost, autoKeep, hostJson, hostKept, mangaIdFor } from './shared.js';
 
 /** A glimpse's cover as the screen can fetch it: Suwayomi's through the proxy, anything else as it is. */
@@ -76,6 +77,37 @@ export function libraryRoutes(app: FastifyInstance): void {
     return { autoSwitchSources: store.autoSwitchSources };
   });
 
+  /*
+   * Test A and Test B (`test-source.ts`), switched on and off from More, on
+   * the PC that runs the app only: a test platform, not part of anybody's
+   * library. On adds the two to the library, linked to their test sources;
+   * off takes them out, and anything kept of them in the Local collection.
+   */
+  app.get('/api/manga/test-source', async (request) => ({ ...testState(), available: !isGuest && request.isLocal }));
+  app.put('/api/manga/test-source', async (request, reply) => {
+    if (isGuest || !request.isLocal) return reply.code(403).send({ error: 'Test series are only on the PC that runs the app.' });
+    const body = (request.body ?? {}) as { on?: unknown; bMode?: unknown };
+    const next = setTestState({ on: typeof body.on === 'boolean' ? body.on : undefined, bMode: body.bMode as TestBMode });
+    const store = read();
+    const isTest = (s: { source: { mangaId: string } | null }) => isTestMangaId(s.source?.mangaId);
+    if (next.on) {
+      for (const t of [TEST_A, TEST_B]) {
+        if (store.series.some((s) => s.source?.mangaId === t.mangaId)) continue;
+        const series = newSeries({ title: t.title, coverUrl: null, status: 'ongoing', mangadexId: null, malId: null, anilistId: null, muId: null, altTitles: [t.other] });
+        series.source = { adapter: 'suwayomi', mangaId: t.mangaId, title: t.title, sourceName: t.sourceName };
+        store.series.push(series);
+      }
+      // A new way for Test B to fail starts clean: the last one's error would otherwise stand until its next check.
+      if (body.bMode !== undefined) for (const s of store.series.filter(isTest)) s.error = null;
+    } else {
+      for (const s of store.series.filter(isTest)) stopArchive(s.id, { deleteFiles: true, mangaId: s.source!.mangaId });
+      store.series = store.series.filter((s) => !isTest(s));
+      store.glimpses = store.glimpses.filter((g) => !isTest(g));
+    }
+    write(store);
+    return { ...next, available: true };
+  });
+
   app.get('/api/manga/find-sources', async () => ({ ...findSourcesState(), unlinked: unlinkedCount(), gone: goneCount() }));
   // `mode: 'gone'` switches every series its source has lost to another source that has it.
   app.post('/api/manga/find-sources', { config: { announce: false } }, async (request) => {
@@ -104,14 +136,15 @@ export function libraryRoutes(app: FastifyInstance): void {
   app.get('/api/manga/ignored-sources', async () => ({ ignoredSources: read().ignoredSources }));
 
   /** The library, already shaped for the screen. */
-  app.get('/api/manga', async () => {
+  app.get('/api/manga', async (request) => {
     const store = read();
     const positions = readPositions();
     // Kept on the PC, for the library's "On this PC" filter: the host's own
     // archive, or on a guest copy the host's, which every copy shares.
     const kept = isGuest ? await hostKept() : keptMangaIds();
     return {
-      series: store.series.map((s) => {
+      // Test A and Test B only to this PC (`test-source.ts`).
+      series: store.series.filter((s) => request.isLocal || !isTestMangaId(s.source?.mangaId)).map((s) => {
         const place = positions[s.id] ?? null;
         const shown = readableChapter(s.sourceChapter, s.latestChapter).chapter;
         return {

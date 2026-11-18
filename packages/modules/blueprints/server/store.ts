@@ -11,9 +11,9 @@
  * things you made by hand, and reading a stray comma as "no blueprints" and
  * then saving would replace every one of them. The screen says so instead.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 import { cleanGraph, type Blueprint, type Step } from '../web/engine.js';
 
 export const STORE_FILE = join(dataDir, 'blueprints.json');
@@ -60,19 +60,7 @@ function readJson(file: string): unknown {
 }
 
 function writeJson(file: string, value: unknown): void {
-  mkdirSync(dataDir, { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  for (let tries = 0; ; tries += 1) {
-    try {
-      renameSync(temp, file);
-      return;
-    } catch (error) {
-      // OneDrive or a scan holding the file for a moment; the archive learned this.
-      if (tries >= 20 || !['EPERM', 'EBUSY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
-    }
-  }
+  writeFileAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 export function readFolders(): Folder[] {

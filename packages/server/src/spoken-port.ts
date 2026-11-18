@@ -109,8 +109,3 @@ export function onSpokenChange(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
-
-/** Only for tests. */
-export function resetSpokenPort(): void {
-  port = NONE;
-}

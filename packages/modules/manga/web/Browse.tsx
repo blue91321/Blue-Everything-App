@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Editable } from '@app/ui-text';
 import { Cover } from './Cover';
 import { Icon } from './Icons';
-import { COMMON_TAGS, FIRST_TAGS, isFirstTag, loadHiddenTags, saveHiddenTags } from './hidden-tags';
+import { COMMON_TAGS, FIRST_TAGS, loadHiddenTags, loadWantedTags, saveHiddenTags, saveWantedTags } from './hidden-tags';
 import { SeriesDetail } from './SeriesDetail';
 import { languageName } from './judge';
 import {
@@ -70,6 +70,8 @@ export function Browse({
   // Ecchi, Mature and Adult unless changed, and per device: what is fine on the
   // PC may not be on the phone. See `hidden-tags.ts`.
   const [hide, setHide] = useState<string[]>(loadHiddenTags);
+  // And the tags a series must have to be shown, none by default; also per device.
+  const [wanted, setWanted] = useState(loadWantedTags);
   // A small button at the end of the tab row opens the tags, rather than a row
   // of them above every grid: set once and left, so not a line of every visit.
   const [hideOpen, setHideOpen] = useState(false);
@@ -184,7 +186,20 @@ export function Browse({
   function chooseHide(next: string[]) {
     setHide(next);
     saveHiddenTags(next);
+    // A tag is one or the other: hiding it takes it out of the wanted ones.
+    const left = wanted.tags.filter((t) => !next.some((h) => h.toLowerCase() === t.toLowerCase()));
+    if (left.length !== wanted.tags.length) chooseWanted(left, wanted.any);
   }
+
+  function chooseWanted(tags: string[], any: boolean) {
+    setWanted({ tags, any });
+    saveWantedTags(tags, any);
+  }
+
+  const filtering = hide.length > 0 || wanted.tags.length > 0;
+  const filterSays = [hide.length > 0 ? `Hiding ${hide.join(', ')}` : '', wanted.tags.length > 0 ? `only ${wanted.tags.join(wanted.any ? ' or ' : ' and ')}` : '']
+    .filter(Boolean)
+    .join('; ');
 
   return (
     <div className="card manga-browse">
@@ -234,25 +249,26 @@ export function Browse({
         ))}
         {sub !== 'search' && !keptSelected && (
           <button
-            className={`manga-browse-hide${hide.length > 0 ? ' on' : ''}`}
+            className={`manga-browse-hide${filtering ? ' on' : ''}`}
             onClick={() => setHideOpen((o) => !o)}
             aria-expanded={hideOpen}
-            aria-label={hide.length > 0 ? `Hidden tags: ${hide.join(', ')}` : 'Hide tags'}
-            title={hide.length > 0 ? `Hiding ${hide.join(', ')}` : 'Hide tags you don\u2019t want to see'}
+            aria-label={filtering ? `Tag filter: ${filterSays}` : 'Filter by tag'}
+            title={filtering ? filterSays : 'Hide tags, or show only series with some'}
           >
             <Icon.filter />
           </button>
         )}
       </div>
-      {hideOpen && sub !== 'search' && <HideTags hide={hide} onChange={chooseHide} />}
+      {hideOpen && sub !== 'search' && <HideTags hide={hide} onChange={chooseHide} wanted={wanted} onWanted={chooseWanted} />}
 
       {keptSelected && sub !== 'search' && <KeptList following={followingOf} onOpen={open} />}
       {source && sub !== 'search' && (
         <SourceList
-          key={`${source.id}:${sub}:${hide.join('|')}`}
+          key={`${source.id}:${sub}:${hide.join('|')}:${wanted.tags.join('|')}:${wanted.any}`}
           sourceId={source.id}
           type={sub}
           hide={hide}
+          wanted={wanted}
           following={followingOf}
           onOpen={open}
         />
@@ -275,14 +291,30 @@ function byTag(counts: Record<string, number>): string {
   return parts.length > 0 ? ` (${parts.join(', ')})` : '';
 }
 
-/* ---- Tags to hide ---- */
+/* ---- Tags to hide, or to show only ---- */
 
 /**
- * Ecchi, Mature and Adult first, as switches that stay in place; then any other
- * tag hidden, tapped to show it again; then quick picks, your library's own
- * tags and the common ones, tapped to hide; and a box for anything else.
+ * One list of tags, each tapped round three states (2026-11-16, asked for as
+ * "one tap turns it red and another turns it blue and a final tap unselects
+ * it, so it's one continuous list"): off, **hidden** (red: a series with it
+ * is left out) and **only** (blue: only series with it are shown), then off
+ * again. The order never moves as you tap, so a tag stays under your finger:
+ * Ecchi, Mature and Adult, the common ones, any you typed, then your library's
+ * own. A typed tag arrives hidden, as a first tap would leave it.
  */
-function HideTags({ hide, onChange }: { hide: string[]; onChange: (next: string[]) => void }) {
+type TagState = 'off' | 'hide' | 'only';
+
+function HideTags({
+  hide,
+  onChange,
+  wanted,
+  onWanted,
+}: {
+  hide: string[];
+  onChange: (next: string[]) => void;
+  wanted: { tags: string[]; any: boolean };
+  onWanted: (tags: string[], any: boolean) => void;
+}) {
   const [draft, setDraft] = useState('');
   const [libraryTags, setLibraryTags] = useState<string[]>([]);
 
@@ -298,64 +330,101 @@ function HideTags({ hide, onChange }: { hide: string[]; onChange: (next: string[
     );
   }, []);
 
-  const on = (tag: string) => hide.some((h) => h.toLowerCase() === tag.toLowerCase());
-  const toggle = (tag: string) => onChange(on(tag) ? hide.filter((h) => h.toLowerCase() !== tag.toLowerCase()) : [...hide, tag]);
-  const others = hide.filter((t) => !isFirstTag(t));
-  const picks: string[] = [];
-  for (const tag of [...COMMON_TAGS, ...libraryTags]) {
-    if (!on(tag) && !isFirstTag(tag) && !picks.some((p) => p.toLowerCase() === tag.toLowerCase())) picks.push(tag);
+  const has = (list: readonly string[], tag: string) => list.some((t) => t.toLowerCase() === tag.toLowerCase());
+  const without = (list: readonly string[], tag: string) => list.filter((t) => t.toLowerCase() !== tag.toLowerCase());
+  const stateOf = (tag: string): TagState => (has(hide, tag) ? 'hide' : has(wanted.tags, tag) ? 'only' : 'off');
+
+  // Off, then hidden, then only, then off again.
+  function cycle(tag: string) {
+    const now = stateOf(tag);
+    if (now === 'off') onChange([...hide, tag]);
+    else if (now === 'hide') {
+      onChange(without(hide, tag));
+      onWanted([...without(wanted.tags, tag), tag], wanted.any);
+    } else onWanted(without(wanted.tags, tag), wanted.any);
   }
+
+  // Every tag on offer, each once, in an order that does not change as they are tapped.
+  const list: string[] = [];
+  const offer = (tag: string) => {
+    if (tag && !has(list, tag)) list.push(tag);
+  };
+  for (const tag of FIRST_TAGS) offer(tag);
+  for (const tag of COMMON_TAGS) offer(tag);
+  for (const tag of [...hide, ...wanted.tags]) offer(tag);
+  const shown = list.length;
+  for (const tag of libraryTags) offer(tag);
+  // Your library's own tags past the first dozen only once chosen, or the list runs on for ever.
+  const visible = list.filter((tag, i) => i < shown + 12 || stateOf(tag) !== 'off');
 
   function add(event: FormEvent) {
     event.preventDefault();
     const typed = draft.replace(/\s+/g, ' ').trim();
     // "romance" typed is the Romance on offer, spelled as sources spell it.
-    const tag = picks.find((p) => p.toLowerCase() === typed.toLowerCase()) ?? typed;
-    if (tag && !on(tag)) onChange([...hide, tag]);
+    const tag = list.find((p) => p.toLowerCase() === typed.toLowerCase()) ?? typed;
+    if (tag && stateOf(tag) === 'off') onChange([...hide, tag]);
     setDraft('');
   }
+
+  const SAYS: Record<TagState, string> = { off: 'not used', hide: 'hidden', only: 'shown only' };
+  const NEXT: Record<TagState, string> = {
+    off: 'Tap to hide series with it',
+    hide: 'Tap to show only series with it',
+    only: 'Tap to stop using it',
+  };
 
   return (
     <div className="manga-hide-tags">
       <p className="meta">
-        Hidden from Popular and Latest on this device. Some sources tag violent series Mature too, such as Jujutsu
-        Kaisen and Berserk.
+        Tap a tag once to <span className="manga-tag-key hide">− hide</span> series with it, again to{' '}
+        <span className="manga-tag-key only">+ show only</span> series with it, and again to clear it. For Popular and Recently
+        released, on this device. Some sources tag violent series Mature too, such as Jujutsu Kaisen and Berserk.
       </p>
       <div className="manga-shelf-chips">
-        {FIRST_TAGS.map((tag) => (
-          <button key={tag} className={`manga-shelf-chip${on(tag) ? ' on' : ''}`} aria-pressed={on(tag)} onClick={() => toggle(tag)}>
-            {tag}
-          </button>
-        ))}
-        {others.map((tag) => (
-          <button key={tag} className="manga-shelf-chip on" aria-pressed onClick={() => toggle(tag)} title={`Show ${tag} again`}>
-            {tag} ×
-          </button>
-        ))}
-      </div>
-      {picks.length > 0 && (
-        <div className="manga-shelf-chips">
-          {picks.slice(0, 14).map((tag) => (
-            <button key={tag} className="manga-shelf-chip" aria-pressed={false} onClick={() => toggle(tag)} title={`Hide ${tag}`}>
-              + {tag}
+        {visible.map((tag) => {
+          const state = stateOf(tag);
+          return (
+            <button
+              key={tag}
+              className={`manga-shelf-chip manga-tag-chip ${state}`}
+              onClick={() => cycle(tag)}
+              aria-label={`${tag}: ${SAYS[state]}. ${NEXT[state]}.`}
+              title={NEXT[state]}
+            >
+              {/* The sign says it without the colour: − left out, + only these. */}
+              {state !== 'off' && <span aria-hidden="true">{state === 'hide' ? '− ' : '+ '}</span>}
+              {tag}
             </button>
-          ))}
-        </div>
+          );
+        })}
+      </div>
+      {wanted.tags.length > 1 && (
+        <p className="meta manga-only-tags-head">
+          Show series with
+          <span className="manga-only-mode" role="group" aria-label="Which of the blue tags">
+            <button className={`manga-shelf-chip${!wanted.any ? ' on' : ''}`} aria-pressed={!wanted.any} onClick={() => onWanted(wanted.tags, false)}>
+              all of the blue ones
+            </button>
+            <button className={`manga-shelf-chip${wanted.any ? ' on' : ''}`} aria-pressed={wanted.any} onClick={() => onWanted(wanted.tags, true)}>
+              any of them
+            </button>
+          </span>
+        </p>
       )}
       <form className="row manga-hide-add" onSubmit={add}>
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           list="manga-hide-suggest"
-          placeholder="Another tag to hide"
-          aria-label="Another tag to hide"
+          placeholder="Another tag"
+          aria-label="Another tag"
           maxLength={40}
         />
         <button className="btn subtle" disabled={!draft.trim()}>
-          Hide
+          Add
         </button>
         <datalist id="manga-hide-suggest">
-          {picks.map((tag) => (
+          {libraryTags.map((tag) => (
             <option key={tag} value={tag} />
           ))}
         </datalist>
@@ -422,12 +491,14 @@ function SourceList({
   sourceId,
   type,
   hide,
+  wanted,
   following,
   onOpen,
 }: {
   sourceId: string;
   type: 'popular' | 'latest';
   hide: string[];
+  wanted: { tags: string[]; any: boolean };
   following: (r: BrowseResult) => string | null;
   onOpen: (r: BrowseResult) => void;
 }) {
@@ -439,14 +510,20 @@ function SourceList({
   const [hidden, setHidden] = useState(0);
   const [hiddenBy, setHiddenBy] = useState<Record<string, number>>({});
   const [unchecked, setUnchecked] = useState(0);
+  // Left out for lacking the wanted tags, and for tags not known in time.
+  const [missing, setMissing] = useState(0);
+  const [uncheckedOut, setUncheckedOut] = useState(0);
   const { countOf: chaptersOf, seen } = useChapterCounts(results);
 
   async function load(next: number) {
     setLoading(true);
     setProblem(null);
     try {
-      const got = await manga.browse.list(sourceId, type, next, hide);
+      const got = await manga.browse.list(sourceId, type, next, hide, wanted.tags, wanted.any);
       setHidden((n) => n + (got.hidden ?? 0));
+      setMissing((n) => n + (got.missing ?? 0));
+      // Only the latest page's, as with `unchecked`.
+      setUncheckedOut(got.uncheckedOut ?? 0);
       setHiddenBy((was) => {
         const sum = { ...was };
         for (const [tag, n] of Object.entries(got.hiddenBy ?? {})) sum[tag] = (sum[tag] ?? 0) + n;
@@ -480,15 +557,22 @@ function SourceList({
       {results.length === 0 && loading && <p className="empty">Loading…</p>}
       {results.length === 0 && !loading && !problem && (
         <p className="empty">
-          {hidden > 0 ? 'Everything on this page had a tag you hide.' : 'This source listed nothing.'}
+          {missing > 0 || uncheckedOut > 0
+            ? `Nothing on this page has ${wanted.tags.join(wanted.any ? ' or ' : ' and ')}${hidden > 0 ? ' without a tag you hide' : ''}. More looks at the next page.`
+            : hidden > 0
+              ? 'Everything on this page had a tag you hide.'
+              : 'This source listed nothing.'}
         </p>
       )}
-      {hide.length > 0 && (hidden > 0 || unchecked > 0) && (
+      {(hide.length > 0 || wanted.tags.length > 0) && (hidden > 0 || unchecked > 0 || missing > 0) && (
         <p className="meta">
+          {wanted.tags.length > 0 && missing > 0 ? `${missing} without ${wanted.tags.join(wanted.any ? ' or ' : ' and ')} left out. ` : ''}
           {hidden > 0 ? `${hidden} hidden${byTag(hiddenBy)}.` : ''}
-          {unchecked > 0
-            ? ` ${unchecked} could not be checked in time and are shown; they will be checked next time.`
-            : ''}
+          {wanted.tags.length > 0 && uncheckedOut > 0
+            ? ` ${uncheckedOut} could not be checked in time and are left out; they will be checked next time.`
+            : unchecked > 0
+              ? ` ${unchecked} could not be checked in time and are shown; they will be checked next time.`
+              : ''}
         </p>
       )}
       <div className="manga-browse-grid">
@@ -504,7 +588,7 @@ function SourceList({
           />
         ))}
       </div>
-      {more && (results.length > 0 || hidden > 0) && (
+      {more && (results.length > 0 || hidden > 0 || missing > 0 || uncheckedOut > 0) && (
         <button className="btn" disabled={loading} onClick={() => void load(page + 1)}>
           {loading ? 'Loading…' : 'More'}
         </button>

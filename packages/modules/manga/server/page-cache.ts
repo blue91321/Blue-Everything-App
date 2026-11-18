@@ -25,11 +25,13 @@
  * `index.json` is the only record. A folder it does not name is removed on the
  * next write, so a crash mid-eviction cannot leave strays for good.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { dataDir } from '@everything/server/module-api';
+import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 import { isWholeImage } from '../web/image-bytes.js';
 import { sharedPage } from './page-fetch.js';
+import { currentPagePath } from './page-path.js';
+import { sameChapterTwice } from '../web/duplicate-pages.js';
 
 export const KEEP_CHAPTERS = 10;
 
@@ -69,10 +71,7 @@ function readIndex(): Index {
 }
 
 function writeIndex(index: Index): void {
-  mkdirSync(ROOT, { recursive: true });
-  const tmp = `${INDEX}.tmp`;
-  writeFileSync(tmp, JSON.stringify(index));
-  renameSync(tmp, INDEX);
+  writeFileAtomic(INDEX, JSON.stringify(index));
   // Anything the index does not name goes: an evicted chapter, or a stray.
   const keep = new Set(index.chapters.map((e) => folderOf(e)));
   for (const name of readdirSync(ROOT)) {
@@ -88,10 +87,18 @@ export function cachedPageList(seriesId: string, chapterId: string): string[] | 
   return e && e.pages.length > 0 ? e.pages : null;
 }
 
-/** A page's bytes from disk, or null. */
-export function cachedPage(seriesId: string, path: string): { body: Buffer; type: string } | null {
+/**
+ * A page's bytes from disk, or null.
+ *
+ * By its chapter when the chapter is known: an address names a chapter by its
+ * position in the list, and two chapters can hold the same address once a
+ * source posts one late (`page-path.ts`). Without a chapter, the first that has
+ * it, which is what a page asked for by an older screen gets.
+ */
+export function cachedPage(seriesId: string, path: string, chapterId?: string | null): { body: Buffer; type: string } | null {
   for (const e of readIndex().chapters) {
     if (e.seriesId !== seriesId || !(path in e.stored)) continue;
+    if (chapterId && e.chapterId !== chapterId) continue;
     const file = fileOf(e, path);
     if (file && existsSync(file)) return { body: readFileSync(file), type: e.stored[path] };
   }
@@ -99,18 +106,20 @@ export function cachedPage(seriesId: string, path: string): { body: Buffer; type
 }
 
 /**
- * A page's bytes by its path alone, whichever series it was cached under.
+ * A page's bytes by its chapter and path, whichever series it was cached under.
  *
  * For the archive: a chapter just read and then kept is in this cache already,
  * so its pages are copied from here rather than asked of the site again. The
- * path is Suwayomi's and carries its chapter id, so it names one page whatever
- * series id this copy filed it under; the archive files a series kept for a
- * friend under `kept-<id>`, which no cache entry has. Only a whole picture
- * counts, as everywhere a page is kept.
+ * chapter id is Suwayomi's, so it names one chapter whatever series id this
+ * copy filed it under; the archive files a series kept for a friend under
+ * `kept-<id>`, which no cache entry has. **The path alone is not enough**: it
+ * names a chapter by its position in the list, and that moves (`page-path.ts`),
+ * which is how chapter 60's pictures could have been copied in as chapter 59's.
+ * Only a whole picture counts, as everywhere a page is kept.
  */
-export function cachedPageAnywhere(path: string): { body: Buffer; type: string } | null {
+export function cachedPageAnywhere(path: string, chapterId: string): { body: Buffer; type: string } | null {
   for (const e of readIndex().chapters) {
-    if (!(path in e.stored)) continue;
+    if (e.chapterId !== chapterId || !(path in e.stored)) continue;
     const file = fileOf(e, path);
     if (!file || !existsSync(file)) continue;
     const body = readFileSync(file);
@@ -159,16 +168,29 @@ export function readAheadAt(openedAt: number, nth: number): number {
   return openedAt - 1 - nth;
 }
 
+/** Forget a chapter and its pictures: "Wrong pages? Fetch this chapter again" in the reader. */
+export function forgetChapter(seriesId: string, chapterId: string): boolean {
+  const index = readIndex();
+  const had = index.chapters.find((c) => c.seriesId === seriesId && c.chapterId === chapterId);
+  if (!had) return false;
+  index.chapters = index.chapters.filter((c) => c !== had);
+  // The index no longer names its folder, so writing it removes the pictures.
+  writeIndex(index);
+  return true;
+}
+
 /** Is this chapter in the ten, with every page already on disk? */
 export function chapterIsComplete(seriesId: string, chapterId: string): boolean {
   const e = readIndex().chapters.find((c) => c.seriesId === seriesId && c.chapterId === chapterId);
   return Boolean(e && e.pages.length > 0 && e.pages.every((page) => page in e.stored));
 }
 
-/** Keep one page's bytes, if its chapter is still one of the ten. */
-export function keepPage(seriesId: string, path: string, body: Buffer, type: string): void {
+/** Keep one page's bytes, if its chapter is still one of the ten. By its chapter when known, as `cachedPage` reads it. */
+export function keepPage(seriesId: string, path: string, body: Buffer, type: string, chapterId?: string | null): void {
   const index = readIndex();
-  const e = index.chapters.find((c) => c.seriesId === seriesId && c.pages.includes(path));
+  const e = index.chapters.find(
+    (c) => c.seriesId === seriesId && (!chapterId || c.chapterId === chapterId) && c.pages.includes(path)
+  );
   const file = e ? fileOf(e, path) : null;
   if (!e || !file) return;
   // A damaged page is passed through but never kept: kept, it would be served
@@ -204,8 +226,9 @@ export async function fillChapter(baseUrl: string, seriesId: string, chapterId: 
       if (!e || !next) return;
       try {
         // Shared with the reader asking for the same page meanwhile: see `sharedPage`.
-        const { body, type } = await sharedPage(`${baseUrl}${next}`);
-        keepPage(seriesId, next, body, type);
+        // By the chapter's address now, not the one kept: see `page-path.ts`.
+        const { body, type } = await sharedPage(`${baseUrl}${await currentPagePath(baseUrl, chapterId, next)}`);
+        keepPage(seriesId, next, body, type, chapterId);
         failedInARow = 0;
       } catch {
         passed.add(next);
@@ -216,5 +239,46 @@ export async function fillChapter(baseUrl: string, seriesId: string, chapterId: 
     // The rest is fetched as the reader asks for it, and kept then.
   } finally {
     filling.delete(key);
+    dropDuplicateCopies(seriesId);
   }
+}
+
+/**
+ * Two kept chapters of one series with the same pictures: both are dropped, to
+ * be fetched again by their chapters' addresses now.
+ *
+ * Which of the two is wrong cannot be told from the bytes, and fetching both
+ * again costs two chapters, which is cheap beside reading the wrong one. Run
+ * after a chapter is filled and once at startup (`seriesId` omitted). Returns
+ * the chapters dropped. See `sameChapterTwice` for what counts as the same.
+ */
+export function dropDuplicateCopies(seriesId?: string): string[] {
+  const index = readIndex();
+  const bySeries = new Map<string, Entry[]>();
+  for (const e of index.chapters) {
+    if (seriesId && e.seriesId !== seriesId) continue;
+    bySeries.set(e.seriesId, [...(bySeries.get(e.seriesId) ?? []), e]);
+  }
+  const dropped: string[] = [];
+  for (const entries of bySeries.values()) {
+    const sizes = (e: Entry): number[] =>
+      e.pages.map((path) => {
+        if (!(path in e.stored)) return -1;
+        const file = fileOf(e, path);
+        try {
+          return file && existsSync(file) ? readFileSync(file).length : -1;
+        } catch {
+          return -1;
+        }
+      });
+    const twice = sameChapterTwice(entries.map((e) => ({ id: e.chapterId, sizes: sizes(e) })));
+    for (const e of entries) {
+      if (!twice.has(e.chapterId)) continue;
+      rmSync(folderOf(e), { recursive: true, force: true });
+      e.stored = {};
+      dropped.push(e.chapterId);
+    }
+  }
+  if (dropped.length > 0) writeIndex(index);
+  return dropped;
 }

@@ -817,33 +817,7 @@
  * container, which is the single-column layout.
  */
 
-/*
- * The manga list is a third shape: many rows inside one card.
- *
- * It flows for the same reason the others do — otherwise it is the one screen
- * left with a title at the far left and its buttons 1,200px away, on the change
- * that was specifically about that.
- *
- * The separator has to change with it. `border-bottom` draws a line under every
- * row, which in a single column reads as a divider and in a grid reads as an
- * underline beneath each cell; the rule below turns it off once the rows are
- * side by side and lets the gap do the separating.
- */
-.manga-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
-  gap: 4px var(--gap);
-  align-items: start;
-}
-
 .meta .strong {
   color: var(--text);
 }
 
-/* Prose, so it takes the measure the notes do rather than the window's width. */
-.manga-detail-blurb {
-  margin: 0;
-  max-width: 90ch;
-  white-space: pre-line;
-  line-height: 1.5;
-}

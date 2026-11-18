@@ -41,7 +41,7 @@ async function load(): Promise<void> {
 }
 
 /** Started when the package loads, so the first wait does not pay for it. */
-export const fineTimerReady = load();
+void load();
 
 /** Waits at least this long gain nothing worth a finer timer: 15 ms in a second is one and a half percent. */
 const SHORT_MS = 2000;

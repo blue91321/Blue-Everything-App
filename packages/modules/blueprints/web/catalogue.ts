@@ -55,8 +55,8 @@ export interface FieldSpec {
   /** Shown under the box, small. */
   hint?: string;
   placeholder?: string;
-  /** Shown only while another field of the box has one of these values. */
-  showWhen?: { key: string; is: string[] };
+  /** Shown only while another field of the box has one of these values (or, with `or`, while a second one does). */
+  showWhen?: { key: string; is: string[]; or?: { key: string; is: string[] } };
   /**
    * For `game`: what leaving it empty means ("any game"). A box that only asks
    * about a game offers every game on the list, not just the ones it can start.
@@ -393,11 +393,29 @@ export const NODES: NodeSpec[] = [
         showWhen: { key: 'listen', is: ['watch'] },
       },
       {
+        // 2026-11-16, asked for as "only trigger when focused on a game or a
+        // specific game". Asked of the window in front at the moment of the
+        // press, by the agent. A box saved before this with a game named
+        // reads as "a game I pick" (`upgradeFields` in the engine).
+        key: 'only',
+        label: 'Only when',
+        kind: 'choice',
+        options: [
+          { id: 'anywhere', label: 'anywhere' },
+          { id: 'any-game', label: 'a game is in front' },
+          { id: 'game', label: 'a game I pick is in front' },
+        ],
+        default: 'anywhere',
+        showWhen: { key: 'listen', is: ['take'] },
+      },
+      {
         key: 'game',
-        label: 'Only while playing',
+        label: 'Game',
         kind: 'game',
         default: '',
-        anyGame: 'any time',
+        anyGame: 'pick a game…',
+        hint: 'Listened for only while it is open, and a press counts only with it in front.',
+        showWhen: { key: 'listen', is: ['watch'], or: { key: 'only', is: ['game'] } },
       },
       {
         key: 'again',
@@ -1160,6 +1178,30 @@ export const NODES: NodeSpec[] = [
         default: '[]',
         showWhen: { key: 'mode', is: ['timeline'] },
       },
+      {
+        // 2026-11-16, asked for after a loop started in Warframe went on
+        // pressing 4 into whatever was in front once you alt-tabbed out. The
+        // agent asks which window is in front at the moment of the press, and
+        // a press that would land elsewhere is skipped, the run going on.
+        key: 'only',
+        label: 'Only into',
+        kind: 'choice',
+        options: [
+          { id: 'anywhere', label: 'whatever is in front' },
+          { id: 'any-game', label: 'a game, when one is in front' },
+          { id: 'game', label: 'a game I pick, when it is in front' },
+        ],
+        default: 'anywhere',
+      },
+      {
+        key: 'game',
+        label: 'Game',
+        kind: 'game',
+        default: '',
+        anyGame: 'pick a game…',
+        hint: 'Skipped while another window is in front; the blueprint carries on.',
+        showWhen: { key: 'only', is: ['game'] },
+      },
     ],
     outputs: THEN,
   },
@@ -1269,7 +1311,8 @@ export function outputsOf(node: { type: string; fields: Fields }): Output[] {
 /** Whether a field is showing: one that means something in only one mode is hidden in the others. */
 export function fieldShown(field: FieldSpec, fields: Fields): boolean {
   if (!field.showWhen) return true;
-  return field.showWhen.is.includes(String(fields[field.showWhen.key]));
+  const { key, is, or } = field.showWhen;
+  return is.includes(String(fields[key])) || (!!or && or.is.includes(String(fields[or.key])));
 }
 
 /** The way in for a number field, by its key. */

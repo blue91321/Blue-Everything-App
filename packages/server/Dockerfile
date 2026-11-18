@@ -1,5 +1,16 @@
-# Here so that "move the server to a VPS" is a build-and-run, not a project.
-# Unused while the server lives on the Windows PC.
+# STALE: an image built from this does not run the app as it is today.
+#
+# It was written when the server was packages/shared and packages/server and
+# nothing else, and has not been run since. What it leaves out:
+#
+#   - packages/modules/ (manga, voice, integrations, weather, trips, calendar,
+#     blueprints, code, vault, push), which the server loads at boot;
+#   - the built PWA (packages/web/dist), which the server serves;
+#   - Suwayomi, which manga needs beside it as a container of its own.
+#
+# Kept as the starting point for the Docker goal in CLAUDE.md ("Where this is
+# heading"), which lists the server code that still assumes Windows. Bring
+# this up to date and run it before relying on it.
 FROM node:24-slim
 
 WORKDIR /app

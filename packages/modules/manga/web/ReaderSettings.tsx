@@ -54,6 +54,9 @@ export function ReaderSettings({
   onReload,
   above = 0,
   onClearAbove,
+  onWrongPages,
+  refetching = false,
+  refetchNote = '',
 }: {
   prefs: ReaderPrefs;
   onChange: (change: Partial<ReaderPrefs>) => void;
@@ -82,6 +85,14 @@ export function ReaderSettings({
   /** Chapters kept above this one in Endless, and letting go of them (2026-11-12, in Reset's place). */
   above?: number;
   onClearAbove?: () => void;
+  /**
+   * The pages are another chapter's: let go of every copy of this one, here and
+   * on the PC, and fetch it again by its id (2026-11-18). For when the reader's
+   * own check (`chapter-prints.ts`) did not notice.
+   */
+  onWrongPages?: () => void;
+  refetching?: boolean;
+  refetchNote?: string;
 }) {
   const [panel, setPanel] = useState<'main' | 'more'>('main');
   // Per device, beside the reader's own settings — see `quality.ts`.
@@ -132,6 +143,22 @@ export function ReaderSettings({
           onPick={(q) => setQuality(setQualityPrefs({ reading: q }).reading)}
         />
         {quality === 'auto' && <div className="meta">{automaticText(auto.level, auto.speed)}</div>}
+        {onWrongPages && (
+          <>
+            <div className="meta" style={{ marginTop: 12 }}>
+              Showing another chapter’s pages?
+            </div>
+            <button
+              className="btn"
+              disabled={refetching}
+              onClick={onWrongPages}
+              title="Throws away every copy of this chapter, on this device and on the PC, and fetches it again from the source"
+            >
+              {refetching ? 'Fetching…' : 'Fetch this chapter again'}
+            </button>
+            {refetchNote && <div className="meta">{refetchNote}</div>}
+          </>
+        )}
       </div>
     );
   }

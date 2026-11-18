@@ -438,6 +438,9 @@ type MenuAt = {
 };
 
 function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; onFields: (patch: Fields) => void; onHear: (fields: Fields) => void; onClose: () => void }) {
+
+  /* ==== 1. What is being edited: the lines, the selection, the tool, the history ============= */
+
   // Drafts while dragging, written to the box when let go: a write per pixel would redraw the whole board per pixel.
   const [draft, setDraft] = useState<Fields>(fields);
   const [lines, setLines] = useState<SoundLine[]>(() => parseSoundShape(fields.shape));
@@ -472,6 +475,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     setLines(parseSoundShape(fields.shape));
   }, [fields]);
   useEffect(() => dialog.current?.focus(), []);
+
+  /* ==== 2. What the sound comes to, and the window on it (zoom and scroll) =================== */
 
   const text = soundShapeText(lines);
   const total = shapeLength(lines);
@@ -524,6 +529,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
+  /* ==== 3. Saving a change, undo and redo ==================================================== */
+
   /** The fields undo puts back besides the lines. */
   const pickFields = (f: Fields): Fields => ({
     fade: f.fade ?? 5,
@@ -569,6 +576,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     restore(s);
   };
 
+  /* ==== 4. The waveform in the lower lane ==================================================== */
+
   const samples = useMemo(() => {
     const d = designOf({ ...draft, sound: 'custom', shape: text });
     return d ? designSamples(d, DRAW_RATE) : new Float32Array(0);
@@ -604,6 +613,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     }
     return d;
   }, [samples, view.start, view.len]);
+
+  /* ==== 5. What is under the pointer ========================================================= */
 
   /** Where the pointer is on the graph, in its own units, snapped to 5 ms (to 1 with Alt, or zoomed in) and, if asked, to a note. */
   const at = (e: At) => {
@@ -673,6 +684,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     return [];
   };
 
+  /* ==== 6. Selecting ========================================================================= */
+
   /** A click that selects: replace, Ctrl to add or take away, Shift to add with every point between it and the last one clicked. */
   const selectClick = (t: Target, mods: Mods) => {
     if (t.kind === 'bg') {
@@ -722,6 +735,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     );
     return inside;
   };
+
+  /* ==== 7. Pressing, dragging and letting go, by tool ======================================== */
 
   const capture = (e: ReactPointerEvent, freeze: boolean) => {
     e.stopPropagation();
@@ -1055,6 +1070,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     setSelected(next);
   };
 
+  /* ==== 8. Copy, cut, paste, duplicate, delete =============================================== */
+
   // What the menu and the keys do.
   const fragments = (): SoundLine[] =>
     lines.flatMap((l, j) => {
@@ -1121,6 +1138,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
   const nudge = (dt: number, steps: number) => {
     if (selected.size) commit(shifted(lines, selected, dt, SEMITONE ** steps, false));
   };
+
+  /* ==== 9. Keys and the right-click menu ===================================================== */
 
   /*
    * The keys, heard by the window while the editor is open rather than only by
@@ -1193,6 +1212,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     });
   };
 
+  /* ==== 10. Changing the selected lines and points; harmonics and examples =================== */
+
   const setLinesTo = (patch: Partial<SoundLine>, hear = true) => {
     if (!targetLines.length) return;
     const next = copyLines(lines);
@@ -1253,6 +1274,8 @@ function SoundEditor({ fields, onFields, onHear, onClose }: { fields: Fields; on
     setZoom(null);
     setSaid(`${name} is loaded. Ctrl+Z puts back what you had.`);
   };
+
+  /* ==== 11. Drawing: the graph, the strip of the whole sound, and the controls =============== */
 
   // The grid: octaves people know, and round times.
   const hzLines = [50, 100, 200, 500, 1000, 2000, 5000, 10_000];

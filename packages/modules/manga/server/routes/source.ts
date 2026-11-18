@@ -4,9 +4,7 @@
  * Registered by `routes` in `../index.ts`, in this order with the other groups.
  */
 import type { FastifyInstance } from 'fastify';
-import { and } from 'drizzle-orm';
-import { config, isGuest } from '@everything/server/module-api';
-import { search } from '../mangadex.js';
+import { isGuest } from '@everything/server/module-api';
 import { readSeries } from '../mangaupdates.js';
 import { read, write } from '../library.js';
 import { seriesSummary } from '../present.js';
@@ -33,7 +31,7 @@ export function sourceRoutes(app: FastifyInstance): void {
    */
   app.get('/api/manga/source', async () => {
     const store = read();
-    const { suwayomiUrl, suwayomiJar, manageSuwayomi } = store;
+    const { suwayomiJar, manageSuwayomi } = store;
     const url = effectiveUrl(store, DEFAULT_BASE_URL);
 
     // Only offered when nothing is chosen yet: a scan of Downloads on every
