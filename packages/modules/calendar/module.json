@@ -2,7 +2,7 @@
   "id": "calendar",
   "label": "Calendar",
   "blurb": "Your own events, calendars read from a link (Google, Outlook, Apple), .ics files, and reminders before each event.",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "author": "blue91321",
   "server": "server/index.ts",
   "notes": "A calendar link is fetched from this PC by the server, about every six hours and when the calendar is opened, from the address you paste. Nothing else is sent anywhere."
