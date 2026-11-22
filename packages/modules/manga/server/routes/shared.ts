@@ -21,6 +21,7 @@ import {
   type ChapterToArchive,
 } from '../archive.js';
 import { titleKey } from '../titles.js';
+import { peerCopyTools } from '../peer-reading.js';
 import { nameKeys, namesFor } from '../names.js';
 import type { FastifyBaseLogger } from 'fastify';
 
@@ -406,6 +407,8 @@ export function archiveTools(): ArchiveTools & { chapters: (mangaId: string) => 
       const list = await new SuwayomiAdapter(url).chapters(mangaId, true);
       return list.map((c) => ({ id: c.id, number: c.number, name: c.name, uploadedAt: c.uploadedAt }));
     },
+    // A series copied from a linked server's Local collection: see `startPeerCopy` in archive.ts.
+    peer: peerCopyTools,
     // A chapter the series' own source will not give whole: see `tryElsewhere` in archive.ts.
     elsewhere: async (series, number, around) => {
       const url = await connect();

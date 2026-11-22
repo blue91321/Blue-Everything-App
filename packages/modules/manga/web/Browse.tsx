@@ -23,6 +23,7 @@ import { Cover } from './Cover';
 import { Icon } from './Icons';
 import { COMMON_TAGS, FIRST_TAGS, loadHiddenTags, loadWantedTags, saveHiddenTags, saveWantedTags } from './hidden-tags';
 import { SeriesDetail } from './SeriesDetail';
+import { CopiedList, LinkedSeries, PeerCollection, useLinkedPeers, type LinkedTarget } from './Linked';
 import { languageName } from './judge';
 import {
   manga,
@@ -85,6 +86,9 @@ export function Browse({
    * returns to the same page of results rather than the top of an empty one.
    */
   const [detail, setDetail] = useState<{ result: BrowseResult; others: BrowseResult[] } | null>(null);
+  /** A linked server's series, or a copy of one, open: see `Linked.tsx`. */
+  const [linked, setLinked] = useState<LinkedTarget | null>(null);
+  const peers = useLinkedPeers();
   /*
    * Where the list was scrolled to, so Back lands on the cover you tapped rather
    * than the top of fifty. The page itself opens at the top: arriving halfway
@@ -94,6 +98,11 @@ export function Browse({
   const open = (result: BrowseResult, others: BrowseResult[] = []) => {
     scrolledTo.current = window.scrollY;
     setDetail({ result, others });
+    window.scrollTo(0, 0);
+  };
+  const openLinked = (target: LinkedTarget) => {
+    scrolledTo.current = window.scrollY;
+    setLinked(target);
     window.scrollTo(0, 0);
   };
   const back = () => {
@@ -107,7 +116,9 @@ export function Browse({
   }, []);
 
   const keptSelected = state?.selected === KEPT;
-  const source = keptSelected ? null : (state?.sources.find((s) => s.id === state?.selected) ?? null);
+  /** A linked server's Local collection, chosen on this screen only: the server remembers its own sources, not these. */
+  const peerSelected = state?.selected?.startsWith('peer:') ? (peers.find((p) => `peer:${p.id}` === state.selected) ?? null) : null;
+  const source = keptSelected || peerSelected ? null : (state?.sources.find((s) => s.id === state?.selected) ?? null);
 
   // A source with no recent-releases list has no such tab; land on Popular.
   useEffect(() => {
@@ -116,6 +127,7 @@ export function Browse({
 
   async function choose(id: string) {
     setState((s) => (s ? { ...s, selected: id } : s));
+    if (id.startsWith('peer:')) return;
     try {
       await manga.browse.setSource(id);
     } catch {
@@ -181,7 +193,7 @@ export function Browse({
   }
 
   const subs: Sub[] = ['popular', ...(source?.supportsLatest ? (['latest'] as const) : []), 'search'];
-  const subLabel = (s: Sub) => (keptSelected && s === 'popular' ? 'Everything kept' : SUB_LABEL[s]);
+  const subLabel = (s: Sub) => ((keptSelected || peerSelected) && s === 'popular' ? 'Everything kept' : SUB_LABEL[s]);
 
   function chooseHide(next: string[]) {
     setHide(next);
@@ -205,6 +217,17 @@ export function Browse({
     <div className="card manga-browse">
       {note && <p className="meta">{note}</p>}
 
+      {linked && (
+        <LinkedSeries
+          key={linked.kind === 'peer' ? `${linked.peer}:${linked.manga}` : linked.seriesId}
+          target={linked}
+          onBack={() => {
+            setLinked(null);
+            setTimeout(() => window.scrollTo(0, scrolledTo.current), 0);
+          }}
+        />
+      )}
+
       {detail && (
         <SeriesDetail
           key={keyOf(detail.result)}
@@ -220,13 +243,24 @@ export function Browse({
         />
       )}
 
-      <div hidden={detail !== null}>
+      <div hidden={detail !== null || linked !== null}>
       <div className="row">
         <label className="meta" htmlFor="manga-browse-source">
           Browse from
         </label>
         <select id="manga-browse-source" value={state.selected ?? ''} onChange={(e) => void choose(e.target.value)}>
           <option value={KEPT}>Local collection</option>
+          {peers.some((p) => p.collection) && (
+            <optgroup label="Linked servers">
+              {peers
+                .filter((p) => p.collection)
+                .map((p) => (
+                  <option key={p.id} value={`peer:${p.id}`}>
+                    {p.name}'s collection
+                  </option>
+                ))}
+            </optgroup>
+          )}
           {state.sources.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -247,7 +281,7 @@ export function Browse({
             <Editable id={`tab:manga.browse:${s}`} fallback={subLabel(s)} inButton />
           </button>
         ))}
-        {sub !== 'search' && !keptSelected && (
+        {sub !== 'search' && source !== null && (
           <button
             className={`manga-browse-hide${filtering ? ' on' : ''}`}
             onClick={() => setHideOpen((o) => !o)}
@@ -261,7 +295,13 @@ export function Browse({
       </div>
       {hideOpen && sub !== 'search' && <HideTags hide={hide} onChange={chooseHide} wanted={wanted} onWanted={chooseWanted} />}
 
-      {keptSelected && sub !== 'search' && <KeptList following={followingOf} onOpen={open} />}
+      {keptSelected && sub !== 'search' && (
+        <>
+          <KeptList following={followingOf} onOpen={open} />
+          <CopiedList onOpen={openLinked} />
+        </>
+      )}
+      {peerSelected && sub !== 'search' && <PeerCollection peer={peerSelected} onOpen={openLinked} />}
       {source && sub !== 'search' && (
         <SourceList
           key={`${source.id}:${sub}:${hide.join('|')}:${wanted.tags.join('|')}:${wanted.any}`}

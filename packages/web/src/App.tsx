@@ -27,13 +27,15 @@ import { onDataChange } from './live';
 import { onNavigate, onSectionShown } from './nav';
 import { onPopView, pushView, startHistory, viewFromUrl } from './view-history';
 import { homeTiles, inMenu, publishEntries, useMenuEntries, type MenuEntry } from './menu-prefs';
-import { groupMenu, readOpen, saveOpen, type MenuRow } from './menu-groups';
-import { folderFor, foldersFrom, makeFolder, putInFolder, removeFolder, useFolderPrefs } from './menu-folders';
+import { groupMenu, readToggled, saveToggled, type MenuRow } from './menu-groups';
+import { folderFor, foldersFrom, makeFolder, putInFolder, removeFolder, shownFolded, startsOpen, useFolderPrefs } from './menu-folders';
 import { Glyph } from './Glyph';
 import { Dashboard } from './views/Dashboard';
 import { Tasks } from './views/Tasks';
 import { Habits } from './views/Habits';
 import { Settings } from './views/Settings';
+import { Feedback } from './views/Feedback';
+import { noteScreen } from './recent-errors';
 
 /*
  * The one core screen that is fetched rather than bundled.
@@ -79,6 +81,8 @@ const CORE_NAV: NavItem[] = [
   { id: 'notes', label: 'Notes', glyph: '✎', order: 40, always: false },
   // `pinned` puts it at the foot of the drawer rather than merely last in the
   // list — features add tabs above it, and it should stay where it was.
+  // Above Settings at the foot, for the same reason: always there, and found in one place.
+  { id: 'feedback', label: 'Feedback', glyph: '✉', order: 99, always: true, pinned: true },
   { id: 'settings', label: 'Settings', glyph: '⚙', order: 100, always: true, pinned: true },
 ];
 
@@ -157,8 +161,8 @@ export function App() {
   const [sectionsReady, setSectionsReady] = useState<Record<string, boolean>>({});
   // Which sections are doing something now — a dot beside them. See `SectionMeta.live`.
   const [sectionsLive, setSectionsLive] = useState<Record<string, boolean>>({});
-  // Menu groups opened on this device; a group is folded until opened. See `menu-groups.ts`.
-  const [openGroups, setOpenGroups] = useState<Set<string>>(readOpen);
+  // Menu groups folded or opened by hand this visit; otherwise each starts as Settings says. See `menu-groups.ts`.
+  const [toggledGroups, setToggledGroups] = useState<Record<string, boolean>>(readToggled);
   useEffect(() => {
     let alive = true;
     const ask = async () => {
@@ -210,6 +214,20 @@ export function App() {
    * mode: which screen, and which folder it is over ('' for the top).
    */
   const folderPrefs = useFolderPrefs();
+  // Choosing in Settings how a folder starts applies at once, over folding it by hand earlier in this visit.
+  const startedOpen = useRef(folderPrefs.open);
+  useEffect(() => {
+    const before = startedOpen.current;
+    startedOpen.current = folderPrefs.open;
+    const changed = Object.keys({ ...before, ...folderPrefs.open }).filter((id) => before[id] !== folderPrefs.open[id]);
+    if (!changed.length) return;
+    setToggledGroups((now) => {
+      const next = { ...now };
+      for (const id of changed) delete next[id];
+      saveToggled(next);
+      return next;
+    });
+  }, [folderPrefs.open]);
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropOn, setDropOn] = useState<string | null>(null);
   /** Text for the destination's search box — see `NavRequest.search`. */
@@ -575,7 +593,7 @@ export function App() {
   const everyScreen = nav;
   if (shownList) {
     const keep = new Set(shownList);
-    nav.splice(0, nav.length, ...everyScreen.filter((item) => item.id === 'settings' || keep.has(item.id)));
+    nav.splice(0, nav.length, ...everyScreen.filter((item) => item.id === 'settings' || item.id === 'feedback' || keep.has(item.id)));
   }
 
   /*
@@ -583,7 +601,8 @@ export function App() {
    * sections. Published for Settings, which lists them with a switch each.
    */
   const entries: MenuEntry[] = nav.flatMap((item) => {
-    const own: MenuEntry = { id: item.id, label: item.label, glyph: item.glyph, defaultMenu: true, defaultHome: item.id !== 'home' };
+    // Feedback is in the menu, and on Home only if you put it there: a launcher's first screen is for what you use.
+    const own: MenuEntry = { id: item.id, label: item.label, glyph: item.glyph, defaultMenu: true, defaultHome: item.id !== 'home' && item.id !== 'feedback' };
     const f = webFeatures.find((w) => w.id === item.id);
     const sections: MenuEntry[] = (f?.sections ?? []).map((s) => ({
       id: `${item.id}#${s.id}`,
@@ -600,6 +619,8 @@ export function App() {
   // Whatever was open may have just been switched off from another device —
   // the SSE stream reloads every client, so this can change under a live page.
   const current = nav.find((n) => n.id === view) ?? nav[0];
+  // Which screen a bug report is most likely about (`recent-errors.ts`). Not a hook: a plain note, safe after the early returns.
+  noteScreen(current.id);
   const feature = webFeatures.find((f) => f.id === current.id);
   /*
    * Namespaced so a package can never take over a core tab by choosing the id
@@ -620,7 +641,7 @@ export function App() {
       .filter((pkg) => pkg.tab !== null)
       .map((pkg) => ({ id: `package:${pkg.id}`, label: pkg.tab!.label, glyph: pkg.tab!.glyph, order: pkg.tab!.order })),
   ]
-    .filter((item) => item.id !== 'home' && item.id !== 'settings')
+    .filter((item) => item.id !== 'home' && item.id !== 'settings' && item.id !== 'feedback')
     .sort((a, b) => a.order - b.order)
     .map((item) => ({ id: item.id, label: item.label, glyph: item.glyph }));
 
@@ -691,6 +712,12 @@ export function App() {
    */
   const folders = foldersFrom(webFeatures.map((w) => w.group), folderPrefs);
   const groupOf = (id: string) => folderFor(id, webFeatures.find((w) => w.id === id)?.group, folders, folderPrefs);
+  const groupOpen = (id: string) => toggledGroups[id] ?? startsOpen(id, folderPrefs);
+  const setGroupOpen = (id: string, open: boolean) => {
+    const next = { ...toggledGroups, [id]: open };
+    setToggledGroups(next);
+    saveToggled(next);
+  };
   const folderAt = (x: number, y: number): string | null => {
     const el = document.elementFromPoint(x, y) as HTMLElement | null;
     const folder = el?.closest<HTMLElement>('[data-folder]');
@@ -730,7 +757,7 @@ export function App() {
               : [];
             const draw = (row: MenuRow) => {
               if (row.kind === 'group') {
-                const open = openGroups.has(row.group.id);
+                const open = groupOpen(row.group.id);
                 return (
                   <div
                     key={`group:${row.group.id}`}
@@ -740,13 +767,7 @@ export function App() {
                     <button
                       className="group-head"
                       aria-expanded={open}
-                      onClick={() => {
-                        const next = new Set(openGroups);
-                        if (open) next.delete(row.group.id);
-                        else next.add(row.group.id);
-                        setOpenGroups(next);
-                        saveOpen(next);
-                      }}
+                      onClick={() => setGroupOpen(row.group.id, !open)}
                     >
                       <span className="glyph" aria-hidden="true">
                         <Glyph glyph={row.group.glyph} />
@@ -776,9 +797,10 @@ export function App() {
               const folder = row.inGroup ? groupOf(screen)?.id : undefined;
               /*
                * A folded group still shows the screen you are on, so the mark
-               * saying where you are is never folded away.
+               * saying where you are is never folded away, and anything you
+               * chose in Settings to show while it is folded.
                */
-              if (folder && !openGroups.has(folder) && current.id !== screen) return null;
+              if (folder && !groupOpen(folder) && current.id !== screen && !shownFolded(e.id, folderPrefs)) return null;
               const pinned = nav.find((n) => n.id === e.id)?.pinned;
               const here = e.parent
                 ? current.id === e.parent && section === e.id.split('#')[1]
@@ -820,11 +842,7 @@ export function App() {
                           const to = folderAt(ev.clientX, ev.clientY);
                           if (to !== null && to !== (groupOf(e.id)?.id ?? '')) {
                             putInFolder(e.id, to);
-                            if (to && !openGroups.has(to)) {
-                              const next = new Set(openGroups).add(to);
-                              setOpenGroups(next);
-                              saveOpen(next);
-                            }
+                            if (to && !groupOpen(to)) setGroupOpen(to, true);
                           }
                         }
                         setDragging(null);
@@ -856,9 +874,7 @@ export function App() {
                     data-ui-fixed
                     onClick={() => {
                       const id = makeFolder('New folder');
-                      const next = new Set(openGroups).add(id);
-                      setOpenGroups(next);
-                      saveOpen(next);
+                      setGroupOpen(id, true);
                     }}
                   >
                     ＋ New folder
@@ -944,6 +960,7 @@ export function App() {
         {current.id === 'settings' && (
           <Settings session={session} onChanged={checkSession} focus={focus} onFocused={clearFocus} />
         )}
+        {current.id === 'feedback' && <Feedback session={session} />}
 
         {/*
           Each feature is its own chunk, fetched the first time its tab is

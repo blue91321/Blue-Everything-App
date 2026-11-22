@@ -38,7 +38,7 @@
  * a guest can do to the host.
  */
 import { spawn } from 'node:child_process';
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -62,6 +62,7 @@ import { config, isGuest, instanceRoot } from './config.js';
 import { dataDir, repoRoot, serverSrc } from './paths.js';
 import { serveOnPort, serveStatus, stopServingPort, tailnetName } from './tailscale.js';
 import { writeFileAtomic } from './atomic-write.js';
+import { insideOf } from './inside-of.js';
 
 /** Where guest copies live. */
 export const instancesRoot = resolve(repoRoot, 'instances');
@@ -77,7 +78,18 @@ const FIRST_PORT = 8788;
 
 /** The name a copy's key goes by in the host's device list. */
 const deviceName = (name: string) => `copy: ${name}`;
-const folderOf = (name: string) => resolve(instancesRoot, name);
+/**
+ * A copy's folder, for a name that could be a copy's and nothing else. Checked
+ * here, where every path to a copy is made, rather than by each caller: the
+ * People routes take the name from the address, and `start` and `stop` reached
+ * `readInfo` unchecked, so `..%2F..` named a folder outside `instances/`.
+ * Owner devices only, but a check in one place cannot be forgotten by the next
+ * route (code scanning, 2026-11-18). `readInfo` turns the throw into "no copy".
+ */
+const folderOf = (name: string) => {
+  if (!NAME.test(name)) throw new Error(`not a copy's name: ${name}`);
+  return insideOf(instancesRoot, name);
+};
 
 interface CopyInfo {
   port: number;
@@ -475,8 +487,8 @@ function addInvite(file: string, code: string, lifeMs: number): number {
 }
 
 export function makeHandoffCode(): { code: string; expiresAt: number } {
-  const bytes = randomBytes(8);
-  const code = [...bytes].map((b) => HANDOFF_ALPHABET[b % HANDOFF_ALPHABET.length]).join('');
+  // `randomInt` rather than a byte modulo 31, which made the first eight letters a little likelier than the rest.
+  const code = Array.from({ length: 8 }, () => HANDOFF_ALPHABET[randomInt(HANDOFF_ALPHABET.length)]).join('');
   mkdirSync(isGuest ? instanceRoot : dataDir, { recursive: true });
   const expiresAt = addInvite(invitesHere(), code, HANDOFF_MS);
   return { code: `${code.slice(0, 4)}-${code.slice(4)}`, expiresAt };

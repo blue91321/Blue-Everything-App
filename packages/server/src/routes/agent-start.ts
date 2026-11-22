@@ -21,11 +21,10 @@
  * server's port already being open. A second recipe here would be a second
  * thing to keep true.
  */
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
-import { repoRoot, startScript } from '../paths.js';
+import { launchScript } from '../launch-script.js';
+import { startScript } from '../paths.js';
 
 export async function agentStartRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -59,21 +58,7 @@ export async function agentStartRoutes(app: FastifyInstance): Promise<void> {
      * stopped — but writing it the other way would be one more spawn recipe in
      * this repo that differs from the three that work.
      */
-    mkdirSync(resolve(repoRoot, 'logs'), { recursive: true });
-    const logFile = resolve(repoRoot, 'logs/agent-start.log');
-    const quoted = (path: string) => path.replace(/'/g, "''");
-
-    const child = spawn(
-      'cmd.exe',
-      [
-        '/c', 'start', '/b', '',
-        'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-        `& '${quoted(startScript)}' -AgentOnly *>> '${quoted(logFile)}'`,
-      ],
-      { cwd: repoRoot, detached: true, stdio: 'ignore' }
-    );
-    child.on('error', (error) => app.log.error(error, 'starting the agent failed to launch'));
-    child.unref();
+    launchScript(startScript, { AgentOnly: true }, 'agent-start.log', (error) => app.log.error(error, 'starting the agent failed to launch'));
 
     app.log.info('agent start requested from the app');
 

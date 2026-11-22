@@ -568,6 +568,40 @@ check('seconds', new Date(whenOf(1767225600)!).getUTCFullYear(), 2026);
 // or in the year 55000, and a date nobody can explain is worse than none.
 check('nonsense is dropped rather than dated', whenOf(42), undefined);
 
+console.log('\nno pattern is slow on a crafted note (code scanning, 2026-11-18)');
+
+/*
+ * Each of these took about a second at 50,000 characters before, and four times
+ * that at double: the parser runs on the server, over imports from elsewhere. At
+ * 200,000 each takes a quarter of a second here.
+ */
+const N = 200_000;
+const quick = (what: string, run: () => unknown) => {
+  const started = performance.now();
+  run();
+  const ms = performance.now() - started;
+  // Two seconds, for a slow CI runner: the quadratic versions took eleven and more.
+  check(`${what} (${ms.toFixed(0)}ms)`, ms < 2_000);
+};
+quick('a title padded with whitespace', () => noteKey(`a${'\t'.repeat(N)}a`));
+quick('a run of [[ with no closing', () => extractWikiLinks('[[' + '[["'.repeat(N / 3)));
+quick('  ...and inline, where an embed is looked for', () => parseInline('[[' + '[["'.repeat(N / 3)));
+quick('a file name with spaces inside', () => safeFileName(`a${' '.repeat(N)}a`));
+quick('a line of unmatched backticks', () => parseInline('`' + '``'.repeat(N / 2)));
+quick('a tag full of slashes', () => extractTags(`#a${'/'.repeat(N)}b`));
+quick('a line of opened links', () => parseInline('[](a'.repeat(N / 4)));
+quick('a line of opened bold', () => parseInline('**a '.repeat(N / 4)));
+quick('a whole note of it', () => parseBlocks(`${'[["'.repeat(N / 3)}\n\n${'~~a'.repeat(N / 3)}`));
+check(
+  'a long paragraph read in pieces still reads as one',
+  parseInline(`${'word '.repeat(2_000)}**bold** end`).map((n) => n.kind),
+  ['text', 'strong', 'text']
+);
+check('a code span still closes on a run of the same length', parseInline('a ``b`c`` d').map((n) => n.kind), ['text', 'code', 'text']);
+check('  ...and an unclosed run is literal', parseInline('``a`').map((n) => n.kind), ['text']);
+check('a tag still loses its trailing slash', extractTags('#area/sub/'), ['area/sub']);
+check('a file name still loses trailing dots and spaces', safeFileName('Notes. . '), 'Notes');
+
 console.log(
   failures === 0 ? '\n\x1b[32mThe note text model holds.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`
 );

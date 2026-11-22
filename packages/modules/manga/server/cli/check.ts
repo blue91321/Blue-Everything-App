@@ -74,6 +74,7 @@ import { join as joinTmp } from 'node:path';
 import { compress } from '../compress.js';
 import { movedPath } from '../page-path.js';
 import { sameChapterTwice } from '../../web/duplicate-pages.js';
+import { afterRefusal, aheadOf, aheadText, isNovel, isRefusal, triedRecently, DAY_MS, FRESH_FOR_MS, latestDue, mapVerdict, MIN_PAGES, recountDue, searchDue, worthTelling, type CopyCount } from '../../web/catalogue-rules.js';
 import { levelForSpeed, sampleSpeed, withQuality } from '../../web/quality.js';
 
 let failures = 0;
@@ -1884,6 +1885,37 @@ console.log('\nsmaller pictures');
     sameChapterTwice([{ id: 'a', sizes: [5, 6, 7, -1] }, { id: 'b', sizes: [5, 6, 7, 8] }]).size === 2
   );
   check('  ...and never with a different number of pages', sameChapterTwice([{ id: 'a', sizes: [5, 6, 7] }, { id: 'b', sizes: [5, 6, 7, 8] }]).size === 0);
+}
+
+console.log('\nthe chapter catalogue\n');
+{
+  const now = Date.UTC(2026, 10, 21);
+  const copy = (source: string, latest: number | null, ageDays = 1, distinct = 10): CopyCount => ({ source, mangaId: source, latest, distinct, at: now - ageDays * DAY_MS });
+  check('a site saying stop is a refusal', ['HTTP error 429', 'HTTP error 403', 'HTTP error 503', 'Cloudflare bypass currently disabled', 'Suwayomi did not answer in time', 'java.net.SocketTimeoutException: timeout'].every(isRefusal));
+  check('  ...an answer about one series is not', !['No chapters found', 'HTTP error 404', 'the source has no such series', 'could not reach Suwayomi at http://127.0.0.1:4567'].some(isRefusal));
+  const rests = [1, 2, 3, 4].map(afterRefusal).map((r) => ('drop' in r ? 'drop' : String(r.holdMs / 60_000)));
+  check('a search or count that failed is tried again a day later, not on every run', triedRecently(now - 3_600_000, now) && !triedRecently(now - DAY_MS, now) && !triedRecently(undefined, now));
+  check('a refusing source rests 10, 20, then 40 minutes, then is left out of the run', rests.join(',') === '10,20,40,drop', rests.join(','));
+  const ahead = aheadOf(115, [copy('MangaHub', 120), copy('Atsumaru', 118), copy('Old', 140, 30), copy('Points', 115.5), copy('Empty', null)], now);
+  check('another source a whole chapter or more ahead counts, best first', ahead.map((c) => c.source).join(',') === 'MangaHub,Atsumaru', ahead.map((c) => c.source).join(','));
+  check('  ...a count older than two weeks is not compared', !ahead.some((c) => c.source === 'Old'));
+  check('  ...nor a point chapter past yours (115.5 against 115)', !ahead.some((c) => c.source === 'Points'));
+  check('  ...and with no chapters on yours, any copy with some is ahead', aheadOf(null, [copy('A', 3)], now).length === 1);
+  check('  ...exactly two weeks old still counts', aheadOf(1, [{ ...copy('Edge', 5), at: now - FRESH_FOR_MS }], now).length === 1);
+  check('a lead is told once', worthTelling(copy('A', 120), undefined) && !worthTelling(copy('A', 120), 120));
+  check('  ...and again when it grows', worthTelling(copy('A', 121), 120) && !worthTelling(copy('A', 120.5), 120));
+  check('  ...and nothing ahead is nothing to tell', !worthTelling(undefined, undefined));
+  check('the nudge says both numbers', aheadText(copy('MangaHub', 120), 115, 'MangaFire (EN)') === 'MangaHub has up to chapter 120; MangaFire (EN) is at 115.', aheadText(copy('MangaHub', 120), 115, 'MangaFire (EN)'));
+  const seen = new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']);
+  check('a list holding nearly every series a search found there is mapped', mapVerdict(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'x'], seen, 3).mapped);
+  const short = mapVerdict(['a', 'b', 'c', 'x', 'y'], seen, 50);
+  check('  ...one leaving out what searches found is not, however long', !short.mapped && /left out 2 of 5/.test((short as { why: string }).why));
+  check('  ...with too little found by search, a long list is taken and a short one is not', mapVerdict(['a'], seen, MIN_PAGES).mapped && !mapVerdict(['a'], seen, MIN_PAGES - 1).mapped);
+  check('  ...and an empty list never', !mapVerdict([], new Set(), 100).mapped);
+  check('a mapped source looks at what is new once a day', latestDue(null, now) && !latestDue(now - DAY_MS + 1, now) && latestDue(now - DAY_MS, now));
+  check('the novel is not the comic', isNovel('Sovereign of the Infinite Clones [Novel]') && isNovel('Solo Leveling (Light Novel)') && isNovel('X (LN)') && isNovel('Web Novel Title'));
+  check('  ...and a title that only has the letters in it is', !isNovel('Novelist Wanted') && !isNovel('Sovereign of the Infinite Clones') && !isNovel('Nov 5'));
+  check('a series is searched for again after a month, a copy counted again after a week', searchDue(undefined, now) && !searchDue(now - 29 * DAY_MS, now) && searchDue(now - 30 * DAY_MS, now) && !recountDue(now - 6 * DAY_MS, now) && recountDue(now - 7 * DAY_MS, now));
 }
 
 process.exit(failures === 0 ? 0 : 1);

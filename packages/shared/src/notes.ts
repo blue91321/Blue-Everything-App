@@ -44,11 +44,31 @@
  * Inner punctuation is kept, because `[[C++]]` and `[[C]]` are different notes.
  */
 export function noteKey(title: string): string {
-  return title
-    .trim()
-    .toLowerCase()
-    .replace(/^[\s.,;:!?'"()[\]{}]+|[\s.,;:!?'"()[\]{}]+$/g, '')
-    .replace(/\s+/g, ' ');
+  return trimEdges(title.trim().toLowerCase(), (ch) => /\s/.test(ch) || EDGE_PUNCTUATION.includes(ch)).replace(/\s+/g, ' ');
+}
+
+const EDGE_PUNCTUATION = '.,;:!?\'"()[]{}';
+
+/*
+ * Trimming by hand rather than with `/[…]+$/`, which is quadratic: on a run of
+ * those characters that does not reach the end, the engine tries the run from
+ * every place in it (measured: 50,000 of them took a second). A note's text
+ * reaches these from an import as well as from you, and the parser runs on the
+ * server too. Found by GitHub's code scanning (2026-11-18).
+ */
+function trimEdges(text: string, strip: (ch: string) => boolean): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && strip(text[start])) start += 1;
+  while (end > start && strip(text[end - 1])) end -= 1;
+  return text.slice(start, end);
+}
+
+/** `text` without any of `chars` at its end. Linear, unlike `/[chars]+$/`. */
+export function trimTrailing(text: string, chars: string): string {
+  let end = text.length;
+  while (end > 0 && chars.includes(text[end - 1])) end -= 1;
+  return text.slice(0, end);
 }
 
 export interface WikiLink {
@@ -64,9 +84,11 @@ export interface WikiLink {
  * `[[target#anchor|label]]`, with every part optional but the target.
  *
  * `[^\]]` rather than a lazy `.` so an unclosed bracket cannot run to the end of
- * the note and swallow everything after it as one enormous link.
+ * the note and swallow everything after it as one enormous link. And no `[`
+ * inside (Obsidian refuses one in a name): allowing it let every `[[` in a
+ * run of them scan to the end, which was quadratic.
  */
-const WIKI_LINK = /\[\[([^\]|#]+)(#[^\]|]*)?(\|[^\]]*)?\]\]/g;
+const WIKI_LINK = /\[\[([^[\]|#]+)(#[^[\]|]*)?(\|[^[\]]*)?\]\]/g;
 
 /**
  * Every wiki-link in a note, in the order they appear.
@@ -111,7 +133,7 @@ export function extractTags(body: string): string[] {
   for (const line of stripCodeForScanning(body).split('\n')) {
     // A heading is not a tag. Leading spaces are allowed, as Markdown does.
     if (/^\s{0,3}#{1,6}(\s|$)/.test(line)) continue;
-    for (const match of line.matchAll(TAG)) found.add(match[2].replace(/\/+$/, ''));
+    for (const match of line.matchAll(TAG)) found.add(trimTrailing(match[2], '/'));
   }
 
   return [...found];
@@ -230,14 +252,14 @@ export function safeFileName(title: string, fallback = 'note'): string {
   const cleaned = title
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[. ]+$/, '');
+    .trim();
+  const trimmed = trimTrailing(cleaned, '. ');
 
-  if (!cleaned) return fallback;
-  if (RESERVED_NAMES.test(cleaned)) return `${cleaned}_`;
+  if (!trimmed) return fallback;
+  if (RESERVED_NAMES.test(trimmed)) return `${trimmed}_`;
   // 120 rather than 255: the folder path and the extension share the budget,
   // and a path limit hit halfway through an export is a poor way to find out.
-  return cleaned.slice(0, 120);
+  return trimmed.slice(0, 120);
 }
 
 /* ------------------------------------------------------------------ */
@@ -347,6 +369,18 @@ export type Inline =
   | { kind: 'wiki'; target: string; anchor: string; label: string }
   | { kind: 'tag'; tag: string };
 
+/** Where the next run of exactly `run` backticks starts, from `from`; -1 for none. Linear. */
+function closingRun(text: string, from: number, run: number): number {
+  let j = text.indexOf('`', from);
+  while (j >= 0) {
+    let length = 0;
+    while (text[j + length] === '`') length += 1;
+    if (length === run) return j;
+    j = text.indexOf('`', j + length);
+  }
+  return -1;
+}
+
 /**
  * Inline Markdown, in one left-to-right pass.
  *
@@ -356,10 +390,44 @@ export type Inline =
  * then emphasis, then tags last — a tag is the only one that can start
  * mid-sentence with no closing delimiter, so anything else that wants a `#` has
  * already claimed it.
+ *
+ * **A very long run of text is read in pieces** (`INLINE_PIECE`), broken at a
+ * space. A link, bold or a strikethrough is matched by scanning on from its
+ * opening mark for its closing one, so a line of opening marks with no closers
+ * scanned to its end from each of them: 200,000 characters of `[[` took eleven
+ * seconds, on the server, over a note that may have come from an import. In
+ * pieces the cost is the length times the piece, not the length squared, and
+ * nothing a person writes inline runs for thousands of characters without a
+ * space. Found by GitHub's code scanning and a test written for it (2026-11-18).
  */
+const INLINE_PIECE = 4_000;
+
 export function parseInline(text: string): Inline[] {
+  if (text.length <= INLINE_PIECE) return parseInlinePiece(text);
+  const out: Inline[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + INLINE_PIECE, text.length);
+    if (end < text.length) {
+      const space = text.lastIndexOf(' ', end);
+      if (space > start + INLINE_PIECE / 2) end = space;
+    }
+    for (const node of parseInlinePiece(text.slice(start, end))) {
+      const last = out[out.length - 1];
+      // Pieces meet in the middle of plain text more often than not: one text node, not two.
+      if (node.kind === 'text' && last?.kind === 'text') last.text += node.text;
+      else out.push(node);
+    }
+    start = end;
+  }
+  return out;
+}
+
+function parseInlinePiece(text: string): Inline[] {
   const out: Inline[] = [];
   let buffer = '';
+  /** For each length of backtick run, the earliest place from which no run of it closes. */
+  const noCloser = new Map<number, number>();
 
   const flush = () => {
     if (buffer) out.push({ kind: 'text', text: buffer });
@@ -377,11 +445,26 @@ export function parseInline(text: string): Inline[] {
       continue;
     }
 
-    const code = /^(`+)([\s\S]*?)\1(?!`)/.exec(rest);
-    if (code) {
-      flush();
-      out.push({ kind: 'code', text: code[2].trim() });
-      i += code[0].length;
+    /*
+     * A code span: a run of backticks, to the next run of exactly as many.
+     * Scanned for rather than matched with `/^(`+)([\s\S]*?)\1/`, which looked to
+     * the end of the text from every backtick and so was quadratic on a line of
+     * unmatched ones. A run with no closer is literal, as CommonMark has it; and
+     * a run of some length with no closer from one place has none from any later.
+     */
+    if (rest[0] === '`') {
+      let run = 0;
+      while (rest[run] === '`') run += 1;
+      const close = (noCloser.get(run) ?? Infinity) <= i ? -1 : closingRun(text, i + run, run);
+      if (close >= 0) {
+        flush();
+        out.push({ kind: 'code', text: text.slice(i + run, close).trim() });
+        i = close + run;
+        continue;
+      }
+      noCloser.set(run, Math.min(noCloser.get(run) ?? Infinity, i));
+      buffer += rest.slice(0, run);
+      i += run;
       continue;
     }
 
@@ -396,7 +479,7 @@ export function parseInline(text: string): Inline[] {
     // `![[x]]` is an Obsidian embed. Rendered as a link rather than inlined:
     // pulling one note into another is a whole behaviour, and a link that goes
     // to the right place beats an embed that half works.
-    const wikiEmbed = /^!?\[\[([^\]|#]+)(#[^\]|]*)?(\|[^\]]*)?\]\]/.exec(rest);
+    const wikiEmbed = /^!?\[\[([^[\]|#]+)(#[^[\]|]*)?(\|[^[\]]*)?\]\]/.exec(rest);
     if (wikiEmbed) {
       flush();
       const target = wikiEmbed[1].trim();
@@ -460,7 +543,7 @@ export function parseInline(text: string): Inline[] {
     const tag = /^#([A-Za-zÀ-\uffff][\wÀ-\uffff/-]*)/.exec(rest);
     if (tag && (i === 0 || /[\s([{,;:!?'"]/.test(text[i - 1]))) {
       flush();
-      out.push({ kind: 'tag', tag: tag[1].replace(/\/+$/, '') });
+      out.push({ kind: 'tag', tag: trimTrailing(tag[1], '/') });
       i += tag[0].length;
       continue;
     }
@@ -540,7 +623,9 @@ export function parseBlocks(markdown: string): Block[] {
     if (fence) {
       const body: string[] = [];
       i += 1;
-      while (i < lines.length && !new RegExp(`^\\s{0,3}${fence[1]}\\s*$`).test(lines[i])) {
+      // Closed by the same kind of fence, asked without building a pattern from the text.
+      const closes = (next: string) => /^\s{0,3}(```|~~~)\s*$/.exec(next)?.[1] === fence[1];
+      while (i < lines.length && !closes(lines[i])) {
         body.push(lines[i]);
         i += 1;
       }

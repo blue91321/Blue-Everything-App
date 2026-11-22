@@ -24,11 +24,10 @@
  * process that asked for it, since stopping the server means stopping whoever
  * is running this line.
  */
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
-import { repoRoot, restartScript } from '../paths.js';
+import { launchScript } from '../launch-script.js';
+import { restartScript } from '../paths.js';
 
 export async function restartRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -77,28 +76,8 @@ export async function restartRoutes(app: FastifyInstance): Promise<void> {
      * first restart failed, left the app stopped, and produced not one line
      * anywhere. A broken launch and an unpressed button looked identical.
      */
-    // The folder may not exist on a fresh clone, and PowerShell's `*>>`
-    // will not create it.
-    mkdirSync(resolve(repoRoot, 'logs'), { recursive: true });
-    const logFile = resolve(repoRoot, 'logs/restart.log');
-    const child = spawn(
-      'cmd.exe',
-      [
-        '/c',
-        'start',
-        '/b',
-        '',
-        'powershell.exe',
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        `& '${restartScript.replace(/'/g, "''")}' *>> '${logFile.replace(/'/g, "''")}'`,
-      ],
-      { cwd: repoRoot, detached: true, stdio: 'ignore', windowsVerbatimArguments: false }
-    );
-    child.on('error', (error) => app.log.error(error, 'restart failed to launch'));
-    child.unref();
+    // The recipe, and how the paths reach PowerShell, are `launch-script.ts`.
+    launchScript(restartScript, {}, 'restart.log', (error) => app.log.error(error, 'restart failed to launch'));
 
     app.log.info('restart requested from the app');
 

@@ -464,6 +464,28 @@ export interface Person {
 }
 
 /** A single-use sign-in link for a person's copy. */
+/** What one side of a link shares with the other. See `peers.ts` in the server. */
+export interface PeerShare {
+  collection: boolean;
+  copy: boolean;
+  catalogue: boolean;
+  ratings: boolean;
+}
+
+/** Another person's own server, linked on purpose over Tailscale. */
+export interface PeerLink {
+  id: string;
+  name: string;
+  url: string;
+  linkedAt: number;
+  /** What this server shares with them. */
+  share: PeerShare;
+  /** What they share with this one, as they last said. */
+  theirs: { share: PeerShare; version: string | null; at: number } | null;
+  problem: string | null;
+  checkedAt: number | null;
+}
+
 export interface PersonInvite {
   url: string;
   expiresAt: number;

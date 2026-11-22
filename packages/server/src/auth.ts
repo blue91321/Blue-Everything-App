@@ -15,6 +15,23 @@ import { config, isGuest } from './config.js';
 
 /** The only routes an `instance` key opens: what one copy asks of the host. */
 export const INSTANCE_PREFIXES = ['/api/manga/host/', '/api/host/'];
+/** The only routes a linked server's key opens, and how often. Kept here rather than imported from `peers.ts`, which imports this file. */
+export const PEER_PREFIX = '/api/peer/';
+export const PEER_LINK_PATH = '/api/peer/link';
+export const PEER_PER_MINUTE = 300;
+
+/** Requests this minute, per linked server's key. */
+const peerBudget = new Map<string, { at: number; count: number }>();
+function peerWithinBudget(deviceId: string): boolean {
+  const now = Date.now();
+  const window = peerBudget.get(deviceId);
+  if (!window || now - window.at > 60_000) {
+    peerBudget.set(deviceId, { at: now, count: 1 });
+    return true;
+  }
+  window.count += 1;
+  return window.count <= PEER_PER_MINUTE;
+}
 
 export const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
 
@@ -141,6 +158,9 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   // is the credential, swapped for a token once (`instances.ts`). The only
   // route that answers without a token, on every copy.
   if (request.method === 'POST' && path === '/api/invite/redeem') return;
+  // A link code from another person's server: the code is the credential, and
+  // the route is held to a few tries a minute (`peers.ts`).
+  if (request.method === 'POST' && path === PEER_LINK_PATH) return;
   if (!config.AUTH_REQUIRED) {
     request.isLocal = true;
     return;
@@ -176,6 +196,21 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
    */
   if (device.kind === 'instance' && !INSTANCE_PREFIXES.some((p) => path.startsWith(p))) {
     return reply.code(403).send({ error: "a copy's key reaches only what copies share" });
+  }
+
+  /*
+   * Another person's server, linked on purpose (`peers.ts`): its key reaches
+   * what servers share and nothing else, at a bounded rate. Never local, even
+   * when `peer-check` runs both servers on one PC.
+   */
+  if (device.kind === 'peer') {
+    if (!path.startsWith(PEER_PREFIX)) return reply.code(403).send({ error: "a linked server's key reaches only what servers share" });
+    if (!peerWithinBudget(device.id)) return reply.code(429).send({ error: 'too many requests; slow down' });
+    request.deviceId = device.id;
+    request.deviceKind = device.kind;
+    request.isLocal = false;
+    db.update(devices).set({ lastSeenAt: Date.now() }).where(eq(devices.id, device.id)).catch(() => {});
+    return;
   }
 
   request.deviceId = device.id;

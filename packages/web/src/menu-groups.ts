@@ -18,11 +18,12 @@
  * Only the menu is grouped. Home is a launcher of screens and keeps a tile per
  * screen, and Settings lists screens as it always did.
  *
- * **A group starts folded**, so World is one line in the menu until you open
- * it. What is stored is the groups you have *opened*, per device in
- * `localStorage` like the notes tree: the menu is mostly the PC's and a choice
- * about it is about that screen. Storing the open ones rather than the shut
- * ones is what makes folded the default for a group added later too.
+ * **How a group starts is your choice per folder** (`startsOpen` in
+ * `menu-folders.ts`, folded unless you say), every time the app opens.
+ * Folding or opening one by its heading is kept for this visit, in
+ * `sessionStorage`, so a reload in the same tab keeps it and opening the app
+ * again starts as chosen. Anything marked in Settings to show while folded
+ * shows under the heading either way.
  */
 import type { MenuEntry } from './menu-prefs';
 
@@ -62,21 +63,23 @@ export function groupMenu(entries: readonly MenuEntry[], groupOf: (screenId: str
   return rows;
 }
 
-const OPEN_KEY = 'menu-groups-open';
+const VISIT_KEY = 'menu-groups-visit';
 
-export function readOpen(): Set<string> {
+/** Folders folded or opened by hand during this visit: id to open. */
+export function readToggled(): Record<string, boolean> {
   try {
-    const v = JSON.parse(localStorage.getItem(OPEN_KEY) ?? '[]') as unknown;
-    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+    const v = JSON.parse(sessionStorage.getItem(VISIT_KEY) ?? '{}') as unknown;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v).filter((e): e is [string, boolean] => typeof e[1] === 'boolean'));
   } catch {
-    return new Set();
+    return {};
   }
 }
 
-export function saveOpen(open: ReadonlySet<string>): void {
+export function saveToggled(toggled: Record<string, boolean>): void {
   try {
-    localStorage.setItem(OPEN_KEY, JSON.stringify([...open]));
+    sessionStorage.setItem(VISIT_KEY, JSON.stringify(toggled));
   } catch {
-    // Kept for this visit only.
+    // Kept in memory for this visit only.
   }
 }

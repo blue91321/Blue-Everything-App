@@ -4,14 +4,15 @@ import type { FeatureMeta, PanelMeta } from '@app/features/index';
 export const meta: FeatureMeta = { id: 'calendar', label: 'Calendar', glyph: '📅', order: 41 };
 
 /**
- * What is coming up: today, and the next week. Usable in either Dashboard
- * column. Nothing coming up says so in a line rather than a card, since an
- * empty calendar is an ordinary week.
+ * The week: today and the six days after, events and tasks with a due date
+ * (Canvas assignments among them), as a week strip, an hour grid or today in
+ * full. Usable in either Dashboard column. The id is the old "Coming up"
+ * card's, so a Dashboard that had it has this.
  */
 export const panels: PanelMeta[] = [
   {
     id: 'calendar:upcoming',
-    label: 'Coming up',
-    hint: 'today’s events, then the rest of the week',
+    label: 'This week',
+    hint: 'the next seven days, events and tasks due, as a week, a grid or today first',
   },
 ];

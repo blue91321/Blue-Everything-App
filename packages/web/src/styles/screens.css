@@ -263,6 +263,81 @@
   white-space: nowrap;
 }
 
+/* The menu's folders and sections, laid out as the menu is: a folder, what is in it, its sections. */
+.menu-fold {
+  margin-top: 0.9rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.menu-fold-head,
+.menu-fold-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+}
+
+.menu-fold-head {
+  margin-bottom: 0.3rem;
+}
+
+.menu-fold-head > .menu-prefs-name,
+.menu-fold-row > .menu-prefs-name {
+  flex: 1 1 10rem;
+}
+
+.menu-fold-row {
+  padding: 0.25rem 0 0.25rem 0.75rem;
+}
+
+/* Selects fill their line elsewhere in the app; here one sits beside its screen's name. */
+.menu-fold-row > select {
+  width: auto;
+  flex: 0 0 auto;
+  min-width: 9rem;
+  max-width: 100%;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.menu-fold-row.sub {
+  padding-left: 2rem;
+  font-size: 0.92em;
+}
+
+.menu-fold-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.menu-fold-start {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.menu-fold-start .btn {
+  border-radius: 0;
+  padding: 3px 9px;
+  font-size: 0.85rem;
+}
+
+.menu-fold-start .btn.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.menu-fold-empty {
+  margin: 0.2rem 0 0 0.75rem;
+}
+
 /*
  * Something running now: Music while shuffle is on. Green, the colour "on"
  * already is for a friend online, rather than the accent, which means
@@ -373,4 +448,57 @@
   display: grid;
   gap: 8px;
   margin: 8px 0 12px;
+}
+
+/*
+ * Feedback (`views/Feedback.tsx`). The two ways to send sit side by side when
+ * the screen has the room and stack on a phone, asked of the screen's own
+ * width as the Settings pickers are, since a docked menu takes 260px of it.
+ */
+.feedback {
+  container: feedback / inline-size;
+}
+
+.feedback-send {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+}
+
+@container feedback (min-width: 640px) {
+  .feedback-send {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.feedback-send .card {
+  display: grid;
+  gap: 10px;
+}
+
+.feedback-send a.btn {
+  justify-self: start;
+}
+
+.feedback .btn.disabled,
+.feedback .btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
+.feedback-diagnostics {
+  margin-top: 8px;
+}
+
+.feedback-diagnostics pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  max-height: 320px;
+  overflow: auto;
 }

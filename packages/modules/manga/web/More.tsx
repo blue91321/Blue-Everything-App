@@ -22,6 +22,7 @@ import { Cover } from './Cover';
 import { isIncognito, setIncognito } from './incognito';
 import { logCsv, logSize, syncLog, unsentCount } from './reading-log';
 import { SourceCard } from './SourceCard';
+import { Catalogue } from './Catalogue';
 import { manga, type Candidate, type FlareState, type Library, type SeriesSummary, type TestSourceState } from './manga-api';
 
 const STATUS_LABEL: Record<SeriesSummary['status'], string> = {
@@ -642,6 +643,9 @@ export function More({
 
       <Incognito />
       <ReadingLog />
+
+      {/* Chapters on other sources: the chapter catalogue, its check and its mapping (`Catalogue.tsx`). */}
+      {data && <Catalogue series={data.series} onCompare={onCompare} />}
 
       <div className="card">
         <div className="row between">

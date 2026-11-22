@@ -262,7 +262,7 @@ once arranged in Settings → Home screen, which is the Dashboard's
 but a few is what an arranged Home is, and *Remove everything* starts from
 nothing. The cost is the Dashboard order's: a section added later is not on an
 arranged Home until you add it, and Settings offers it underneath and says so.
-The menu's section switches are a card of their own.
+The menu's section switches are in the folders card (below).
 
 **The Music tab is its own setup.** Until Spotify is connected and has the
 playback permission, it shows three steps and the Spotify card from Services,
@@ -287,10 +287,10 @@ one member left keeps its heading; one with none is not drawn.
 
 **Only the menu is grouped.** Home keeps a tile per screen, since it is a
 launcher of screens, and Settings lists screens as before. **A group starts
-folded**, so World is one line until opened; what is stored, per device in
-`localStorage` like the notes tree, is the groups you opened, which makes a
-group added later folded too. A folded group still shows the screen you are on,
-so the mark saying where you are is never folded away.
+folded** unless you choose otherwise (see the folders card below), so World is
+one line until opened, and a group added later is folded too. A folded group
+still shows the screen you are on, so the mark saying where you are is never
+folded away.
 Verified in the browser: folded, the menu lost Weather and Trips and kept the
 heading; opened on Trips and folded, Trips stayed, marked as current.
 
@@ -309,10 +309,34 @@ there, or anywhere else in the menu to take it out; a folder has a ✕, which
 moves what was in it to the top rather than taking it away; **＋ New folder**
 makes an empty one, drawn while editing so there is somewhere to drop; and a
 folder is renamed by its heading, as any heading is (`group:<id>`, shared by
-every device). Settings → General → Folders in the menu does the same from a
-list, for a keyboard. A section goes with its screen, and Settings, pinned to
-the foot, has no grip. Verified with real pointer drags in the browser pane:
-Blueprints out of Command and back, a folder made and removed.
+every device). Settings → General → Folders and sections in the menu does the
+same from a list, for a keyboard. A section goes with its screen, and Settings,
+pinned to the foot, has no grip. Verified with real pointer drags in the browser
+pane: Blueprints out of Command and back, a folder made and removed.
+
+**One card for folders and sections, and what shows while folded**
+(2026-11-20). Settings had a card for folders and another for which sections
+are listed under their screen, two views of one list; they are one card now,
+laid out as the menu is: each folder with its screens and their sections, then
+what is in no folder. Two things were added with it:
+
+- **How a folder starts**: *Starts open* or *Starts folded*, per folder
+  (`open` in `menu-folders.ts`), each time the app opens. Folding or opening
+  one by its heading lasts for the visit (`sessionStorage`, `readToggled` in
+  `menu-groups.ts`), so a reload keeps it; changing the setting applies at
+  once over that. Folders used to stay as you last left them, for good
+  (`menu-groups-open`); those you had opened are read once as starting open,
+  so nothing moved the day it changed.
+- **Show when folded**: any screen or section in a folder can be listed under
+  the heading while the folder is folded (`shown`), so a folder can be one
+  line and the one thing used daily. A section needs to be in the menu to be
+  shown folded.
+
+Verified in the browser pane, with its menu settings put back after:
+Connections moved into World and its Music section shown folded left World's
+heading with only Music under it; *Starts open* opened it at once; folding by
+hand survived a reload; choosing the setting again opened it; an old
+"opened" record for Command started it open; no sideways scroll at 375px.
 
 ### Both columns are chosen side by side
 
@@ -980,8 +1004,8 @@ before the calendar existed.
 - **The month is a dot per event on a phone** (a container query on the
   screen's own width), the chosen day's list under it saying what they are; the
   week starts on the locale's first day (`Intl.Locale` week info).
-- **"Coming up" on the Dashboard** (`calendar:upcoming`): today's events and the
-  rest of the week, at most eight, a row opening the calendar on its day.
+- **"This week" on the Dashboard** (`calendar:upcoming`, the old "Coming up"
+  card's id, so a Dashboard that had it has this): see below.
 - **Routes announce under the package's own scope** (`calendar`,
   `announce: false` on each), so a change reloads the calendar's readers and
   not every screen.
@@ -993,6 +1017,78 @@ and then all of them, a `.ics` with a Tokyo-time series imported and shown at
 16:00 here, the Dashboard card, and no sideways scroll at phone width.
 **Not verified**: a real secret link (only a public one), and the onboarding
 step on a new copy.
+
+#### Tasks on the calendar, and the week on the Dashboard (2026-11-20)
+
+Asked for as "use the calendar but just one week of it to show what's
+upcoming" and "the Canvas connection should actually put stuff on the
+calendar". Three looks were offered as mockups; Week was picked, with Grid and
+Today wanted as well, and the grid's text had to be readable.
+
+**Canvas reaches the calendar by being a task** (`server/tasks.ts`). The
+coursework sync already turns assignments into ordinary tasks (`source:
+'canvas'`), so the calendar reads core's `tasks` table, which a package may,
+rather than writing a second copy into `calendar.json`. An extension moves the
+deadline here because it moves the task; handing it in ticks it here; there is
+nothing to keep in step and no import of the integrations package. Every task
+with a due date is shown by default; Calendars → *Tasks on the calendar*
+narrows it to those from a service (`synced`, any `source`) or none
+(`taskLayer` in the store). Dropped tasks are left out, done ones struck
+through. They remind as tasks, never as events, or an assignment would be
+said twice. Readers watch the `tasks` scope beside `calendar`.
+
+**A task's box ticks the task** (`task-bits.tsx`, `PATCH /api/tasks/:id`), so
+the Dashboard's list and Canvas's "handed in" agree with the calendar; its name
+is a link to the assignment (`sourceUrl`), else the Tasks screen. Drawn in one
+colour, amber (`TASK_COLOR`), whatever the calendars' colours, so they read as
+one layer.
+
+**The card has three looks, chosen on it and kept per device**
+(`calendar.card-layout`), since a phone and a monitor want different ones:
+
+- **Week**: seven columns; under 560px of card, a row per day. Names run to
+  four lines, because assignment names differ at their ends ("M9 Quiz -
+  Lymphatic System – Dysfunction"); at two, four quizzes read the same.
+- **Grid**: by the hour. **A block is never shorter or narrower than its
+  text** (`grid-layout.ts`, no imports, asserted by `calendar-check`): at
+  least 56px tall (the time and two lines of name; 42 was measured cutting the
+  second line), at most as many side by side as leave 60px each, the rest a
+  "+N more" column that opens the day. **Tasks are not blocks**: they have a
+  *due* row above the hours, as a calendar app puts them. Drawn as blocks, six
+  assignments at 11:59 pm were six 20px slivers under an empty evening. The
+  hours run from the week's first event to past its last (8 to 8 with none);
+  with no timed events the grid is one line saying so. A narrow card shows
+  three or four days with arrows (measured, three ways, for the reason the
+  weather graph gives), and there folds a day with more than three things due
+  to two and "+N more due".
+- **Today**: today in full with "in 40m", a line per day after; more than two
+  tasks due on a later day fold into "6 due by 11:59 PM", names on hover.
+
+`/api/calendar/upcoming` takes `from` (the start of the card's first day on the
+screen's clock, up to eight days back) and up to 42 days, so the days are whole
+and what already happened stays on them.
+
+**How many weeks, and which day starts them** (the card's ⚙, per device:
+`calendar.card-weeks`, `calendar.card-start`). Week and Grid show 1 to 4 weeks
+from the chosen first day: today, yesterday, or the last Saturday, Sunday
+(the default) or Monday. Each week is its own strip or its own hour grid with a
+date label over it; a narrow Grid pages through all the days instead, opening
+on the page with today. Days already gone are dimmed. Today ignores both: it is
+always today and the six days after. One request covers both views, so
+switching asks nothing. The order of the views on the card is Today, Week,
+Grid; Week is still what a device opens on until one is picked. Verified in
+the pane: each start lands right on a Friday (Saturday is the 14th), three
+weeks from Sunday labelled Nov 15 – 21 to Nov 29 – Dec 5 with last week's
+handed-in M8 items struck through, two stacked grids, and at 375px the pager
+opening on Wed 18 – Fri 20.
+
+Verified on the running app with the real Canvas sync (eight M9 items due
+Sunday to Wednesday) and, in the grid, made-up events injected into the page's
+own responses so nothing was written: every block's name inside its block at
+1024 and 375 wide, four overlapping events as one and "+3 more", no sideways
+scroll, the tick sending `status: done` for the right task (intercepted, so
+the real one stayed open), and the month showing six due on Sunday with their
+course. **Not verified**: how it looks on the iPhone itself.
 
 ### Manga is laid out like a reader
 
@@ -3085,6 +3181,120 @@ only: a friend's copy's cache is its own folder, which the host does not read.
 **The archive's writes retry a refused rename** for up to ~3s: the same run hit
 `EPERM` renaming `series.json` mid-chapter, with the app in a OneDrive folder.
 
+### Chapters on other sources: the catalogue (2026-11-21)
+
+`server/catalogue.ts`, rules in `web/catalogue-rules.ts` (no imports,
+asserted by `manga-check`), a card on Manga → More (`Catalogue.tsx`). Asked
+for to make opening a series and looking for other sources faster, and for a
+nudge when another source has more chapters. Asked first what Suwayomi gives,
+measured on this PC: **38,326 series stored, every search and listing result
+it ever answered, with title, cover and link but no count; chapter lists for
+3,330 of them** (437,582 chapters: number, name, upload date, scanlator), a
+median 17 days old. Of 909 linked series, 861 had their own source's list
+stored, 675 had the same title seen on another source (1,747 copies), and only
+172 had another source's list. No other service fills that: MangaUpdates says
+the newest chapter any group released, not where; MangaDex is a source of its
+own and of names. So the gap was coverage, not a data source, and Suwayomi's
+database is binary and readable only while its JVM runs.
+
+**What it keeps**, in text: every series each source has listed, by
+Suwayomi's id and title, a file per source (`data/manga-catalogue/source-<id>.json`),
+and each copy's chapter profile (the comparison's own `profileChapters`, less
+what only makes sense on the day) with when it was counted (`index.json`).
+About 100 files and 1.8MB here after seeding. Written whole a few seconds
+after the last change, and on close.
+
+**Filled for free first.** Every listing a source answers and every chapter
+list fetched from a site passes through the adapter, which notes it
+(`catalogue-notes.ts`, a listener slot so the adapter does not import the
+catalogue). And once a day, from the sweep while Suwayomi is up, it seeds
+from Suwayomi's own stored series and chapter lists (`storedSeries`,
+`storedChapterLists`), each counted as of when Suwayomi fetched it. Seeding
+alone, with no site asked: 3,164 copies counted, 174 series with another
+source counted, 11 with more chapters elsewhere.
+
+**The library check** (*Check my library on every source*): every name each
+series goes by (`namesFor`, MangaDex's English among them, cached a month, so
+about seven minutes only the first time), then **every installed source in
+your languages** searched for every series not searched there in a month,
+title first and the other names only when it finds nothing; then every copy
+found, and the series' own, counted where the count is missing or a week old.
+A copy is the same series only by an exact name (`titleKey`), as Switch
+sources holds. Each source is asked one thing at a time with three seconds
+after every answer (`PAUSE_MS`, from 1.2s: at most about fifteen requests a
+minute to a site, which is a person clicking through it), six sources at once,
+Suwayomi's idle timer pushed out. Resumable: what was searched and counted is
+kept, so Stop and start again carries on. The first pass here is 26,564
+searches (916 series × 29 sources, up to three names each), most of a day.
+
+**A site that says stop is left alone** (`bySource`, `isRefusal`,
+`afterRefusal`), asked about before the first run: the check went on at the
+same pace through errors, which would have kept asking a site that had just
+answered 429 for the rest of its queue, from the connection you read on. Now a
+refusal (403, 429, a 5xx, a Cloudflare check, no answer in time) rests that
+source 10, then 20, then 40 minutes while the others carry on, and the series
+it refused is asked again first. Refusing once more after that leaves it out of
+the rest of the run, and the card names it. "No chapters found", a 404 and
+Suwayomi itself being down are not refusals. Mapping already stopped a source
+at its first error; a mapped source's daily look now stops at a refusal too.
+Not seen against a real refusal: no site refused while it was built.
+
+**It runs by itself** (`startAutomatic`, *Check my library by itself*, on),
+asked for in place of a button somebody has to press and watch for a day. The
+sweep starts a check when nothing else is running, Suwayomi is already up, and
+something is due (`planSearches`, `planCounts`, the same plans the run uses).
+So the first pass goes on until done across restarts, each picking up what is
+left, and after that the runs are small: new series, a search a month, a
+recount a week. A source left out for refusing rests a day across runs
+(`restUntil`), and a search or count that failed for any other reason is tried
+again a day later (`tried`, pruned each run), or the same few would be asked
+every half hour for ever. Stop pauses it until tomorrow (in memory, so a
+restart lets it go again). An automatic run refetches no screens when it ends.
+**Not on a friend's copy**: they share this connection, and every copy
+searching every site for its own library would multiply what the sites see.
+
+**A source whose whole list is mapped is not searched** (as asked): its
+series are looked up in the map, and it is looked at once a day for what is
+new (its latest list, page by page until a page has nothing new, three at
+most, counting again any library series on it), or mapped again monthly when
+it has no latest list. Mapping is reading its popular list to the end, a few
+pages a sweep in the background while Suwayomi is up (*Map whole sources in
+the background*, on), or all at once from *Map whole sources now*. **A list
+read to the end is trusted only if it holds nearly every series a search found
+there** (`mapVerdict`: 90%, or with fewer than five to test, at least 20
+pages), since some sites' popular lists stop at fifty pages; one that repeats
+the same page is stopped. A source that cannot be mapped says why on the card
+and goes on being searched; *Try mapping again* clears that.
+
+**Telling you** (`aheadOf`, `worthTelling`): another copy counted within two
+weeks and at least one whole chapter further than yours (point chapters are
+split differently everywhere), never for a series on a hidden shelf. Said once
+per lead and again only when it grows (`told`); three or fewer by name, more
+as one nudge saying how many, so a first check does not fill the screen. The
+card lists them with Compare.
+
+**The comparison opens on what is known** (`GET /api/manga/:id/source/known`,
+no site and no Suwayomi): copies and counts in about 110ms, with "counted
+<date>" beside each, while the sites are asked; a count under a week old is not
+asked again, and the search's results are merged in as they arrive. Check pages
+on a known count asks for the count first, since the catalogue keeps no
+chapter ids.
+
+**The novel is not the comic** (`isNovel`). The first seeding put Thunder
+Scans' "Sovereign of the Infinite Clones [Novel]" at 450 beside the comic's
+106: `titleKey` sets bracketed asides aside, which is right for a year or an
+author. A title marked novel, light novel, web novel, (LN) or (WN) is left
+out unless the series is one. Found before it nudged anything by name, but
+it was among the count in the first summary nudge.
+
+Verified on the running app: seeding from the sweep, the eleven leads
+genuine once novels were out (two are series MangaFox took down, so yours has
+none), a check run into its search step and stopped (63 searches kept and
+carried on from), the card at 1024 wide, and the comparison showing known
+counts at once and merging the live search without duplicates. **Not
+verified**: a full first pass, mapping a whole source to its end, the daily
+latest check, and how the card looks on the phone.
+
 ### Bringing a library in from Manga Reader: retired
 
 The importer for Manga Reader's iMazing backup was removed on 2026-10-23,
@@ -4739,6 +4949,58 @@ Three smaller things:
   stepper jumped the instant you typed. Measured at 117 → 108 before, 120 → 120
   after.
 
+### Feedback: a GitHub issue or an email, sent by the person
+
+`views/Feedback.tsx`, in the menu above Settings (pinned at the foot like it,
+and on Home only if put there; only the first pinned row takes the free
+space and the line above it, or the two split the space and Feedback sat
+halfway down an empty menu). Pick **Bug**, **Feature request** or
+**Feedback**, write it, and send it one of two ways (2026-11-18):
+
+- **GitHub issue**: opens `issues/new` with the title, the text and a
+  template (`.github/ISSUE_TEMPLATE/bug.md`, `feature.md`, `feedback.md`),
+  whose labels GitHub applies whoever files it, where a `labels=` in the link
+  is ignored for anybody without triage rights. The screen says issues are
+  public.
+- **Email** to `blueeverythingapp@gmail.com`, an address made for this since
+  it ships in every release (`publish-check` exempts it by name): **Open in
+  email app** (`mailto:`), **Copy message** and **Copy address**. Sending from
+  the app itself waits for an email connector.
+
+**The app sends nothing.** Each copy is somebody's own server, so there is no
+shared place for a report to land, and posting to one would need a key in
+every release. The person reads the report where it opens and sends it there.
+
+**Diagnostics, never a log.** A server log records every request, so it is a
+record of what somebody read, and today's was 2MB. A bug report includes
+instead, ticked by default (unticked for the other two): the version, which
+kind of server, the device and screen size, the browser, the screen opened
+from (`noteScreen`, set as `App` draws), online or not, the packages on, and
+**the last errors this device saw** (`recent-errors.ts`): requests answered
+with an error or timing out (from `send` in `api.ts`, so packages' requests
+too) and anything thrown or rejected that nobody caught. Twenty at most, three
+days, per device in `localStorage`, sent nowhere. Each is scrubbed as it is
+recorded (`scrub` in `feedback-text.ts`): queries (a page's names the
+chapter), ids, long numbers, hosts, IP and tailnet addresses, email
+addresses, user folders and tokens go. *See exactly what's included* shows
+the very text, with *Clear recent errors*. `smoke` asserts the scrub; a
+browser version (`Chrome/120.0.6099.230`) read as an IP address until the IP
+rule learned to skip one after a slash.
+
+**It fits the link or goes on the clipboard** (`fitted`): GitHub refuses an
+issue address past about 8KB and some mail apps cut a `mailto:` near 2,000
+characters. Too long, the description goes in the link and the diagnostics on
+the clipboard, in the same press (the clipboard wants one); too long again, a
+note in the link and the whole report on the clipboard. The links are real
+anchors, for the reason the `discord:` link is. The draft is kept per device
+until **Start again**, so going to the mail app and back loses nothing.
+
+Verified in the pane at 375×812 and 1280×800: opened from Tasks it said "Was
+on: tasks", both links carried the report, the two ways stack on a phone and
+sit side by side with the menu docked, and no sideways scroll at either.
+**Not verified**: GitHub's page or a mail app opening from it, since neither
+was clicked, and the `feedback` label, which the repository does not have yet.
+
 ### Getting to a particular setting
 
 `settings.dashboard_panel` is chosen on a Settings tab, which the friends panel
@@ -5662,6 +5924,101 @@ keeps, opened a chapter, and its first page came back in 40ms through
 The rest of the library is the guest's own: series, read marks, places,
 shelves, the page cache, the downloads. Suwayomi's ids are shared because
 the Suwayomi is.
+
+### Linked servers: a friend's own server, over Tailscale (2026-11-21)
+
+`packages/server/src/peers.ts` holds the link; the manga package's
+`routes/peers.ts` holds what is shared. Asked for as "linking servers for
+sharing databases and local collections between servers with tailscale", the
+cross-server plan agreed on 2026-10-23: for a friend who runs their **own**
+Blue Everything on their own PC, not a guest copy on this one. No central
+site: server to server. `npm run peer-check -w @everything/server` boots two
+real servers on throwaway data and proves the rules below (it is in `npm run
+checks`).
+
+**How a link is made, both sides on purpose.** Settings → People → Linked
+servers. One side makes a **link code** (`POST /api/peers/code`): its own
+`tailscale serve` address and a secret, `https://<machine>.ts.net/#link=<code>`,
+single use, a day, stored only as a hash. The other side pastes it into the
+same card on their own server, which mints a key for the first one and sends it
+with the code to `POST /api/peer/link`, the one route a linked server reaches
+without a key (held to 20 tries a minute, like the sign-in codes). That answers
+with a key for the second. A key each way, each a device of kind `peer`.
+Linking needs this server's own address, read from `tailscale serve status
+--json` (the entry proxying to this port, `ownPeerUrl`); without one the card
+says to turn `serve` on.
+
+**Tailscale only, and the address is held to it.** A linked server must be
+`https://<machine>.<tailnet>.ts.net[:port]` (`cleanPeerUrl`): no path, no
+query, no user, nothing else, checked again on every call. Reaching one is
+Tailscale node sharing (each shares their machine with the other's tailnet in
+the admin console); one-way sharing gives one-way reading, and the card says
+which side cannot reach the other. Redirects are refused and answers capped
+(`peerFetch`: 4MB by default, 40MB for a page, 16MB for a catalogue).
+`PEERS_ALLOW_LOOPBACK` lets `http://127.0.0.1:<port>` through for `peer-check`
+alone.
+
+**A `peer` key opens `/api/peer/` and nothing else** (`authenticate`, beside
+the `instance` wall), at most 300 requests a minute each, and is never local
+even when both run on one PC. Every route under it then checks what this side
+shares with *that* server (`sharesWith(request, 'collection' | 'copy' |
+'catalogue' | 'ratings')`), each switch this side's own, set per link: the
+Local collection to read (on), copying (on, needs reading), the catalogue (on),
+ratings (off, as the 2026-10-23 decision said). A change is told to the other
+side (`/api/peer/changed`) so it asks again. The devices list leaves `peer`
+keys out: revoked there, the other side would never be told.
+
+**Unlinking** (`DELETE /api/peers/:id`) revokes their key here and tells them
+(`DELETE /api/peer/link`), so their key for this one goes too; a side that
+cannot be told keeps a key that no longer matters, since its own link is gone
+and the other refuses it. Both sides' screens show no key.
+
+**What manga shares** (`/api/peer/manga/…`):
+
+- **The Local collection**: `keptSeries()` (who each was kept for stays here),
+  each series' *whole* chapters (`keptChapters`), page lists and pages, and a
+  cover only while Suwayomi is already up (a linked server's grid never wakes
+  it). A copy of someone else's series is not offered on.
+- **The catalogue's counts** (`catalogueForPeer`): by source id and the
+  series' name on that source, with no Suwayomi id, which means nothing to
+  another install. Source ids do agree between installs (an extension's id is
+  worked out from its name, language and version), so the receiving side
+  (`peer-catalogue.ts`, every six hours from the sweep, kept in
+  `data/manga-peer-catalogue.json`) lays a newer count of theirs over its own
+  copy by the same source and name (`overlay` in `catalogue.ts`), said to be
+  theirs ("counted by Ann's server" on More and in the comparison), which also
+  spares this server recounting it. A copy only they know of joins the
+  "more chapters elsewhere" list and its nudge.
+- **Ratings**, by MangaUpdates id and every name a series goes by, shown on a
+  series' page beside friends' copies' ("Ann (linked)").
+
+**Reading theirs.** Each linked server sharing a collection is one more choice
+in Browse's "Browse from" (`Linked.tsx`, chosen on the screen only). A series
+opens to its chapters and the ordinary reader as a preview (`preview:
+'peer:<link>:<their id>'`, which `manga.browse.pages` sends to
+`/api/manga/peers/…`), so nothing is marked read. Every page goes through this
+server, which refuses one that is not a whole picture (`isWholeImage`).
+
+**Copying** (`POST /api/manga/peers/:peer/series/:id/copy`, only when they
+share copying) queues the series with the archive worker as
+`peer-<link>-<their id>`, a manifest with `peer` and **no `source`**, on
+purpose: nothing that looks a kept series up by Suwayomi id (Browse's Local
+collection, the release sweep, a friend's copy) can then mistake their id for
+one of this Suwayomi's. The worker asks their server for pages
+(`ArchiveTools.peer`, `peerCopyTools`), a page every quarter second, never this
+disk's caches, and never another source. Copies are listed under Browse's own
+Local collection and read from this disk (`/api/manga/copies/…`), linked or
+not. A server that shares reading but not copying refuses a request marked
+`purpose=copy`; that is a courtesy its server keeps, not a wall, since pages
+read can be kept by a server that wanted to, and the card's wording does not
+claim otherwise.
+
+**Not built yet**: a friend's copy on this PC reading linked servers (the links
+are the host's), sharing *more* of the catalogue than counts (a mapped source's
+whole list), and a remembered "Browse from" for a linked server.
+**Not verified**: two real PCs on two tailnets (`peer-check` runs both on this
+one), and the receiving side laying a linked server's counts over its own,
+which runs from the sweep; `peer-check` proves only the sending route.
 
 ### Popups and sounds
 
@@ -6990,6 +7347,68 @@ cannot reintroduce it.
 `smoke` now fires both, plus backslash and mixed forms, and asserts an ordinary
 id still reads its own picture — a guard that merely says no to everything is
 not a fixed feature.
+
+### GitHub's code scanning, the first pass (2026-11-18)
+
+CodeQL on the repository raised 75 alerts. What was real:
+
+- **Notes text that was slow on purpose-built input.** Trimming with
+  `/[…]+$/`, a wiki-link that let `[` inside a target, and code spans,
+  links, bold and strikethrough each scanning to the end of the line from every
+  opening mark: 200,000 characters of `[[` took eleven seconds to read, on the
+  server, over a note that may have come from an import. Now `trimEdges` and
+  `trimTrailing` trim by hand, a target cannot contain `[`, a code span is
+  found by scanning for a run of the same length (`closingRun`, remembering a
+  length that has no closer), and a long run of text is read in pieces of
+  4,000 characters broken at a space (`INLINE_PIECE`). `notes-check` times
+  each shape at 200,000 characters.
+- **A copy's name was checked by some routes and not others**: People's start
+  and stop reached `readInfo` with the name from the address. `folderOf` checks
+  it now, for every path to a copy.
+- **The hand-off code took a byte modulo 31**, so eight letters were a little
+  likelier than the rest. `randomInt` now.
+
+Hardened though nothing could reach them: HTML stripping repeated until it
+settles (`untilSettled`; the result is Markdown drawn as text), a table cell's
+backslashes escaped before its pipes, `&amp;` decoded last in the forum
+reader, and the offline temporary id using `getRandomValues` where
+`randomUUID` is missing.
+
+**Then done the scanner's way, where its way was also better** (the same day,
+asked for as "not fake fixes"):
+
+- **A path from a request stays in its folder** (`inside-of.ts`): each route
+  that makes a file from part of an address checked it against a pattern of
+  its own, and still does; `insideOf(root, …)` then refuses any result outside
+  the folder, so a pattern loosened later cannot reach out. A copy's folder, a
+  habit's picture and a log by name go through it; `smoke` asserts it.
+  `writeFileAtomic` deliberately does not: the archive may be in any folder you
+  choose, and every flagged write traced back to one of those three inputs.
+- **No path is in a shell's command text** (`launch-script.ts`): Restart,
+  Update, the configuration switch and Start the agent were four copies of
+  `cmd /c start … powershell -Command "& '<path>' …"`, with quotes doubled for
+  PowerShell but read by cmd first, which expands `%name%` inside quotes. Now
+  one function with a fixed command, the script, its parameters (named, as a
+  hashtable splat: an array splat passed `-Configuration` as a string) and the
+  log in environment variables. Run for real from a folder named
+  `launch test %x%` with an apostrophe in the script's name.
+- **A secret has no way to the device's storage** (`apiSecretRequest` in
+  `api.ts`): the vault's client and the calls saving a service's key, token or
+  client secret use it. It goes straight to the server and fails offline, with
+  none of `send`'s read cache or outbox, which before kept secrets out only by
+  a list.
+- **Riot's certificate is checked** (`riot-ca.ts`): Riot publishes the
+  authority that signs the League client's local certificate, which names
+  `127.0.0.1`. Verification was off; with the authority it passes in full,
+  measured against a running client (169 friends read), while Node's own trust
+  refuses the same certificate.
+
+Left, and why: **rate limiting** (27 routes): every one is behind a device
+token or local-only, the icons are cached, and behind `tailscale serve` every
+request arrives from 127.0.0.1, so a limit per address would be one limit for
+everybody; a limit per device is worth having one day as protection from a
+runaway client, not as security. **URL substring** in `vault-api-check.ts`: a
+test asserting a word is absent.
 
 ### Auth: this machine is trusted, everything else needs a token
 

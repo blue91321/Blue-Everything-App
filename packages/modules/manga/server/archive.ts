@@ -175,6 +175,20 @@ export interface ArchiveChapter {
   refetch?: boolean;
 }
 
+export interface PeerCopyOf {
+  /** This server's id for the link. */
+  id: string;
+  /** What they were called when it was copied, kept for when the link is gone. */
+  name: string;
+  /** Their Suwayomi's id for the series. */
+  mangaId: string;
+  sourceName: string;
+}
+
+/** The entry id of a series copied from a linked server. */
+export const peerCopyId = (linkId: string, mangaId: string) => `peer-${linkId}-${mangaId}`;
+const isPeerCopy = (seriesId: string) => seriesId.startsWith('peer-');
+
 /** Where a chapter was saved from instead. `whole`: the whole chapter that a part (3.1) is in (3). */
 export interface ElsewhereChapter {
   sourceName: string;
@@ -186,6 +200,15 @@ export interface ArchiveManifest {
   seriesId: string;
   title: string;
   source: { adapter: string; mangaId: string; sourceName: string; title: string } | null;
+  /**
+   * Copied from a linked server's Local collection (`peer-copy` in `routes/peers.ts`),
+   * not kept from a source here: whose, and their Suwayomi's id for it. Such a
+   * series has no `source`, deliberately: their Suwayomi's ids mean nothing to
+   * this one, so nothing that looks a kept series up by Suwayomi id (Browse's
+   * Local collection, the sweep, a friend's copy) can mistake it for one of its
+   * own. Its entry id is `peer-<link>-<their id>`.
+   */
+  peer?: PeerCopyOf;
   startedAt: number;
   updatedAt: number;
   chapters: ArchiveChapter[];
@@ -413,6 +436,20 @@ export function keptSeries(asking = 'you'): Array<{
  * ------------------------------------------------------------------ */
 
 /**
+ * A kept series' whole chapters, by Suwayomi id, for a linked server reading
+ * this collection: only what is done, since a half-kept chapter is not one to
+ * hand anybody.
+ */
+export function keptChapters(mangaId: string): Array<{ chapterId: string; number: number; name: string; pages: number }> | null {
+  const folder = folderOf('', mangaId);
+  const manifest = folder ? readManifest(folder) : null;
+  if (!manifest?.source) return null;
+  return manifest.chapters
+    .filter((c) => c.done && !c.refetch)
+    .map((c) => ({ chapterId: c.chapterId, number: c.number, name: c.name, pages: c.pages.length }));
+}
+
+/**
  * The page list of an archived chapter, in the source's own path form.
  *
  * Deliberately the same shape `cachedPageList` returns, so the route that
@@ -595,6 +632,54 @@ export function startArchive(
   writeManifest(entry.folder, manifest);
   writeIndex(index);
   return { queued, already };
+}
+
+/**
+ * Copy a series from a linked server's Local collection into this one: queued
+ * like any kept series, its pages fetched from their server (`ArchiveTools.peer`).
+ * Safe to call again, which is how a copy catches up with what they kept since.
+ */
+export function startPeerCopy(
+  of: PeerCopyOf,
+  title: string,
+  chapters: readonly ChapterToArchive[]
+): { seriesId: string; queued: number; already: number } {
+  const seriesId = peerCopyId(of.id, of.mangaId);
+  const added = startArchive({ id: seriesId, title, source: null }, chapters);
+  const folder = folderOf(seriesId);
+  const manifest = folder ? readManifest(folder) : null;
+  if (folder && manifest) {
+    manifest.peer = of;
+    writeManifest(folder, manifest);
+  }
+  return { seriesId, ...added };
+}
+
+/** Every series copied from a linked server, for Browse's Local collection. */
+export function peerCopies(): Array<{ seriesId: string; title: string; of: PeerCopyOf; chapters: number; complete: number }> {
+  const out = [];
+  for (const entry of readIndex().series) {
+    if (!isPeerCopy(entry.seriesId)) continue;
+    const manifest = readManifest(entry.folder);
+    if (!manifest?.peer) continue;
+    out.push({
+      seriesId: entry.seriesId,
+      title: manifest.title,
+      of: manifest.peer,
+      chapters: manifest.chapters.length,
+      complete: manifest.chapters.filter((c) => c.done).length,
+    });
+  }
+  return out.sort((a, b) => a.title.localeCompare(b.title));
+}
+
+/** A copied series' chapters, as kept here. */
+export function copiedChapters(seriesId: string): Array<{ chapterId: string; number: number; name: string; pages: number; done: boolean }> | null {
+  if (!isPeerCopy(seriesId)) return null;
+  const folder = folderOf(seriesId);
+  const manifest = folder ? readManifest(folder) : null;
+  if (!manifest?.peer) return null;
+  return manifest.chapters.map((c) => ({ chapterId: c.chapterId, number: c.number, name: c.name, pages: c.pages.length, done: c.done }));
 }
 
 /**
@@ -887,6 +972,15 @@ export interface ArchiveTools {
     number: number,
     around: number[]
   ) => Promise<ElsewhereChapter | null>;
+  /**
+   * A linked server's kept chapter, for a series copied from it: its page list
+   * and each page, checked whole before they are handed back. Without this, a
+   * copy waits in the queue.
+   */
+  peer?: {
+    pages: (of: PeerCopyOf, chapterId: string) => Promise<string[]>;
+    page: (of: PeerCopyOf, chapterId: string, path: string) => Promise<{ body: Buffer; type: string }>;
+  };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -907,8 +1001,11 @@ export async function runQueue(tools: ArchiveTools): Promise<void> {
       const next = nextInQueue(index.queue);
       if (!next) return;
 
-      const url = await tools.connect();
-      if (!url) {
+      // A copy from a linked server asks that server, not Suwayomi.
+      const fromPeer = isPeerCopy(next.seriesId);
+      if (fromPeer && !tools.peer) return;
+      const url = fromPeer ? '' : await tools.connect();
+      if (!fromPeer && !url) {
         /*
          * Nothing to fetch from. Left in the queue rather than failed: "the
          * source is not running" is not a fact about this chapter, and marking
@@ -921,12 +1018,12 @@ export async function runQueue(tools: ArchiveTools): Promise<void> {
       working = next;
       lastServed.set(next.seriesId, Date.now());
       try {
-        await fetchChapter(url, next, tools);
+        await fetchChapter(url ?? '', next, tools);
         dequeue(next);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'could not fetch the chapter';
         const gaveUp = noteFailure(next, message);
-        if (gaveUp && !next.from && tools.elsewhere) await tryElsewhere(next, tools);
+        if (gaveUp && !next.from && !fromPeer && tools.elsewhere) await tryElsewhere(next, tools);
       } finally {
         working = null;
       }
@@ -1023,8 +1120,10 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
   const folder = folderOf(item.seriesId);
   if (!folder) return; // Stopped while it was queued; nothing to do.
 
-  const paths = await tools.pages(item.from?.chapterId ?? item.chapterId);
-  if (paths.length === 0) throw new Error('the source listed no pages for this chapter');
+  const peer = readManifest(folder)?.peer ?? null;
+  if (peer && !tools.peer) return;
+  const paths = peer ? await tools.peer!.pages(peer, item.chapterId) : await tools.pages(item.from?.chapterId ?? item.chapterId);
+  if (paths.length === 0) throw new Error(peer ? `${peer.name}'s server listed no pages for this chapter` : 'the source listed no pages for this chapter');
 
   const manifest = readManifest(folder);
   const chapter = manifest?.chapters.find((c) => c.chapterId === item.chapterId);
@@ -1069,14 +1168,18 @@ async function fetchChapter(baseUrl: string, item: QueueItem, tools: ArchiveTool
      * cut-off page archived is a gap that would be served in preference to the
      * source forever.
      */
-    const fromCache = cachedPageAnywhere(path, item.from?.chapterId ?? item.chapterId);
+    // A linked server's paths name its own Suwayomi's chapters, so this disk's caches are never asked for them.
+    const fromCache = peer ? null : cachedPageAnywhere(path, item.from?.chapterId ?? item.chapterId);
     /*
      * Made smaller first when the collection is set to (`archiveQuality`,
      * `compress.ts`). Read per page, so changing it takes effect on the next
      * page rather than the next chapter; a page that would not come out
      * smaller is kept as it came.
      */
-    const { body, type } = await compress(fromCache ?? (await sharedPage(`${baseUrl}${path}`)), read().archiveQuality);
+    const { body, type } = await compress(
+      fromCache ?? (peer ? await tools.peer!.page(peer, item.chapterId, path) : await sharedPage(`${baseUrl}${path}`)),
+      read().archiveQuality
+    );
 
     /*
      * Numbered from the source's own page path rather than from the loop, so a

@@ -10,6 +10,7 @@
     "pair": "tsx src/cli/pair.ts",
     "smoke": "tsx src/cli/smoke.ts",
     "instance-check": "tsx src/cli/instance-check.ts",
+    "peer-check": "tsx src/cli/peer-check.ts",
     "push-test": "tsx src/cli/push-test.ts",
     "vault-check": "tsx src/cli/vault-check.ts",
     "vault-api": "tsx src/cli/vault-api-check.ts",

@@ -213,6 +213,16 @@ const envSchema = z.object({
    */
   EVERYTHING_HOST_URL: z.string().default('http://127.0.0.1:8787'),
 
+  /**
+   * Let a linked server be `http://127.0.0.1:<port>`, for `peer-check` alone,
+   * which runs two servers on one PC with no Tailscale between them. Off, a
+   * linked server must be an `https://…ts.net` address: see `peers.ts`.
+   */
+  PEERS_ALLOW_LOOPBACK: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
   /** Set when running behind a reverse proxy so client IPs log correctly. */
   TRUST_PROXY: z
     .enum(['true', 'false'])

@@ -18,6 +18,7 @@ import { attentionRoutes } from './routes/attention.js';
 import { connectRoutes } from './routes/connect.js';
 import { deviceRoutes } from './routes/devices.js';
 import { instanceRoutes } from './instances.js';
+import { peerRoutes } from './peers.js';
 import { onboardingRoutes } from './onboarding.js';
 import { nameRoutes } from './names.js';
 import { closingRoutes } from './closing.js';
@@ -95,6 +96,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(deviceRoutes);
   await app.register(instanceRoutes);
+  await app.register(peerRoutes);
   await app.register(onboardingRoutes);
   await app.register(nameRoutes);
   await app.register(closingRoutes);

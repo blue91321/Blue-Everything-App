@@ -17,6 +17,7 @@ import { occurrencesIn } from '../occurrences.js';
 import { cleanEvent, cleanOffsets, DEFAULT_REMINDERS, type CalEvent, type Calendar, type Store } from '../store.js';
 import { nudgeFor, remindersDue, whenText } from '../reminders.js';
 import { shiftSkips } from '../index.js';
+import { hourRange, placeDay } from '../../web/grid-layout.js';
 
 let failures = 0;
 function check(what: string, ok: boolean, detail = ''): void {
@@ -319,6 +320,7 @@ console.log('\nReminders');
     ],
     reminders: { ...DEFAULT_REMINDERS, asked: true },
     raised: {},
+    taskLayer: 'all',
   };
   const { due, next } = remindersDue(store, now);
   const names = due.map((d) => `${d.occ.title}:${d.offset}`).sort();
@@ -348,6 +350,54 @@ console.log('\nReminders');
     whenText(meeting.occ, now, 'America/New_York')
   );
   check('offsets are cleaned: whole minutes, sorted, at most five', eq(cleanOffsets([15, 15.4, 'x', 60, -2000, 5, 1, 2, 3]), [1, 2, 3, 5, 15]));
+}
+
+console.log('\nThe week card’s hour grid');
+{
+  // 40px an hour, blocks at least 42px: a half-hour lecture is 20px of time and 42px of block.
+  const lecture = placeDay([{ id: 'calc', start: 10 * 60, end: 10 * 60 + 30 }], 8, 40, 42)[0]!;
+  check('a short event is as tall as its two lines of text, not its length', lecture.height === 42 && lecture.top === 80, JSON.stringify(lecture));
+  const due = placeDay([{ id: 'quiz', start: 23 * 60 + 59, end: 23 * 60 + 59 }], 8, 40, 42)[0]!;
+  check('a task falling due, which lasts no time, still gets a block', due.height === 42);
+  const two = placeDay(
+    [
+      { id: 'a', start: 600, end: 630 },
+      { id: 'b', start: 640, end: 700 },
+    ],
+    8,
+    40,
+    42
+  );
+  check(
+    'two that only overlap once drawn at full height share the width',
+    two.every((p) => p.cols === 2) && new Set(two.map((p) => p.col)).size === 2,
+    JSON.stringify(two)
+  );
+  const apart = placeDay(
+    [
+      { id: 'a', start: 600, end: 660 },
+      { id: 'b', start: 720, end: 780 },
+    ],
+    8,
+    40,
+    42
+  );
+  check('two hours apart, each has the whole width', apart.every((p) => p.cols === 1 && p.col === 0));
+  const three = placeDay(
+    [
+      { id: 'a', start: 600, end: 720 },
+      { id: 'b', start: 610, end: 640 },
+      { id: 'c', start: 680, end: 700 },
+    ],
+    8,
+    40,
+    42
+  );
+  const col = (id: string) => three.find((p) => p.id === id)!.col;
+  check('a column freed by an earlier block is used again', col('a') === 0 && col('b') === 1 && col('c') === 1 && three.every((p) => p.cols === 2), JSON.stringify(three));
+  check('nothing on: 8 am to 8 pm', eq(hourRange([]), { from: 8, to: 20 }));
+  check('the range runs from the first hour to past the last, including 11:59 pm', eq(hourRange([{ start: 9 * 60, end: 10 * 60 }, { start: 1439, end: 1439 }]), { from: 9, to: 24 }));
+  check('at least ten hours, stretched later then earlier', eq(hourRange([{ start: 20 * 60, end: 21 * 60 }]), { from: 14, to: 24 }));
 }
 
 if (failures) {

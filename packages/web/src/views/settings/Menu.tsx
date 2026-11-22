@@ -21,6 +21,10 @@ import {
   putInFolder,
   removeFolder,
   resetFolders,
+  setShownFolded,
+  setStartsOpen,
+  shownFolded,
+  startsOpen,
   useFolderPrefs,
 } from '../../menu-folders';
 import { webFeatures } from '../../features';
@@ -128,8 +132,9 @@ export function MenuDrawer() {
  * to add. Until it is arranged it shows the defaults; once arranged it shows
  * exactly the list, so hiding everything but a few is removing the rest.
  *
- * The menu keeps its switches, on sections only: a screen is always in the
- * menu, because one reachable only by a tile you might hide is a screen lost.
+ * The menu's switches, on sections only, are in the folders card: a screen is
+ * always in the menu, because one reachable only by a tile you might hide is a
+ * screen lost.
  *
  * Per device: the phone's first screen and the PC's menu are separate choices.
  */
@@ -139,7 +144,6 @@ export function MenuAndHome() {
   const all = useMenuEntries()
     .filter((e) => e.id !== 'home')
     .map((e) => ({ ...e, label: t(`screen:${e.id}`, e.label) }));
-  const sections = all.filter((e) => e.parent);
   const arranged = homeArranged();
   const tiles = homeTiles(all);
   const choices = all.map((e) => ({
@@ -178,72 +182,137 @@ export function MenuAndHome() {
         </div>
       </div>
 
-      <MenuFolders screens={all.filter((e) => !e.parent && e.id !== 'settings')} />
-
-      {sections.length > 0 && (
-        <div className="card">
-          <div className="title">Sections in the menu</div>
-          <div className="meta" style={{ marginTop: 2 }}>
-            Listed under their screen in the menu. A screen itself is always there. On this device only.
-          </div>
-          <div className="menu-prefs">
-            {sections.map((e) => (
-              <label key={e.id} className="menu-prefs-row sub">
-                <span className="menu-prefs-name">
-                  <span aria-hidden="true">{e.glyph}</span> {all.find((p) => p.id === e.parent)?.label} › {e.label}
-                  {isReady(e.id) === false && <span className="meta"> · not set up yet</span>}
-                </span>
-                <input
-                  type="checkbox"
-                  aria-label={`${e.label} in the menu`}
-                  checked={inMenu(e)}
-                  onChange={(ev) => setShown('menu', e.id, ev.target.checked)}
-                />
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
+      <MenuFolders all={all} />
     </section>
   );
 }
 
 /**
- * Folders in the menu (`menu-folders.ts`): which screen is in which, and
- * making and removing them. The menu itself does the same by dragging in
- * edit mode; this is the way for a keyboard, or for anybody who would rather
- * pick from a list. A folder is renamed in edit mode, by its heading.
+ * The menu's folders and sections, in one card (2026-11-20): which folder
+ * each screen is in, how each folder starts, which sections are listed under
+ * their screen, and what shows under a folder's heading while it is folded
+ * (`menu-folders.ts`). It was two cards, "Folders in the menu" and "Sections
+ * in the menu", which described one list from two sides.
+ *
+ * Laid out as the menu is: each folder with what is in it, then what is in
+ * none. The menu itself does the moving by dragging in ✎ Edit screens; this is
+ * the way for a keyboard, or for anybody who would rather pick from a list. A
+ * folder is renamed in edit mode, by its heading.
  */
-function MenuFolders({ screens }: { screens: MenuEntry[] }) {
+function MenuFolders({ all }: { all: MenuEntry[] }) {
   const t = useUiText();
   const prefs = useFolderPrefs();
   const [name, setName] = useState('');
   const declaredOf = (id: string) => webFeatures.find((w) => w.id === id)?.group;
   const folders = foldersFrom(webFeatures.map((w) => w.group), prefs);
-  return (
-    <div className="card">
-      <div className="title">Folders in the menu</div>
-      <div className="meta" style={{ marginTop: 2 }}>
-        Screens gathered under one heading that folds, like World. Removing a folder moves what is in it to the top of the
-        menu. Rename one in ✎ Edit screens, by clicking its name, where you can also drag screens in and out. On this device
-        only.
-      </div>
-      <div className="menu-prefs">
-        {folders.map((f) => (
-          <div key={f.id} className="menu-prefs-row">
+  // Settings and Feedback are pinned to the foot of the menu and are in no folder.
+  const screens = all.filter((e) => !e.parent && !PINNED.includes(e.id));
+  const sectionsOf = (id: string) => all.filter((e) => e.parent === id);
+  const folderOf = (id: string) => folderFor(id, declaredOf(id), folders, prefs)?.id ?? '';
+
+  const screenRows = (list: MenuEntry[], inFolder: boolean) =>
+    list.map((s) => (
+      <div key={s.id} className="menu-fold-screen">
+        <div className="menu-fold-row">
+          <span className="menu-prefs-name">
+            <span aria-hidden="true">
+              <Glyph glyph={s.glyph} />
+            </span>{' '}
+            {s.label}
+          </span>
+          <select value={folderOf(s.id)} onChange={(e) => putInFolder(s.id, e.target.value)} aria-label={`Folder for ${s.label}`}>
+            <option value="">Not in a folder</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id}>
+                {t(`group:${f.id}`, f.label)}
+              </option>
+            ))}
+          </select>
+          {inFolder && (
+            <label className="menu-fold-check" title="Listed under the folder's heading even while the folder is folded">
+              <input type="checkbox" checked={shownFolded(s.id, prefs)} onChange={(e) => setShownFolded(s.id, e.target.checked)} />
+              Show when folded
+            </label>
+          )}
+        </div>
+        {sectionsOf(s.id).map((sec) => (
+          <div key={sec.id} className="menu-fold-row sub">
             <span className="menu-prefs-name">
-              <span aria-hidden="true">
-                <Glyph glyph={f.glyph} />
-              </span>{' '}
-              {t(`group:${f.id}`, f.label)}
-              <span className="meta"> · {screens.filter((s) => folderFor(s.id, declaredOf(s.id), folders, prefs)?.id === f.id).length} in it</span>
+              <span aria-hidden="true">{sec.glyph}</span> {sec.label}
+              {isReady(sec.id) === false && <span className="meta"> · not set up yet</span>}
             </span>
-            <button className="btn subtle" onClick={() => removeFolder(f.id)}>
-              Remove
-            </button>
+            <label className="menu-fold-check" title="Listed under its screen in the menu">
+              <input type="checkbox" checked={inMenu(sec)} onChange={(e) => setShown('menu', sec.id, e.target.checked)} />
+              In the menu
+            </label>
+            {inFolder && (
+              <label className="menu-fold-check" title="Listed under the folder's heading even while the folder is folded">
+                <input
+                  type="checkbox"
+                  disabled={!inMenu(sec)}
+                  checked={inMenu(sec) && shownFolded(sec.id, prefs)}
+                  onChange={(e) => setShownFolded(sec.id, e.target.checked)}
+                />
+                Show when folded
+              </label>
+            )}
           </div>
         ))}
       </div>
+    ));
+
+  const loose = screens.filter((s) => folderOf(s.id) === '');
+  return (
+    <div className="card">
+      <div className="title">Folders and sections in the menu</div>
+      <div className="meta" style={{ marginTop: 2 }}>
+        A folder gathers screens under one heading that folds, like World. Choose whether each starts open or folded when the app
+        opens, and tick <em>Show when folded</em> on anything that should stay under the heading either way. Sections are parts of a
+        screen listed under it. Rename a folder in ✎ Edit screens, by clicking its name, where screens can also be dragged in and
+        out. On this device only.
+      </div>
+
+      {folders.map((f) => {
+        const inside = screens.filter((s) => folderOf(s.id) === f.id);
+        const open = startsOpen(f.id, prefs);
+        return (
+          <section key={f.id} className="menu-fold">
+            <div className="menu-fold-head">
+              <span className="menu-prefs-name">
+                <span aria-hidden="true">
+                  <Glyph glyph={f.glyph} />
+                </span>{' '}
+                <strong>{t(`group:${f.id}`, f.label)}</strong>
+                <span className="meta"> · {inside.length === 0 ? 'empty' : `${inside.length} in it`}</span>
+              </span>
+              <div className="menu-fold-start" role="group" aria-label={`How ${t(`group:${f.id}`, f.label)} starts`}>
+                <button className={`btn subtle${open ? ' on' : ''}`} aria-pressed={open} onClick={() => setStartsOpen(f.id, true)}>
+                  Starts open
+                </button>
+                <button className={`btn subtle${!open ? ' on' : ''}`} aria-pressed={!open} onClick={() => setStartsOpen(f.id, false)}>
+                  Starts folded
+                </button>
+              </div>
+              <button className="btn subtle" onClick={() => removeFolder(f.id)} title="What is in it moves to the top of the menu">
+                Remove
+              </button>
+            </div>
+            {inside.length ? screenRows(inside, true) : <p className="meta menu-fold-empty">Nothing in it yet. Pick it from a screen's list below.</p>}
+          </section>
+        );
+      })}
+
+      {loose.length > 0 && (
+        <section className="menu-fold">
+          <div className="menu-fold-head">
+            <span className="menu-prefs-name">
+              <strong>Not in a folder</strong>
+            </span>
+          </div>
+          {screenRows(loose, false)}
+        </section>
+      )}
+
       <form
         className="row"
         style={{ marginTop: '.75rem', gap: '.4rem' }}
@@ -258,38 +327,17 @@ function MenuFolders({ screens }: { screens: MenuEntry[] }) {
           ＋ New folder
         </button>
       </form>
-      <div className="menu-prefs" style={{ marginTop: '.75rem' }}>
-        {screens.map((s) => (
-          <label key={s.id} className="menu-prefs-row">
-            <span className="menu-prefs-name">
-              <span aria-hidden="true">
-                <Glyph glyph={s.glyph} />
-              </span>{' '}
-              {s.label}
-            </span>
-            <select
-              value={folderFor(s.id, declaredOf(s.id), folders, prefs)?.id ?? ''}
-              onChange={(e) => putInFolder(s.id, e.target.value)}
-              aria-label={`Folder for ${s.label}`}
-            >
-              <option value="">Not in a folder</option>
-              {folders.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {t(`group:${f.id}`, f.label)}
-                </option>
-              ))}
-            </select>
-          </label>
-        ))}
-      </div>
       {foldersChanged() && (
         <button className="btn subtle" style={{ marginTop: '.75rem' }} onClick={resetFolders}>
-          Back to the defaults
+          Folders back to the defaults
         </button>
       )}
     </div>
   );
 }
+
+/** Pinned to the foot of the menu, in no folder: see `CORE_NAV` in App. */
+const PINNED = ['settings', 'feedback'];
 
 /**
  * The widths offered for docking the menu, as named alternatives.

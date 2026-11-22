@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 
 const SERVER = [
   'smoke',
+  'peer-check',
   'manga-check',
   'notes-check',
   'integrations-check',

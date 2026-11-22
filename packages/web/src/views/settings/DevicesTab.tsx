@@ -113,7 +113,8 @@ export function DevicesTab({ session, onChanged }: { session: Session; onChanged
         <h2>Connected devices</h2>
         {devices.loading && <div className="empty">loading…</div>}
         {devices.data?.length === 0 && <div className="empty">No devices connected yet.</div>}
-        {devices.data?.map((device) => (
+        {/* A linked server's key is managed with the link (People → Linked servers): revoked here, the other side would never be told. */}
+        {devices.data?.filter((device) => device.kind !== 'peer').map((device) => (
           <DeviceRow
             key={device.id}
             device={device}

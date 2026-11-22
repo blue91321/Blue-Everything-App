@@ -26,7 +26,7 @@ const TABS = [
   { id: 'games', label: 'Games', hint: 'What counts as a game, and what may interrupt one' },
   { id: 'packages', label: 'Packages', hint: 'Which parts of the app run' },
   // On the host only: friends' copies of the app on this PC. See PeopleTab.
-  { id: 'people', label: 'People', hint: 'Friends with their own copy, on this PC' },
+  { id: 'people', label: 'People', hint: "Friends with their own copy on this PC, and friends' own servers linked with this one" },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -148,7 +148,7 @@ export function Settings({
       {tab === 'devices' && <DevicesTab session={session} onChanged={onChanged} />}
       {tab === 'games' && <GamesTab session={session} />}
       {tab === 'packages' && <PackagesTab session={session} />}
-      {tab === 'people' && session.copy === null && <PeopleTab />}
+      {tab === 'people' && session.copy === null && <PeopleTab manga={session.features?.includes('manga') ?? true} />}
     </>
   );
 }

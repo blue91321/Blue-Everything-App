@@ -108,6 +108,24 @@ export { copyOfDevice, readHostKey } from './instances.js';
 export { nameFor, ownName } from './names.js';
 
 /**
+ * Linked servers: another person's own server, linked on purpose, over
+ * Tailscale. A package shares under `/api/peer/<package>/`, checks
+ * `sharesWith(request, …)` on every such route, and asks a linked server with
+ * `peerFetch` / `peerJson`. See `peers.ts`.
+ */
+export {
+  freshPeer,
+  linkedPeers,
+  peerById,
+  peerFetch,
+  peerJson,
+  peerOf,
+  sharesWith,
+  type PeerLink,
+  type PeerShare,
+} from './peers.js';
+
+/**
  * Announcing a change, so every open client refetches.
  *
  * A package that writes something and does not announce it leaves the phone and

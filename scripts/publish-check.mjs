@@ -132,7 +132,9 @@ const PERSONAL_PATTERNS = [
     // Documentation addresses and GitHub noreply addresses are exempt. A
     // noreply address is the *fix* for publishing a personal one, so flagging
     // it would train whoever runs this to ignore the one warning that matters.
-    /\b[A-Za-z0-9._%+-]+@(?!example\.(com|org|net)\b)(?!domain\.tld\b)(?!users\.noreply\.github\.com\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
+    // So is the app's feedback address, made to be public (`feedback-text.ts`):
+    // exempted by name, so any other address still warns.
+    /\b(?!blueeverythingapp@gmail\.com\b)[A-Za-z0-9._%+-]+@(?!example\.(com|org|net)\b)(?!domain\.tld\b)(?!users\.noreply\.github\.com\b)[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/,
     'a real email address',
   ],
 ];

@@ -12,10 +12,11 @@
 import { useState } from 'react';
 import { api, type Person, type PersonInvite } from '../../api';
 import { useAsync } from '../../useAsync';
+import { LinkedServers } from './LinkedServers';
 
 const NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
-export function PeopleTab() {
+export function PeopleTab({ manga = true }: { manga?: boolean }) {
   const people = useAsync(() => api.people.list(), [], ['all']);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -177,6 +178,8 @@ export function PeopleTab() {
       )}
 
       {list.length === 0 ? <p className="empty">Nobody yet.</p> : list.map(row)}
+
+      <LinkedServers manga={manga} />
     </>
   );
 }

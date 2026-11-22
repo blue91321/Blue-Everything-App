@@ -3,14 +3,15 @@
  *
  * Its own client rather than entries on `api` in core, because core must not
  * know a package exists: deleting this folder takes its routes, its screens
- * and this file together. It goes through core's `apiRequest`, so its reads
- * are kept for offline use and its changes refused or queued by the same
- * rules as everything else. `manga-api.ts` was the first of these.
+ * and this file together. It goes through core's `apiSecretRequest`, not
+ * `apiRequest`: nothing it sends or gets back may be kept on the device, so it
+ * has no offline copy and nothing is queued (2026-11-18, see `api.ts`).
+ * `manga-api.ts` was the first client of its own.
  *
  * The server half is `packages/modules/vault/server`.
  */
 
-import { apiRequest as request } from '@app/api';
+import { apiSecretRequest as request } from '@app/api';
 
 export interface VaultStatus {
   configured: boolean;

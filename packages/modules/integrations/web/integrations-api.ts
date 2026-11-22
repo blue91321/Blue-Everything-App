@@ -10,7 +10,7 @@
  * The server half is `packages/modules/integrations/server`.
  */
 
-import { apiRequest as request } from '@app/api';
+import { apiRequest as request, apiSecretRequest } from '@app/api';
 
 /* ------------------------------------------------------------------ */
 /* App integrations                                                    */
@@ -367,6 +367,9 @@ export interface MusicView {
   byArtist?: { items: number; artists: Array<{ name: string; count: number }> };
 }
 
+/** A key, a token or a client secret: never kept on the device or queued offline (`apiSecretRequest`). */
+const secretPost = <T>(path: string, payload: unknown) =>
+  apiSecretRequest<T>(path, { method: 'POST', body: JSON.stringify(payload) });
 const post = <T>(path: string, payload?: unknown) =>
   request<T>(path, { method: 'POST', body: payload === undefined ? undefined : JSON.stringify(payload) });
 const patch = <T>(path: string, payload: unknown) =>
@@ -395,7 +398,7 @@ export const integrationsApi = {
      * `apiKey` is optional only because STEAM_API_KEY remains a fallback.
      */
     connectSteam: (profile: string, apiKey?: string) =>
-      post<{ connected: boolean; accountName: string; steamId: string }>('/api/integrations/steam/connect', {
+      secretPost<{ connected: boolean; accountName: string; steamId: string }>('/api/integrations/steam/connect', {
         profile,
         apiKey,
       }),
@@ -405,7 +408,7 @@ export const integrationsApi = {
      * only the host is kept.
      */
     connectCanvas: (host: string, token: string) =>
-      post<{ connected: boolean; accountName: string; host: string }>('/api/integrations/canvas/connect', {
+      secretPost<{ connected: boolean; accountName: string; host: string }>('/api/integrations/canvas/connect', {
         host,
         token,
       }),
@@ -414,7 +417,7 @@ export const integrationsApi = {
      * Omit a key to leave it as it is; send '' to clear it.
      */
     saveCredentials: (provider: string, values: { clientId?: string; clientSecret?: string }) =>
-      request<{ saved: string[]; missingConfig: string[] }>(`/api/integrations/${provider}/credentials`, {
+      apiSecretRequest<{ saved: string[]; missingConfig: string[] }>(`/api/integrations/${provider}/credentials`, {
         method: 'PUT',
         body: JSON.stringify(values),
       }),

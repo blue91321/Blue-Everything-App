@@ -348,11 +348,11 @@ export function queueable(method: string, path: string): boolean {
 }
 
 function newTempId(): string {
-  const uuid =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
-  return `offline-${uuid}`;
+  // `randomUUID` is missing where the page is not a secure context (an http address
+  // that is not this PC); `getRandomValues` is not, so it stands in rather than Math.random.
+  if (typeof crypto.randomUUID === 'function') return `offline-${crypto.randomUUID()}`;
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return `offline-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
 }
 
 /** Queue a change, apply it here, and answer as the server would have. */

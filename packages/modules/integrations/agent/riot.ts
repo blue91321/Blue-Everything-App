@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs';
 import { existsSync } from 'node:fs';
 import { request } from 'node:https';
 import { join } from 'node:path';
+import { RIOT_CA } from './riot-ca.js';
 
 export interface RiotFriend {
   providerUserId: string;
@@ -85,18 +86,16 @@ export function readLock(): Lock | null {
 /**
  * A GET against the LCU.
  *
- * `node:https` rather than `fetch`, for one reason: **the certificate is
- * self-signed and verification has to be off**, and `rejectUnauthorized` is a
- * plain option here while doing the same through `fetch` means constructing an
- * undici dispatcher.
+ * `node:https` rather than `fetch`, because the certificate is checked against
+ * **Riot's own certificate authority** (`riot-ca.ts`), and `ca` is a plain
+ * option here while doing the same through `fetch` means constructing an undici
+ * dispatcher.
  *
- * Switching off TLS verification is normally a serious thing to do, so it is
- * worth being precise about why it is not here. The connection is to
- * `127.0.0.1` on a port named by a file that only a process running as this
- * user could have written, authenticated with a password from that same file.
- * There is no network path to man-in-the-middle: an attacker able to sit
- * between this process and loopback is already inside the machine. The
- * certificate would add nothing, and Riot does not offer a verifiable one.
+ * This had verification switched off, on the reasoning that the connection is
+ * to `127.0.0.1` on a port named by a file only this user could have written.
+ * That stands, but Riot does publish the authority that signs the client's
+ * certificate, and the certificate names `127.0.0.1`, so verifying it costs
+ * nothing (2026-11-18, after GitHub's code scanning flagged the switch).
  */
 function lcuGet<T>(lock: Lock, path: string, timeoutMs = 2000): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -106,7 +105,7 @@ function lcuGet<T>(lock: Lock, path: string, timeoutMs = 2000): Promise<T> {
         port: lock.port,
         path,
         method: 'GET',
-        rejectUnauthorized: false,
+        ca: RIOT_CA,
         headers: {
           authorization: `Basic ${Buffer.from(`riot:${lock.password}`).toString('base64')}`,
           accept: 'application/json',

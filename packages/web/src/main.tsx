@@ -2,10 +2,13 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { reloadOnStaleBuild } from './stale-build';
+import { watchForErrors } from './recent-errors';
 import './styles.css';
 
 // Before the first render, so a screen opened straight away is covered too.
 reloadOnStaleBuild();
+// What nobody caught, kept on this device for a bug report (`recent-errors.ts`).
+watchForErrors();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

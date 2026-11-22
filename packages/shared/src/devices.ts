@@ -11,8 +11,10 @@ import { z } from 'zod';
  * `instance` is not a device: it is the key a guest copy of the server holds
  * to ask the host's Suwayomi for things (plan A). Only the host mints one, for
  * a copy it finds in `instances/`, so it is left out of what a person can pair.
+ * `peer` is the same idea for another person's whole server, linked on purpose
+ * (`peers.ts` in the server), and is made only by linking.
  */
-export const deviceKinds = ['windows-agent', 'phone', 'browser', 'extension', 'instance'] as const;
+export const deviceKinds = ['windows-agent', 'phone', 'browser', 'extension', 'instance', 'peer'] as const;
 
 export const pairableDeviceKinds = ['windows-agent', 'phone', 'browser', 'extension'] as const;
 

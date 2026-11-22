@@ -331,3 +331,525 @@
 .cal-preview {
   margin-top: 10px;
 }
+
+/*
+ * The week card on the Dashboard (panel.tsx): three looks. Its own container,
+ * since the card sits in either Dashboard column and what decides the layout
+ * is the card's width, not the window's.
+ */
+.cal-card {
+  container: cal-card / inline-size;
+}
+
+.cal-card-head {
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.cal-card-head .cal-switch .btn {
+  padding: 4px 10px;
+}
+
+/* A thing on a day, as a chip: a tint of its calendar's colour with a bar down the side. */
+.cal-wchip {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 4px;
+  padding: 3px 6px;
+  border: 0;
+  border-left: 3px solid var(--c, var(--accent));
+  border-radius: 0 6px 6px 0;
+  background: color-mix(in srgb, var(--c, var(--accent)) 16%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cal-wchip.allday {
+  background: color-mix(in srgb, var(--c, var(--accent)) 34%, transparent);
+}
+
+.cal-wchip-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.cal-wchip-time {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.cal-wchip-title {
+  /* Two lines, then an ellipsis: a name is never cut mid-line with nothing to say so. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.cal-wchip.done .cal-wchip-title,
+.cal-tg-block.done .cal-wchip-title,
+.cal-line .done .cal-link,
+.cal-today-row.past .cal-link {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+/* A task's box. */
+.cal-tick {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  padding: 0;
+  border: 1.5px solid var(--c, var(--accent));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 13px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.cal-tick.done {
+  background: var(--c, var(--accent));
+  color: #fff;
+}
+
+/* ---- Week: seven columns ---- */
+.cal-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cal-week-head {
+  display: block;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cal-week-num {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cal-week-day.today .cal-week-head,
+.cal-week-day.today .cal-week-num {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.cal-week-none {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* A narrow card: a row per day, its things flowing beside it. */
+@container cal-card (max-width: 560px) {
+  .cal-week {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .cal-week-day {
+    display: grid;
+    grid-template-columns: 4.2em minmax(0, 1fr);
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .cal-week-day:last-child {
+    border-bottom: 0;
+  }
+
+  .cal-week-head {
+    margin: 0;
+    border: 0;
+  }
+
+  .cal-week-items .cal-wchip:last-child {
+    margin-bottom: 0;
+  }
+}
+
+/* ---- Grid: by the hour ---- */
+.cal-tg-pager {
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.cal-tg-row {
+  display: grid;
+  gap: 0 3px;
+}
+
+.cal-tg-head {
+  padding: 2px 0 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.cal-tg-head strong {
+  color: var(--text);
+}
+
+.cal-tg-head.today,
+.cal-tg-head.today strong {
+  color: var(--accent);
+}
+
+.cal-tg-top {
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+
+.cal-tg-top-cell {
+  min-width: 0;
+}
+
+.cal-tg-top-cell .cal-wchip {
+  margin-bottom: 2px;
+}
+
+.cal-tg-hour {
+  font-size: 0.7rem;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.cal-tg-body {
+  position: relative;
+  border-top: 1px solid var(--border);
+}
+
+.cal-tg-hours {
+  position: relative;
+}
+
+.cal-tg-hours .cal-tg-hour {
+  position: absolute;
+  right: 4px;
+  transform: translateY(2px);
+  white-space: nowrap;
+}
+
+.cal-tg-col {
+  position: relative;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+}
+
+.cal-tg-col.today {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.cal-tg-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.cal-tg-now {
+  position: absolute;
+  left: -1px;
+  right: 0;
+  border-top: 2px solid var(--danger);
+  z-index: 2;
+}
+
+.cal-tg-block {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 5px;
+  border: 0;
+  border-left: 3px solid var(--c, var(--accent));
+  border-radius: 0 5px 5px 0;
+  background: color-mix(in srgb, var(--c, var(--accent)) 22%, var(--surface));
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.cal-tg-block .cal-wchip-time {
+  font-size: 0.7rem;
+}
+
+/* ---- Today: today in full, a line per day after ---- */
+.cal-today {
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.cal-today-head {
+  display: block;
+  margin-bottom: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cal-today-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.cal-today-row.past {
+  opacity: 0.6;
+}
+
+.cal-today-time {
+  flex: none;
+  width: 6.5em;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.cal-today-time.task {
+  color: var(--c, var(--accent));
+}
+
+.cal-today-what {
+  min-width: 0;
+}
+
+.cal-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.cal-link:hover {
+  text-decoration: underline;
+}
+
+.cal-link.task {
+  color: #c69026;
+}
+
+.cal-soon {
+  color: var(--accent);
+  font-size: 0.85em;
+}
+
+.cal-line {
+  display: grid;
+  grid-template-columns: 4.6em minmax(0, 1fr);
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.cal-line:last-child {
+  border-bottom: 0;
+}
+
+.cal-line-day {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cal-line-items {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Tasks on the Calendar screen. */
+.cal-chip.task {
+  border-left-style: dotted;
+}
+
+.cal-chip.task.done,
+.cal-task-row.done .cal-link {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.cal-task-row {
+  align-items: center;
+  cursor: default;
+}
+
+.cal-task-row .cal-link.title {
+  font-weight: 500;
+}
+
+/* A week column is narrow, and assignment names differ at their ends ("M9 Quiz - Lymphatic System – Dysfunction"): four lines before an ellipsis. */
+.cal-week .cal-wchip-title {
+  -webkit-line-clamp: 4;
+}
+
+.cal-tg-top .cal-tg-hour {
+  padding-top: 5px;
+}
+
+.cal-tg-none {
+  margin: 6px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+/* More blocks than fit side by side: a column of its own that opens the day. */
+.cal-tg-more {
+  position: absolute;
+  z-index: 3;
+  padding: 3px 5px;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Room for one column only: a small count at the foot of the block shown. */
+.cal-tg-more.corner {
+  right: 3px;
+  padding: 0 5px;
+  border-style: solid;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.cal-tg-top .cal-wchip-title {
+  -webkit-line-clamp: 4;
+}
+
+.cal-card {
+  margin-bottom: 16px;
+}
+
+.cal-week-day {
+  align-items: start;
+}
+
+.cal-tg-moredue {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: none;
+  color: #c69026;
+  font: inherit;
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+
+/* The week card's own settings, under its head. */
+.cal-card-options {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.cal-card-opt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 6px;
+}
+
+.cal-card-opt-label {
+  min-width: 8em;
+  font-size: 0.85rem;
+}
+
+.cal-card-opt .cal-switch {
+  flex-wrap: wrap;
+}
+
+.cal-card-opt .cal-switch .btn {
+  padding: 3px 9px;
+}
+
+.cal-card-options .meta {
+  margin: 2px 0 0;
+}
+
+/* More than one week: a label over each, and days already gone this week quieter. */
+.cal-week-block + .cal-week-block,
+.cal-tg-week + .cal-tg-week {
+  margin-top: 14px;
+}
+
+.cal-week-label {
+  margin-bottom: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cal-week-day.past,
+.cal-tg-head.past,
+.cal-tg-col.past .cal-tg-block {
+  opacity: 0.6;
+}

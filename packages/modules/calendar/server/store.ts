@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { dataDir, writeFileAtomic } from '@everything/server/module-api';
 import { cleanRepeat, type Repeat } from './recur.js';
 import { DATE, DATETIME, isZone } from './time.js';
+import { TASK_LAYERS, type TaskLayer } from './tasks.js';
 
 export const STORE_FILE = join(dataDir, 'calendar.json');
 
@@ -75,6 +76,8 @@ export interface Store {
   reminders: ReminderPrefs;
   /** Reminders already raised, by `<occurrence key>|<offset>`, so a restart does not raise them again; the nudge, so an edit can take it back. */
   raised: Record<string, Raised>;
+  /** Which tasks with a due date the calendar shows beside its events (`tasks.ts`). */
+  taskLayer: TaskLayer;
 }
 
 export interface Raised {
@@ -166,6 +169,7 @@ const EMPTY = (): Store => ({
   events: [],
   reminders: { ...DEFAULT_REMINDERS },
   raised: {},
+  taskLayer: 'all',
 });
 
 export function read(): Store {
@@ -188,7 +192,8 @@ export function read(): Store {
         raised[k] = { at: (v as Raised).at, nudge: typeof (v as Raised).nudge === 'string' ? (v as Raised).nudge : null };
     }
   }
-  return { calendars, events, reminders: cleanReminders(parsed.reminders), raised };
+  const taskLayer = TASK_LAYERS.includes(parsed.taskLayer as TaskLayer) ? (parsed.taskLayer as TaskLayer) : 'all';
+  return { calendars, events, reminders: cleanReminders(parsed.reminders), raised, taskLayer };
 }
 
 export function write(next: Store): void {

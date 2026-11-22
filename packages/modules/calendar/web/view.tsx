@@ -15,6 +15,7 @@ import { useAction, useAsync } from '@app/useAsync';
 import { useBackStep } from '@app/view-history';
 import type { FeatureViewProps } from '@app/features/index';
 import { ReminderQuestion } from './ask';
+import { TaskName, Tick } from './task-bits';
 import './calendar.css';
 import {
   addDaysKey,
@@ -24,12 +25,15 @@ import {
   daysOf,
   dayTitle,
   deviceZone,
+  dueDay,
   fromKey,
   localWall,
   offsetText,
   ordinal,
   pad,
   repeatText,
+  sourceName,
+  TASK_COLOR,
   TIMED_CHOICES,
   timeText,
   weekOfMonth,
@@ -38,15 +42,18 @@ import {
   type CalendarInfo,
   type CalendarState,
   type CalEvent,
+  type DueTask,
   type EventDraft,
   type ImportPreview,
   type Occurrence,
   type Reminders,
   type Repeat,
   type Scope,
+  type TaskLayer,
 } from './calendar-api';
 
-const WATCH = ['calendar'] as unknown as ChangeScope[];
+// Tasks too: a task with a due date (a Canvas assignment) is on the calendar, and ticking one off elsewhere should show here.
+const WATCH = ['calendar', 'tasks'] as unknown as ChangeScope[];
 const COLORS = ['#4f8cff', '#e5534b', '#57ab5a', '#c69026', '#a371f7', '#39c5cf', '#e0823d', '#d16ba5'];
 const MODE_KEY = 'calendar.mode';
 
@@ -127,6 +134,16 @@ export default function CalendarView({ focus, onFocused }: FeatureViewProps) {
       }
     }
     for (const list of map.values()) list.sort((a, b) => Number(b.allDay) - Number(a.allDay) || a.startMs - b.startMs);
+    return map;
+  }, [data]);
+  const tasksByDay = useMemo(() => {
+    const map = new Map<string, DueTask[]>();
+    for (const t of data?.due ?? []) {
+      const d = dueDay(t);
+      const list = map.get(d) ?? [];
+      list.push(t);
+      map.set(d, list);
+    }
     return map;
   }, [data]);
 
@@ -220,13 +237,15 @@ export default function CalendarView({ focus, onFocused }: FeatureViewProps) {
             ))}
             {grid.map((key) => {
               const events = byDay.get(key) ?? [];
+              const due = tasksByDay.get(key) ?? [];
+              const total = events.length + due.length;
               const out = key.slice(0, 7) !== month;
               return (
                 <button
                   key={key}
                   role="gridcell"
                   aria-selected={key === selected}
-                  aria-label={`${dayTitle(key, today)}, ${events.length ? `${events.length} event${events.length === 1 ? '' : 's'}` : 'nothing on'}`}
+                  aria-label={`${dayTitle(key, today)}, ${events.length ? `${events.length} event${events.length === 1 ? '' : 's'}` : 'nothing on'}${due.length ? `, ${due.length} due` : ''}`}
                   className={`cal-cell${out ? ' out' : ''}${key === today ? ' today' : ''}${key === selected ? ' selected' : ''}`}
                   onClick={() => {
                     setSelected(key);
@@ -244,7 +263,15 @@ export default function CalendarView({ focus, onFocused }: FeatureViewProps) {
                         </span>
                       </span>
                     ))}
-                    {events.length > 3 && <span className="cal-more">+{events.length - 3}</span>}
+                    {due.slice(0, Math.max(0, 3 - events.length)).map((t) => (
+                      <span key={t.id} className={`cal-chip task${t.done ? ' done' : ''}`} style={{ ['--c' as string]: TASK_COLOR }}>
+                        <span className="cal-chip-text">
+                          {t.done ? '✓ ' : '☐ '}
+                          {t.title}
+                        </span>
+                      </span>
+                    ))}
+                    {total > 3 && <span className="cal-more">+{total - 3}</span>}
                   </span>
                 </button>
               );
@@ -254,13 +281,14 @@ export default function CalendarView({ focus, onFocused }: FeatureViewProps) {
             day={selected}
             today={today}
             events={byDay.get(selected) ?? []}
+            due={tasksByDay.get(selected) ?? []}
             canAdd={ownCount > 0}
             onOpen={(occ) => setTarget({ kind: 'occurrence', occ })}
             onAdd={() => setTarget({ kind: 'new', day: selected })}
           />
         </>
       ) : (
-        <Agenda today={today} byDay={byDay} loading={state.loading} onOpen={(occ) => setTarget({ kind: 'occurrence', occ })} />
+        <Agenda today={today} byDay={byDay} tasksByDay={tasksByDay} loading={state.loading} onOpen={(occ) => setTarget({ kind: 'occurrence', occ })} />
       )}
     </div>
   );
@@ -283,10 +311,30 @@ function EventRow({ o, day, onOpen }: { o: Occurrence; day: string; onOpen: (o: 
   );
 }
 
+/** A task due on a day: its box, its name (opening it on Canvas, or on Tasks), and when it is due. */
+function TaskRow({ t }: { t: DueTask }) {
+  return (
+    <div className={`card cal-row cal-task-row${t.done ? ' done' : ''}`} style={{ ['--c' as string]: TASK_COLOR }}>
+      <Tick t={t} />
+      <span className="grow">
+        <TaskName t={t} className="cal-link title">
+          {t.title}
+        </TaskName>
+        <span className="meta">
+          {t.allDay ? 'Due that day' : `Due ${timeText(t.dueAt)}`}
+          {t.notes ? ` · ${t.notes.split('\n')[0]}` : ''}
+          {t.source ? ` · ${sourceName(t.source)}` : ' · a task'}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 function DayList({
   day,
   today,
   events,
+  due,
   canAdd,
   onOpen,
   onAdd,
@@ -294,6 +342,7 @@ function DayList({
   day: string;
   today: string;
   events: Occurrence[];
+  due: DueTask[];
   canAdd: boolean;
   onOpen: (o: Occurrence) => void;
   onAdd: () => void;
@@ -308,13 +357,28 @@ function DayList({
           </button>
         )}
       </div>
-      {events.length === 0 ? <p className="meta">Nothing on.</p> : events.map((o) => <EventRow key={o.key} o={o} day={day} onOpen={onOpen} />)}
+      {events.length === 0 && due.length === 0 ? <p className="meta">Nothing on.</p> : events.map((o) => <EventRow key={o.key} o={o} day={day} onOpen={onOpen} />)}
+      {due.map((t) => (
+        <TaskRow key={t.id} t={t} />
+      ))}
     </section>
   );
 }
 
-function Agenda({ today, byDay, loading, onOpen }: { today: string; byDay: Map<string, Occurrence[]>; loading: boolean; onOpen: (o: Occurrence) => void }) {
-  const days = [...byDay.keys()].filter((d) => d >= today).sort();
+function Agenda({
+  today,
+  byDay,
+  tasksByDay,
+  loading,
+  onOpen,
+}: {
+  today: string;
+  byDay: Map<string, Occurrence[]>;
+  tasksByDay: Map<string, DueTask[]>;
+  loading: boolean;
+  onOpen: (o: Occurrence) => void;
+}) {
+  const days = [...new Set([...byDay.keys(), ...tasksByDay.keys()])].filter((d) => d >= today).sort();
   if (loading) return <p className="meta">Loading…</p>;
   if (!days.length) return <p className="empty">Nothing in the next two months.</p>;
   return (
@@ -322,8 +386,11 @@ function Agenda({ today, byDay, loading, onOpen }: { today: string; byDay: Map<s
       {days.map((d) => (
         <section key={d} className="cal-day">
           <h3>{dayTitle(d, today)}</h3>
-          {byDay.get(d)!.map((o) => (
+          {(byDay.get(d) ?? []).map((o) => (
             <EventRow key={o.key} o={o} day={d} onOpen={onOpen} />
+          ))}
+          {(tasksByDay.get(d) ?? []).map((t) => (
+            <TaskRow key={t.id} t={t} />
           ))}
         </section>
       ))}
@@ -780,6 +847,8 @@ function Calendars({ state, onClose }: { state: CalendarState; onClose: () => vo
         )}
       </section>
 
+      {state.taskLayer && <TaskLayerCard layer={state.taskLayer} />}
+
       <h3>Your calendars</h3>
       {state.calendars.map((c) => (
         <CalendarRow key={c.id} c={c} now={now} onlyOwn={c.kind === 'own' && state.calendars.filter((x) => x.kind === 'own').length === 1} />
@@ -795,6 +864,40 @@ function Calendars({ state, onClose }: { state: CalendarState; onClose: () => vo
       <ImportFile own={state.calendars.filter((c) => c.kind === 'own')} />
       {problem && <p className="banner">{problem}</p>}
     </div>
+  );
+}
+
+const TASK_LAYER_CHOICES: { id: TaskLayer; label: string }[] = [
+  { id: 'all', label: 'Every task with a due date' },
+  { id: 'synced', label: 'Only from connected services' },
+  { id: 'none', label: 'None' },
+];
+
+/** Which tasks the calendar shows beside its events. Canvas assignments are tasks, so "only from connected services" is Canvas on its own. */
+function TaskLayerCard({ layer }: { layer: TaskLayer }) {
+  const { busy, problem, run } = useAction();
+  return (
+    <section className="card">
+      <strong>Tasks on the calendar</strong>
+      <p className="meta">
+        Tasks with a due date are drawn in amber beside your events, Canvas assignments among them. Ticking one here ticks the task, and a deadline Canvas moves
+        moves here too. They remind you as tasks do, not as events.
+      </p>
+      <div className="cal-switch" role="group" aria-label="Tasks on the calendar">
+        {TASK_LAYER_CHOICES.map((c) => (
+          <button
+            key={c.id}
+            className={`btn subtle${layer === c.id ? ' on' : ''}`}
+            aria-pressed={layer === c.id}
+            disabled={busy}
+            onClick={() => void run(() => calendar.setTaskLayer(c.id))}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      {problem && <p className="banner">{problem}</p>}
+    </section>
   );
 }
 

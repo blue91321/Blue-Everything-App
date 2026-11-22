@@ -58,9 +58,16 @@ function escapeMarkdown(text: string): string {
 export function htmlToMarkdown(html: string): string {
   let text = html;
 
-  // Whole elements whose *contents* are not text at all.
-  text = text.replace(/<(script|style|head|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
-  text = text.replace(/<!--[\s\S]*?-->/g, '');
+  /*
+   * Whole elements whose *contents* are not text at all, until nothing changes:
+   * taking one out can join the pieces around it into another
+   * (`<scr<script></script>ipt>`). Nothing here could run anyway (the result is
+   * Markdown, drawn as text), but a stripper that can leave a tag behind is one
+   * somebody has to reason about (code scanning, 2026-11-18).
+   */
+  text = untilSettled(text, (t) =>
+    t.replace(/<(script|style|head|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, '').replace(/<!--[\s\S]*?-->/g, '')
+  );
 
   /*
    * Evernote's to-do boxes, which are an element rather than text. Done before
@@ -153,7 +160,18 @@ function tidy(text: string): string {
 }
 
 function stripTags(html: string): string {
-  return html.replace(/<[^>]*>/g, '');
+  return untilSettled(html, (t) => t.replace(/<[^>]*>/g, ''));
+}
+
+/** Apply `step` until it changes nothing (twenty times at most). */
+function untilSettled(text: string, step: (t: string) => string): string {
+  let before = text;
+  for (let i = 0; i < 20; i += 1) {
+    const after = step(before);
+    if (after === before) return after;
+    before = after;
+  }
+  return before;
 }
 
 function attr(tag: string, name: string): string {
@@ -172,8 +190,9 @@ function tableToMarkdown(inner: string): string {
   const rows = [...inner.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((row) =>
     [...row[1].matchAll(/<(t[hd])\b[^>]*>([\s\S]*?)<\/\1>/gi)].map((cell) =>
       // A pipe inside a cell would end the cell; escaped, since a table with a
-      // stray column is worse than one with a visible backslash.
-      decodeEntities(stripTags(cell[2])).trim().replace(/\|/g, '\\|').replace(/\n+/g, ' ')
+      // stray column is worse than one with a visible backslash. Backslashes
+      // first, or a cell ending in one would undo the pipe's escape.
+      decodeEntities(stripTags(cell[2])).trim().replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n+/g, ' ')
     )
   );
 

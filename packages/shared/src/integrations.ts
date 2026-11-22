@@ -1304,7 +1304,9 @@ export const connectSteamSchema = z.object({
  */
 export function steamProfileInput(raw: string): { steamId: string } | { vanity: string } {
   // Trailing slashes are how a copied URL usually arrives.
-  const input = raw.trim().replace(/\/+$/, '');
+  // By hand: `/\/+$/` is quadratic on a long run of slashes that does not reach the end.
+  let input = raw.trim();
+  while (input.endsWith('/')) input = input.slice(0, -1);
 
   if (/^\d{17}$/.test(input)) return { steamId: input };
 

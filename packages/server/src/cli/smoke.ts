@@ -2731,6 +2731,58 @@ console.log('\nYour wording, from edit mode');
   check('  ...as does saving it blank', blank.statusCode === 200 && (blank.json() as { text: unknown }).text === null, blank.body);
 }
 
+console.log('\nA path from a request stays in its folder (`inside-of.ts`)');
+{
+  const { insideOf } = await import('../inside-of.js');
+  const { join } = await import('node:path');
+  const root = join('C:', 'app', 'data');
+  const refuses = (...parts: string[]) => {
+    try {
+      insideOf(root, ...parts);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  check('a name inside is the file inside', insideOf(root, 'habit-a.png') === join(root, 'habit-a.png'));
+  check('  ...and the folder itself is allowed', insideOf(root) === join(root));
+  check('climbing out is refused', refuses('..', 'secret.txt'));
+  // A backslash and a drive letter are only path syntax on Windows; elsewhere they are part of a name.
+  const windows = process.platform === 'win32';
+  check('  ...however it is spelled', refuses('a/../../b') && (!windows || refuses('..\\x')));
+  check('  ...and an absolute path elsewhere', refuses(windows ? 'C:\\Windows\\win.ini' : '/etc/passwd'));
+  check('  ...and a sibling that shares the start of the name', refuses('../data-other/x'));
+}
+
+console.log('\nFeedback: what a report says, and that it fits its link');
+{
+  /*
+   * `feedback-text.ts` has no imports so it can be asserted here. The scrub is
+   * the part that matters: a bug report carries the device's recent errors,
+   * and what it must not carry is where somebody is or what they were reading.
+   */
+  const { scrub, fitted, titleOf, BUG_OUTLINE, GITHUB_URL_LIMIT, MAILTO_LIMIT } = await import('../../../web/src/feedback-text.js');
+  const line = scrub(
+    'GET /api/manga/90ba26e0-f658-4ab3-ac1c-99e4e1224c5d/page?p=%2Fapi%2Fv1%2Fmanga%2F12911%2Fchapter%2F60&c=777 → 502 from https://pc.example.ts.net:8788/x?y=1 at 203.0.113.7, C:\\Users\\sam\\data, me@example.com, Bearer abcdef123456'
+  );
+  check('a page address loses its id and its query', line.startsWith('GET /api/manga/:id/page → 502'), line);
+  check('  ...a web address its host and query', line.includes('[address]/x') && !line.includes('example.ts') && !line.includes('y=1'), line);
+  check('  ...an IP, a user folder, an email and a token', line.includes('[ip]') && line.includes('Users\\[user]') && line.includes('[email]') && line.includes('Bearer [hidden]') && !line.includes('abcdef'), line);
+  check('  ...but a browser version is not an address', scrub('Chrome/120.0.6099.230 Mobile') === 'Chrome/120.0.6099.230 Mobile', scrub('Chrome/120.0.6099.230 Mobile'));
+  check('  ...and a chapter number survives', scrub('chapter 60 has 14 pages') === 'chapter 60 has 14 pages', scrub('chapter 60 has 14 pages'));
+
+  const report = { kind: 'bug' as const, title: '', description: `${BUG_OUTLINE.split('\n')[0]}\nThe list is empty`, diagnostics: 'Version: 0.6.3' };
+  check('a title is taken from the description, past the outline', titleOf(report) === 'The list is empty', titleOf(report));
+  const small = fitted(report, 'github');
+  check('a short report goes whole in the link', small.paste === null && small.url.includes('template=bug.md') && small.url.includes('Version'), small.url);
+  const big = { ...report, diagnostics: 'x'.repeat(9_000) };
+  const github = fitted(big, 'github');
+  check('long diagnostics go on the clipboard, the description in the link', github.paste === big.diagnostics && github.url.length <= GITHUB_URL_LIMIT && github.url.includes('empty'), `${github.url.length}`);
+  const huge = fitted({ ...big, description: 'y'.repeat(3_000) }, 'email');
+  check('  ...and a long email goes whole on the clipboard', huge.paste !== null && huge.paste.includes('yyy') && huge.url.length <= MAILTO_LIMIT, `${huge.url.length}`);
+  check('  ...with spaces as %20 in a mailto, not +', !fitted(report, 'email').url.includes('+'), fitted(report, 'email').url);
+}
+
 await app.close();
 console.log(failures === 0 ? '\n\x1b[32mAll checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

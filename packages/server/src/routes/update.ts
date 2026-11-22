@@ -18,10 +18,12 @@
  * that broke something cannot also take away the way to update past it.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { config } from '../config.js';
+import { insideOf } from '../inside-of.js';
+import { launchScript } from '../launch-script.js';
 import { logsDir, repoRoot, updateScript } from '../paths.js';
 import { VERSION } from '../version.js';
 
@@ -80,7 +82,7 @@ export async function updateRoutes(app: FastifyInstance): Promise<void> {
    * a path to go and find. Only a bare `name.log` inside `logs/` — the name is
    * checked against a pattern, never joined as given.
    */
-  const logFile = (name: string) => (/^[a-z][a-z-]*\.log$/.test(name) ? resolve(logsDir, name) : null);
+  const logFile = (name: string) => (/^[a-z][a-z-]*\.log$/.test(name) ? insideOf(logsDir, name) : null);
 
   app.get('/api/logs/:name', async (request, reply) => {
     const file = logFile((request.params as { name: string }).name);
@@ -105,26 +107,8 @@ export async function updateRoutes(app: FastifyInstance): Promise<void> {
     if (!existsSync(updateScript)) {
       return reply.code(500).send({ error: 'scripts/update.ps1 is missing — download the new release by hand' });
     }
-    mkdirSync(resolve(repoRoot, 'logs'), { recursive: true });
     const logFile = resolve(repoRoot, 'logs/update.log');
-    const child = spawn(
-      'cmd.exe',
-      [
-        '/c',
-        'start',
-        '/b',
-        '',
-        'powershell.exe',
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        `& '${updateScript.replace(/'/g, "''")}' *>> '${logFile.replace(/'/g, "''")}'`,
-      ],
-      { cwd: repoRoot, detached: true, stdio: 'ignore', windowsVerbatimArguments: false }
-    );
-    child.on('error', (error) => app.log.error(error, 'update failed to launch'));
-    child.unref();
+    launchScript(updateScript, {}, 'update.log', (error) => app.log.error(error, 'update failed to launch'));
     app.log.info('update requested from the app');
     return { ok: true, updating: true, log: logFile };
   });

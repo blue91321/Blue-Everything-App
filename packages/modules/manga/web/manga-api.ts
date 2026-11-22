@@ -85,6 +85,117 @@ export interface OldHistorySearch {
   }>;
 }
 
+/** The chapter catalogue — see `catalogue.ts` on the server. */
+export interface CatalogueCopyProfile {
+  entries: number;
+  distinct: number;
+  first: number | null;
+  latest: number | null;
+  missing: number;
+  newestUpload: number | null;
+}
+
+/** A linked server, as Browse lists it: whether it shares its Local collection with this one, and copying. */
+export interface LinkedPeer {
+  id: string;
+  name: string;
+  collection: boolean;
+  copy: boolean;
+  problem: string | null;
+}
+export interface LinkedSeriesRow {
+  mangaId: string;
+  title: string;
+  sourceName: string;
+  complete: number;
+  copied: boolean;
+}
+export interface LinkedChapter {
+  id: string;
+  number: number;
+  name: string;
+  pages: number;
+}
+export interface LinkedSeriesPage {
+  peer: { id: string; name: string; copy: boolean };
+  title: string;
+  sourceName: string;
+  chapters: LinkedChapter[];
+  /** This server's copy of it, if one was made. */
+  copy: { chapters: number; complete: number } | null;
+}
+export interface CopiedSeries {
+  seriesId: string;
+  title: string;
+  of: { id: string; name: string; mangaId: string; sourceName: string };
+  chapters: number;
+  complete: number;
+  stillLinked: boolean;
+}
+
+export interface KnownCopy {
+  mangaId: string;
+  sourceId: string;
+  sourceName: string;
+  lang: string;
+  title: string;
+  current: boolean;
+  profile: CatalogueCopyProfile | null;
+  countedAt: number | null;
+  /** Counted by a linked server, by its name. */
+  via?: string | null;
+}
+
+export interface CatalogueState {
+  state: {
+    running: boolean;
+    kind: 'check' | 'map' | null;
+    phase: 'starting' | 'seeding' | 'naming' | 'searching' | 'counting' | 'mapping' | 'done';
+    total: number;
+    done: number;
+    found: number;
+    ahead: number;
+    sources: number;
+    startedAt: number | null;
+    finishedAt: number | null;
+    problem: string | null;
+    stopping: boolean;
+    held: { source: string; until: number; why: string }[];
+    dropped: { source: string; why: string }[];
+    automatic: boolean;
+  };
+  settings: { nudge: boolean; background: boolean; automatic: boolean };
+  /** False on a friend's copy, which does not check by itself. */
+  automaticHere: boolean;
+  /** Stopped by hand: the automatic check waits until then. */
+  autoPausedUntil: number | null;
+  sources: Array<{
+    id: string;
+    name: string;
+    series: number;
+    mapped: boolean;
+    mappedAt: number | null;
+    mapping: { pages: number } | null;
+    why: string | null;
+    latestAt: number | null;
+  }>;
+  /** Copies with a chapter count. */
+  counted: number;
+  /** Series with a source. */
+  library: number;
+  /** Of those, how many have another source's count known. */
+  withOthers: number;
+  ahead: Array<{
+    id: string;
+    title: string;
+    own: number | null;
+    ownSource: string | null;
+    best: { source: string; mangaId: string; latest: number | null; distinct: number; at: number; via?: string };
+    others: number;
+  }>;
+  seededAt: number | null;
+}
+
 /** Finding a source for every series without one — see `find-sources.ts` on the server. */
 export interface FindSourcesState {
   running: boolean;
@@ -632,6 +743,17 @@ export const manga = {
       method: 'PUT',
       body: JSON.stringify({ chapters }),
     }),
+  catalogue: {
+    get: () => call<CatalogueState>('/api/manga/catalogue'),
+    check: () => call<CatalogueState['state']>('/api/manga/catalogue/check', { method: 'POST' }),
+    map: () => call<CatalogueState['state']>('/api/manga/catalogue/map', { method: 'POST' }),
+    stop: () => call<CatalogueState['state']>('/api/manga/catalogue/stop', { method: 'POST' }),
+    settings: (patch: Partial<CatalogueState['settings']>) =>
+      call<CatalogueState['settings']>('/api/manga/catalogue/settings', { method: 'PUT', body: JSON.stringify(patch) }),
+    retry: (sourceId: string) => call<CatalogueState>(`/api/manga/catalogue/sources/${encodeURIComponent(sourceId)}/retry`, { method: 'POST' }),
+    /** What the catalogue knows of one series' copies: no site asked. */
+    known: (id: string) => call<{ copies: KnownCopy[] }>(`/api/manga/${id}/source/known`),
+  },
   findSources: {
     get: () => call<FindSourcesState>('/api/manga/find-sources'),
     start: (mode: 'unlinked' | 'gone' = 'unlinked') => call<FindSourcesState>('/api/manga/find-sources', { method: 'POST', body: JSON.stringify({ mode }) }),
@@ -735,6 +857,18 @@ export const manga = {
     unlink: (id: string) => call<SeriesSummary>(`/api/manga/${id}/source`, { method: 'DELETE' }),
   },
 
+  /** Linked servers' Local collections, and copies of theirs kept here. See `routes/peers.ts`. */
+  linked: {
+    peers: () => call<{ peers: LinkedPeer[] }>('/api/manga/peers'),
+    collection: (peer: string) => call<{ name: string; copy: boolean; series: LinkedSeriesRow[] }>(`/api/manga/peers/${peer}/collection`),
+    series: (peer: string, manga: string) => call<LinkedSeriesPage>(`/api/manga/peers/${peer}/series/${manga}`),
+    copy: (peer: string, manga: string) =>
+      call<{ seriesId: string; queued: number; already: number }>(`/api/manga/peers/${peer}/series/${manga}/copy`, { method: 'POST' }),
+    copies: () => call<{ copies: CopiedSeries[] }>('/api/manga/copies'),
+    copied: (seriesId: string) =>
+      call<{ title: string; of: CopiedSeries['of']; chapters: LinkedChapter[]; waiting: number }>(`/api/manga/copies/${seriesId}`),
+  },
+
   browse: {
     get: () => call<BrowseState>('/api/manga/browse'),
     setSource: (id: string) =>
@@ -776,10 +910,20 @@ export const manga = {
       only: string[] | null;
     }) => call<GroupedSearch>('/api/manga/browse/search', { method: 'POST', body: JSON.stringify(body) }),
     detail: (mangaId: string) => call<SeriesDetailPage>(`/api/manga/browse/manga/${encodeURIComponent(mangaId)}`),
-    pages: (mangaId: string, chapterId: string) =>
-      call<{ pages: string[] }>(
+    /**
+     * A chapter's page list for the reader's preview. A linked server's series
+     * (`peer:<link>:<their id>`) and a copy of one (`copy:<entry id>`) go to
+     * their own routes; see `Linked.tsx`.
+     */
+    pages: (mangaId: string, chapterId: string) => {
+      const peer = /^peer:([0-9a-f]{8}):(\d+)$/.exec(mangaId);
+      if (peer) return call<{ pages: string[] }>(`/api/manga/peers/${peer[1]}/series/${peer[2]}/chapters/${encodeURIComponent(chapterId)}/pages`);
+      const copy = /^copy:([A-Za-z0-9-]+)$/.exec(mangaId);
+      if (copy) return call<{ pages: string[] }>(`/api/manga/copies/${copy[1]}/chapters/${encodeURIComponent(chapterId)}/pages`);
+      return call<{ pages: string[] }>(
         `/api/manga/browse/manga/${encodeURIComponent(mangaId)}/chapters/${encodeURIComponent(chapterId)}/pages`
-      ),
+      );
+    },
     follow: (result: BrowseResult) =>
       call<{ series: SeriesSummary; matchedOn: 'mangadex' | 'existing' | null }>('/api/manga/follow-source', {
         method: 'POST',

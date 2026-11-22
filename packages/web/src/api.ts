@@ -28,6 +28,7 @@ import {
 } from './offline-sync';
 import './offline-effects';
 import { onServersMachine, thePc, ThePc } from './device';
+import { noteError } from './recent-errors';
 // The row shapes live in api-types.ts; re-exported so importers need not know.
 export type * from './api-types';
 import type {
@@ -49,6 +50,8 @@ import type {
   Nudge,
   Onboarding,
   Person,
+  PeerLink,
+  PeerShare,
   PersonInvite,
   Session,
   Task,
@@ -272,6 +275,7 @@ async function send<T>(rawPath: string, init: RequestInit, method: string): Prom
     // The whole app waits on the session, and an ordinary error there would
     // mean the pairing screen: better the offline screen, which retries.
     if (path === '/api/session') return unreachable('the server is slow to answer');
+    noteError(`${method} ${path}: timed out, the server was slow`);
     throw new Error(
       isRead
         ? `${ThePc()} is taking too long to answer. It is running; try again in a moment.`
@@ -317,12 +321,22 @@ async function send<T>(rawPath: string, init: RequestInit, method: string): Prom
   }
 
   markOnline();
-  if (response.status === 401) throw new Unauthorized('this device is not paired');
-  if (!response.ok) throw new Error(await errorMessage(response, method, path));
-  if (response.status === 204) return undefined as T;
-  const data = (await response.json()) as T;
-  if (kept) void remember(path, data);
+  const data = await answerOf<T>(response, method, path);
+  if (kept && data !== undefined) void remember(path, data);
   return data;
+}
+
+/** What the server answered: the data, or its error thrown with its own words. */
+async function answerOf<T>(response: Response, method: string, path: string): Promise<T> {
+  if (response.status === 401) throw new Unauthorized('this device is not paired');
+  if (!response.ok) {
+    const message = await errorMessage(response, method, path);
+    // Kept for a bug report (`recent-errors.ts`), scrubbed of the path's ids and query.
+    noteError(`${method} ${path} → ${response.status}: ${message}`);
+    throw new Error(message);
+  }
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
 }
 
 /**
@@ -332,6 +346,39 @@ async function send<T>(rawPath: string, init: RequestInit, method: string): Prom
  */
 export function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   return request<T>(path, init);
+}
+
+/**
+ * A request that carries a secret, or answers with one: the vault, and a
+ * service's key or token being saved (2026-11-18).
+ *
+ * **It has no way to the device's storage.** `send` keeps reads for offline use
+ * and queues changes in `localStorage` while the PC cannot be reached, and what
+ * keeps a master password out of either was a list: the vault's paths are never
+ * kept, and only changes with a registered offline effect are queued. Right,
+ * and one careless entry from wrong. This goes straight to the server and
+ * fails if it cannot, so a secret never reaches the outbox or the read cache
+ * by any path, which GitHub's code scanning asked for in this form.
+ */
+export async function apiSecretRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = init.method ?? 'GET';
+  const body = init.body ?? (method === 'GET' ? undefined : '{}');
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...init,
+      body,
+      ...(init.signal ? {} : { signal: AbortSignal.timeout(CHANGE_TIMEOUT_MS) }),
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        authorization: `Bearer ${getToken()}`,
+        ...init.headers,
+      },
+    });
+  } catch {
+    throw new ServerUnreachable(onServersMachine() ? 'Needs the app running' : `Needs ${thePc()}`);
+  }
+  return answerOf<T>(response, method, path);
 }
 
 /**
@@ -445,6 +492,20 @@ export const api = {
         body: JSON.stringify({ confirm: name }),
         signal: AbortSignal.timeout(30_000),
       }),
+  },
+
+  /**
+   * Linked servers: another person's own Blue Everything, linked on purpose
+   * (People → Linked servers). Linking waits for the other server to answer.
+   */
+  peers: {
+    list: () => request<{ own: string | null; links: PeerLink[]; codes: number }>('/api/peers'),
+    code: () => post<{ link: string; expiresAt: number }>('/api/peers/code'),
+    link: (link: string) => request<PeerLink>('/api/peers', { method: 'POST', body: JSON.stringify({ link }), signal: AbortSignal.timeout(60_000) }),
+    share: (id: string, share: Partial<PeerShare>) => patch<PeerLink>(`/api/peers/${encodeURIComponent(id)}`, { share }),
+    check: (id: string) => post<PeerLink>(`/api/peers/${encodeURIComponent(id)}/check`),
+    unlink: (id: string) => request<{ ok: true; told: boolean }>(`/api/peers/${encodeURIComponent(id)}`, { method: 'DELETE', signal: AbortSignal.timeout(20_000) }),
+    forgetCodes: () => request<{ ok: true }>('/api/peers/codes', { method: 'DELETE' }),
   },
 
   tasks: {

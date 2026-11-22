@@ -22,6 +22,13 @@
  * series' chapter count into "which source is furthest" would be exactly the
  * confident wrongness this screen exists to catch.
  *
+ * ### Known counts first (2026-11-21)
+ *
+ * The chapter catalogue (`server/catalogue.ts`) already knows many copies and
+ * their counts, so the screen opens on those at once, while the sites are asked,
+ * and a copy counted in the last week is not counted again. Each says when it
+ * was counted. What the search finds is merged in as it arrives.
+ *
  * ### Counts arrive late, checks only when asked
  *
  * Each count is a scrape of that series on that site, so the list arrives ranked
@@ -33,6 +40,7 @@ import { useEffect, useRef, useState } from 'react';
 import { FloatingBack } from '@app/FloatingBack';
 import {
   manga,
+  type KnownCopy,
   type ChapterProfile,
   type PageCheck,
   type SeriesSummary,
@@ -51,6 +59,10 @@ const AT_ONCE = 2;
 
 type Row = SourceMatch & {
   profile?: ChapterProfile;
+  /** When the catalogue counted it, for a count not asked of the site just now. */
+  countedAt?: number;
+  /** Counted by a linked server, by its name. */
+  countedBy?: string;
   counting?: boolean;
   countFailed?: boolean;
   check?: PageCheck;
@@ -58,6 +70,34 @@ type Row = SourceMatch & {
 };
 
 const keyOf = (m: { sourceName: string; id: string }) => `${m.sourceName}:${m.id}`;
+
+/** A catalogue count is trusted for a week; older, the site is asked again. */
+const KNOWN_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** A copy the catalogue knows, as a row: an exact name, so the same title, with its count if fresh. */
+function fromKnown(c: KnownCopy): Row {
+  const fresh = c.profile && c.countedAt !== null && Date.now() - c.countedAt < KNOWN_FRESH_MS;
+  return {
+    id: c.mangaId,
+    title: c.title,
+    sourceName: c.sourceName,
+    lang: c.lang || null,
+    url: null,
+    thumbnailUrl: null,
+    ...(fresh ? { profile: { ...c.profile!, latestChapterId: null, missingSample: [] }, countedAt: c.countedAt!, ...(c.via ? { countedBy: c.via } : {}) } : {}),
+  };
+}
+
+/** The search's results, each given the catalogue's count where it has a fresh one, then the known copies it did not find. */
+function merge(results: Row[], known: Row[]): Row[] {
+  const byId = new Map(known.map((k) => [k.id, k]));
+  const out = results.map((r) => {
+    const k = byId.get(r.id);
+    byId.delete(r.id);
+    return k?.profile ? { ...r, profile: k.profile, countedAt: k.countedAt, ...(k.countedBy ? { countedBy: k.countedBy } : {}) } : r;
+  });
+  return [...out, ...byId.values()];
+}
 
 /** A server from before scoring sends none; every result is then treated as the same title. */
 const isSameTitle = (r: Row) => r.score === undefined || r.score >= SAME_TITLE;
@@ -120,12 +160,14 @@ function Stats({ row }: { row: Row }) {
   if (row.countFailed) return <span className="meta">count unknown</span>;
   const p = row.profile;
   if (!p) return null;
-  if (p.latest === null) return <span className="meta urgent">no chapters</span>;
+  const when = row.countedAt !== undefined ? ` · counted ${new Date(row.countedAt).toLocaleDateString()}${row.countedBy ? ` by ${row.countedBy}'s server` : ''}` : '';
+  if (p.latest === null) return <span className="meta urgent">no chapters{when}</span>;
   return (
     <span className="meta">
       <span className="strong">up to {chapterText(p.latest)}</span>
       {p.first !== null && p.first > 1 ? ` · starts at ${chapterText(p.first)}` : ''}
       {p.newestUpload !== null ? ` · last upload ${new Date(p.newestUpload).toLocaleDateString()}` : ''}
+      {when}
     </span>
   );
 }
@@ -268,16 +310,22 @@ export function Compare({
     await Promise.all(Array.from({ length: Math.min(AT_ONCE, order.length) }, worker));
   }
 
+  /** The catalogue's copies of this series, read once on opening: no site asked. */
+  const known = useRef<Row[]>([]);
+
   async function find(q: string, allLanguages = wide) {
     setSearching(true);
     setProblem(null);
-    setRows(null);
+    // The series' own title shows what the catalogue knows straight away; a typed search starts empty.
+    const own = q === series.title;
+    setRows(own && known.current.length ? known.current : null);
     try {
       const { results, ...asked } = await manga.source.search(series.id, q, allLanguages);
-      setRows(results);
+      const found = own ? merge(results, known.current) : results;
+      setRows(found);
       setScope(asked);
       otherCounted.current = false;
-      void count(results.filter(isSameTitle));
+      void count(found.filter(isSameTitle));
     } catch (error) {
       setProblem(error instanceof Error ? error.message : 'the search failed');
     } finally {
@@ -286,13 +334,33 @@ export function Compare({
   }
 
   useEffect(() => {
+    void manga.catalogue
+      .known(series.id)
+      .then(
+        ({ copies }) => {
+          known.current = copies.map(fromKnown);
+          // Shown at once if the search has not answered yet.
+          setRows((current) => current ?? (known.current.length ? known.current : null));
+        },
+        () => undefined
+      );
     void find(series.title);
     // Once, on opening. A later search is the button.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series.id]);
 
   async function checkPages(row: Row) {
-    const chapterId = row.profile?.latestChapterId;
+    let chapterId = row.profile?.latestChapterId;
+    // A count from the catalogue carries no chapter id: asked of the site first.
+    if (!chapterId) {
+      try {
+        const answer = await manga.source.count(series.id, row.id);
+        if (answer.profile) patch(keyOf(row), { profile: answer.profile, countedAt: undefined });
+        chapterId = answer.profile?.latestChapterId ?? null;
+      } catch {
+        chapterId = null;
+      }
+    }
     if (!chapterId) return;
     patch(keyOf(row), { checking: true });
     try {
@@ -352,7 +420,7 @@ export function Compare({
         <CheckResult check={r.check} />
       </div>
       <div className="manga-row-actions">
-        {r.profile?.latestChapterId && (
+        {r.profile && r.profile.latest !== null && (r.profile.latestChapterId || r.countedAt !== undefined) && (
           <button className="btn subtle" disabled={r.checking} onClick={() => void checkPages(r)}>
             {r.checking ? 'Checking…' : r.check ? 'Check again' : 'Check pages'}
           </button>
@@ -465,6 +533,7 @@ export function Compare({
         </details>
       )}
       {searching && !rows && <p className="empty">Asking every installed source…</p>}
+      {searching && rows && <p className="meta">Showing what is already known while every installed source is asked…</p>}
 
       {verdict.summary && <p className="manga-compare-summary">{verdict.summary}</p>}
 

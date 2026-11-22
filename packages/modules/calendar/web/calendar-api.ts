@@ -81,11 +81,31 @@ export interface CalEvent {
   readOnly?: boolean;
 }
 
+/** A task with a due date, shown beside the events (`server/tasks.ts`). Canvas assignments are these. */
+export interface DueTask {
+  id: string;
+  title: string;
+  dueAt: number;
+  allDay: boolean;
+  /** The day it is due, for one due on a day. */
+  date: string;
+  done: boolean;
+  source: string | null;
+  sourceUrl: string | null;
+  notes: string | null;
+}
+
+/** Which tasks the calendar shows: every one with a due date, only those from a service, or none. */
+export type TaskLayer = 'all' | 'synced' | 'none';
+
 export interface CalendarState {
   zone: string;
   calendars: CalendarInfo[];
   occurrences: Occurrence[];
   reminders: Reminders;
+  /** Missing from a server older than the task layer. */
+  due?: DueTask[];
+  taskLayer?: TaskLayer;
 }
 
 export interface ImportPreview {
@@ -118,7 +138,11 @@ const q = (scope?: Scope, occurrence?: string) => (scope ? `?scope=${scope}${occ
 
 export const calendar = {
   get: (from: number, to: number) => apiRequest<CalendarState>(`/api/calendar?from=${from}&to=${to}`),
-  upcoming: (days: number) => apiRequest<{ occurrences: Occurrence[]; reminders: Reminders; calendars: number }>(`/api/calendar/upcoming?days=${days}`),
+  upcoming: (days: number, from?: number) =>
+    apiRequest<{ occurrences: Occurrence[]; reminders: Reminders; calendars: number; due?: DueTask[]; taskLayer?: TaskLayer }>(
+      `/api/calendar/upcoming?days=${days}${from ? `&from=${from}` : ''}`
+    ),
+  setTaskLayer: (layer: TaskLayer) => apiRequest<{ taskLayer: TaskLayer }>('/api/calendar/task-layer', { method: 'PUT', ...json({ layer }) }),
   event: (id: string) => apiRequest<CalEvent>(`/api/calendar/events/${encodeURIComponent(id)}`),
   addEvent: (draft: EventDraft) => apiRequest<CalEvent>('/api/calendar/events', { method: 'POST', ...json(draft) }),
   saveEvent: (id: string, patch: Partial<EventDraft>, scope?: Scope, occurrence?: string) =>
@@ -179,6 +203,15 @@ export function daysOf(o: Occurrence): string[] {
   for (let k = first; k <= last && out.length < 400; k = addDaysKey(k, 1)) out.push(k);
   return out;
 }
+
+/** The day a task is due on this device: its date when due on a day, else where its instant falls here. */
+export const dueDay = (t: DueTask): string => (t.allDay ? t.date : dayKey(new Date(t.dueAt)));
+
+/** Tasks are drawn in one colour, the calendars' amber, so they read as one layer whatever the calendars are. */
+export const TASK_COLOR = '#c69026';
+
+/** "Canvas" for `canvas`: the slug is opaque, so this only capitalises it. */
+export const sourceName = (source: string | null): string | null => (source ? source.charAt(0).toUpperCase() + source.slice(1) : null);
 
 export const timeText = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 

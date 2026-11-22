@@ -34,6 +34,7 @@
  * it is theirs rather than ours. It is written down here so nobody "corrects" it
  * to a query and finds the field does not exist.
  */
+import { noteChapters, noteListing } from './catalogue-notes.js';
 import {
   SourceError,
   type ExtensionCatalogue,
@@ -394,18 +395,18 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
         },
       }
     );
-    return {
-      hasNextPage: found.fetchSourceManga?.hasNextPage === true,
-      matches: (found.fetchSourceManga?.mangas ?? []).map((m) => ({
-        id: String(m.id),
-        title: m.title,
-        sourceId: String(source.id),
-        sourceName: source.displayName,
-        lang: source.lang || null,
-        url: m.realUrl ?? null,
-        thumbnailUrl: m.thumbnailUrl ?? null,
-      })),
-    };
+    const matches = (found.fetchSourceManga?.mangas ?? []).map((m) => ({
+      id: String(m.id),
+      title: m.title,
+      sourceId: String(source.id),
+      sourceName: source.displayName,
+      lang: source.lang || null,
+      url: m.realUrl ?? null,
+      thumbnailUrl: m.thumbnailUrl ?? null,
+    }));
+    // Every series a source lists goes into the chapter catalogue, for free (`catalogue-notes.ts`).
+    noteListing({ id: String(source.id), displayName: source.displayName, lang: source.lang }, type, matches);
+    return { hasNextPage: found.fetchSourceManga?.hasNextPage === true, matches };
   }
 
   /** A source's own filters, as it declares them. */
@@ -676,7 +677,7 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       { id }
     );
 
-    return (data.fetchMangaAndChapters?.chapters ?? []).map((c) => ({
+    const fresh = (data.fetchMangaAndChapters?.chapters ?? []).map((c) => ({
       id: String(c.id),
       number: c.chapterNumber,
       name: c.name,
@@ -685,6 +686,60 @@ export class SuwayomiAdapter implements SourceAdapter, ExtensionCatalogue {
       uploadedAt: uploadedAtMs(c.uploadDate),
       scanlator: c.scanlator ?? null,
     }));
+    // Counted into the chapter catalogue, since it is fresh from the site (`catalogue-notes.ts`).
+    noteChapters(mangaId, fresh);
+    return fresh;
+  }
+
+  /**
+   * Every series Suwayomi has stored, as it holds them: from every search and
+   * listing it has ever answered, with when its chapter list was last fetched
+   * (null for one only ever listed). Read from its own database, no site asked;
+   * the chapter catalogue seeds itself from this (`catalogue.ts`).
+   */
+  async storedSeries(): Promise<Array<{ id: string; title: string; sourceId: string; chaptersAt: number | null }>> {
+    const out: Array<{ id: string; title: string; sourceId: string; chaptersAt: number | null }> = [];
+    let after: string | null = null;
+    for (let guard = 0; guard < 200; guard++) {
+      const data: {
+        mangas: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: Array<{ id: number; title: string; sourceId: string; chaptersLastFetchedAt: string | null }> };
+      } = await this.gql(
+        `query Stored($after: Cursor) {
+           mangas(first: 5000, after: $after) {
+             pageInfo { hasNextPage endCursor }
+             nodes { id title sourceId chaptersLastFetchedAt }
+           }
+         }`,
+        { after }
+      );
+      for (const m of data.mangas?.nodes ?? []) {
+        // Seconds, as text; 0 for a series whose chapters were never fetched.
+        const at = Number(m.chaptersLastFetchedAt);
+        out.push({ id: String(m.id), title: m.title, sourceId: String(m.sourceId), chaptersAt: Number.isFinite(at) && at > 0 ? at * 1000 : null });
+      }
+      if (!data.mangas?.pageInfo?.hasNextPage) break;
+      after = data.mangas.pageInfo.endCursor;
+    }
+    return out;
+  }
+
+  /** The stored chapter lists of these series, from Suwayomi's own database, no site asked. */
+  async storedChapterLists(mangaIds: readonly string[]): Promise<Map<string, SourceChapter[]>> {
+    const out = new Map<string, SourceChapter[]>();
+    const ids = mangaIds.map((id) => Number.parseInt(id, 10)).filter(Number.isSafeInteger);
+    for (let i = 0; i < ids.length; i += 200) {
+      const data = await this.gql<{ chapters: { nodes: Array<{ id: number; mangaId: number; name: string; chapterNumber: number; uploadDate?: string | null; scanlator?: string | null }> } }>(
+        `query Lists($ids: [Int!]!) { chapters(filter: { mangaId: { in: $ids } }) { nodes { id mangaId name chapterNumber uploadDate scanlator } } }`,
+        { ids: ids.slice(i, i + 200) }
+      );
+      for (const c of data.chapters?.nodes ?? []) {
+        const key = String(c.mangaId);
+        const list = out.get(key) ?? [];
+        list.push({ id: String(c.id), number: c.chapterNumber, name: c.name, uploadedAt: uploadedAtMs(c.uploadDate), scanlator: c.scanlator ?? null });
+        out.set(key, list);
+      }
+    }
+    return out;
   }
 
   async pages(chapterId: string): Promise<string[]> {

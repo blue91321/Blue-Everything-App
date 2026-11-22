@@ -20,14 +20,14 @@
  * Local-only, like every change to what this install runs, and never on a
  * friend's copy, which runs this checkout and is not its to change.
  */
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { isGuest } from '../config.js';
 import { scanModules, setModuleEnabled } from '../modules.js';
 import { configuration, dataDir, repoRoot, restartScript, updateScript } from '../paths.js';
 import { writeFileAtomic } from '../atomic-write.js';
+import { launchScript } from '../launch-script.js';
 
 /**
  * What Just Manga keeps. The same list as `JUST_MANGA_KEEPS` in
@@ -40,19 +40,6 @@ const configFile = resolve(repoRoot, 'configuration.json');
 /** On a clone: the packages that were on when it switched to Just Manga. */
 const beforeFile = () => resolve(dataDir, 'configuration-before.json');
 const isGit = () => existsSync(resolve(repoRoot, '.git'));
-
-/** Run a script so it outlives this server, as Restart and Update do: see `restart.ts` for why this form. */
-function launch(script: string, args: string[], log: string): void {
-  mkdirSync(resolve(repoRoot, 'logs'), { recursive: true });
-  const logFile = resolve(repoRoot, 'logs', log);
-  const quoted = [script, ...args].map((a, i) => (i === 0 || /\s|'/.test(a) ? `'${a.replace(/'/g, "''")}'` : a));
-  const child = spawn(
-    'cmd.exe',
-    ['/c', 'start', '/b', '', 'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `& ${quoted.join(' ')} *>> '${logFile.replace(/'/g, "''")}'`],
-    { cwd: repoRoot, detached: true, stdio: 'ignore' }
-  );
-  child.unref();
-}
 
 /** The shipped packages Just Manga leaves out, as this checkout has them. */
 function leftOut() {
@@ -94,7 +81,7 @@ export async function configurationRoutes(app: FastifyInstance): Promise<void> {
 
     if (!isGit()) {
       if (!existsSync(updateScript)) return reply.code(500).send({ error: 'scripts/update.ps1 is missing' });
-      launch(updateScript, ['-Configuration', to], 'update.log');
+      launchScript(updateScript, { Configuration: to }, 'update.log', (error) => app.log.error(error, 'switching configuration failed to launch'));
       app.log.info(`switching to ${to} from the app`);
       return { ok: true, how: 'download', log: 'update.log' };
     }
@@ -120,7 +107,7 @@ export async function configurationRoutes(app: FastifyInstance): Promise<void> {
       rmSync(configFile, { force: true });
       rmSync(beforeFile(), { force: true });
     }
-    launch(restartScript, [], 'restart.log');
+    launchScript(restartScript, {}, 'restart.log', (error) => app.log.error(error, 'restart failed to launch'));
     app.log.info(`switched to ${to} from the app; restarting`);
     return { ok: true, how: 'restart' };
   });

@@ -45,6 +45,7 @@ import { updateExtensionsIfDue } from './setup.js';
 import { mendDuplicates, mendEditions, sweepArchive } from './archive.js';
 import { dropDuplicateCopies } from './page-cache.js';
 import { retitleFromSource } from './titles.js';
+import { peerMangaRoutes } from './routes/peers.js';
 import { archiveTools, autoKeep, hostFetch, useLogger, workArchive } from './routes/shared.js';
 import { libraryRoutes } from './routes/library.js';
 import { sourceRoutes } from './routes/source.js';
@@ -54,6 +55,8 @@ import { readingRoutes } from './routes/reading.js';
 import { archiveRoutes } from './routes/archive.js';
 import { hostRoutes } from './routes/host.js';
 import { flaresolverrRoutes } from './routes/flaresolverr.js';
+import { catalogueRoutes } from './routes/catalogue.js';
+import { catalogueSweep, flushCatalogue } from './catalogue.js';
 import { configureSuwayomiFlare, stopFlare, stopLeftover } from './flaresolverr.js';
 import { autoSwitch } from './find-sources.js';
 
@@ -143,6 +146,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
   archiveRoutes(app);
   hostRoutes(app);
   flaresolverrRoutes(app);
+  catalogueRoutes(app);
+  peerMangaRoutes(app);
   // One a killed server left running is stopped now; Suwayomi learns this run's door each time it comes up.
   stopLeftover();
   whenSuwayomiUp(configureSuwayomiFlare);
@@ -159,6 +164,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
       await autoSwitch().catch(() => 0);
       // A few series' genres each sweep, only while Suwayomi is up — see `tags.ts`.
       await fillTags(TAGS_PER_SWEEP);
+      // The chapter catalogue: a few pages of a source not yet mapped, what is new on mapped ones, and the nudge when another source is ahead. Only while Suwayomi is up — see `catalogue.ts`.
+      await catalogueSweep().catch(() => undefined);
       // Extensions, once a day, only while Suwayomi is up — see `updateExtensionsIfDue`.
       await updateExtensionsIfDue().catch(() => undefined);
       /*
@@ -218,6 +225,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
     clearTimeout(bootStart);
     clearTimeout(firstRun);
     clearInterval(repeat);
+    flushCatalogue();
     /*
      * Suwayomi goes down with us. A surviving child would hold port 4567 with
      * nobody owning it, and the next start would fail against a server that

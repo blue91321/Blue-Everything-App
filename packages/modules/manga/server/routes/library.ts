@@ -31,6 +31,8 @@ import { readableChapter } from '../sources.js';
 import { findSourcesState, goneCount, startFindingSources, switchNow, unlinkedCount } from '../find-sources.js';
 import { searchOldHistory } from '../old-history.js';
 import { othersRatings, setShared } from '../shared-ratings.js';
+import { peerRatingsOf } from '../peer-catalogue.js';
+import { nameKeys } from '../names.js';
 import { keptMangaIds, stopArchive } from '../archive.js';
 import { TEST_A, TEST_B, isTestMangaId, setTestState, testState, type TestBMode } from '../test-source.js';
 import { COVER_CACHE, askHost, autoKeep, hostJson, hostKept, mangaIdFor } from './shared.js';
@@ -688,9 +690,18 @@ export function libraryRoutes(app: FastifyInstance): void {
   /** What friends on this PC who share their ratings gave this series. */
   app.get('/api/manga/:id/ratings', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const mangaId = mangaIdFor(read(), id);
+    const store = read();
+    const mangaId = mangaIdFor(store, id);
+    if (!isGuest) {
+      // And linked servers that share their ratings, matched by MangaUpdates id or a name (`peer-catalogue.ts`).
+      const series = store.series.find((s) => s.id === id);
+      const linked = series
+        ? await peerRatingsOf(series.muId, nameKeys([series.title, series.source?.title, ...(series.altTitles ?? [])].filter((x): x is string => !!x))).catch(() => [])
+        : [];
+      const here = mangaId ? othersRatings(mangaId, 'you').map((o) => ({ ...o, who: nameFor(o.who, 'you') })) : [];
+      return { others: [...here, ...linked] };
+    }
     if (!mangaId) return { others: [] };
-    if (!isGuest) return { others: othersRatings(mangaId, 'you').map((o) => ({ ...o, who: nameFor(o.who, 'you') })) };
     const got = await hostJson<{ others: Array<{ who: string; rating: number }> }>(
       `/api/manga/host/ratings?manga=${encodeURIComponent(mangaId)}`
     );

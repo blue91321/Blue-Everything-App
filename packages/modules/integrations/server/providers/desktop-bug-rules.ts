@@ -39,11 +39,12 @@ export function plainText(html: string): string {
     .replace(/<br\s*\/?>|<\/p>|<\/li>|<\/div>/gi, '\n')
     .replace(/<[^>]*>/g, '')
     .replace(/&nbsp;| /g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#0?39;|&apos;/g, "'")
+    // Last, so `&amp;lt;` (the text "&lt;") stays that, rather than becoming "<".
+    .replace(/&amp;/g, '&')
     .replace(/[ \t]+/g, ' ')
     .trim();
 }

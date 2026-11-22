@@ -18,6 +18,7 @@ import { cleanRepeat } from './recur.js';
 import { forgetEvent, LINK_STALE, onWake, schedule, stop } from './reminders.js';
 import { cleanEvent, cleanOffsets, cleanReminders, COLORS, defaultCalendar, newId, read, StoreUnreadable, write, type CalEvent, type Calendar, type Store } from './store.js';
 import { addDays, dateOf, DATE, DATETIME, DAY, isZone, serverZone } from './time.js';
+import { dueTasks, TASK_LAYERS, type TaskLayer } from './tasks.js';
 
 const SCOPE = 'calendar' as ChangeScope;
 const QUIET = { config: { announce: false } };
@@ -192,6 +193,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
         calendars: store.calendars.map((c) => shown(c, store)),
         occurrences: occurrencesIn(store.events, store.calendars, store.reminders, from, to),
         reminders: store.reminders,
+        due: await dueTasks(from, to, store.taskLayer),
+        taskLayer: store.taskLayer,
       };
     } catch (error) {
       return fail(reply, error);
@@ -201,14 +204,21 @@ export async function routes(app: FastifyInstance): Promise<void> {
   app.get('/api/calendar/upcoming', async (request, reply) => {
     try {
       const q = request.query as { days?: string };
-      const days = Math.max(1, Math.min(31, Number(q.days) || 7));
+      // Up to six weeks: the week card shows up to four, from up to a week back (its week may start on last Sunday).
+      const days = Math.max(1, Math.min(42, Number(q.days) || 7));
       const now = Date.now();
+      // From the start of the card's first day on the screen's clock when it says so, so the week card can show what already happened.
+      const asked = Number((q as { from?: string }).from);
+      const from = Number.isFinite(asked) && asked <= now && asked > now - 8 * DAY ? asked : now;
+      const to = from + days * DAY;
       const store = read();
       void refreshStale(now, READ_STALE).catch(() => undefined);
       return {
-        occurrences: occurrencesIn(store.events, store.calendars, store.reminders, now, now + days * DAY).slice(0, 50),
+        occurrences: occurrencesIn(store.events, store.calendars, store.reminders, from, to).slice(0, 400),
         reminders: store.reminders,
         calendars: store.calendars.length,
+        due: await dueTasks(from, to, store.taskLayer),
+        taskLayer: store.taskLayer,
       };
     } catch (error) {
       return fail(reply, error);
@@ -522,6 +532,22 @@ export async function routes(app: FastifyInstance): Promise<void> {
       await forgetEvent([ev.id]);
       schedule();
       return { ok: true };
+    } catch (error) {
+      return fail(reply, error);
+    }
+  });
+
+  // ---------------------------------------------------------------- tasks
+
+  app.put('/api/calendar/task-layer', QUIET, async (request, reply) => {
+    try {
+      const layer = ((request.body as Body) ?? {}).layer;
+      if (!TASK_LAYERS.includes(layer as TaskLayer)) throw new Refused('layer is all, synced or none');
+      const store = read();
+      store.taskLayer = layer as TaskLayer;
+      write(store);
+      announce();
+      return { taskLayer: store.taskLayer };
     } catch (error) {
       return fail(reply, error);
     }

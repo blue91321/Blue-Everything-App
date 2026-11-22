@@ -2400,3 +2400,68 @@ html:has(body > .manga-reader.no-scrollbar)::-webkit-scrollbar {
   margin-right: 2px;
   color: var(--muted);
 }
+
+/* Chapters on other sources (Catalogue.tsx). */
+.manga-catalogue label.meta {
+  display: block;
+  margin-top: 8px;
+}
+
+.manga-catalogue-run {
+  margin: 8px 0;
+}
+
+.manga-catalogue details {
+  margin-top: 10px;
+}
+
+.manga-catalogue summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.manga-catalogue-row {
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.manga-catalogue-row:last-child {
+  border-bottom: 0;
+}
+
+.manga-catalogue-row .grow {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Linked servers' collections (Linked.tsx) ---- */
+.manga-linked-chapters {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+.manga-linked-chapter {
+  width: 100%;
+  text-align: left;
+  padding: 10px 4px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  gap: 8px;
+}
+.manga-linked-chapter > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (hover: hover) {
+  .manga-linked-chapter:hover {
+    background: var(--surface-raised);
+  }
+}

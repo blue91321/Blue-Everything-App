@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { dataDir } from '../paths.js';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -25,6 +24,7 @@ import { db } from '../db/client.js';
 import { habitEntries, habits } from '../db/schema.js';
 import { happenedAt } from '../happened-at.js';
 import { happenings } from '../happenings.js';
+import { insideOf } from '../inside-of.js';
 import { spokenCommands, spokenProvided } from '../spoken-port.js';
 import { normalisePush } from './tasks.js';
 
@@ -94,7 +94,7 @@ const SAFE_ID = /^[A-Za-z0-9-]{1,64}$/;
 
 const imagePath = (habitId: string, extension: string): string => {
   if (!SAFE_ID.test(habitId)) throw new Error('unsafe habit id');
-  return resolve(dataDir, `habit-${habitId}.${extension}`);
+  return insideOf(dataDir, `habit-${habitId}.${extension}`);
 };
 
 function storedImage(habitId: string): { path: string; extension: string } | null {
